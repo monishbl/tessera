@@ -141,9 +141,34 @@ def show(ssid):
     emit(**out)
 
 
-def commands(req):
+def psk_key_mgmt(security):
+    """The key management for a password network, from the scan's SECURITY
+    (nmcli: "WPA2", "WPA1 WPA2", "WPA2 WPA3", "WPA3"). A WPA3-only network
+    takes SAE: with wpa-psk forced, joining one failed as a wrong password."""
+    words = security.split()
+    if "WPA3" in words and not ("WPA2" in words or "WPA1" in words or "WPA" in words):
+        return "sae"
+    return "wpa-psk"
+
+
+def scan_security(ssid):
+    """What the last scan says about SSID's security ("" when it isn't seen)."""
+    try:
+        r = nmcli("-t", "-f", "SSID,SECURITY", "device", "wifi", "list", "--rescan", "no", timeout=10)
+    except subprocess.TimeoutExpired:
+        return ""
+    if r.returncode != 0:
+        return ""
+    for line in r.stdout.splitlines():
+        parts = [p.replace("\0", ":") for p in line.replace("\\:", "\0").split(":")]
+        if len(parts) >= 2 and parts[0] == ssid:
+            return ":".join(parts[1:])
+    return ""
+
+
+def commands(req, security_seen=""):
     """nmcli editor commands for the request, secrets included (they only
-    ever go to nmcli's stdin)."""
+    ever go to nmcli's stdin). `security_seen`: the scan's SECURITY for it."""
     security = req.get("security", "enterprise")
     if security not in SECURITY:
         raise ValueError("Choose how the network is secured.")
@@ -152,13 +177,20 @@ def commands(req):
         raise ValueError("Type the network name (up to 32 characters).")
     cmds = [f"set 802-11-wireless.ssid {ssid}", f"set 802-11-wireless.hidden {'yes' if req.get('hidden') else 'no'}"]
     if security == "open":
-        cmds.append("remove 802-11-wireless-security")
+        # (a profile that was secured before keeps no 802.1X part either:
+        # NetworkManager refuses to save one without its security)
+        cmds += ["remove 802-11-wireless-security", "remove 802-1x"]
         return ssid, cmds
     if security == "psk":
         psk = clean(req.get("psk"), "Wi-Fi password")
         if not 8 <= len(psk) <= 63:
             raise ValueError("Wi-Fi passwords are 8 to 63 characters.")
-        cmds += ["set 802-11-wireless-security.key-mgmt wpa-psk", f"set 802-11-wireless-security.psk {psk}"]
+        # (psk-flags 0: the password kept in the profile. A profile made by
+        # another app can say "kept by the keyring" (1); then the password
+        # typed here wasn't kept, and with no keyring agent the join failed
+        # as "Secrets were required")
+        cmds += [f"set 802-11-wireless-security.key-mgmt {psk_key_mgmt(security_seen)}", f"set 802-11-wireless-security.psk {psk}",
+                 "set 802-11-wireless-security.psk-flags 0", "remove 802-1x"]
         return ssid, cmds
 
     eap = req.get("eap", "peap")
@@ -237,7 +269,8 @@ def explain(text, req):
 
 def join(req):
     try:
-        ssid, cmds = commands(req)
+        seen = scan_security(str(req.get("ssid") or "")) if req.get("security") == "psk" and not req.get("hidden") else ""
+        ssid, cmds = commands(req, seen)
     except ValueError as e:
         emit(state="error", message=str(e))
         return 1

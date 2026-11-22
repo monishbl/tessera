@@ -96,11 +96,16 @@ def switch(card, profile):
         match = next((s for s in sinks if stem in s and s.endswith(suffix)), None)
         if match:
             subprocess.run(["pactl", "set-default-sink", match], capture_output=True)
+            # (read back: the sound goes there only if it's the default now)
+            if pactl("get-default-sink").strip() != match:
+                print(json.dumps({"ok": False, "error": "The sound card switched, but its output couldn't be made the default. Pick it in the Sound menu."}))
+                return 1
             print(json.dumps({"ok": True, "sink": match}))
             return 0
         time.sleep(0.1)
-    print(json.dumps({"ok": True, "sink": None}))
-    return 0
+    # (switched, but no output for it came: the sound still plays where it did)
+    print(json.dumps({"ok": False, "error": "The sound card switched, but its new output didn't appear. Pick it in the Sound menu."}))
+    return 1
 
 
 def main(argv):

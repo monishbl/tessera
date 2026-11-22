@@ -248,6 +248,14 @@ class Watcher:
                     self.call(adapter, props, "Set", ("org.bluez.Adapter1", "Pairable", self.GLib.Variant("b", False)), "(ssv)")
                 except Exception:  # noqa: BLE001
                     pass
+        # (the bond read back, not taken from Pair's answer: Pair can answer
+        # fine while nothing was kept)
+        try:
+            bonded = bool(self.call(target, props, "Get", ("org.bluez.Device1", "Bonded"), "(ss)")[0])
+        except Exception:  # noqa: BLE001
+            bonded = True  # (an older BlueZ, without Bonded)
+        if not bonded:
+            raise RuntimeError("They paired, but the pairing wasn't kept. Turn Bluetooth off and on, then try again.")
 
     def objects(self):
         return self.call("/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects")[0]

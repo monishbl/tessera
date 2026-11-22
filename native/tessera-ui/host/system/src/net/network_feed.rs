@@ -78,6 +78,32 @@ pub fn parse_known(text: &str) -> BTreeSet<String> {
     }).collect()
 }
 
+/// The active Wi-Fi connections' UUIDs (`nmcli -t -f UUID,TYPE connection show --active`)
+pub fn active_wifi(text: &str) -> Vec<String> {
+    text.lines().filter_map(|l| l.split_once(':')).filter(|(_, t)| *t == "802-11-wireless").map(|(u, _)| u.to_string()).collect()
+}
+
+/// Disconnect from the network named `ssid` (blocking: on a thread): its
+/// active connection found by SSID, not by the profile's name. 22 Nov:
+/// `connection down id <ssid>` did nothing, unsaid, for a profile named
+/// otherwise ("Home 1", an imported one). False if it's still up
+fn disconnect(ssid: &str) -> bool {
+    let t = Duration::from_secs(8);
+    let active = crate::util::capture(&["nmcli", "-t", "-f", "UUID,TYPE", "connection", "show", "--active"], t).map(|x| x.1).unwrap_or_default();
+    let mut found = false;
+    for uuid in active_wifi(&active) {
+        let named = crate::util::capture(&["nmcli", "-g", "802-11-wireless.ssid", "connection", "show", "uuid", &uuid], t).map(|x| x.1).unwrap_or_default();
+        if named.trim() == ssid {
+            found = true;
+            if crate::util::capture(&["nmcli", "connection", "down", "uuid", &uuid], Duration::from_secs(20)).map(|x| x.0) != Some(0) {
+                return false;
+            }
+        }
+    }
+    // (none found by its SSID: the profile's name, as before)
+    found || crate::util::capture(&["nmcli", "connection", "down", "id", ssid], Duration::from_secs(20)).is_some_and(|x| x.0 == 0)
+}
+
 /// Connected first, then known, then by signal; at most 30 (sortedNow)
 pub fn sorted(aps: &[Ap], known: &BTreeSet<String>) -> Vec<Ap> {
     let mut v = aps.to_vec();
@@ -160,6 +186,8 @@ enum M {
     Tick,
     Listed(String, String),
     Connected(String, bool),
+    /// a disconnect ended (the network, whether it went down)
+    Down(String, bool),
 }
 
 #[derive(Default)]
@@ -378,7 +406,11 @@ impl Service for NetworkFeed {
             }
             "disconnect" => {
                 if !name.is_empty() {
-                    crate::util::run_async(&["nmcli", "connection", "down", "id", &name]);
+                    let send = h.sender(NAME);
+                    std::thread::spawn(move || {
+                        let ok = disconnect(&name);
+                        send(Box::new(M::Down(name, ok)));
+                    });
                 }
             }
             "join" => {
@@ -471,6 +503,13 @@ impl Service for NetworkFeed {
                     self.send(h, false);
                 }
             }
+            M::Down(name, ok) => {
+                if !ok {
+                    crate::input::common_island::post(h, json!({"kind": "custom", "key": "network", "icon": "wifi-slash", "title": "Couldn't disconnect", "subtitle": format!("{name} is still connected. Try again, or turn Wi-Fi off.")}), 6000);
+                }
+                // (the end state read again, not assumed)
+                self.list(h);
+            }
             M::Connected(name, ok) => {
                 if self.connecting == name {
                     self.connecting.clear();
@@ -496,6 +535,13 @@ impl Service for NetworkFeed {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn active_wifi_connections() {
+        let t = "1111-aaaa:802-11-wireless\n2222-bbbb:802-3-ethernet\n3333-cccc:wireguard\n4444-dddd:802-11-wireless\n";
+        assert_eq!(active_wifi(t), vec!["1111-aaaa".to_string(), "4444-dddd".to_string()]);
+        assert!(active_wifi("").is_empty());
+    }
 
     #[test]
     fn nmcli_is_asked_on_the_ui_thread_only_the_first_time() {

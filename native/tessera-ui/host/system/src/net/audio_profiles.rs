@@ -17,7 +17,20 @@ const NAME: &str = "AudioProfiles";
 
 enum M {
     Listed(String),
-    Switched,
+    /// the switch's exit code and its last line ({"ok", "error"})
+    Switched(i32, String),
+}
+
+/// Why a switch failed, from audio-profiles.py's answer (None: it worked).
+/// 22 Nov: its "The sound card didn't switch." was read by nobody, so a
+/// failed pick only stopped spinning
+pub fn switch_error(code: i32, out: &str) -> Option<String> {
+    let last = out.trim().lines().next_back().unwrap_or("");
+    let v: Value = serde_json::from_str(last).unwrap_or(Value::Null);
+    if code == 0 && v["ok"] != false {
+        return None;
+    }
+    Some(v["error"].as_str().filter(|e| !e.is_empty()).unwrap_or("The sound output didn't switch. Try again, or pick it in Settings → Sound.").to_string())
 }
 
 #[derive(Default)]
@@ -70,7 +83,7 @@ impl Service for AudioProfiles {
                 self.switching = profile.clone();
                 self.switching_now = true;
                 let send = h.sender(NAME);
-                capture_then_within(script_cmd("audio-profiles.py", &["switch", &card, &profile]), None, Some(std::time::Duration::from_secs(20)), move |_, _| send(Box::new(M::Switched)));
+                capture_then_within(script_cmd("audio-profiles.py", &["switch", &card, &profile]), None, Some(std::time::Duration::from_secs(20)), move |code, out| send(Box::new(M::Switched(code, out))));
             }
             _ => {}
         }
@@ -87,12 +100,29 @@ impl Service for AudioProfiles {
                     }
                 }
             }
-            M::Switched => {
+            M::Switched(code, out) => {
                 self.switching.clear();
                 self.switching_now = false;
+                // (said, not only the spinner stopping)
+                if let Some(why) = switch_error(code, &out) {
+                    crate::input::common_island::post(h, json!({"kind": "custom", "key": "audioprofile", "icon": "speaker-x", "title": "Couldn't switch the sound output", "subtitle": why}), 6000);
+                }
                 self.refresh(h);
             }
         }
         self.publish();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_switch_says_why() {
+        assert_eq!(switch_error(0, "{\"ok\": true, \"sink\": \"alsa_output.x.hdmi-stereo\"}\n"), None);
+        assert_eq!(switch_error(1, "{\"ok\": false, \"error\": \"The sound card didn't switch.\"}\n").as_deref(), Some("The sound card didn't switch."));
+        // (killed at the deadline: -1 and nothing said)
+        assert!(switch_error(-1, "").unwrap().contains("didn't switch"));
     }
 }

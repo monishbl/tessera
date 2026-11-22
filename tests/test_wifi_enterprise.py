@@ -34,6 +34,8 @@ FAKE_NMCLI = textwrap.dedent(r'''
     elif args[:2] == ["-t", "-f"] and args[3:5] == ["connection", "show"]:
         p = db["profiles"].get(args[-1], {})
         out = "".join(f"{k}:{v}\n" for k, v in p.get("settings", {}).items())
+    elif args[:5] == ["-t", "-f", "SSID,SECURITY", "device", "wifi"]:
+        out = os.environ.get("FAKE_NM_SCAN", "")
     elif args[:2] == ["connection", "edit"]:
         if os.environ.get("FAKE_NM_REFUSE_SAVE"):
             out = "Error: failed to save"
@@ -193,6 +195,22 @@ class WifiEnterprise(unittest.TestCase):
         self.assertIn("set 802-11-wireless.ssid Hidden Net", stdin)
         _, out = self.run_script("join", request=dict(req, psk="short"))
         self.assertIn("8 to 63", out[-1]["message"])
+
+    def test_psk_join_keeps_the_password_and_picks_wpa3(self):
+        req = {"ssid": "Cafe", "security": "psk", "psk": "hunter22"}
+        # (nmcli -t escapes the ":" in a name: "Cafe: Two" is another network)
+        r, out = self.run_script("join", request=req, FAKE_NM_SCAN="Cafe\\: Two:WPA2\nCafe:WPA3\n")
+        self.assertEqual(out[-1]["state"], "connected")
+        stdin = [c for c in self.calls() if c["argv"][:2] == ["connection", "edit"]][0]["stdin"]
+        # (a WPA3-only network takes SAE; the password stays in the profile)
+        self.assertIn("set 802-11-wireless-security.key-mgmt sae", stdin)
+        self.assertIn("set 802-11-wireless-security.psk-flags 0", stdin)
+        self.assertIn("remove 802-1x", stdin)
+        # (transition mode, or not seen: WPA2's wpa-psk)
+        self.state.unlink()
+        self.run_script("join", request=req, FAKE_NM_SCAN="Cafe:WPA2 WPA3\n")
+        stdin = [c for c in self.calls() if c["argv"][:2] == ["connection", "edit"]][0]["stdin"]
+        self.assertIn("set 802-11-wireless-security.key-mgmt wpa-psk", stdin)
 
     def test_show_returns_settings_without_secrets(self):
         req = {"ssid": "eduroam", "security": "enterprise", "eap": "peap", "identity": "me", "password": "topsecret", "domain": "d.edu", "ca": "system"}
