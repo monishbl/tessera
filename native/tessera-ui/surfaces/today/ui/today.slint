@@ -1172,14 +1172,19 @@ component OptionsSheet inherits FocusScope {
         background: Theme.material ? Theme.m3-surface-container : Theme.dark ? #1C1C1F : #F5F5F7;
     }
     TouchArea {} // (clicks stay on the sheet)
+    // (8 px wider all round than the sheet's 32 px margin, the list put back
+    // in by as much: a focus ring stands 4–5 px off its control, and the
+    // Flickable clips, which cut the rings at the edges: 22 Nov)
     Flickable {
-        x: 32px;
-        y: 32px;
-        width: parent.width - 64px;
-        height: parent.height - 64px - done-button.height - 16px;
-        content-height: list.preferred-height;
+        x: 32px - 8px;
+        y: 32px - 8px;
+        width: parent.width - 64px + 16px;
+        height: parent.height - 64px - done-button.height - 16px + 16px;
+        content-height: list.preferred-height + 16px;
         content-width: self.width;
         list := VerticalLayout {
+            x: 8px;
+            y: 8px;
             width: root.inner-w;
             alignment: start;
             spacing: 20px;

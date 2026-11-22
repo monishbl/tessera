@@ -229,6 +229,9 @@ export component LaunchpadPanel inherits Window {
                 y: 0;
                 // Glass: back (in a folder) and the folder's name
                 if !Theme.material && in-folder: Rectangle {
+                    // (at the left, by the folder's name: with no x Slint
+                    // centres it, which put it inside the search field: 22 Nov)
+                    x: 0;
                     width: 36px;
                     height: 36px;
                     border-radius: Theme.radius-control - 2px;

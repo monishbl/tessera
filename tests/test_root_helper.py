@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import pwd
 import shutil
 import socket
 import stat
@@ -577,7 +578,8 @@ class FingerprintPam(unittest.TestCase):
         self.dir.cleanup()
 
     def run_fp(self, on, where):
-        return self.r.fingerprint(on, where, etc=str(self.etc), vendor=str(self.vendor), module=(str(self.module),))
+        return self.r.fingerprint(on, where, etc=str(self.etc), vendor=str(self.vendor), module=(str(self.module),),
+                                  gate=str(Path(self.dir.name) / "fingerprint-login"))
 
     def test_sudo_on_and_off(self):
         original = "#%PAM-1.0\nauth\t\tinclude\t\tsystem-auth\naccount\t\tinclude\t\tsystem-auth\n"
@@ -604,7 +606,69 @@ class FingerprintPam(unittest.TestCase):
     def test_login_covers_the_login_screens_installed(self):
         (self.etc / "ly").write_text("#%PAM-1.0\nauth include login\n")
         (self.etc / "sddm").write_text("#%PAM-1.0\nauth include system-login\n")
-        self.assertEqual(sorted(self.run_fp(True, "login")), sorted([str(self.etc / "ly"), str(self.etc / "sddm")]))
+        gate = str(Path(self.dir.name) / "fingerprint-login")
+        self.assertEqual(sorted(self.run_fp(True, "login")), sorted([str(self.etc / "ly"), str(self.etc / "sddm"), gate]))
+
+    def test_login_takes_a_finger_only_after_a_password_this_boot(self):
+        original = "#%PAM-1.0\n\nauth include system-local-login\nsession include system-local-login\n"
+        (self.etc / "greetd").write_text(original)
+        gate = Path(self.dir.name) / "fingerprint-login"
+        self.assertIn(str(gate), self.r.fingerprint(True, "login", etc=str(self.etc), vendor=str(self.vendor),
+                                                    module=(str(self.module),), gate=str(gate)))
+        lines = (self.etc / "greetd").read_text().splitlines()
+        # the gate first (no: skip the finger), then the finger, the mark last
+        self.assertIn("[success=ignore default=1] pam_exec.so quiet " + self.r.FP_GATE + " check", lines[2])
+        self.assertIn("pam_fprintd.so", lines[3])
+        self.assertIn("pam_exec.so quiet " + self.r.FP_GATE + " mark", lines[-1])
+        self.assertTrue(lines[-1].startswith("session"))
+        self.assertEqual(gate.read_bytes(), self.r.FP_GATE_TEXT)
+        self.run_fp(True, "login")  # (again: no doubles)
+        self.assertEqual((self.etc / "greetd").read_text().count("pam_exec"), 2)
+        self.run_fp(False, "login")
+        self.assertEqual((self.etc / "greetd").read_text(), original)
+
+    def test_the_gate(self):
+        d = Path(self.dir.name)
+        script = d / "gate.sh"
+        run_dir = d / "run"
+        script.write_bytes(self.r.FP_GATE_TEXT.replace(b"/run/", str(run_dir).encode() + b"/"))
+        script.chmod(0o755)
+        env = {"PAM_USER": os.environ.get("USER") or pwd.getpwuid(os.getuid()).pw_name, "PATH": "/usr/bin:/bin"}
+        uid = str(os.getuid())
+
+        def gate(*a):
+            return subprocess.run(["/bin/sh", str(script), *a], env=env).returncode
+        self.assertNotEqual(gate("check"), 0)  # (no password login yet)
+        keyring = run_dir / "user" / uid / "keyring"
+        keyring.mkdir(parents=True)
+        sock = socket.socket(socket.AF_UNIX)
+        sock.bind(str(keyring / "control"))
+        self.addCleanup(sock.close)
+        self.assertNotEqual(gate("check"), 0)  # (a keyring, but no password login this boot)
+        self.assertEqual(gate("mark"), 0)
+        self.assertEqual(gate("check"), 0)
+        (keyring / "control").unlink()
+        self.assertNotEqual(gate("check"), 0)  # (logged out: the keyring ended)
+        env["PAM_USER"] = "no-such-user-here"
+        self.assertNotEqual(gate("check"), 0)
+
+    def test_an_old_login_finger_is_moved_behind_the_gate_on_update(self):
+        etc = Path(self.dir.name) / "root/etc/pam.d"
+        etc.mkdir(parents=True)
+        old = "#%PAM-1.0\n\n" + self.r.FP_LINES["login"] + "\nauth include system-local-login\n"
+        (etc / "greetd").write_text(old)
+        r = self.r
+
+        def write(dest, data, mode):
+            Path(dest).parent.mkdir(parents=True, exist_ok=True)
+            Path(dest).write_bytes(data)
+        r.write_root = write
+        done = r.migrate_old_names(str(Path(self.dir.name) / "root"), run=lambda *a, **k: None)
+        self.assertIn("/etc/pam.d/greetd", done)
+        self.assertIn(r.FP_GATE, (etc / "greetd").read_text())
+        self.assertEqual((etc / "greetd").read_text().count("pam_fprintd"), 1)
+        self.assertTrue((Path(self.dir.name) / ("root" + r.FP_GATE)).exists())
+        self.assertNotIn("/etc/pam.d/greetd", r.migrate_old_names(str(Path(self.dir.name) / "root"), run=lambda *a, **k: None))
 
     def test_refused_without_fprintd_or_for_anything_else(self):
         (self.etc / "sudo").write_text("#%PAM-1.0\nauth include system-auth\n")
