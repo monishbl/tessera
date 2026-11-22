@@ -78,6 +78,8 @@ FIXES = {
     "watchers": [sys.executable, "-I", os.path.join(HERE, "process-identity.py"), "reap"],
     # (the native helpers' own build, in the folder the check looks in)
     "native": ["bash", os.path.join(SHELL, "native", "build.sh")],
+    # (Passkeys' daemon, a user service: native/tessera-passkeys)
+    "passkeys": ["systemctl", "--user", "restart", "tessera-passkeys.service"],
 }
 # Fixes that take longer than a restart (a build), in seconds
 FIX_TIMEOUT = {"native": 600}
@@ -425,6 +427,56 @@ def check_polkit(opts):
                          RESTART])
 
 
+def passkeys_status(timeout=1.5):
+    """The passkeys daemon's STATUS (its socket), or None when it doesn't answer"""
+    import socket
+    path = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}", "tessera", "passkeys.sock")
+    try:
+        with socket.socket(socket.AF_UNIX) as s:
+            s.settimeout(timeout)
+            s.connect(path)
+            s.sendall(b"STATUS\n")
+            data = b""
+            while not data.endswith(b"\n") and len(data) < 65536:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+        v = json.loads(data.decode("utf-8", "replace"))
+        return v if isinstance(v, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def check_passkeys(_):
+    # (only when it's on: Settings → Privacy & Security → Passkeys)
+    code, out = run(["systemctl", "--user", "is-enabled", "tessera-passkeys.service"])
+    if (out or "").strip() != "enabled":
+        return result("passkeys", "Passkeys", "Desktop", "off", "Off")
+    st = passkeys_status()
+    if st is None:
+        return result("passkeys", "Passkeys", "Desktop", "fail", "On, but its daemon isn't running: sites and sudo can't use your passkeys",
+                      "systemctl --user restart tessera-passkeys.service", page="security", target="Passkeys",
+                      steps=["Press Fix: it starts the daemon again",
+                             TERMINAL + "journalctl --user -u tessera-passkeys -n 30 says why it stopped",
+                             "Or turn Passkeys off and on again in Privacy & Security"])
+    if st.get("tpm") is False:
+        return no_fix(result("passkeys", "Passkeys", "Desktop", "fail", st.get("tpmError") or "The TPM can't be used, so there's no key",
+                             page="security", target="Passkeys",
+                             steps=["Turn Passkeys off and on again in Privacy & Security (it sets the TPM up; it asks for your password)",
+                                    "If it says the same, check the TPM is turned on in your firmware settings"]))
+    if st.get("device") is not True:
+        return result("passkeys", "Passkeys", "Desktop", "fail", "The security key couldn't be made (/dev/uhid)",
+                      "systemctl --user restart tessera-passkeys.service", page="security", target="Passkeys",
+                      steps=["Turn Passkeys off and on again in Privacy & Security: it sets up /dev/uhid (it asks for your password)",
+                             "Then press Check again"])
+    if st.get("prompt") is not True:
+        return no_fix(result("passkeys", "Passkeys", "Desktop", "warn", "Tessera's prompt isn't listening, so requests are refused",
+                             steps=[RESTART]))
+    n = st.get("count") if isinstance(st.get("count"), int) else 0
+    return result("passkeys", "Passkeys", "Desktop", "ok", "On, " + ("no passkeys yet" if n == 0 else "1 saved" if n == 1 else f"{n} saved"))
+
+
 def check_clipboard(_):
     if not shutil.which("cliphist"):
         return result("clipboard", "Clipboard history", "Desktop", "fail", "cliphist isn't installed", "sudo pacman -S cliphist",
@@ -666,7 +718,7 @@ def check_watchers(_):
 
 CHECKS = [check_pipewire, check_wireplumber, check_networkmanager, check_bluetooth, check_avahi, check_firewall,
           check_btpairing, check_goa, check_geoclue,
-          check_upower, check_profiles, check_hypridle, check_portal, check_notifications, check_polkit, check_clipboard,
+          check_upower, check_profiles, check_hypridle, check_portal, check_notifications, check_polkit, check_passkeys, check_clipboard,
           check_recorder, check_disk, check_hyprland, check_plugin, check_native, check_quickshell, check_watchers]
 
 

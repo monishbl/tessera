@@ -253,6 +253,50 @@ class HealthCheck(unittest.TestCase):
         rows = self.rows(FAKE_SHELL_PID=str(os.getpid()))  # this test runner, not a Quickshell
         self.assertEqual(rows["notifications"]["status"], "warn")
 
+    def test_passkeys_only_when_on_and_what_its_daemon_says(self):
+        import socket
+        import threading
+        self.assertEqual(self.rows()["passkeys"]["status"], "off")
+        on = dict(FAKE_UNITS="tessera-passkeys.service")
+        r = self.rows(**on)["passkeys"]
+        self.assertEqual(r["status"], "fail")  # (on, no daemon)
+        self.assertTrue(r["canFix"])
+        self.assertEqual(r["page"], "security")
+        # its daemon, answering STATUS as it would
+        sock_dir = Path(self.env["XDG_RUNTIME_DIR"]) / "tessera"
+        sock_dir.mkdir(parents=True)
+        srv = socket.socket(socket.AF_UNIX)
+        srv.bind(str(sock_dir / "passkeys.sock"))
+        srv.listen(4)
+        self.addCleanup(srv.close)
+        answer = {}
+
+        def serve():
+            while True:
+                try:
+                    c, _ = srv.accept()
+                except OSError:
+                    return
+                with c:
+                    c.recv(64)
+                    c.sendall((json.dumps(answer) + "\n").encode())
+        threading.Thread(target=serve, daemon=True).start()
+        answer.update(tpm=True, device=True, prompt=True, count=2)
+        r = self.rows(**on)["passkeys"]
+        self.assertEqual((r["status"], r["detail"]), ("ok", "On, 2 saved"))
+        answer.update(device=False)
+        self.assertEqual(self.rows(**on)["passkeys"]["status"], "fail")
+        answer.update(tpm=False, tpmError="No TPM here")
+        r = self.rows(**on)["passkeys"]
+        self.assertEqual((r["status"], r["detail"]), ("fail", "No TPM here"))
+        self.assertFalse(r["canFix"])
+        self.assertTrue(r["steps"])
+        answer.update(tpm=True, device=True, prompt=False)
+        self.assertEqual(self.rows(**on)["passkeys"]["status"], "warn")
+        out = self.check("fix", "passkeys")
+        self.assertEqual(json.loads(out.stdout)["ok"], True)
+        self.assertIn("systemctl --user restart tessera-passkeys.service", self.log.read_text())
+
     def test_fix_runs_only_known_user_level_commands(self):
         out = self.check("fix", "pipewire")
         self.assertEqual(json.loads(out.stdout)["ok"], True)
