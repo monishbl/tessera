@@ -8,6 +8,7 @@ Start with the [README](../README.md) or [tessera.monishbl.in](https://tessera.m
 |---|---|
 | [FEATURES.md](FEATURES.md) | Everything Tessera does, area by area, with keys and gestures |
 | [INSTALL.md](INSTALL.md) | Requirements, the install lines, mirrors, installer options, VMs, the `tessera` command |
+| [PASSKEYS.md](PASSKEYS.md) | Passkeys with your fingerprint: the virtual security key, what stays on this laptop, SSH, sudo, removing it |
 | [material-look.md](material-look.md) | The Material look and how it differs from Glass |
 | [google-integration.md](google-integration.md) | Google Calendar and Tasks: setup, security, limits |
 | [battery-saver.md](battery-saver.md) | What battery saver changes, and when it turns on |

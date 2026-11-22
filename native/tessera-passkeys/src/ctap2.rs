@@ -420,10 +420,11 @@ impl Authenticator {
 
     fn get_next(&mut self) -> Vec<u8> {
         let now = (self.now)();
-        let Some(n) = self.next.as_mut().filter(|n| now <= n.until && !n.creds.is_empty()) else {
+        if !self.next.as_ref().is_some_and(|n| now <= n.until && !n.creds.is_empty()) {
             self.next = None;
             return err(ERR_NOT_ALLOWED);
-        };
+        }
+        let Some(n) = self.next.as_mut() else { return err(ERR_NOT_ALLOWED) };
         let c = n.creds.remove(0);
         let (cdh, rp_hash, plan) = (n.cdh.clone(), n.rp_hash, n.plan);
         let r = self.assertion(&c, &cdh, &rp_hash, &plan, None, true);

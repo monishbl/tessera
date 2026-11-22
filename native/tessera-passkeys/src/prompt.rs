@@ -117,14 +117,14 @@ impl Prompts {
         let slot = Arc::new(Mutex::new(None::<Child>));
         {
             let mut i = self.inner.lock().unwrap();
-            let Some(p) = i.pending.iter_mut().find(|p| p.id == id && p.verdict.is_none()) else {
+            let Some(at) = i.pending.iter().position(|p| p.id == id && p.verdict.is_none()) else {
                 drop(i);
                 let _ = (&client).write_all(b"FAILURE\n");
                 return;
             };
             // (one check at a time: a new one stops the one before)
-            kill(&p.conv);
-            p.conv = Some(slot.clone());
+            kill(&i.pending[at].conv);
+            i.pending[at].conv = Some(slot.clone());
         }
         let Some((cmd, args)) = self.helper.split_first() else { return };
         let child = Command::new(cmd).args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn();

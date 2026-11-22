@@ -114,6 +114,7 @@ Recent apps, minimized windows, a Downloads stack and Trash, right-click menus, 
 - **Bedside Mode:** on a charging laptop left alone, the lock screen becomes a large clock, two widgets or your photos (red at night), and the screen stays on.
 - **Login screen** that matches the lock screen (greetd), set up by the installer or with `./install.sh --only=login`.
 - Power dialog, polkit password prompt, volume and brightness HUD.
+- **Passkeys** (Settings → Privacy & Security → Passkeys, off by default; the Rust shell): this laptop becomes a security key that browsers, apps, `ssh-keygen -t ed25519-sk` and, if you like, sudo can use, and you approve each use with your fingerprint or your password. The keys are sealed by the laptop's TPM, so they stay on this laptop: keep another way to sign in to each site. See [PASSKEYS.md](PASSKEYS.md).
 - **Sound effects:** a chime at login, the shutter for screenshots, paper for Empty Trash (Settings → Notifications).
 - **Match apps** (Settings → Appearance): GTK, Qt/KDE, terminal (foot, kitty, Alacritty) and browser colours from your accent or wallpaper, with matugen. Dolphin's KDE colours and the desktop light/dark preference follow Tessera even when Match apps is off.
 - **Accessibility:** Reduce transparency and Increase contrast.
