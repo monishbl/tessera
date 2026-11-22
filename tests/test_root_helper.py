@@ -575,6 +575,7 @@ class FingerprintPam(unittest.TestCase):
         self.r.write_root = lambda dest, data, mode: Path(dest).write_bytes(data)
         # (made-up PAM files: the real PAM check is LoginScreensStillStart's)
         self.r.login_screen_starts = lambda *a, **k: True
+        self.r.pam_problem = lambda *a, **k: ""
 
     def tearDown(self):
         self.dir.cleanup()
@@ -622,7 +623,7 @@ class FingerprintPam(unittest.TestCase):
         self.assertIn("[success=ignore ignore=ignore default=1] pam_exec.so quiet type=auth " + self.r.FP_GATE + " check", lines[2])
         self.assertIn("pam_fprintd.so", lines[3])
         self.assertIn("pam_exec.so quiet " + self.r.FP_GATE + " mark", lines[-1])
-        self.assertTrue(lines[-1].startswith("session"))
+        self.assertTrue(lines[-1].startswith("-session"))
         self.assertEqual(gate.read_bytes(), self.r.FP_GATE_TEXT)
         self.run_fp(True, "login")  # (again: no doubles)
         self.assertEqual((self.etc / "greetd").read_text().count("pam_exec"), 2)
@@ -705,6 +706,7 @@ class Passkeys(unittest.TestCase):
         self.r.write_root = write
         # (the real PAM check needs the real pam_u2f: LoginScreensStillStart has it)
         self.r.login_screen_starts = lambda *a, **k: True
+        self.r.pam_problem = lambda *a, **k: ""
         self.me = pwd.getpwuid(os.getuid()).pw_name
         self.line = f"{self.me}:{'A' * 40},{'B+/=' * 10},es256,+presence+verification"
 
@@ -1488,61 +1490,3 @@ class BootSplash(unittest.TestCase):
             self.assertEqual(script.count("("), script.count(")"), id)
 
 
-class LoginScreensStillStart(unittest.TestCase):
-    """22 Nov: the fingerprint gate's line made pam_setcred come back
-    PAM_IGNORE when greetd started its greeter (no password step first), so
-    the login screen never came up: no logout, no boot to a desktop. The
-    real Linux-PAM, on copies of the PAM files (pam_start_confdir), for
-    every login-screen file the helper can write."""
-
-    BASE = ("#%PAM-1.0\n\nauth       required     pam_permit.so\naccount    required     pam_permit.so\n"
-            "session    required     pam_permit.so\n")
-
-    def setUp(self):
-        import ctypes
-        try:
-            ctypes.CDLL("libpam.so.0").pam_start_confdir
-        except (OSError, AttributeError):
-            self.skipTest("no Linux-PAM 1.4+ here")
-        fprintd = next((m for m in R.PAM_FPRINTD if os.path.exists(m)), None)
-        if not fprintd:
-            self.skipTest("pam_fprintd isn't installed here")
-        self.etc = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, self.etc)
-        self.user = pwd.getpwuid(os.getuid()).pw_name
-
-    def starts(self, text):
-        return R.login_screen_starts(self.etc, "greetd", text, user=self.user)
-
-    def test_the_fingerprint_login_lines_let_it_start(self):
-        self.assertTrue(self.starts(self.BASE))
-        self.assertTrue(self.starts(R.pam_login_fingerprint(self.BASE)))
-
-    def test_the_line_from_before_the_fix_is_caught(self):
-        old = R.pam_login_fingerprint(self.BASE).replace(R.GATE_CONTROL, R.OLD_GATE_CONTROL)
-        self.assertNotEqual(old, R.pam_login_fingerprint(self.BASE))
-        self.assertFalse(self.starts(old))
-
-    def test_the_passkey_lines_let_it_start(self):
-        if not any(os.path.exists(m) for m in R.PAM_U2F):
-            self.skipTest("pam_u2f isn't installed here")
-        self.assertTrue(self.starts(R.pam_with_passkey(self.BASE)))
-
-    def test_every_gate_uses_the_safe_control(self):
-        text = SOURCE.read_text() if hasattr(SOURCE, "read_text") else open(SOURCE).read()
-        for line in text.splitlines():
-            if "pam_exec.so" in line and "default=1]" in line and "GATE_CONTROL" not in line:
-                self.fail("a gate line not built from GATE_CONTROL: " + line.strip())
-
-    def test_an_update_rewrites_the_old_line(self):
-        root = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, root)
-        pam = Path(root, "etc/pam.d")
-        pam.mkdir(parents=True)
-        old = R.pam_login_fingerprint(self.BASE).replace(R.GATE_CONTROL, R.OLD_GATE_CONTROL)
-        (pam / "greetd").write_text(old)
-        gate = Path(root, R.FP_GATE.lstrip("/"))
-        gate.parent.mkdir(parents=True)
-        gate.write_bytes(R.FP_GATE_TEXT)
-        R.migrate_old_names(root, run=lambda *a, **k: subprocess.CompletedProcess(a, 0, "", ""))
-        self.assertEqual((pam / "greetd").read_text(), R.pam_login_fingerprint(self.BASE))

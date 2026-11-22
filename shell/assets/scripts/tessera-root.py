@@ -296,17 +296,9 @@ def migrate_old_names(prefix, run=subprocess.run, src=None):
                 write_root(p, text.encode(), 0o644)
                 done.append(os.path.join(PAM_ETC, name))
     # The login screen's finger from before 22 Nov (any time, so the
-    # keyring stayed locked): now only after a password login this boot
-    for name in FP_FILES["login"]:
-        p = os.path.join(at(PAM_ETC), name)
-        text = read_text(p)
-        if text and FP_LINES["login"] in text and (FP_GATE not in text or OLD_GATE_CONTROL + FP_GATE in text):
-            if write_fp_gate(at(FP_GATE)):
-                done.append(FP_GATE)
-            new = pam_login_fingerprint(text)
-            if login_screen_starts(at(PAM_ETC), name, new):
-                write_root(p, new.encode(), 0o644)
-                done.append(os.path.join(PAM_ETC, name))
+    # keyring stayed locked): now only after a password login this boot;
+    # and every marked line as this helper writes it today
+    done += fingerprint_refresh(prefix)
     # The boot animation in use, under its new name (the boot image keeps
     # the old copy, the same animation, until it's next rebuilt)
     current = current_theme(prefix)
@@ -583,9 +575,16 @@ FP_MARK = "# Tessera fingerprint"
 # asks one thing at a time; the login screen waits longest). Five tries: some
 # readers (Broadcom's) answer "no match" at once for a finger still resting
 # on them, which used up two tries before a real touch
-FP_LINES = {"polkit": "auth       sufficient   pam_fprintd.so max-tries=5 timeout=10   " + FP_MARK,
-            "sudo": "auth       sufficient   pam_fprintd.so max-tries=5 timeout=10   " + FP_MARK,
-            "login": "auth       sufficient   pam_fprintd.so max-tries=5 timeout=15   " + FP_MARK}
+# Every line Tessera adds to a PAM file starts with "-": Linux-PAM then
+# doesn't log a module that isn't installed (fprintd, pam-u2f or Howdy
+# removed later). The dash changes only the logging: a missing module gives
+# PAM_MODULE_UNKNOWN either way, so each line's control must already make
+# that harmless ("sufficient", "optional", or a gate's default=1 skip), and
+# the password's own lines, which follow, decide (pam_problem checks it with
+# the real Linux-PAM before any edit is written)
+FP_LINES = {"polkit": "-auth      sufficient   pam_fprintd.so max-tries=5 timeout=10   " + FP_MARK,
+            "sudo": "-auth      sufficient   pam_fprintd.so max-tries=5 timeout=10   " + FP_MARK,
+            "login": "-auth      sufficient   pam_fprintd.so max-tries=5 timeout=15   " + FP_MARK}
 # The login screen takes a finger only once your password has opened the
 # keyring this boot (a finger gives PAM no password, so the login keyring
 # stayed locked and apps asked for it: 22 Nov). FP_GATE checks: a password
@@ -610,11 +609,12 @@ esac
 # came back PAM_IGNORE through the skip, and greetd wouldn't start the login
 # screen at all (22 Nov: system1 couldn't log out or boot; pam_start_confdir
 # reproduces it, tests/test_root_helper.py)
-GATE_CONTROL = "auth       [success=ignore ignore=ignore default=1] pam_exec.so quiet type=auth "
-# (the line before 22 Nov's fix, rewritten on update: migrate_old_names)
+GATE_CONTROL = "-auth      [success=ignore ignore=ignore default=1] pam_exec.so quiet type=auth "
+# (the line before 22 Nov's fix, rewritten on update: migrate_old_names;
+# and every marked line in the form before the dash: pam_refresh)
 OLD_GATE_CONTROL = "auth       [success=ignore default=1] pam_exec.so quiet "
 FP_LOGIN_HEAD = [GATE_CONTROL + FP_GATE + " check   " + FP_MARK]
-FP_LOGIN_TAIL = ["session    optional     pam_exec.so quiet " + FP_GATE + " mark   " + FP_MARK]
+FP_LOGIN_TAIL = ["-session   optional     pam_exec.so quiet " + FP_GATE + " mark   " + FP_MARK]
 # (GDM isn't here: it asks for a finger by itself, gdm-fingerprint, once one is added)
 FP_FILES = {"polkit": ["polkit-1"], "sudo": ["sudo"], "login": ["greetd", "ly", "sddm", "lightdm", "lxdm"]}
 PAM_ETC, PAM_VENDOR = "/etc/pam.d", "/usr/lib/pam.d"
@@ -642,41 +642,387 @@ def pam_login_fingerprint(text):
     return pam_with_fingerprint(text, FP_LINES["login"], FP_LOGIN_HEAD, FP_LOGIN_TAIL)
 
 
-def login_screen_starts(etc, name, text, user="root"):
-    """Whether TEXT, as /etc/pam.d/NAME, still lets a login screen start
-    its session without a password first (greetd's greeter, autologin):
-    pam_setcred on a copy of the PAM files (pam_start_confdir, Linux-PAM
-    1.4+). False only on a clear failure; True when it can't be tried."""
+PAM_SUCCESS, PAM_SYSTEM_ERR, PAM_PERM_DENIED = 0, 4, 6
+PAM_IGNORE, PAM_MODULE_UNKNOWN = 25, 28
+PAM_WORDS = {4: "a system error", 6: "permission denied", 25: "PAM_IGNORE (nothing decided)", 28: "a module that isn't there"}
+PAM_CHECK_TIMEOUT = 30  # s; a module that hangs is "couldn't tell"
+
+
+def pam_confdir(d, etc, vendor=PAM_VENDOR):
+    """A copy of the PAM files as PAM reads them: the package's
+    (/usr/lib/pam.d), then /etc's over them"""
+    for src_dir in (vendor, etc):
+        try:
+            names = os.listdir(src_dir)
+        except OSError:
+            continue
+        for f in names:
+            src = os.path.join(src_dir, f)
+            if os.path.isfile(src):
+                shutil.copy(src, os.path.join(d, f))
+
+
+# Unprivileged (tests), PAM runs only when a test turns this on, and only on
+# PAM files whose every module is a stand-in or isn't installed at all
+PAM_STAND_INS = False
+STAND_IN_MODULES = ("pam_permit.so", "pam_deny.so", "pam_exec.so")
+
+
+def stand_ins_only(d):
+    """Every module the PAM files in D name is a stand-in (pam_exec only
+    running /bin/true or /bin/false) or isn't installed"""
+    for f in os.listdir(d):
+        text = read_text(os.path.join(d, f)) or ""
+        for kind, control, module, _ in pam_rules(text):
+            if control in ("include", "substack"):
+                continue
+            base = os.path.basename(module)
+            if base not in STAND_IN_MODULES and any(os.path.exists(os.path.join(p, base)) for p in (
+                    "/usr/lib/security", "/lib/security", "/usr/lib64/security", "/lib64/security",
+                    "/usr/lib/x86_64-linux-gnu/security")):
+                return False
+        for line in text.splitlines():
+            line = line.split("#", 1)[0]
+            if "pam_exec.so" in line and not re.search(r"pam_exec\.so(\s+(quiet|type=\w+))*\s+/(usr/)?bin/(true|false)(\s|$)", line):
+                return False
+    return True
+
+
+def pam_setcred_code(etc, name, text, user="root", vendor=PAM_VENDOR, timeout=PAM_CHECK_TIMEOUT):
+    """The real Linux-PAM's pam_setcred, with no authentication first
+    (greetd starting its greeter, autologin), on a copy of the PAM files
+    with TEXT as NAME (pam_start_confdir, Linux-PAM 1.4+), in a child
+    process (a module that crashes or hangs can't take this one with it).
+    Only pam_setcred, ever: no password, finger, key or face is asked, no
+    failure is counted (pam_authenticate never runs here). Returns PAM's
+    code, or None when it couldn't be tried."""
     import ctypes
-    import tempfile
+    if os.geteuid() != 0 and not PAM_STAND_INS:
+        return None  # (not root: a test, which runs it only on stand-ins)
     try:
-        pam = ctypes.CDLL("libpam.so.0")
-        start = pam.pam_start_confdir
+        ctypes.CDLL("libpam.so.0").pam_start_confdir
     except (OSError, AttributeError):
-        return True
+        return None
     with tempfile.TemporaryDirectory(prefix="tessera-pam-") as d:
         try:
-            for f in os.listdir(etc):
-                src = os.path.join(etc, f)
-                if os.path.isfile(src):
-                    shutil.copy(src, os.path.join(d, f))
+            pam_confdir(d, etc, vendor)
+            with open(os.path.join(d, name), "w") as f:
+                f.write(text)
         except OSError:
-            return True
-        with open(os.path.join(d, name), "w") as f:
-            f.write(text)
+            return None
+        if os.geteuid() != 0 and not stand_ins_only(d):
+            raise AssertionError("a test's PAM files name a real module: stand-ins only (pam_permit, pam_deny, pam_exec)")
+        r, w = os.pipe()
+        pid = os.fork()
+        if pid == 0:  # (the child: PAM, its code down the pipe, nothing else)
+            try:
+                os.close(r)
+                devnull = os.open(os.devnull, os.O_RDWR)
+                for fd in (0, 1, 2):
+                    os.dup2(devnull, fd)
+                os.write(w, str(_pam_setcred_child(d, name, user)).encode())
+            finally:
+                os._exit(0)
+        os.close(w)
+        import select
+        out = b""
+        deadline = time.monotonic() + timeout
+        try:
+            while time.monotonic() < deadline:
+                ready, _, _ = select.select([r], [], [], max(0.0, deadline - time.monotonic()))
+                if not ready:
+                    break
+                chunk = os.read(r, 64)
+                if not chunk:
+                    break
+                out += chunk
+        finally:
+            os.close(r)
+            with contextlib.suppress(OSError):
+                if os.waitpid(pid, os.WNOHANG) == (0, 0):
+                    os.kill(pid, signal.SIGKILL)
+                    os.waitpid(pid, 0)
+        try:
+            code = int(out)
+        except ValueError:
+            return None
+        return None if code < 0 else code
 
-        class Conv(ctypes.Structure):
-            _fields_ = [("conv", ctypes.c_void_p), ("appdata", ctypes.c_void_p)]
-        cb_t = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
-        cb = cb_t(lambda n, m, r, a: 19)  # PAM_CONV_ERR: nobody to ask
-        conv = Conv(ctypes.cast(cb, ctypes.c_void_p), None)
-        h = ctypes.c_void_p()
-        if start(name.encode(), user.encode(), ctypes.byref(conv), d.encode(), ctypes.byref(h)) != 0:
-            return True
-        r = pam.pam_setcred(h, 2)  # PAM_ESTABLISH_CRED
-        pam.pam_end(h, r)
-        # 25 PAM_IGNORE (the 22 Nov fault), 4 PAM_SYSTEM_ERR, 6 PAM_PERM_DENIED
-        return r not in (25, 4, 6)
+
+def _pam_setcred_child(d, name, user):
+    import ctypes
+    pam = ctypes.CDLL("libpam.so.0")
+
+    class Conv(ctypes.Structure):
+        _fields_ = [("conv", ctypes.c_void_p), ("appdata", ctypes.c_void_p)]
+    cb_t = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
+    cb = cb_t(lambda n, m, r, a: 19)  # PAM_CONV_ERR: nobody to ask, nothing is asked
+    conv = Conv(ctypes.cast(cb, ctypes.c_void_p), None)
+    h = ctypes.c_void_p()
+    if pam.pam_start_confdir(name.encode(), user.encode(), ctypes.byref(conv), d.encode(), ctypes.byref(h)) != 0:
+        return -1
+    code = pam.pam_setcred(h, 2)  # PAM_ESTABLISH_CRED
+    pam.pam_end(h, code)
+    return code
+
+
+def login_screen_starts(etc, name, text, user="root", vendor=PAM_VENDOR):
+    """Whether TEXT, as /etc/pam.d/NAME, still lets a login screen start
+    its session without a password first (greetd's greeter, autologin):
+    pam_setcred on a copy of the PAM files. False only on a clear failure;
+    True when it can't be tried."""
+    r = pam_setcred_code(etc, name, text, user, vendor)
+    # 25 PAM_IGNORE (the 22 Nov fault), 4 PAM_SYSTEM_ERR, 6 PAM_PERM_DENIED
+    return r not in (PAM_IGNORE, PAM_SYSTEM_ERR, PAM_PERM_DENIED, PAM_MODULE_UNKNOWN)
+
+
+# ── the password's path, read (never run) ───────────────────────────────
+# Whether a PAM file still gets to the password, worked out from the text
+# alone: its auth lines (includes and substacks followed, as Linux-PAM lays
+# them out) walked by Linux-PAM's own rules for each control, with every
+# Tessera-marked line taking each answer it could give (success, failure,
+# not installed, PAM_IGNORE, an error) and everything else succeeding.
+# Unless one of Tessera's lines let the person in (a finger in time: its
+# "sufficient" success), the walk must go through exactly the lines it goes
+# through without Tessera's, no failure of Tessera's counted on the way:
+# Tessera's lines are then invisible to the password. Nothing is executed,
+# so nothing is asked, woken or counted (pam_faillock).
+TESSERA_MARKS = (FP_MARK, OLD_FP_MARK, "# Tessera passkey", "# Tessera face")
+PAM_CONTROLS = {
+    "required": {"success": "ok", "new_authtok_reqd": "ok", "ignore": "ignore", "default": "bad"},
+    "requisite": {"success": "ok", "new_authtok_reqd": "ok", "ignore": "ignore", "default": "die"},
+    "sufficient": {"success": "done", "new_authtok_reqd": "done", "default": "ignore"},
+    "optional": {"success": "ok", "new_authtok_reqd": "ok", "default": "ignore"},
+}
+TESSERA_ANSWERS = ("success", "auth_err", "module_unknown", "ignore", "authinfo_unavail", "system_err")
+PASSWORD_MODULES = ("pam_unix.so", "pam_sss.so", "pam_ldap.so", "pam_krb5.so", "pam_systemd_home.so")
+
+
+def pam_rules(text):
+    """(type, control, module, marked) for each rule in a PAM file's text
+    (continued lines joined, comments out, a bracketed control kept whole)"""
+    out = []
+    for raw in re.sub(r"\\\n", " ", text).splitlines():
+        marked = any(m in raw for m in TESSERA_MARKS)
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("@include"):
+            parts = line.split()
+            if len(parts) > 1:
+                out.append(("auth", "include", parts[1], marked))
+            continue
+        m = re.match(r"^-?(\w+)\s+(\[[^\]]*\]|\S+)\s+(\S+)", line)
+        if m:
+            out.append((m.group(1).lower(), m.group(2), m.group(3), marked))
+    return out
+
+
+def pam_auth_chain(name, texts, depth=0, marked=False):
+    """NAME's auth rules with includes and substacks laid out in place:
+    [(control dict, module, marked)]. texts: name → text."""
+    if depth > 16:
+        raise ValueError("includes nest too deep")
+    chain = []
+    for kind, control, module, mark in pam_rules(texts.get(name) or ""):
+        if kind != "auth":
+            continue
+        if control in ("include", "substack"):
+            chain += pam_auth_chain(module, texts, depth + 1, marked or mark)
+            continue
+        if control.startswith("["):
+            c = {}
+            for pair in control[1:-1].split():
+                k, _, v = pair.partition("=")
+                c[k.lower()] = v.lower()
+        else:
+            c = PAM_CONTROLS.get(control.lower())
+            if c is None:
+                raise ValueError(f"an unknown control: {control}")
+        chain.append((c, os.path.basename(module), marked or mark))
+    return chain
+
+
+def pam_walk(chain, answers):
+    """Linux-PAM's walk of an auth chain (each rule answering
+    answers.get(i, "success")): (the plain rules it goes through, whether a
+    Tessera rule failed it, whether a Tessera rule's success ended it)"""
+    seen, failed, i = [], False, 0
+    while i < len(chain):
+        c, module, marked = chain[i]
+        answer = answers.get(i, "success")
+        action = c.get(answer, c.get("default", "bad"))
+        if not marked:
+            seen.append(i)
+        if action in ("bad", "die"):
+            failed = failed or marked
+            if action == "die":
+                break
+        elif action == "done":
+            if answer == "success" and marked:
+                return seen, failed, True
+            break
+        elif action.isdigit():
+            i += int(action) + 1
+            continue
+        i += 1
+    return seen, failed, False
+
+
+def password_path_problem(etc, name, text, vendor=PAM_VENDOR):
+    """Why the password could be cut off by Tessera's lines in TEXT (as
+    ETC/NAME), or "" (see above: read, never run)"""
+    texts = {}
+    for d in (vendor, etc):
+        try:
+            for f in os.listdir(d):
+                p = os.path.join(d, f)
+                if os.path.isfile(p):
+                    texts[f] = read_text(p) or ""
+        except OSError:
+            continue
+    texts[name] = text
+    try:
+        chain = pam_auth_chain(name, texts)
+    except ValueError as e:
+        return f"{name}: {e}"
+    ours = [i for i, (_, _, marked) in enumerate(chain) if marked]
+    if not ours:
+        return ""
+    plain = [i for i, (_, _, marked) in enumerate(chain) if not marked]
+    # (what everything is compared to: the walk without Tessera's lines)
+    want = [plain[j] for j in pam_walk([chain[i] for i in plain], {})[0]]
+    if any(chain[i][1] in PASSWORD_MODULES for i in plain) and not any(chain[i][1] in PASSWORD_MODULES for i in want):
+        return ""  # (the system's own stack never gets to it: not Tessera's to judge)
+    import itertools
+    for combo in itertools.product(TESSERA_ANSWERS, repeat=min(len(ours), 4)):
+        answers = dict(zip(ours, combo))
+        seen, failed, let_in = pam_walk(chain, answers)
+        if let_in:
+            continue
+        if failed:
+            return f"{name}: one of Tessera's lines would count as a failed password"
+        if seen != want:
+            return f"{name}: Tessera's lines would skip some of the password's own lines"
+    return ""
+
+
+def password_reached(etc, name, text=None, vendor=PAM_VENDOR):
+    """Whether NAME's auth rules, read (never run), get to a password
+    module (pam_unix and the like) when everything before it succeeds and
+    Tessera's lines don't let anyone in: the boot check's "a password still
+    works". None when the file can't be read."""
+    texts = {}
+    for d in (vendor, etc):
+        with contextlib.suppress(OSError):
+            for f in os.listdir(d):
+                if os.path.isfile(os.path.join(d, f)):
+                    texts[f] = read_text(os.path.join(d, f)) or ""
+    if text is not None:
+        texts[name] = text
+    if name not in texts:
+        return None
+    try:
+        chain = pam_auth_chain(name, texts)
+    except ValueError:
+        return False
+    answers = {i: "module_unknown" for i, c in enumerate(chain) if c[2]}
+    # (a password module that succeeds ends the walk too: each one's place
+    # is what counts, so each is tried as the first to answer)
+    for i, (c, module, marked) in enumerate(chain):
+        if module in PASSWORD_MODULES and not marked:
+            if i in pam_walk(chain, answers)[0]:
+                return True
+            answers[i] = "auth_err"
+    return False
+
+
+def pam_problem(etc, name, text, login=None, user="root", vendor=PAM_VENDOR):
+    """Why TEXT, as /etc/pam.d/NAME, would lock people out, or "" when it
+    wouldn't (or it can't be told). Every file: the password's path, read
+    from the text (password_path_problem). A login screen's (login: NAME is
+    one by default) also: its session must start without a password first
+    (greetd's greeter, autologin): pam_setcred, the one call made to the
+    real Linux-PAM (nothing is asked by it)."""
+    login = name in FP_FILES["login"] + ["greetd-greeter"] if login is None else login
+    if login:
+        r = pam_setcred_code(etc, name, text, user, vendor)
+        if r in (PAM_IGNORE, PAM_SYSTEM_ERR, PAM_PERM_DENIED, PAM_MODULE_UNKNOWN):
+            return f"{name}: starting a login screen's session gave {PAM_WORDS.get(r, r)}"
+    return password_path_problem(etc, name, text, vendor)
+
+
+PAM_BACKUP = "/var/lib/tessera/pam-backup"
+
+
+def pam_backup_dir(etc):
+    """Where the copies from before Tessera's edits of ETC's files go:
+    /var/lib/tessera/pam-backup (under a test's folder, beside its etc)"""
+    etc = etc.rstrip("/")
+    if etc.endswith("/etc/pam.d"):
+        return _at(etc[:-len("/etc/pam.d")] or "/", PAM_BACKUP)
+    return os.path.join(os.path.dirname(etc), "pam-backup")
+
+
+def write_pam(etc, name, text, vendor=PAM_VENDOR, check=True):
+    """TEXT as ETC/NAME, only if it locks no one out (pam_problem: refused
+    otherwise), the file before kept first: <backup>/NAME (the one before
+    the latest edit) and <backup>/NAME.first (before Tessera's first, kept
+    for good). Returns the destination."""
+    dest = os.path.join(etc, name)
+    if check:
+        why = pam_problem(etc, name, text, vendor=vendor)
+        if why:
+            raise Refused(f"{why}: so the change wasn't made")
+    before = read_text(dest)
+    if before is None:
+        before = read_text(os.path.join(vendor, name))
+    if before is not None and before != text:
+        b = pam_backup_dir(etc)
+        os.makedirs(b, mode=0o700, exist_ok=True)
+        if not os.path.exists(os.path.join(b, name + ".first")):
+            write_root(os.path.join(b, name + ".first"), before.encode(), 0o600)
+        write_root(os.path.join(b, name), before.encode(), 0o600)
+    write_root(dest, text.encode(), 0o644)
+    return dest
+
+
+def refresh_pam_file(etc, name, text, new, vendor=PAM_VENDOR):
+    """An update's rewrite of Tessera's marked lines in ETC/NAME (TEXT now,
+    NEW as this helper writes them): only when the real Linux-PAM finds no
+    problem with NEW (else it stays as it is, and the boot check after the
+    update decides about it). Returns True when written."""
+    if new == text:
+        return False
+    try:
+        write_pam(etc, name, new, vendor)
+        return True
+    except Refused as e:
+        print(f"tessera-root: {e}", file=sys.stderr)
+        return False
+
+
+def fingerprint_refresh(prefix="/"):
+    """setup's part, at each update: the fingerprint's marked lines (and the
+    login screen's gate) as this helper writes them today, wherever they're
+    on: the lines from before 22 Nov's gate, and those before the dash.
+    Each file tried with the real Linux-PAM first (write_pam). Returns what
+    it wrote."""
+    etc = _at(prefix, PAM_ETC)
+    done = []
+    for kind, names in FP_FILES.items():
+        for name in names:
+            text = read_text(os.path.join(etc, name))
+            if not text or FP_MARK not in text:
+                continue
+            new = pam_login_fingerprint(text) if kind == "login" else pam_with_fingerprint(text, FP_LINES[kind])
+            if new == text:
+                continue
+            if kind == "login" and write_fp_gate(_at(prefix, FP_GATE)):
+                done.append(FP_GATE)
+            if refresh_pam_file(etc, name, text, new, _at(prefix, PAM_VENDOR)):
+                done.append(os.path.join(PAM_ETC, name))
+    return done
 
 
 def write_fp_gate(gate=FP_GATE):
@@ -719,10 +1065,9 @@ def fingerprint(on, where, etc=PAM_ETC, vendor=PAM_VENDOR, module=PAM_FPRINTD, g
                     changed.append(dest)
                     continue
         if new != text or (on and src != dest):
-            if where == "login" and not login_screen_starts(etc, name, new):
-                raise Refused(f"{name}: the login screen wouldn't start with this change, so it wasn't made")
-            write_root(dest, new.encode(), 0o644)
-            changed.append(dest)
+            # (tried with the real Linux-PAM first: the login screen still
+            # starts, a password still reaches the password's check)
+            changed.append(write_pam(etc, name, new, vendor))
     return changed
 
 
@@ -768,7 +1113,7 @@ uid=$(/usr/bin/id -u -- "$PAM_USER" 2>/dev/null) || exit 1
 [ -S "/run/user/$uid/tessera/passkeys.sock" ]
 """
 PK_LINES = [GATE_CONTROL + PK_GATE + "   " + PK_MARK,
-            "auth       sufficient   pam_u2f.so authfile=" + PK_KEYS + " origin=" + PK_ORIGIN + " appid=" + PK_ORIGIN
+            "-auth      sufficient   pam_u2f.so authfile=" + PK_KEYS + " origin=" + PK_ORIGIN + " appid=" + PK_ORIGIN
             + " cue nouserok userverification=1   " + PK_MARK]
 PK_FILES = ["sudo"] + FP_FILES["login"]
 PAM_U2F = ("/usr/lib/security/pam_u2f.so", "/lib/security/pam_u2f.so")
@@ -812,10 +1157,7 @@ def passkey_pam_files(on, etc=PAM_ETC, vendor=PAM_VENDOR):
                     changed.append(dest)
                     continue
         if new != text or (on and src != dest):
-            if name in FP_FILES["login"] and not login_screen_starts(etc, name, new):
-                raise Refused(f"{name}: the login screen wouldn't start with this change, so it wasn't made")
-            write_root(dest, new.encode(), 0o644)
-            changed.append(dest)
+            changed.append(write_pam(etc, name, new, vendor))
     return changed
 
 
@@ -925,9 +1267,7 @@ def passkeys_refresh(prefix="/"):
         text = read_text(p)
         if text and PK_MARK in text:
             on_somewhere = True
-            new = pam_with_passkey(text)
-            if new != text:
-                write_root(p, new.encode(), 0o644)
+            if refresh_pam_file(at(PAM_ETC), name, text, pam_with_passkey(text), at(PAM_VENDOR)):
                 done.append(os.path.join(PAM_ETC, name))
     if on_somewhere and (read_text(at(PK_GATE)) or "").encode() != PK_GATE_TEXT:
         write_root(at(PK_GATE), PK_GATE_TEXT, 0o755)
@@ -1037,7 +1377,7 @@ NOT_INFRARED = ("A regular camera never approves administrator prompts (a video 
 def polkit_face_line():
     """Howdy with the infrared camera: a face in time approves; none, and
     what follows (a finger, the password) is asked as before"""
-    return f"auth       sufficient                       pam_howdy.so   {FACE_MARK}"
+    return f"-auth      sufficient                       pam_howdy.so   {FACE_MARK}"
 
 
 def polkit_with_face(text):
@@ -1123,6 +1463,9 @@ def face_admin_on(uid, device, kind, exists=os.path.exists, which=shutil.which, 
     with open(root(target)) as f:
         text = f.read()
     overlay = f"{FACE_ADMIN_DIR}/polkit-1"
+    why = pam_problem(os.path.dirname(root(target)), "polkit-1", polkit_with_face(text), login=False)
+    if why:
+        raise Refused(f"{why}: so faces don't approve administrator prompts")
     write_root(root(overlay), polkit_with_face(text).encode(), 0o644)
     write_root(root(FACE_DROPIN), face_dropin(overlay, target).encode(), 0o644)
     if prefix == "/":
@@ -2431,7 +2774,11 @@ def login_switch_on(src, look_text, uid, prefix=None, run=subprocess.run, which=
         if new is not None:
             if not os.path.lexists(pam + ".pre-tessera"):
                 copy_file(pam, pam + ".pre-tessera")
-            write_root(pam, new.encode(), 0o644)
+            # (refused, the login screen keeps its file: the keyring then asks once)
+            try:
+                write_pam(os.path.dirname(pam), "greetd", new, _at(prefix, PAM_VENDOR))
+            except Refused as e:
+                print(f"tessera-root: {e}", file=sys.stderr)
     for path, text in LOGIN_UNITS.items():
         write_root(_at(prefix, path), text.encode(), 0o644)
     _systemctl(run, "daemon-reload")
