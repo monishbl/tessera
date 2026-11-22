@@ -1,0 +1,38 @@
+[package]
+name = "tessera-passkeys"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Tessera's passkeys: a virtual FIDO2 security key (uhid), keys sealed by the TPM, approved with a fingerprint or the password"
+publish = false
+
+# Few and well known. RustCrypto for the keys (P-256 ECDSA, Ed25519,
+# AES-256-GCM, SHA-256), getrandom for randomness; CBOR, CTAPHID, uhid,
+# PAM and the TPM (through tpm2-tools: src/tpm.rs says why) are its own.
+# No Cargo.lock yet: the first build on the build machine makes it
+# (`cargo generate-lockfile`), and it is committed from then on, as
+# tessera-events' is (tools/build-native.sh builds --locked once it's there).
+[dependencies]
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+p256 = "0.13"
+ed25519-dalek = "2"
+aes-gcm = "0.10"
+sha2 = "0.10"
+getrandom = "0.2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+# (a panic in one request's thread ends only that thread; the HID loop goes on)
+panic = "unwind"
+strip = true
+
+# Built here by the updater (tools/build-native.sh), as tessera-events' "local"
+[profile.local]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+incremental = false
