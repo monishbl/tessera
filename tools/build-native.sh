@@ -65,13 +65,36 @@ if [[ "${1:-}" == --stage ]]; then
     # it's on, the time (and how long is left, after a first build), live;
     # $XDG_STATE_HOME/tessera/build-progress.json and build.log for the
     # installer and Software Update. Plain cargo when python3 isn't there.
+    # Gentle (22 Nov: an update's build made the laptop stutter for its
+    # whole length): the desktop comes first. Its own cgroup gets CPU only
+    # when nothing else wants it (CPUWeight=idle) and the disk last; past
+    # 55% of the memory it's slowed and reclaimed, not your apps; half the
+    # cores (and no more than one job per 3 GB), lowest nice and idle I/O
+    # where there's no systemd. Longer on a busy machine, smooth while it
+    # runs. TESSERA_BUILD_GENTLE=0: all of it, full speed.
+    gentle=()
+    if [[ "${TESSERA_BUILD_GENTLE:-1}" != 0 ]]; then
+        cores=$(nproc 2>/dev/null || echo 2)
+        mem_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+        jobs=$(( cores / 2 ))
+        (( mem_kb > 0 && jobs > mem_kb / 3145728 )) && jobs=$(( mem_kb / 3145728 ))
+        (( jobs >= 1 )) || jobs=1
+        export CARGO_BUILD_JOBS="$jobs"
+        if [[ -n "${XDG_RUNTIME_DIR:-}" ]] && command -v systemd-run >/dev/null \
+            && systemd-run --user --scope --quiet --collect -p CPUWeight=idle true >/dev/null 2>&1; then
+            gentle=(systemd-run --user --scope --quiet --collect -p CPUWeight=idle -p IOWeight=1)
+            (( mem_kb > 0 )) && gentle+=(-p "MemoryHigh=$(( mem_kb * 55 / 100 ))K")
+        fi
+        gentle+=(nice -n 19)
+        command -v ionice >/dev/null && gentle+=(ionice -c 3)
+    fi
     cargo_build() { # label title final cargo-args…
         local label="$1" title="$2" final="$3"
         shift 3
         if command -v python3 >/dev/null && [[ -f "$ROOT/tools/build-progress.py" ]]; then
-            python3 -I "$ROOT/tools/build-progress.py" cargo --label "$label" --title "$title" --final "$final" -- cargo build "$@"
+            "${gentle[@]}" python3 -I "$ROOT/tools/build-progress.py" cargo --label "$label" --title "$title" --final "$final" -- cargo build "$@"
         else
-            cargo build --quiet "$@"
+            "${gentle[@]}" cargo build --quiet "$@"
         fi
     }
     CRATE="$ROOT/native/tessera-events"
