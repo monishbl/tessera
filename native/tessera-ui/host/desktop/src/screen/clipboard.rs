@@ -19,8 +19,6 @@ use std::time::Duration;
 use tessera_core::host::{Host, Service};
 use tessera_core::services::clipboard as cb;
 
-const TERMINALS: &[&str] = &["foot", "kitty", "alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty", "konsole", "org.gnome.ptyxis", "xterm"];
-
 pub fn pin_dir() -> PathBuf {
     tessera_core::util::state_dir().join("clip-pins")
 }
@@ -105,30 +103,60 @@ fn watch(ask: mpsc::Receiver<()>) {
 
 // ── Copy and paste (pub: Search, Live Text, Dictation) ──────────────────
 
+/// The command line that copies an item (history row by id, or a pin by
+/// image/text). plain: text only. A text goes in through wl-copy's input
+/// (on its command line, one starting with "-" was read as wl-copy's options
+/// and nothing was copied), a
+/// pinned picture with its type said (guessing it needs xdg-mime)
+fn copy_argv(id: Option<&str>, image: Option<&str>, text: &str, plain: bool, db: &str) -> Vec<String> {
+    let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    match (id, image) {
+        (Some(id), None) => v(&["sh", "-c", &format!("cliphist -db-path \"$2\" decode \"$1\" | wl-copy{}", if plain { " --type text/plain" } else { "" }), "sh", id, db]),
+        (Some(id), Some(_)) => v(&["sh", "-c", "cliphist -db-path \"$2\" decode \"$1\" | wl-copy", "sh", id, db]),
+        (None, Some(img)) => match image_type(img) {
+            Some(t) => v(&["sh", "-c", "wl-copy --type \"$2\" < \"$1\"", "sh", img, t]),
+            None => v(&["sh", "-c", "wl-copy < \"$1\"", "sh", img]),
+        },
+        (None, None) => v(&["sh", "-c", "printf %s \"$1\" | wl-copy --type text/plain", "sh", text]),
+    }
+}
+
+/// A picture's type by its name ("a.png": image/png); None: unknown
+pub fn image_type(path: &str) -> Option<&'static str> {
+    let ext = path.rsplit_once('.')?.1.to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        _ => return None,
+    })
+}
+
 /// Copy an item (history row by id, or a pin by image/text). plain: text only
 pub fn copy(id: Option<&str>, image: Option<&str>, text: &str, plain: bool) {
-    let db = db();
-    if let (Some(id), None) = (id, image) {
-        let cmd = format!("cliphist -db-path \"$2\" decode \"$1\" | wl-copy{}", if plain { " --type text/plain" } else { "" });
-        util::detached(&["sh", "-c", &cmd, "sh", id, &db]);
-    } else if let (Some(id), Some(_)) = (id, image) {
-        util::detached(&["sh", "-c", "cliphist -db-path \"$2\" decode \"$1\" | wl-copy", "sh", id, &db]);
-    } else if let Some(img) = image {
-        util::detached(&["sh", "-c", "wl-copy < \"$1\"", "sh", img]);
-    } else {
-        util::detached(&["wl-copy", "--type", "text/plain", text]);
-    }
+    let argv = copy_argv(id, image, text, plain, &db());
+    let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+    util::detached(&a);
 }
 
 /// Copy, then paste into the window that had focus before the panel opened
 /// (Ctrl+V; terminals Ctrl+Shift+V) after the panel releases the keyboard
+/// and once the copy is done (a picture decoded from the history could take
+/// longer than the 180 ms, and the paste put in what was there before)
 pub fn paste(h: &mut Host, id: Option<&str>, image: Option<&str>, text: &str, plain: bool) {
-    copy(id, image, text, plain);
+    let argv = copy_argv(id, image, text, plain, &db());
     let class = h.st.shell.get::<tessera_core::services::clients::Windows>().and_then(|w| w.active_client()).map(|c| c.class.to_lowercase()).unwrap_or_default();
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(180));
-        let mods = if TERMINALS.contains(&class.as_str()) { "CTRL SHIFT" } else { "CTRL" };
-        let _ = tessera_core::services::hypr::request(&format!("dispatch hl.dsp.send_shortcut({{ mods = \"{mods}\", key = \"V\" }})"));
+        let asked = std::time::Instant::now();
+        let copied = Command::new(&argv[0]).args(&argv[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
+        if !copied {
+            eprintln!("tessera-ui: clipboard: the copy didn't work, so nothing is pasted");
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(180).saturating_sub(asked.elapsed()));
+        tessera_core::util::paste_shortcut(&class);
     });
 }
 
@@ -305,6 +333,18 @@ impl Service for ClipboardSvc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copies_keep_text_off_the_options_and_say_picture_types() {
+        // a text starting with "-" (an OCR'd list) is wl-copy's input, never an option
+        let t = copy_argv(None, None, "- one\n- two", false, "/db");
+        assert_eq!(t, vec!["sh", "-c", "printf %s \"$1\" | wl-copy --type text/plain", "sh", "- one\n- two"]);
+        let p = copy_argv(None, Some("/s/clip-pins/1.png"), "", false, "/db");
+        assert_eq!(p, vec!["sh", "-c", "wl-copy --type \"$2\" < \"$1\"", "sh", "/s/clip-pins/1.png", "image/png"]);
+        assert_eq!(copy_argv(None, Some("/s/x"), "", false, "/db")[2], "wl-copy < \"$1\"");
+        let h = copy_argv(Some("7"), None, "", true, "/db");
+        assert!(h[2].ends_with("| wl-copy --type text/plain") && h[4] == "7" && h[5] == "/db");
+    }
 
     #[test]
     fn first_run_is_from_before_then_new_entries_get_now() {

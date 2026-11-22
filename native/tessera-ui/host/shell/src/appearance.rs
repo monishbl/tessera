@@ -76,7 +76,9 @@ pub fn internal(name: &str) -> bool {
 }
 
 fn hypr_eval(lua: &str) {
-    run(&["hyprctl", "eval", lua]);
+    // (its "error: …" in the log: a refused hl.config looked applied)
+    let lua = lua.to_string();
+    std::thread::spawn(move || tessera_core::services::hypr::eval_logged(&lua));
 }
 
 impl Appearance {

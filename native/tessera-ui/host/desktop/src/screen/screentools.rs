@@ -116,7 +116,7 @@ impl ScreenSvc {
         let dir = Self::shots_dir();
         let file = format!("{}/Screenshot {}-{}.png", dir, util::stamp(true), util::nonce());
         let kind = if !self.has_editor(h) && h.cfg()["screenshot"]["markup"].as_bool().unwrap_or(false) && util::has("swappy") { "shotMarkup" } else { "shot" };
-        let script = format!("mkdir -p {d} && mv -f {s} {f} && wl-copy < {f} && echo {f}", d = util::q(&dir), s = util::q(src), f = util::q(&file));
+        let script = format!("mkdir -p {d} && mv -f {s} {f} && wl-copy --type image/png < {f} && echo {f}", d = util::q(&dir), s = util::q(src), f = util::q(&file));
         self.run(h, kind, script);
     }
 
@@ -168,7 +168,7 @@ impl ScreenSvc {
         let file = format!("{}/Screenshot {}-{}.png", dir, util::stamp(true), util::nonce());
         let a: Vec<String> = args.iter().map(|x| util::q(x)).collect();
         let kind = if area && !self.has_editor(h) && h.cfg()["screenshot"]["markup"].as_bool().unwrap_or(false) && util::has("swappy") { "shotMarkup" } else { "shot" };
-        let script = format!("mkdir -p {d} && grim {a} {f} && wl-copy < {f} && echo {f}", d = util::q(&dir), a = a.join(" "), f = util::q(&file));
+        let script = format!("mkdir -p {d} && grim {a} {f} && wl-copy --type image/png < {f} && echo {f}", d = util::q(&dir), a = a.join(" "), f = util::q(&file));
         self.run(h, kind, script);
     }
 
@@ -223,7 +223,9 @@ impl ScreenSvc {
                 if text.is_empty() {
                     return util::notify("Text Capture", "No text found", &format!("Try selecting a larger area with clearer text.{}", self.missing_hint()));
                 }
-                util::detached(&["wl-copy", text]);
+                // (through its input: a text starting with "-", as a list read off the
+                // screen, was taken for wl-copy's options and nothing was copied)
+                util::copy_text(text);
                 let words = text.split_whitespace().count();
                 let head: String = text.chars().take(200).collect();
                 util::notify("Text Capture", &format!("Copied {} {}", words, if words == 1 { "word" } else { "words" }), &head);

@@ -259,6 +259,61 @@ pub fn pipe_to(cmd: &[&str], input: Vec<u8>) {
     });
 }
 
+/// `pipe_to`, but here, until the program ends: true when it took all of
+/// `input` and exited 0 (wl-copy: the clipboard holds it then, so a paste
+/// after this gets it, not what was there before). On a thread
+pub fn pipe_to_wait(cmd: &[&str], input: &[u8]) -> bool {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let Some((prog, args)) = cmd.split_first() else { return false };
+    let Ok(mut child) = Command::new(prog).args(args).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() else {
+        eprintln!("tessera-ui: can't run {prog}");
+        return false;
+    };
+    let wrote = child.stdin.take().is_some_and(|mut i| i.write_all(input).is_ok());
+    child.wait().is_ok_and(|s| s.success()) && wrote
+}
+
+/// Terminals, by window class (lower case): their paste is Ctrl+Shift+V
+/// (Ctrl+V types a literal ^V there). One list for every paste (clipboard
+/// history, emoji, dictation): three copies of it had drifted apart, so
+/// Konsole (org.kde.konsole) got Ctrl+V from the clipboard history
+pub const TERMINALS: &[&str] = &["kitty", "foot", "footclient", "alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty", "ghostty", "org.kde.konsole", "konsole", "org.gnome.terminal", "gnome-terminal-server", "org.gnome.console", "org.gnome.ptyxis", "xterm", "urxvt", "st", "tilix", "blackbox", "xfce4-terminal"];
+
+/// The modifiers that paste in a window of this class ("CTRL" or "CTRL SHIFT")
+pub fn paste_mods(class: &str) -> &'static str {
+    let c = class.to_ascii_lowercase();
+    if TERMINALS.iter().any(|t| c == *t) { "CTRL SHIFT" } else { "CTRL" }
+}
+
+/// Paste into the focused window: Hyprland sends Ctrl+V (terminals
+/// Ctrl+Shift+V) with the real keyboard's keymap (wtype's own keymap gave
+/// Electron apps boxes and Firefox ones stray shortcuts). True when Hyprland
+/// said "ok". Blocking: on a thread
+pub fn paste_shortcut(class: &str) -> bool {
+    let r = crate::services::hypr::request(&format!("dispatch hl.dsp.send_shortcut({{ mods = \"{}\", key = \"V\" }})", paste_mods(class)));
+    match r {
+        Ok(s) if s.trim() == "ok" => true,
+        Ok(s) => {
+            eprintln!("tessera-ui: paste: Hyprland said {}", s.trim());
+            false
+        }
+        Err(e) => {
+            eprintln!("tessera-ui: paste: {e}");
+            false
+        }
+    }
+}
+
+/// The focused window's class, lower case ("" none). Blocking: on a thread
+pub fn active_class() -> String {
+    crate::services::hypr::request("j/activewindow")
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v["class"].as_str().map(str::to_lowercase))
+        .unwrap_or_default()
+}
+
 /// strftime for a time (seconds since the epoch) in the local time zone
 pub fn strftime(fmt: &str, secs: i64) -> String {
     let fmt = std::ffi::CString::new(fmt).unwrap_or_default();
@@ -508,6 +563,24 @@ pub fn encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminals_paste_with_shift() {
+        for t in ["kitty", "org.kde.konsole", "konsole", "com.mitchellh.ghostty", "foot", "org.gnome.Ptyxis", "Alacritty"] {
+            assert_eq!(paste_mods(t), "CTRL SHIFT", "{t}");
+        }
+        for a in ["com.microsoft.VSCode", "zen", "firefox", "org.gnome.TextEditor", ""] {
+            assert_eq!(paste_mods(a), "CTRL", "{a}");
+        }
+    }
+
+    #[test]
+    fn a_wait_for_a_pipe_says_how_it_went() {
+        assert!(pipe_to_wait(&["sh", "-c", "cat >/dev/null"], b"hello"));
+        assert!(!pipe_to_wait(&["sh", "-c", "cat >/dev/null; exit 1"], b"hello"));
+        assert!(!pipe_to_wait(&["tessera-no-such-program-xyz"], b""));
+        assert!(!pipe_to_wait(&[], b""));
+    }
 
     #[test]
     fn a_watched_folder_says_when_it_changes() {

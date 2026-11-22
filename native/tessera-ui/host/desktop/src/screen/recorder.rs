@@ -63,6 +63,11 @@ fn source_mute(h: &Host, mic: &str, muted: Option<bool>) {
     }
 }
 
+/// The recording is there and has something in it
+pub fn written(file: &str) -> bool {
+    std::fs::metadata(file).is_ok_and(|m| m.is_file() && m.len() > 0)
+}
+
 const CPU_NOTE: &str ="Hardware video encoding isn't available (install intel-media-driver for Intel or libva-nvidia-driver for NVIDIA); recorded with the CPU instead";
 
 impl ScreenSvc {
@@ -422,6 +427,12 @@ impl ScreenSvc {
             } else {
                 self.rec_failed(h, &format!("The recorder stopped (code {code}). Try again, or check that the display is still connected."));
             }
+        } else if !written(&f) {
+            // (ended "fine" with nothing written: stopped before its first
+            // frame, or a folder it couldn't write to. "Recording saved"
+            // then pointed at no file)
+            eprintln!("Recorder: ended (code {code}) without a file: {}", err.trim().lines().last().unwrap_or(""));
+            self.rec_failed(h, "Nothing was recorded. Try again, and record for a moment longer.");
         } else {
             self.saved(h, &f);
             if self.cpu_encoding {
@@ -486,6 +497,20 @@ mod tests {
         assert_eq!(gsr_region("100,50 800x600"), "800x600+100+50");
         assert_eq!(gsr_region("-1920,0 1920x1080"), "1920x1080+-1920+0");
         assert_eq!(gsr_region("odd"), "odd");
+    }
+
+    #[test]
+    fn a_recording_counts_only_when_its_file_has_something() {
+        let d = std::env::temp_dir().join(format!("tessera-rec-test-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let (empty, full) = (d.join("empty.mp4"), d.join("full.mp4"));
+        std::fs::write(&empty, b"").unwrap();
+        std::fs::write(&full, b"ftyp").unwrap();
+        assert!(written(&full.to_string_lossy()));
+        assert!(!written(&empty.to_string_lossy()));
+        assert!(!written(&d.join("none.mp4").to_string_lossy()));
+        assert!(!written(&d.to_string_lossy()));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

@@ -64,7 +64,9 @@ pub fn hyprctl(args: &[&str]) {
 
 /// `hyprctl eval <lua>` (Hyprland's Lua config)
 pub fn hyprctl_eval(lua: &str) {
-    hyprctl(&["eval", lua]);
+    // (its "error: …" in the log: a refused hl.config looked applied)
+    let lua = lua.to_string();
+    std::thread::spawn(move || tessera_core::services::hypr::eval_logged(&lua));
 }
 
 /// A Lua string literal (Displays.luaStr)

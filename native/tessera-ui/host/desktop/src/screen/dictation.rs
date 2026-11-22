@@ -1,7 +1,11 @@
 //! Dictation (shell/services/Dictation.qml): speak, and the words are typed
 //! into the app you're in. All on this computer: the microphone is recorded
 //! (pw-record, 16 kHz mono), whisper.cpp turns it into text (the same
-//! assets/scripts/dictate.py) and wtype types it.
+//! assets/scripts/dictate.py) and it's pasted where the cursor is (copied,
+//! then Hyprland's Ctrl+V; terminals Ctrl+Shift+V, as the emoji picker and
+//! the clipboard history: wtype typed it until 22 Nov, and its own keymap
+//! gave Electron apps boxes for anything past ASCII and Firefox ones stray
+//! shortcuts).
 //!
 //! Super+H (the shortcut belongs to the shell host's Keybinds): a tap starts
 //! listening and the next tap stops; held down, it listens until you let go.
@@ -32,7 +36,10 @@ struct Transcribed(String, String); // file, stdout
 struct Limit(u64);
 struct Progress(Value);
 struct DownloadEnd;
-struct TypeFailed(String);
+/// the paste didn't go (the words are on the clipboard)
+struct TypeFailed;
+/// wl-copy didn't take the words
+struct CopyFailed;
 struct InstallDone(bool);
 
 pub struct DictationSvc {
@@ -308,32 +315,25 @@ impl DictationSvc {
             util::island_post(h, json!({"kind": "custom", "icon": "microphone", "title": "Didn't catch that", "subtitle": "Speak a little closer to the microphone, then try again", "color": "secondary"}), 3000);
             return;
         }
-        if !util::has("wtype") {
-            return self.copy_instead(h, &text);
-        }
-        // (through its input: a command line can be read by any program)
+        // (through wl-copy's input: a command line can be read by any
+        // program; waited for, so the paste gets these words)
         let send = h.sender("Dictation");
-        let child = Command::new("wtype").arg("-").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
-        match child {
-            Ok(mut c) => {
-                std::thread::spawn(move || {
-                    use std::io::Write;
-                    if let Some(mut i) = c.stdin.take() {
-                        let _ = i.write_all(text.as_bytes());
-                    }
-                    let ok = c.wait().map(|s| s.success()).unwrap_or(false);
-                    if !ok {
-                        send(Box::new(TypeFailed(text)));
-                    }
-                });
+        std::thread::spawn(move || {
+            let class = tessera_core::util::active_class();
+            if !tessera_core::util::pipe_to_wait(&["wl-copy"], text.as_bytes()) {
+                send(Box::new(CopyFailed));
+                return;
             }
-            Err(_) => self.copy_instead(h, &text),
-        }
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            if !tessera_core::util::paste_shortcut(&class) {
+                send(Box::new(TypeFailed));
+            }
+        });
     }
 
-    fn copy_instead(&self, h: &mut Host, text: &str) {
-        util::copy_text(text);
-        util::island_post(h, json!({"kind": "custom", "icon": "clipboard-text", "title": "Copied what you said", "subtitle": "Typing into this app didn't work: paste it with Ctrl+V", "color": "accent"}), 5000);
+    /// The paste didn't go: the words are on the clipboard already
+    fn copy_instead(&self, h: &mut Host) {
+        util::island_post(h, json!({"kind": "custom", "icon": "clipboard-text", "title": "Copied what you said", "subtitle": "Pasting into this app didn't work: paste it with Ctrl+V", "color": "accent"}), 5000);
     }
 
     fn fail(&mut self, h: &mut Host, why: &str) {
@@ -345,12 +345,12 @@ impl DictationSvc {
 
     // ── Setting it up (Settings → Dictation) ────────────────────────────
     fn install(&mut self, h: &mut Host) {
-        if self.install_asked || (self.has_binary() && util::has("wtype")) {
+        if self.install_asked || self.has_binary() {
             return;
         }
         self.install_asked = true;
         self.install_error.clear();
-        let list = if util::has("wtype") { "whisper-cpp" } else { "whisper-cpp,wtype" };
+        let list = "whisper-cpp";
         // Updates.update(["--install", list]); the system host answers, and
         // tells `dictation install-done` (ipc) when its job ends
         h.ask("system.update", json!(["--install", list]));
@@ -531,7 +531,11 @@ impl Service for DictationSvc {
             Err(m) => m,
         };
         let msg = match msg.downcast::<TypeFailed>() {
-            Ok(t) => return self.copy_instead(h, &t.0), // (no virtual keyboard here)
+            Ok(_) => return self.copy_instead(h),
+            Err(m) => m,
+        };
+        let msg = match msg.downcast::<CopyFailed>() {
+            Ok(_) => return self.fail(h, "Couldn't put what you said on the clipboard (wl-copy didn't work). Try again."),
             Err(m) => m,
         };
         if msg.downcast::<InstallDone>().is_ok() {

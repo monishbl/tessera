@@ -58,25 +58,19 @@ pub fn dictation(cx: &mut Ctx, p: &mut Page) {
         cx.ask(G, "dictRefresh", json!([]));
     }
     let d = feed(cx)["dictation"].clone();
-    let tools = feed(cx)["tools"].clone();
     let updating = feed(cx)["updatesRunning"].as_bool().unwrap_or(false);
     let has_binary = d["hasBinary"].as_bool().unwrap_or(false);
     let ready = d["ready"].as_bool().unwrap_or(false);
     let installing = d["installing"].as_bool().unwrap_or(false);
     let install_error = d["installError"].as_str().unwrap_or("").to_string();
     let install = cx.on(|cx, _| cx.ask(G, "dictInstall", json!([])));
-    let install2 = cx.on(|cx, _| cx.ask(G, "dictInstall", json!([])));
     p.group("")
-        .footer("Press Super+H, speak, then press it again. Or hold Super+H while you speak and let go when you're done. The words are typed where your cursor is. Everything stays on this computer.")
+        .footer("Press Super+H, speak, then press it again. Or hold Super+H while you speak and let go when you're done. The words are pasted where your cursor is (they stay on the clipboard). Everything stays on this computer.")
         .row(Row::new("Speech recognition")
             .visible(!has_binary)
             .detail(if install_error.is_empty() { "Install whisper.cpp to turn speech into text on this computer. It asks for your password once.".to_string() } else { install_error.clone() })
             .tone(if install_error.is_empty() { 0 } else { 2 })
             .buttons(vec![btn(if installing { "Installing…" } else { "Install" }).icon("download-simple").primary().on(installing).off(updating)], install))
-        .row(Row::new("Typing into apps needs wtype")
-            .visible(has_binary && tools["ready"] == true && tools["wtype"] != true)
-            .detail("Without it, what you say goes on the clipboard to paste. It asks for your password once.")
-            .buttons(vec![btn(if installing { "Installing…" } else { "Install" }).on(installing).off(updating)], install2))
         .row(Row::new(if ready { "Ready" } else { "Download a speech model to start" })
             .visible(has_binary)
             .detail(if ready { "Super+H to dictate" } else { "Speech recognition is installed" })

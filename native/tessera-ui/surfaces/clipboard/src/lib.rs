@@ -27,7 +27,7 @@ tessera_core::theme_global!(ui);
 use tessera_core::*;
 
 use tessera_core::services::clipboard::{self as clip, Filter, History, Pin, Previews, Row};
-use tessera_core::services::hypr::{self, Glass};
+use tessera_core::services::hypr::Glass;
 use tessera_core::shell::{Command, Part};
 use tessera_core::theme;
 use tessera_core::wayland::{Spec, State, Surface};
@@ -48,9 +48,6 @@ pub const NS: &str = "tessera:clipboard";
 const RETIRE_SECS: u64 = 300;
 const WIDTH: f32 = 560.0;
 const KINDS: [Filter; 3] = [Filter::All, Filter::Text, Filter::Images];
-
-/// Apps that paste with Ctrl+Shift+V
-const TERMINALS: &[&str] = &["foot", "kitty", "alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty", "konsole", "org.gnome.ptyxis", "xterm"];
 
 enum M {
     Key(String, bool, bool, bool),
@@ -524,15 +521,17 @@ impl Clipboard {
     fn activate(&mut self, i: usize, plain: bool, copy_only: bool) {
         let Some(r) = self.rows.get(i).cloned() else { return };
         self.close(true);
-        copy(&r, plain);
-        if !copy_only {
-            std::thread::spawn(|| {
-                std::thread::sleep(Duration::from_millis(180)); // (the panel lets go of the keyboard first)
-                let class = hypr::request("j/activewindow").ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()).and_then(|v| v["class"].as_str().map(str::to_lowercase)).unwrap_or_default();
-                let mods = if TERMINALS.contains(&class.as_str()) { "CTRL SHIFT" } else { "CTRL" };
-                let _ = hypr::request(&format!("dispatch hl.dsp.send_shortcut({{ mods = \"{mods}\", key = \"V\" }})"));
-            });
-        }
+        std::thread::spawn(move || {
+            let asked = std::time::Instant::now();
+            // (the paste waits for the copy: a picture decoded from the
+            // history can take longer than the panel's 180 ms, and the paste
+            // then put in what was on the clipboard before)
+            if !copy_blocking(&r, plain) || copy_only {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(180).saturating_sub(asked.elapsed())); // (the panel lets go of the keyboard first)
+            tessera_core::util::paste_shortcut(&tessera_core::util::active_class());
+        });
     }
 
     fn toggle_pin(&mut self, st: &State, i: usize) {
@@ -642,32 +641,44 @@ fn pin_json(p: &Pin) -> serde_json::Value {
 
 /// Onto the clipboard: a history entry decoded from cliphist (plain: as text
 /// only), a pinned picture's file, or a pinned text (through wl-copy's input,
-/// never its command line)
-pub fn copy(r: &Row, plain: bool) {
+/// never its command line); here until wl-copy has it, true when it did (on
+/// a thread)
+fn copy_blocking(r: &Row, plain: bool) -> bool {
     use std::process::{Command, Stdio};
     if let Some(e) = &r.entry {
         let (id, db, text) = (e.id.clone(), clip::db_path(), e.image.is_none());
-        std::thread::spawn(move || {
-            let Ok(mut dec) = Command::new("cliphist").args(["-db-path", &db, "decode", &id]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else { return };
-            let mut args = vec![];
-            if plain && text {
-                args = vec!["--type", "text/plain"];
-            }
-            if let Some(out) = dec.stdout.take() {
-                let _ = Command::new("wl-copy").args(&args).stdin(Stdio::from(out)).stdout(Stdio::null()).stderr(Stdio::null()).status();
-            }
-            let _ = dec.wait();
-        });
+        let Ok(mut dec) = Command::new("cliphist").args(["-db-path", &db, "decode", &id]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else { return false };
+        let mut args = vec![];
+        if plain && text {
+            args = vec!["--type", "text/plain"];
+        }
+        let copied = dec.stdout.take().is_some_and(|out| Command::new("wl-copy").args(&args).stdin(Stdio::from(out)).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success()));
+        dec.wait().is_ok_and(|s| s.success()) && copied
     } else if let Some(img) = &r.image {
         // (the file is wl-copy's input as it is: never read whole on the UI thread)
-        let img = img.clone();
-        std::thread::spawn(move || {
-            let Ok(f) = std::fs::File::open(&img) else { return };
-            let _ = Command::new("wl-copy").stdin(Stdio::from(f)).stdout(Stdio::null()).stderr(Stdio::null()).status();
-        });
+        let Ok(f) = std::fs::File::open(img) else { return false };
+        // (its type said: guessing it needs xdg-mime, without which a picture went as text)
+        let mut cmd = Command::new("wl-copy");
+        if let Some(t) = image_type(&img.to_string_lossy()) {
+            cmd.args(["--type", t]);
+        }
+        cmd.stdin(Stdio::from(f)).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
     } else {
-        crate::util::pipe_to(&["wl-copy", "--type", "text/plain"], r.text.clone().into_bytes());
+        tessera_core::util::pipe_to_wait(&["wl-copy", "--type", "text/plain"], r.text.as_bytes())
     }
+}
+
+/// A picture's type by its name ("a.png": image/png); None: unknown
+pub fn image_type(path: &str) -> Option<&'static str> {
+    let ext = path.rsplit_once('.')?.1.to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        _ => return None,
+    })
 }
 
 impl Part for Clipboard {
@@ -867,6 +878,14 @@ mod tests {
 
     fn row(section: &str, image: bool) -> Row {
         Row { pin: None, entry: None, text: "x".into(), image: image.then(|| PathBuf::from("/p.png")), section: section.into() }
+    }
+
+    #[test]
+    fn pinned_pictures_say_their_type() {
+        assert_eq!(image_type("/s/clip-pins/1.png"), Some("image/png"));
+        assert_eq!(image_type("/s/a b.JPG"), Some("image/jpeg"));
+        assert_eq!(image_type("/s/noext"), None);
+        assert_eq!(image_type("/s/x.tiff"), None);
     }
 
     #[test]

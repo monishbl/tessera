@@ -100,18 +100,12 @@ pub struct Placement {
     pub class: String,
 }
 
-/// Terminals: their paste is Ctrl+Shift+V (as the clipboard history's list)
-const TERMINALS: &[&str] = &["kitty", "foot", "footclient", "alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty", "ghostty", "org.kde.konsole", "konsole", "org.gnome.terminal", "gnome-terminal-server", "org.gnome.ptyxis", "xterm", "urxvt", "st", "tilix", "blackbox"];
-
-/// A pick is pasted, as the clipboard history does: Hyprland sends Ctrl+V
-/// (terminals Ctrl+Shift+V) with the real keyboard. Typing it with wtype
-/// (until 22 Nov) swapped in wtype's own keymap: Chromium/Electron apps got
-/// boxes for emoji (VS Code: ▯) and Firefox ones stray shortcuts (Zen opened
-/// sidebars), so the pick had to be pasted by hand
-fn paste_mods(class: &str) -> &'static str {
-    let c = class.to_ascii_lowercase();
-    if TERMINALS.iter().any(|t| c == *t) { "CTRL SHIFT" } else { "CTRL" }
-}
+// A pick is pasted, as the clipboard history does: Hyprland sends Ctrl+V
+// (terminals Ctrl+Shift+V: core's one list) with the real keyboard. Typing
+// it with wtype (until 22 Nov) swapped in wtype's own keymap: Chromium/
+// Electron apps got boxes for emoji (VS Code: ▯) and Firefox ones stray
+// shortcuts (Zen opened sidebars), so the pick had to be pasted by hand
+// (tessera_core::util::paste_shortcut)
 
 /// The panel's top-left on a screen (origin ox, oy; size sw, sh), as
 /// PickerWindow.place(): Wayland doesn't say where the text cursor is, so
@@ -855,20 +849,22 @@ impl Emoji {
         self.mem.record(key, kind, crate::util::now_ms());
         self.mem.save();
         let target = self.placement.window.as_ref().map(|w| w.4.clone()).unwrap_or_default();
-        let mods = paste_mods(&self.placement.class);
+        let class = self.placement.class.clone();
         self.close(true);
-        crate::util::pipe_to(&["wl-copy"], text.into_bytes());
-        if copy_only {
-            return;
-        }
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(140)); // (the layer gives up the keyboard first)
+            let asked = std::time::Instant::now();
+            // (wl-copy waited for: a paste before it has the clipboard pastes what was there before)
+            let copied = tessera_core::util::pipe_to_wait(&["wl-copy"], text.as_bytes());
+            if copy_only || !copied {
+                return;
+            }
+            // (the layer gives up the keyboard first)
+            std::thread::sleep(Duration::from_millis(140).saturating_sub(asked.elapsed()));
             if !target.is_empty() {
                 let _ = hypr::request(&format!("dispatch hl.dsp.focus({{ window = \"address:0x{}\" }})", target.trim_start_matches("0x")));
             }
             std::thread::sleep(Duration::from_millis(60));
-            // (the copy above is the clipboard by now: wl-copy was asked 200 ms ago)
-            let _ = hypr::request(&format!("dispatch hl.dsp.send_shortcut({{ mods = \"{mods}\", key = \"V\" }})"));
+            tessera_core::util::paste_shortcut(&class);
         });
     }
 
@@ -1464,11 +1460,11 @@ mod tests {
 
     #[test]
     fn a_pick_pastes_with_the_terminals_own_shortcut() {
-        assert_eq!(paste_mods("kitty"), "CTRL SHIFT");
-        assert_eq!(paste_mods("com.mitchellh.ghostty"), "CTRL SHIFT");
-        assert_eq!(paste_mods("com.microsoft.VSCode"), "CTRL");
-        assert_eq!(paste_mods("zen"), "CTRL");
-        assert_eq!(paste_mods(""), "CTRL");
+        assert_eq!(tessera_core::util::paste_mods("kitty"), "CTRL SHIFT");
+        assert_eq!(tessera_core::util::paste_mods("com.mitchellh.ghostty"), "CTRL SHIFT");
+        assert_eq!(tessera_core::util::paste_mods("com.microsoft.VSCode"), "CTRL");
+        assert_eq!(tessera_core::util::paste_mods("zen"), "CTRL");
+        assert_eq!(tessera_core::util::paste_mods(""), "CTRL");
     }
 
     #[test]

@@ -291,6 +291,30 @@ pub fn dispatch(cmd: impl Into<String>) {
     });
 }
 
+/// What `hyprctl eval` answered, when it's an error: Hyprland 0.57 says
+/// "error: …" (exit 7) for a Lua mistake or an unknown config key, and the
+/// whole hl.config({ … }) is refused then, so a setting that looked applied
+/// wasn't. None: it took it
+pub fn eval_error(code: Option<i32>, out: &str) -> Option<String> {
+    let t = out.trim();
+    (code != Some(0) || t.starts_with("error")).then(|| if t.is_empty() { format!("exit {}", code.map_or("?".into(), |c| c.to_string())) } else { t.lines().next().unwrap_or(t).to_string() })
+}
+
+/// `hyprctl eval <lua>`, here (on a thread), its error said in the log
+/// (they went unseen: every eval's output was thrown away). True: taken
+pub fn eval_logged(lua: &str) -> bool {
+    let out = std::process::Command::new("hyprctl").args(["eval", lua]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output();
+    let err = match &out {
+        Ok(o) => eval_error(o.status.code(), &String::from_utf8_lossy(&o.stdout)),
+        Err(e) => Some(e.to_string()),
+    };
+    if let Some(e) = &err {
+        let head: String = lua.chars().take(120).collect();
+        eprintln!("tessera-ui: hyprctl eval refused {head:?}: {e}");
+    }
+    err.is_none()
+}
+
 pub fn focus_workspace(id: i32) {
     dispatch(format!("hl.dsp.focus({{ workspace = {id} }})"));
 }
@@ -582,6 +606,17 @@ static SENDER: std::sync::Mutex<Option<mpsc::Sender<(String, String)>>> = std::s
 #[cfg(test)]
 mod tests {
     use super::find_plugin;
+
+    #[test]
+    fn eval_errors_are_read() {
+        use super::eval_error;
+        // (what Hyprland 0.57.2 answers)
+        assert_eq!(eval_error(Some(0), "ok\n"), None);
+        assert_eq!(eval_error(Some(7), "error: return hl.config({ general = { nonexistent_key_xyz = 1 } });:1: unknown config key 'general.nonexistent_key_xyz'\n").as_deref(), Some("error: return hl.config({ general = { nonexistent_key_xyz = 1 } });:1: unknown config key 'general.nonexistent_key_xyz'"));
+        assert!(eval_error(Some(0), "error: x").is_some());
+        assert_eq!(eval_error(Some(1), "").as_deref(), Some("exit 1"));
+        assert_eq!(eval_error(None, "").as_deref(), Some("exit ?"));
+    }
 
     #[test]
     fn finds_the_plugin_by_either_name() {
