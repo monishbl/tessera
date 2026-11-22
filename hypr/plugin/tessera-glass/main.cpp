@@ -12,7 +12,7 @@
 //
 // hyprctl tessera-glass set <monitor> <namespace> <n> [<16 floats per shape>...]
 // hyprctl tessera-glass clear [<monitor> <namespace>]
-// hyprctl tessera-glass ping            -> "tessera-glass 6 shadow blur turned" (2: gloss; 3: pointer boundaries;
+// hyprctl tessera-glass ping            -> "tessera-glass 6 shadow blur turned [nohook:<why>]" (2: gloss; 3: pointer boundaries;
 //                                       4: pointer-follow, input-age; 5: glass fades
 //                                       with its layer; 6: its own blur; "shadow": a shape
 //                                       may carry a drop shadow, two more numbers; "blur":
@@ -65,6 +65,7 @@ using namespace Render::GL;
 void        pointerInit(HANDLE);
 void        pointerExit();
 bool        pointerReady();
+const std::string& pointerProblem();
 std::string pointerCommand(const std::string&, std::istringstream&);
 void        controlsInit(HANDLE);
 void        controlsExit();
@@ -890,7 +891,10 @@ static std::string onCommand(std::string request) {
     if (verb == "pointer-policy" || verb == "pointer-confine" || verb == "pointer-refocus" || verb == "pointer-follow" || verb == "input-age")
         return pointerCommand(verb, in);
     if (verb == "ping")
-        return pointerReady() ? "tessera-glass 6 shadow blur turned" : "tessera-glass 2 shadow blur turned";
+        // (the version is the build's; "nohook:<why>" when pointer boundaries
+        // can't work here: the rest, focus-follow included, still does. Until
+        // 22 Nov a missing hook answered "2", read as an old build)
+        return pointerReady() ? "tessera-glass 6 shadow blur turned" : "tessera-glass 6 shadow blur turned nohook:" + pointerProblem();
     if (verb == "frametimes") {
         std::string arg;
         in >> arg;

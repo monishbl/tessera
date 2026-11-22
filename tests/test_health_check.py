@@ -194,6 +194,14 @@ class HealthCheck(unittest.TestCase):
         self.assertIn("newer than Tessera is tested with (0.57.x)", r["detail"])
         self.assertIn("older than", self.rows(FAKE_HYPR="v0.55.1")["hyprland"]["detail"])
 
+    def test_a_current_plugin_without_its_pointer_hook_isnt_called_old(self):
+        r = self.rows(FAKE_PLUGIN="6 shadow blur turned nohook:failed")["plugin"]
+        self.assertEqual(r["status"], "warn")
+        self.assertIn("pointer boundaries are off", r["detail"])
+        self.assertNotIn("older build", r["detail"])
+        self.assertEqual(self.rows(FAKE_PLUGIN="6 shadow blur turned")["plugin"]["status"], "ok")
+        self.assertIn("older build", self.rows(FAKE_PLUGIN="2")["plugin"]["detail"])
+
     def test_an_installed_shell_reads_compat_from_the_recorded_source(self):
         # (an installed copy has no compat.json next to it: the installer's
         # record of where Tessera came from leads to it)

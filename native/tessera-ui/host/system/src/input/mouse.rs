@@ -152,7 +152,9 @@ fn signature(cfg: &Value) -> String {
 enum M {
     Raw(Raw),
     Devices(Value),
-    Plugin(String, i64),
+    /// the plugin's name, version, and whether its pointer hook is in place
+    /// (a "nohook:<why>" in the ping: boundaries can't work, the rest can)
+    Plugin(String, i64, bool),
     LookAgain,
     UdevLine,
     UdevEnded,
@@ -172,6 +174,7 @@ pub struct Mouse {
     look_gen: u64,
     plugin_name: String,
     plugin_version: i64,
+    plugin_hooked: bool,
     pending: Vec<Raw>,
     focus_gen: u64,
     urgent_window: String,
@@ -184,7 +187,7 @@ pub struct Mouse {
 impl Default for Mouse {
     fn default() -> Self {
         Self {
-            mice: vec![], touchpads: vec![], sig: String::new(), apply_gen: 0, look_gen: 0, plugin_name: "tessera-glass".into(), plugin_version: 0,
+            mice: vec![], touchpads: vec![], sig: String::new(), apply_gen: 0, look_gen: 0, plugin_name: "tessera-glass".into(), plugin_version: 0, plugin_hooked: true,
             pending: vec![], focus_gen: 0, urgent_window: String::new(), urgent_gen: 0, opened_class: BTreeMap::new(), boundary_sig: String::new(), lease_gen: 0,
         }
     }
@@ -192,7 +195,7 @@ impl Default for Mouse {
 
 impl Mouse {
     fn boundary_available(&self) -> bool {
-        self.plugin_version >= 3
+        self.plugin_version >= 3 && self.plugin_hooked
     }
     fn follow_available(&self) -> bool {
         self.plugin_version >= 4
@@ -344,7 +347,8 @@ impl Service for Mouse {
                 if let Some((0, o)) = crate::util::capture(&["hyprctl", n, "ping"], std::time::Duration::from_secs(3)) {
                     if o.trim().starts_with(n) {
                         let v = o.split_whitespace().nth(1).and_then(|v| v.parse().ok()).unwrap_or(1);
-                        send(Box::new(M::Plugin(n.to_string(), v)));
+                        let hooked = !o.split_whitespace().any(|w| w.starts_with("nohook"));
+                        send(Box::new(M::Plugin(n.to_string(), v, hooked)));
                         return;
                     }
                 }
@@ -465,9 +469,10 @@ impl Service for Mouse {
                     after(h.sender("Mouse"), 150, M::ApplyLater(self.apply_gen));
                 }
             }
-            M::Plugin(n, v) => {
+            M::Plugin(n, v, hooked) => {
                 self.plugin_name = n;
                 self.plugin_version = v;
+                self.plugin_hooked = hooked;
                 self.publish();
                 self.apply_boundaries(h);
             }

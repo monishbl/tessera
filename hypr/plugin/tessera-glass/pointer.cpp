@@ -16,6 +16,10 @@
 #include "focus-policy.hpp"
 
 static CFunctionHook* hook = nullptr;
+// Why the pointer hook isn't in place ("" when it is): "notfound" (no
+// CPointerManager::move in this Hyprland), "failed" (found, but Hyprland's
+// hook system couldn't patch it)
+static std::string hookProblem = "notfound";
 static int mode = 0;
 static double corner = 24;
 static std::string confinement;
@@ -145,6 +149,7 @@ static void focusInit() {
 
 void pointerInit(HANDLE handle) {
     focusInit();
+    hookProblem = "notfound";
     for (const auto& fn : HyprlandAPI::findFunctionsByName(handle, "move")) {
         if (fn.demangled.find("CPointerManager::move(") == std::string::npos) continue;
         hook = HyprlandAPI::createFunctionHook(handle, fn.address, reinterpret_cast<void*>(&movePointer));
@@ -153,10 +158,12 @@ void pointerInit(HANDLE handle) {
             HyprlandAPI::removeFunctionHook(handle, hook);
             hook = nullptr;
         }
+        hookProblem = hook ? "" : "failed";
         break;
     }
 }
 bool pointerReady() { return hook != nullptr; }
+const std::string& pointerProblem() { return hookProblem; }
 void pointerExit() {
     // The hook itself is removed by Hyprland when the plugin unloads (as in
     // main.cpp's exit); only our state is reset here

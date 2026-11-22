@@ -450,6 +450,15 @@ def check_plugin(_):
     m = re.search(r"tessera-glass (\d+)", out or "")
     if code == 0 and m:
         n = int(m.group(1))
+        hook = re.search(r"nohook:(\w+)", out)
+        if n >= PLUGIN_VERSION and hook:
+            # a current build whose pointer hook didn't take: glass and
+            # focus-follow work; pointer boundaries can't (seen on CachyOS's
+            # Hyprland, 22 Nov)
+            return result("plugin", "Glass plugin", "Tessera itself", "warn",
+                          f"Loaded (version {n}), but pointer boundaries are off: this Hyprland build "
+                          + ("has no pointer function Tessera can hook" if hook.group(1) == "notfound" else "refused Tessera's pointer hook"),
+                          "Glass and focus-follow work. If Hyprland was just updated, log out and in; otherwise pointer boundaries stay off with this Hyprland build")
         if n >= PLUGIN_VERSION:
             return result("plugin", "Glass plugin", "Tessera itself", "ok", f"Loaded (version {n})")
         return result("plugin", "Glass plugin", "Tessera itself", "warn",
