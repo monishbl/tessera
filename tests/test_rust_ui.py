@@ -640,7 +640,10 @@ class SmallerSurfaces(unittest.TestCase):
         self.assertNotIn('"wtype"', osk)
 
 
-@unittest.skipUnless(shutil.which("cargo"), "needs cargo")
+# (opt-in: the whole workspace's cargo test, debug profile, inside a Python
+# run took 6 GB plus 7 GB of zram swap on system1 and oomd killed it, 22 Nov.
+# The Rust tests run on their own: cargo test with the dev profile settings)
+@unittest.skipUnless(shutil.which("cargo") and os.environ.get("TESSERA_PY_CARGO") == "1", "cargo tests run on their own (TESSERA_PY_CARGO=1 to run them here)")
 class CrateTests(unittest.TestCase):
     def test_cargo_test(self):
         # (the whole workspace: the binary, tessera-core and every surface's crate)
