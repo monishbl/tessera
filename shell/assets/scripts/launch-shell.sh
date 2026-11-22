@@ -111,6 +111,11 @@ export QT_LOGGING_RULES="${QT_LOGGING_RULES:+$QT_LOGGING_RULES;}qt.svg.draw.warn
 # the shell, which doesn't wait for children it didn't start, kept it as a
 # zombie for its whole life)
 setsid -f "$(dirname -- "${BASH_SOURCE[0]}")/start-idle.sh" "$QS" </dev/null >/dev/null 2>&1
+# The login rescue's note, once, when it stepped in since the last login
+# (what broke, what was rolled back, Restore): only a file read when there's none
+if [[ -f /var/lib/tessera/rescue/note.json ]]; then
+    setsid -f python3 -I "$(dirname -- "${BASH_SOURCE[0]}")/rescue-note.py" </dev/null >/dev/null 2>&1
+fi
 
 # Standalone (rust.standalone, on unless set to false; TESSERA_STANDALONE=1
 # forces it, =0 forbids it): no Quickshell. tessera-ui draws every surface and

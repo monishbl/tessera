@@ -825,8 +825,10 @@ def pam_rules(text):
     """(type, control, module, marked) for each rule in a PAM file's text
     (continued lines joined, comments out, a bracketed control kept whole)"""
     out = []
+    after_mark = False  # (the keyring's line: its mark is the comment above it)
     for raw in re.sub(r"\\\n", " ", text).splitlines():
-        marked = any(m in raw for m in TESSERA_MARKS)
+        marked = any(m in raw for m in TESSERA_MARKS) or (after_mark and "pam_gnome_keyring" in raw)
+        after_mark = "# tessera: unlock the keyring" in raw
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue
@@ -918,7 +920,7 @@ def password_path_problem(etc, name, text, vendor=PAM_VENDOR):
     if any(chain[i][1] in PASSWORD_MODULES for i in plain) and not any(chain[i][1] in PASSWORD_MODULES for i in want):
         return ""  # (the system's own stack never gets to it: not Tessera's to judge)
     import itertools
-    for combo in itertools.product(TESSERA_ANSWERS, repeat=min(len(ours), 4)):
+    for combo in itertools.product(TESSERA_ANSWERS, repeat=min(len(ours), 5)):
         answers = dict(zip(ours, combo))
         seen, failed, let_in = pam_walk(chain, answers)
         if let_in:
@@ -2806,6 +2808,9 @@ def login_switch_on(src, look_text, uid, prefix=None, run=subprocess.run, which=
                 print(f"tessera-root: {e}", file=sys.stderr)
     for path, text in LOGIN_UNITS.items():
         write_root(_at(prefix, path), text.encode(), 0o644)
+    # (greetd may have come just now: its login rescue too)
+    for path, text in RESCUE_UNITS.items():
+        write_root(_at(prefix, path), text.encode(), 0o644)
     _systemctl(run, "daemon-reload")
     if already:
         return write_record(prefix, previous=previous, state=rec.get("state") if rec.get("state") in ("trial", "active") else "active")
@@ -4245,6 +4250,12 @@ def main(argv):
             except OSError:
                 return 1
             if new is None:
+                return 1
+            # (read, never run: the password's path as without the lines)
+            d = os.path.dirname(os.path.abspath(args[0]))
+            why = password_path_problem(d, os.path.basename(args[0]), new, PAM_VENDOR)
+            if why:
+                print(f"tessera-root: {why}", file=sys.stderr)
                 return 1
             sys.stdout.write(new)
             return 0

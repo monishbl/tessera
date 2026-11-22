@@ -80,6 +80,9 @@ run_rust() { # style
 done_with() { # exit code
     seen_cancel
     [[ $1 == 0 ]] && seen
+    # (how it ended, for greeter-session.sh: 0, someone logged in; anything
+    # else twice in a row, and greetd's text login takes over)
+    [[ -n ${TESSERA_GREETER_RESULT:-} ]] && printf '%s\n' "$1" >"$TESSERA_GREETER_RESULT" 2>/dev/null
     exit "$1"
 }
 start=$SECONDS

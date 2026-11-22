@@ -226,6 +226,17 @@ if [[ $LOGIN_HERE == 1 ]]; then
         fi
     done
 fi
+# The login rescue (the root helper's setup puts it in wherever greetd is):
+# greetd's drop-in, its unit, and greetd's text login if a rescue turned it on
+RESCUE_RELOAD=0
+for p in "$S/etc/systemd/system/greetd.service.d/tessera-rescue.conf" "$S/etc/systemd/system/tessera-login-rescue.service" \
+    "$S/etc/systemd/system/greetd.service.d/zz-tessera-text-greeter.conf" "$S/etc/greetd/tessera-text-greeter.toml"; do
+    if [[ -e $p ]]; then
+        opt sudo rm -f "$p"
+        RESCUE_RELOAD=1
+    fi
+done
+[[ $RESCUE_RELOAD == 1 && -z $S ]] && quiet sudo systemctl daemon-reload
 # The login screen's entry for a Tessera run from its folder (tools/setup-session.sh)
 opt sudo rm -f "$S/usr/share/wayland-sessions/tessera.desktop" "$S$OLD_SESSION_ENTRY"
 # The quiet start (install.sh's quiet_boot): Plymouth quits as before, and
@@ -259,7 +270,7 @@ done
 # A finger for sudo, administrator prompts and the login screen (the root
 # helper's lines, each marked; the helper took them out above when it could)
 for f in polkit-1 sudo greetd ly sddm lightdm lxdm; do
-    for mark in "# Tessera fingerprint" "$OLD_FP_MARK"; do
+    for mark in "# Tessera fingerprint" "# Tessera passkey" "$OLD_FP_MARK"; do
         if grep -qF "$mark" "$S/etc/pam.d/$f" 2>/dev/null; then
             opt sudo sed -i "/$mark/d" "$S/etc/pam.d/$f"
         fi

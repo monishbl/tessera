@@ -332,5 +332,184 @@ class HealthRow(Machine):
         self.assertIn("rescue undo", " ".join(r["steps"]))
 
 
+class LoginRescue(Machine):
+    """tessera-login-rescue.service: one step further each time in a boot"""
+
+    def rescue(self, run=None, which=None):
+        said = []
+        r = R.login_rescue(self.root, run or self.run, which or which_with("Hyprland", "start-hyprland", "agreety", "greetd"), said.append)
+        return r, said
+
+    def setUp(self):
+        super().setUp()
+        self.run = Recorder({"journalctl": (0, "greetd[1]: error: PAM 'greetd' authentication error\n")})
+        # (the Tessera lines of the 22 Nov fault: the old gate, which only the
+        # real PAM finds (as root); unprivileged, step 1's strip "anyway" does)
+        self.old = R.pam_login_fingerprint(GREETD_PAM).replace(R.GATE_CONTROL, R.OLD_GATE_CONTROL)
+        (self.etc / "greetd").write_text(self.old)
+
+    def test_the_steps(self):
+        r, said = self.rescue()
+        self.assertEqual(r, "repaired")
+        self.assertEqual((self.etc / "greetd").read_text(), GREETD_PAM)
+        self.assertTrue(self.run.ran("systemctl", "reset-failed", "greetd.service"))
+        self.assertTrue(self.run.ran("systemctl", "restart", "--no-block", "greetd.service"))
+        note = R.read_note(self.root)
+        self.assertEqual(Path(note["saved"]["greetd"]).read_text(), self.old)
+        self.assertIn("PAM 'greetd' authentication error", " ".join(note["log"]))
+        self.assertTrue(any("error" in s for s in said))
+        # failed again: the text login
+        r, _ = self.rescue()
+        self.assertEqual(r, "text-login")
+        self.assertTrue(self.p(R.TEXT_DROPIN).exists())
+        # and again: a console login
+        r, _ = self.rescue()
+        self.assertEqual(r, "console")
+        self.assertTrue(self.run.ran("systemctl", "start", "--no-block", "getty@tty1.service"))
+        self.assertIn("a console login on tty1 (getty)", R.read_note(self.root)["did"])
+
+    def test_without_agreety_straight_to_the_console(self):
+        (self.etc / "greetd").write_text(GREETD_PAM)  # (nothing of Tessera's to take out)
+        r, _ = self.rescue(which=which_with("Hyprland"))
+        self.assertEqual(r, "console")
+        self.assertFalse(self.p(R.TEXT_DROPIN).exists())
+
+    def test_another_login_screen_took_over(self):
+        os.unlink(self.p("/etc/systemd/system/display-manager.service"))
+        r, _ = self.rescue()
+        self.assertEqual(r, "elsewhere")
+        self.assertFalse(self.run.ran("systemctl", "restart", "--no-block", "greetd.service"))
+
+    def test_anything_unexpected_is_a_console(self):
+        orig = R._login_rescue
+        R._login_rescue = lambda *a: 1 / 0
+        self.addCleanup(setattr, R, "_login_rescue", orig)
+        r, said = self.rescue()
+        self.assertEqual(r, "console")
+        self.assertTrue(self.run.ran("systemctl", "start", "--no-block", "getty@tty1.service"))
+
+    def test_from_a_console(self):
+        said = []
+        self.assertEqual(R.rescue([], self.root, self.run, which_with("Hyprland", "agreety", "greetd"), said.append), 0)
+        self.assertEqual((self.etc / "greetd").read_text(), GREETD_PAM)
+        self.assertTrue(self.p(R.TEXT_DROPIN).exists())
+        self.assertTrue(self.run.ran("systemctl", "restart", "--no-block", "greetd.service"))
+        out = []
+        R.rescue(["status"], self.root, self.run, say=out.append)
+        self.assertTrue(json.loads(out[0])["textGreeter"])
+        with self.assertRaises(R.Refused):
+            R.rescue(["now"], self.root, self.run, say=out.append)
+
+    def test_the_units(self):
+        unit = R.RESCUE_UNITS["/etc/systemd/system/tessera-login-rescue.service"]
+        self.assertIn("ExecStart=/usr/lib/tessera/tessera-root login-rescue", unit)
+        self.assertIn("getty@tty1.service", unit)
+        self.assertNotIn("[Install]", unit)  # (only greetd failing starts it)
+        dropin = R.RESCUE_UNITS["/etc/systemd/system/greetd.service.d/tessera-rescue.conf"]
+        self.assertIn("OnFailure=tessera-login-rescue.service", dropin)
+        if shutil.which("systemd-analyze"):
+            d = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, d)
+            Path(d, "tessera-login-rescue.service").write_text(unit)
+            p = subprocess.run(["systemd-analyze", "verify", str(Path(d, "tessera-login-rescue.service"))], capture_output=True, text=True)
+            self.assertEqual(p.stderr.strip(), "")
+
+    def test_uninstall_removes_them(self):
+        text = (ROOT / "uninstall.sh").read_text()
+        for path in list(R.RESCUE_UNITS) + [R.TEXT_DROPIN, R.TEXT_GREETER]:
+            self.assertIn(path, text)
+
+
+class GreeterSession(unittest.TestCase):
+    """hypr/greeter-session.sh: the login screen failing twice in a row
+    gives greetd's text login in the same session"""
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.d)
+        self.bin = self.d / "bin"
+        self.bin.mkdir()
+        for tool in ("cat", "mktemp", "rm", "cut"):
+            os.symlink(shutil.which(tool), self.bin / tool)
+        # (the journal's stand-in: runs what it's given, writes nowhere)
+        self.stub("systemd-cat", 'while [ $# -gt 0 ]; do case "$1" in -t|-p) shift 2;; *) break;; esac; done\n'
+                                 '[ $# -gt 0 ] && exec "$@"\ncat >/dev/null\n')
+        # start-hyprland: run N says FAKE_RESULTS' Nth word ("none": nothing)
+        self.stub("start-hyprland", 'n=$(cat "$FAKE_COUNT" 2>/dev/null || echo 0); n=$((n + 1)); echo $n >"$FAKE_COUNT"\n'
+                                    'w=$(echo "$FAKE_RESULTS" | cut -d" " -f$n)\n'
+                                    '[ "$w" = none ] || printf "%s\\n" "$w" >"$TESSERA_GREETER_RESULT"\nexit "${FAKE_CODE:-0}"\n')
+        self.stub("agreety", 'echo "agreety $*" >"$FAKE_AGREETY"\n')
+
+    def stub(self, name, body):
+        (self.bin / name).write_text("#!/bin/sh\n" + body)
+        (self.bin / name).chmod(0o755)
+
+    def session(self, results, code=0, agreety=True):
+        if not agreety:
+            (self.bin / "agreety").unlink()
+        env = {"PATH": str(self.bin), "XDG_RUNTIME_DIR": str(self.d), "FAKE_RESULTS": results, "FAKE_CODE": str(code),
+               "FAKE_COUNT": str(self.d / "count"), "FAKE_AGREETY": str(self.d / "agreety.txt"),
+               "TESSERA_GREETER_LUA": str(self.d / "greeter.lua")}
+        p = subprocess.run(["/bin/sh", str(ROOT / "hypr/greeter-session.sh")], env=env, capture_output=True, text=True, timeout=30)
+        runs = int((self.d / "count").read_text()) if (self.d / "count").exists() else 0
+        said = (self.d / "agreety.txt").read_text().strip() if (self.d / "agreety.txt").exists() else ""
+        return p.returncode, runs, said
+
+    def test_a_login_ends_it(self):
+        self.assertEqual(self.session("0"), (0, 1, ""))
+
+    def test_one_failure_then_a_login(self):
+        self.assertEqual(self.session("1 0"), (0, 2, ""))
+
+    def test_two_failures_give_the_text_login(self):
+        code, runs, said = self.session("1 none", code=1)
+        self.assertEqual(runs, 2)
+        self.assertEqual(said, "agreety --cmd start-hyprland")
+
+    def test_a_login_screen_from_before_that_says_nothing(self):
+        self.assertEqual(self.session("none"), (0, 1, ""))
+
+    def test_no_agreety(self):
+        self.assertEqual(self.session("1 1", agreety=False), (1, 2, ""))
+
+    def test_greeter_start_says_how_it_ended(self):
+        self.assertIn('"$1" >"$TESSERA_GREETER_RESULT"', (SCRIPTS / "greeter-start.sh").read_text())
+
+
+class RescueNote(unittest.TestCase):
+    """rescue-note.py: the note once at the next login, with Restore"""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d)
+        os.environ["TESSERA_SYSTEM_ROOT"] = self.d
+        os.environ["XDG_STATE_HOME"] = os.path.join(self.d, "state")
+        self.addCleanup(os.environ.pop, "TESSERA_SYSTEM_ROOT", None)
+        self.n = load(SCRIPTS / "rescue-note.py", "rescue_note")
+        os.makedirs(os.path.dirname(self.n.NOTE))
+        self.calls = []
+
+    def run_(self, cmd, **k):
+        self.calls.append(cmd)
+        out = "restore" if cmd[0] == "notify-send" and "-w" in cmd else ""
+        return subprocess.CompletedProcess(cmd, 0, out, "")
+
+    def test_once_with_restore(self):
+        Path(self.n.NOTE).write_text(json.dumps({"time": 100, "why": ["greetd kept failing"],
+                                                 "did": ["took Tessera's lines out of /etc/pam.d/greetd"]}))
+        self.n.HELPER = shutil.which("true")
+        self.n.shutil = type("S", (), {"which": staticmethod(lambda n: "/usr/bin/" + n)})
+        self.n.main([], run=self.run_)
+        self.assertTrue(any(c[0] == "notify-send" and "restore=Restore" in c for c in self.calls))
+        self.assertTrue(any(c[:3] == ["pkexec", self.n.HELPER, "rescue"] for c in self.calls))
+        self.calls.clear()
+        self.n.main([], run=self.run_)
+        self.assertEqual(self.calls, [])  # (shown once)
+
+    def test_nothing_without_a_note(self):
+        self.n.main([], run=self.run_)
+        self.assertEqual(self.calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()
