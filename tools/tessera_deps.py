@@ -29,8 +29,8 @@ the one most likely to support it), never a reason to stay behind.
         (tools/tessera-packages.sh adds "outdated" to its "missing", so
         Settings installs them with the rest, one password)
     tessera_deps.py check [--root DIR]
-        install.sh, after its pacman -Syu: what's still not met, in words;
-        exit 1 when something is
+        install.sh, after its pacman -Syu: what's still not met, in words
+        (stderr); exit 1 when something is
 """
 import json
 import os
@@ -373,9 +373,8 @@ def main(argv=None):
         got = check_requirements(requirements(text, _read(os.path.join(root, "compat.json"))), names(text, "PACKAGES"),
                                  own_qs=own_quickshell())
         # (after pacman -Syu: one still too old can't be upgraded any further)
-        plan = {"blocked": got["blocked"] + [dict(o, why="too old") for o in got["outdated"]], "newer": got["newer"]}
-        for line in notes_words(plan):
-            print(line)
+        # (install.sh says itself when Hyprland is newer than tested)
+        plan = {"blocked": got["blocked"] + [dict(o, why="too old") for o in got["outdated"]]}
         msg = blocked_words(plan)
         if msg:
             print(msg, file=sys.stderr)
