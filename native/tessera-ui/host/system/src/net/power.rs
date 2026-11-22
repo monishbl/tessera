@@ -120,8 +120,15 @@ fn set_profile(mode: String) {
                 conn.call_method(Some(*dest), *path, Some("org.freedesktop.DBus.Properties"), "Set", &(*dest, "ActiveProfile", zbus::zvariant::Value::from(mode.as_str()))).is_ok()
             })
         });
-        if !set && tessera_core::util::on_path("powerprofilesctl") {
-            let _ = std::process::Command::new("powerprofilesctl").args(["set", &mode]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+        let set = set
+            || (tessera_core::util::on_path("powerprofilesctl")
+                && std::process::Command::new("powerprofilesctl").args(["set", &mode]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success()));
+        if !set {
+            // (refused, by polkit or a daemon that went away: the menus
+            // showed the new mode while the computer stayed in the old one
+            // with no word)
+            eprintln!("Power: couldn't set the energy mode to {mode}");
+            tessera_core::util::notify("Battery & Power", "dialog-error", "", "Couldn't change the energy mode", &format!("The power daemon didn't take “{}”. Try again, or check that power-profiles-daemon is running.", mode_name(&mode)));
         }
     });
 }

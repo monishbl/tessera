@@ -57,12 +57,42 @@ pub fn is_picture(e: &Entry) -> bool {
     !e.dir && super::grid::kind_of(e) == "Images" && !e.name.to_lowercase().ends_with(".svg")
 }
 
+/// The trash entry a file went to (its name in Trash/files: "a.txt", or
+/// "a.2.txt" when an "a.txt" was there already), as a trash:/// URI: the
+/// newest whose .trashinfo says it came from that path
+const TRASHED_AS: &str = r#"import os, sys, urllib.parse
+want = os.path.abspath(sys.argv[1])
+info = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"), "Trash", "info")
+best = None
+for n in os.listdir(info) if os.path.isdir(info) else []:
+    if not n.endswith(".trashinfo"):
+        continue
+    p = os.path.join(info, n)
+    try:
+        lines = open(p, encoding="utf-8", errors="replace").read().splitlines()
+    except OSError:
+        continue
+    path = next((urllib.parse.unquote(l[5:]) for l in lines if l.startswith("Path=")), "")
+    if path == want and (best is None or os.path.getmtime(p) > best[0]):
+        best = (os.path.getmtime(p), n[: -len(".trashinfo")])
+if best:
+    print("trash:///" + urllib.parse.quote(best[1]))
+"#;
+
+/// trash()'s script: $1 the file, $2 its name, $3 TRASHED_AS
+const TRASH_SH: &str = "e=$(gio trash -- \"$1\" 2>&1) || { notify-send -a Files -i dialog-error \"Couldn't move “$2” to the Trash\" \"${e##*: }\"; exit 1; }; \
+a=$(timeout 600 notify-send -a Files -i user-trash -t 8000 -A undo=Undo 'Moved to Trash' \"$2\"); [ \"$a\" = undo ] || exit 0; \
+u=$(python3 -I -c \"$3\" \"$1\"); [ -n \"$u\" ] || u=\"trash:///$(basename \"$1\")\"; \
+e=$(gio trash --restore \"$u\" 2>&1) || notify-send -a Files -i dialog-error \"Couldn't put “$2” back\" \"${e##*: }\"";
+
 /// Move to Trash, with the notification's Undo (as the QML: gio, then
-/// notify-send with an action that restores it)
+/// notify-send with an action that restores it). gio's failure is said (a
+/// file on a drive without a trash, say: it stayed where it was with no word
+/// before), and Undo restores this file, not another of the same name that
+/// went to the Trash before it
 pub fn trash(path: &str) {
     let name = path.rsplit('/').next().unwrap_or(path).to_string();
-    let script = "gio trash -- \"$1\" || exit; a=$(timeout 600 notify-send -a Files -i user-trash -t 8000 -A undo=Undo 'Moved to Trash' \"$2\"); [ \"$a\" = undo ] && gio trash --restore \"trash:///$(basename \"$1\")\"";
-    let argv = vec!["sh".to_string(), "-c".into(), script.into(), "sh".into(), path.to_string(), name];
+    let argv = vec!["sh".to_string(), "-c".into(), TRASH_SH.into(), "sh".into(), path.to_string(), name, TRASHED_AS.to_string()];
     std::thread::spawn(move || {
         let _ = std::process::Command::new("setsid").arg("-f").args(argv).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
     });

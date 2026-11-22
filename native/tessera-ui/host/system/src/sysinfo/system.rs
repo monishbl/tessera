@@ -133,6 +133,18 @@ pub fn lock_mark_for(run: Option<String>, sig: Option<String>, uid: u32) -> Stri
     format!("{run}/tessera-locked-{sig}")
 }
 
+/// A child of ours that has ended and isn't reaped yet (its /proc stat
+/// says Z); false while it runs, and once it's gone
+fn exited(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|s| stat_zombie(&s))
+}
+
+/// /proc/<pid>/stat's state (after the name in brackets, which may hold
+/// spaces and brackets of its own) is Z
+fn stat_zombie(stat: &str) -> bool {
+    stat.rsplit_once(')').is_some_and(|(_, rest)| rest.trim_start().starts_with('Z'))
+}
+
 fn gap_levels(name: &str) -> (i64, i64) {
     match name {
         "none" => (0, 0),
@@ -185,7 +197,9 @@ impl System {
     }
 
     fn hypr_eval(lua: &str) {
-        tessera_core::services::bridge::run(&["hyprctl", "eval", lua]);
+        // (its "error: …" in the log: a refused hl.config looked applied)
+        let lua = lua.to_string();
+        std::thread::spawn(move || tessera_core::services::hypr::eval_logged(&lua));
     }
 
     fn reload_config() {
@@ -250,7 +264,22 @@ impl System {
             let _ = c.wait();
         }
         if self.night_light {
+            // (Night Light showed on with nothing warming the screen when
+            // hyprsunset was missing or quit at once, as it does when another
+            // one runs or Hyprland won't hand it the colours: now said)
+            if !tessera_core::util::on_path("hyprsunset") {
+                helpers::notify_send(&["-a", "Night Light", "-i", "dialog-error", "Night Light needs hyprsunset", &format!("Install it ({}), then turn Night Light on again.", tessera_core::util::install_hint("hyprsunset", "hyprsunset", "hyprsunset"))]);
+                return;
+            }
             self.sunset = Command::new("setpriv").args(["--pdeathsig", "TERM", "--", "hyprsunset", "-t", &self.night_temp.to_string()]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok();
+            if let Some(pid) = self.sunset.as_ref().map(|c| c.id()) {
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                    if exited(pid) {
+                        helpers::notify_send(&["-a", "Night Light", "-i", "dialog-error", "Night Light didn't start", "hyprsunset stopped at once. If another copy of it runs (started by your Hyprland config), take that one out, then turn Night Light on again."]);
+                    }
+                });
+            }
         }
     }
 
@@ -724,6 +753,15 @@ struct Inhibited(u64, Option<zbus::zvariant::OwnedFd>);
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn an_ended_child_is_told_from_a_running_one() {
+        assert!(stat_zombie("4242 (hyprsunset) Z 1 4242 4242 0 -1"));
+        assert!(!stat_zombie("4242 (hyprsunset) S 1 4242 4242 0 -1"));
+        // (a name with ") Z" in it doesn't fool it)
+        assert!(!stat_zombie("7 (a) Z (b) R 1 7"));
+        assert!(!stat_zombie(""));
+        assert!(!exited(std::process::id())); // (this test, running)
+    }
     #[test]
     fn the_lock_mark_never_falls_back_to_a_shared_tmp() {
         assert_eq!(lock_mark_for(Some("/run/user/7".into()), Some("abc".into()), 7), "/run/user/7/tessera-locked-abc");

@@ -1578,7 +1578,7 @@ impl Menubar {
             match b {
                 "screenshot" => Self::toggle_at(&output, "screenTools", x),
                 "keyboard" => Self::toggle_at(&output, "keyboard", x),
-                "colorPicker" => bridge::run(&["hyprpicker", "-a", "-r"]),
+                "colorPicker" => bridge::run(&["hyprpicker", "-a", "-n", "-r"]), // (-n: the colour it copied is said)
                 "mic" => act("mic", ""),
                 "darkMode" => act("darkMode", ""),
                 "powerProfile" => act("powerProfile", ""),

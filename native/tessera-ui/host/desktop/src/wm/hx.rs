@@ -22,7 +22,9 @@ pub fn dispatch(cmd: impl Into<String>) {
 /// `hyprctl eval <lua>` (Quickshell.execDetached), in order with the dispatches
 pub fn eval(lua: impl Into<String>) {
     let lua = lua.into();
-    hypr::IN_ORDER.run(move || quiet(&["hyprctl".into(), "eval".into(), lua]));
+    hypr::IN_ORDER.run(move || {
+        hypr::eval_logged(&lua);
+    });
 }
 /// A command, after what was queued before it
 pub fn run(argv: Vec<String>) {
