@@ -45,6 +45,7 @@ pub mod hypr;
 pub mod icons;
 pub mod mpris;
 pub mod pulse;
+pub mod radio;
 pub mod notify;
 pub mod status;
 pub mod tray;

@@ -20,6 +20,15 @@
 //!   Otherwise no agent at all: the dialog shows only Polkit.qml's preview
 //!     (`qs ipc call polkit preview | previewFinger`, forwarded as
 //!     `{"to":"polkit","preview":true,"finger":…}`), with its fake action.
+//!
+//! ── Bluetooth pairing (btagent.rs) ───────────────────────────────────────
+//!   The same dialog asks for a Bluetooth pairing: BlueZ's default agent
+//!   (org.bluez.Agent1, KeyboardDisplay) is served with the real polkit
+//!   agent only (the same roles: never in a sandbox, a demo or a test).
+//!   A code to check (phones: Pair / Cancel), a code to type on the device
+//!   (keyboards: shown until it's paired, Cancel stops the pairing), a PIN or
+//!   passkey to type here (the field), or a device asking to pair. While one
+//!   shows, it comes before a password request (BlueZ gives it 60 s).
 //! Not like the QML: Material's hero shape changes without morphing; Glass's
 //! fingerprint turns red on a miss but doesn't pulse or shake (FingerGlyph);
 //! the real agent is untested here (its socket handshake follows polkit
@@ -36,6 +45,7 @@ tessera_core::theme_global!(ui);
 use tessera_core::*;
 
 pub mod agent;
+pub mod btagent;
 
 use tessera_core::services::hypr::Glass;
 use tessera_core::shell::Part;
@@ -43,6 +53,7 @@ use tessera_core::surfaces::polar as shape;
 use tessera_core::theme;
 use tessera_core::wayland::{Spec, State, Surface};
 use agent::{Line, Reply, Request, SessionLine};
+use btagent::{Answer, BtReply, BtRequest, Field};
 use slint::ComponentHandle;
 use smithay_client_toolkit::shell::wlr_layer::{Anchor, KeyboardInteractivity, Layer};
 use smithay_client_toolkit::shell::WaylandSurface;
@@ -53,6 +64,8 @@ use std::time::Duration;
 const NAME: &str = "polkit";
 const NS: &str = "tessera:polkit";
 const PREVIEW: &str = "Authentication is required to install software";
+/// Phosphor's lock (the password request's glyph)
+const LOCK: &str = "\u{e2fe}";
 
 enum M {
     Submit(String),
@@ -97,6 +110,17 @@ struct Win {
     ui: ui::PolkitDialog,
     a11y: Option<crate::a11y::A11y>,
     glass_sent: String,
+}
+
+/// A Bluetooth agent's request on the dialog
+struct BtReq {
+    id: u64,
+    /// the device's object path
+    path: String,
+    name: String,
+    kind: btagent::Kind,
+    /// None: a code that is only shown
+    reply: Option<BtReply>,
 }
 
 struct Req {
@@ -178,6 +202,11 @@ pub struct Polkit {
     /// conversations in a row that failed at once without asking
     quick_fails: u32,
     retry: slint::Timer,
+    /// the Bluetooth agent's requests (the first one shows, before `queue`'s)
+    bt: Vec<BtReq>,
+    bt_error: String,
+    /// the request the field's text was typed for (0: a password's)
+    bt_front: u64,
 }
 
 impl Default for Polkit {
@@ -204,6 +233,9 @@ impl Default for Polkit {
             pam_error: String::new(),
             quick_fails: 0,
             retry: slint::Timer::default(),
+            bt: Vec::new(),
+            bt_error: String::new(),
+            bt_front: 0,
         }
     }
 }
@@ -214,7 +246,7 @@ impl Polkit {
     }
 
     fn shown(&self) -> bool {
-        self.preview || !self.queue.is_empty()
+        self.preview || !self.queue.is_empty() || !self.bt.is_empty()
     }
 
     fn fake_helper() -> Option<String> {
@@ -269,15 +301,57 @@ impl Polkit {
         let message = if self.preview { PREVIEW.to_string() } else { self.queue.first().map(|r| message_of(&r.message)).unwrap_or_default() };
         let hero = if fw { if self.finger_missed { "softBurst" } else { "clover8" } } else if !self.error.is_empty() { "softBurst" } else { "cookie9" };
         let ui = &w.ui;
-        ui.set_message(message.into());
-        ui.set_prompt(if self.preview { "Password".into() } else { prompt_of(&self.ask.prompt).into() });
-        ui.set_secret(self.preview || self.ask.secret);
-        ui.set_error(self.error.clone().into());
-        ui.set_error_count(self.error_count);
-        ui.set_waiting(self.waiting);
-        ui.set_finger_wait(fw);
-        ui.set_finger_missed(self.finger_missed && fw);
-        ui.set_hero(shape::outline(hero, hero, 0.0, 0.0).into());
+        // (a Bluetooth pairing first; the field's text never carries over
+        // between a pairing and a password)
+        let front = self.bt.first().map_or(0, |b| b.id);
+        let switched = front != self.bt_front;
+        self.bt_front = front;
+        if switched {
+            ui.set_text("".into());
+        }
+        if let Some(b) = self.bt.first() {
+            let t = btagent::texts(&b.kind, &b.name);
+            ui.set_pair(true);
+            ui.set_message(t.title.into());
+            ui.set_detail(t.detail.into());
+            ui.set_code(t.code.into());
+            ui.set_prompt(t.prompt.into());
+            ui.set_secret(false);
+            ui.set_numeric(t.field == Field::Passkey);
+            ui.set_field_shown(t.field != Field::None);
+            ui.set_ok_label(t.ok.into());
+            ui.set_ok_shown(!t.ok.is_empty());
+            ui.set_ok_needs_text(t.field != Field::None);
+            ui.set_error(self.bt_error.clone().into());
+            ui.set_error_count(self.error_count);
+            ui.set_waiting(false);
+            ui.set_finger_wait(false);
+            ui.set_finger_missed(false);
+            ui.set_glyph(crate::icons::glyph_or("bluetooth", "lock").into());
+            ui.set_hero(shape::outline("cookie9", "cookie9", 0.0, 0.0).into());
+        } else {
+            ui.set_pair(false);
+            ui.set_detail("".into());
+            ui.set_code("".into());
+            ui.set_numeric(false);
+            ui.set_field_shown(true);
+            ui.set_ok_label("Allow".into());
+            ui.set_ok_shown(true);
+            ui.set_ok_needs_text(true);
+            ui.set_glyph(LOCK.into());
+            ui.set_message(message.into());
+            ui.set_prompt(if self.preview { "Password".into() } else { prompt_of(&self.ask.prompt).into() });
+            ui.set_secret(self.preview || self.ask.secret);
+            ui.set_error(self.error.clone().into());
+            ui.set_error_count(self.error_count);
+            ui.set_waiting(self.waiting);
+            ui.set_finger_wait(fw);
+            ui.set_finger_missed(self.finger_missed && fw);
+            ui.set_hero(shape::outline(hero, hero, 0.0, 0.0).into());
+        }
+        if switched && shown && ui.get_shown() {
+            ui.invoke_focus_field();
+        }
         if shown && !ui.get_shown() {
             ui.set_text("".into());
             w.surface.layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
@@ -338,7 +412,89 @@ impl Polkit {
         self.push(st);
     }
 
+    // ── Bluetooth pairing ───────────────────────────────────────────────
+
+    fn bt_request(&mut self, st: &mut State, r: BtRequest) {
+        match r {
+            BtRequest::Ask { id, path, name, kind, reply } => {
+                // (the same request again: a keyboard's digits typed so far)
+                if let Some(b) = self.bt.iter_mut().find(|b| b.id == id) {
+                    b.kind = kind;
+                    b.name = name;
+                } else {
+                    self.bt.push(BtReq { id, path, name, kind, reply });
+                }
+                self.push(st);
+            }
+            BtRequest::Gone { id } => {
+                if let Some(i) = self.bt.iter().position(|b| b.id == id) {
+                    let b = self.bt.remove(i);
+                    if let Some(r) = b.reply {
+                        r.send(Answer::Cancelled);
+                    }
+                    if i == 0 {
+                        self.bt_error.clear();
+                    }
+                    self.push(st);
+                }
+            }
+            BtRequest::CancelAll => {
+                if !self.bt.is_empty() {
+                    for b in self.bt.drain(..) {
+                        if let Some(r) = b.reply {
+                            r.send(Answer::Cancelled);
+                        }
+                    }
+                    self.bt_error.clear();
+                    self.push(st);
+                }
+            }
+            BtRequest::Registered(Ok(())) => eprintln!("tessera-ui: bluetooth agent registered (the default, {})", btagent::CAPABILITY),
+            BtRequest::Registered(Err(e)) => eprintln!("tessera-ui: bluetooth agent not registered yet ({e}): again when bluetoothd starts"),
+        }
+    }
+
+    /// Pair (or Enter): the answer, when the field's content does
+    fn bt_submit(&mut self, st: &mut State, text: &str) {
+        let Some(b) = self.bt.first() else { return };
+        match btagent::answer_for(&b.kind, text) {
+            Ok(a) => {
+                let b = self.bt.remove(0);
+                if let Some(r) = b.reply {
+                    r.send(a);
+                }
+                self.bt_error.clear();
+            }
+            // (a code that's only shown: nothing to answer)
+            Err("") => return,
+            Err(why) => {
+                self.bt_error = why.to_string();
+                self.error_count += 1;
+            }
+        }
+        self.push(st);
+    }
+
+    /// Cancel (or Esc): turned down; a shown code's pairing is stopped
+    fn bt_cancel(&mut self, st: &mut State) {
+        if self.bt.is_empty() {
+            return;
+        }
+        let b = self.bt.remove(0);
+        match b.reply {
+            Some(r) => {
+                r.send(Answer::No);
+            }
+            None => btagent::cancel_pairing(b.path),
+        }
+        self.bt_error.clear();
+        self.push(st);
+    }
+
     fn cancel(&mut self, st: &mut State) {
+        if !self.bt.is_empty() {
+            return self.bt_cancel(st);
+        }
         if self.preview {
             self.preview = false;
             self.preview_finger = false;
@@ -351,6 +507,9 @@ impl Polkit {
     }
 
     fn submit(&mut self, st: &mut State, text: String) {
+        if !self.bt.is_empty() {
+            return self.bt_submit(st, &text);
+        }
         if self.preview {
             self.error = "Incorrect password. Try again.".into();
             self.error_count += 1;
@@ -481,6 +640,11 @@ impl Part for Polkit {
         if self.real || test {
             agent::spawn(self.real, Self::send(st));
         }
+        // (Bluetooth's pairing agent: the real shell's only, on the system
+        // bus; never a test's, as sandboxes share the system bus)
+        if self.real {
+            btagent::serve(Self::send(st));
+        }
         eprintln!(
             "tessera-ui: polkit: {}",
             if self.real { "the agent, on the system bus" } else if test { "a test agent, on the session bus, with a fake helper" } else { "no agent (previews only)" }
@@ -521,6 +685,10 @@ impl Part for Polkit {
                 }
                 return;
             }
+            Err(m) => m,
+        };
+        let msg = match msg.downcast::<BtRequest>() {
+            Ok(r) => return self.bt_request(st, *r),
             Err(m) => m,
         };
         let msg = match msg.downcast::<SessionLine>() {
@@ -616,6 +784,11 @@ impl Part for Polkit {
         // (requests still open are refused: polkit asks the next agent)
         for r in self.queue.drain(..) {
             r.reply.send(false);
+        }
+        for b in self.bt.drain(..) {
+            if let Some(r) = b.reply {
+                r.send(Answer::Cancelled);
+            }
         }
         if let Some(w) = &self.win {
             Glass::clear_now(&w.output, NS);
