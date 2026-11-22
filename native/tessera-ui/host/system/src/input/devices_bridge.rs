@@ -29,15 +29,15 @@
 //!
 //! Differences: the Wi-Fi/Bluetooth scanners that the QML switched on with a
 //! Binding while the network page is up are `network.rescan` and
-//! `bluetoothctl scan on` (a child killed when the page goes away).
+//! `bluetoothctl scan on` (a child killed when the page goes away, and
+//! while a device pairs or connects: bluez::scan / busy).
 
 use super::common::*;
 use super::device_alerts::picture_for;
 use serde_json::{json, Value};
 use std::any::Any;
 use std::collections::BTreeSet;
-use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 use tessera_core::host::{Host, Service};
 use tessera_core::services::audio::Sound;
@@ -57,30 +57,26 @@ fn arg_bool(args: &[Value], i: usize) -> bool {
     }
 }
 
-/// Settings of the page's last scan child (bluetoothctl scan on)
-static SCAN: Mutex<Option<Child>> = Mutex::new(None);
+/// The page's discovery run (bluetoothctl scan on, in core's list: it stops
+/// while a device pairs or connects, bluez::busy, and the page's 4 s tick
+/// starts it again after)
+const SCAN: &str = "settings";
 
 fn scan_start() {
-    scan_stop();
-    if let Ok(c) = Command::new("bluetoothctl").args(["--timeout", "3600", "scan", "on"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
-        if let Ok(mut s) = SCAN.lock() {
-            *s = Some(c);
-        }
-    }
+    tessera_core::services::bluez::scan(SCAN, 3600);
 }
 
 fn scan_stop() {
-    if let Ok(mut s) = SCAN.lock() {
-        if let Some(mut c) = s.take() {
-            let _ = c.kill();
-            let _ = c.wait();
-        }
-    }
+    tessera_core::services::bluez::stop_scan(SCAN);
 }
 
 fn bluetoothctl(args: Vec<String>) {
     std::thread::spawn(move || {
-        if args.first().map(String::as_str) == Some("pair") {
+        if args.first().map(String::as_str) == Some("power") {
+            // (the answer read: blocked by rfkill, it says why)
+            let on = args.get(1).map(String::as_str) == Some("on");
+            tessera_core::services::radio::toggle(tessera_core::services::radio::Radio::Bluetooth, on);
+        } else if args.first().map(String::as_str) == Some("pair") {
             // (pairable for the pairing, so it's kept: services::bluez::pair)
             let _ = tessera_core::services::bluez::pair(args.get(1).map_or("", String::as_str));
         } else {
@@ -768,6 +764,12 @@ impl Service for DevicesBridge {
                 if self.live && self.page == "network" && gen == self.link_gen {
                     if self.asking.is_empty() {
                         h.ask("network.list", json!([]));
+                    }
+                    // (Bluetooth's discovery again once nothing pairs or
+                    // connects: bluez::scan stopped it meanwhile)
+                    let powered = h.st.shell.get::<Bluetooth>().is_some_and(|b| b.powered);
+                    if tessera_core::services::bluez::may_scan(powered, tessera_core::services::bluez::busy()) && !tessera_core::services::bluez::scanning(SCAN) {
+                        scan_start();
                     }
                     after(h.sender("DevicesBridge"), 4000, M::Scan(gen));
                 }

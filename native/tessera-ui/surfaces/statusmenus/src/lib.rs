@@ -378,8 +378,9 @@ impl StatusMenus {
             self.hovered = false;
         }
         if panel == "bluetoothMenu" && st.shell.get::<Bluetooth>().is_some_and(|b| b.powered) {
-            // (scanning while it shows, as BluetoothPage does)
-            tessera_core::services::bridge::run(&["bluetoothctl", "--timeout", "8", "scan", "on"]);
+            // (scanning while it shows, as BluetoothPage does; none while a
+            // device pairs or connects: bluez::busy)
+            tessera_core::services::bluez::scan("statusmenus", 8);
         }
         if panel == "nowPlaying" {
             self.position.2 = None;
@@ -965,9 +966,12 @@ impl Part for StatusMenus {
             M::Closed => self.closed(st),
             M::PageToggled => {
                 let on = st.shell.get::<Bluetooth>().is_some_and(|b| b.powered);
-                tessera_core::services::bridge::run(&["bluetoothctl", "power", if on { "off" } else { "on" }]);
+                // (the answer read: blocked by rfkill, it says why)
+                tessera_core::services::radio::toggle(tessera_core::services::radio::Radio::Bluetooth, !on);
             }
-            M::PageRefreshed => tessera_core::services::bridge::run(&["bluetoothctl", "--timeout", "8", "scan", "on"]),
+            M::PageRefreshed => {
+                tessera_core::services::bluez::scan("statusmenus", 8);
+            }
             M::PageBlock(i, w) => self.page_block(st, i, &w),
             M::PageMenu(i, x, y) => self.page_menu(st, i, x, y),
             M::SoundBlock(i, w) => self.sound_block(st, i, &w),

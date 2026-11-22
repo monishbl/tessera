@@ -9,6 +9,8 @@
 use crate::Msg;
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 use zbus::blocking::{Connection, MessageIterator};
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
@@ -190,7 +192,7 @@ mod tests {
 /// whatever happened (BlueZ 5.88: `--timeout 3 info <absent>` prints "not
 /// available", waits 3 s, exits 0), so every pairing took 30 s and a failed
 /// one looked like any other. Without it, it ends on BlueZ's answer, 1 on a failure
-fn ctl_full(args: &[&str], secs: u64) -> (Option<i32>, String) {
+pub(crate) fn ctl_full(args: &[&str], secs: u64) -> (Option<i32>, String) {
     use std::io::Read;
     use std::process::{Command, Stdio};
     let Ok(mut child) = Command::new("bluetoothctl").args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() else {
@@ -286,6 +288,8 @@ pub fn outcome(verb: &str, code: Option<i32>, out: &str) -> Result<(), String> {
 /// untrust, cancel-pairing; "pair" is `pair`), its answer read: blocking,
 /// call on a thread
 pub fn act(verb: &str, addr: &str) -> Result<(), String> {
+    // (no discovery while it runs: busy())
+    let _busy = busy_guard();
     if verb == "pair" {
         return pair(addr);
     }
@@ -300,6 +304,7 @@ pub fn act(verb: &str, addr: &str) -> Result<(), String> {
 /// adapter is pairable for the pairing, and set back after; and the bond is
 /// read back from BlueZ, not taken from "Pairing successful"
 pub fn pair(addr: &str) -> Result<(), String> {
+    let _busy = busy_guard();
     let was = pairable_in(&ctl(&["show"], 5));
     if !was {
         ctl(&["pairable", "on"], 5);
@@ -318,6 +323,103 @@ pub fn pair(addr: &str) -> Result<(), String> {
         ctl(&["pairable", "off"], 5);
     }
     result
+}
+
+// ── Busy: no discovery while a device pairs or connects ─────────────────────
+
+/// Devices pairing, connecting or answering a pairing prompt right now
+/// (act, pair, and the pairing agent's open requests: surfaces/polkit/btagent.rs)
+static BUSY: AtomicUsize = AtomicUsize::new(0);
+
+/// The discovery runs started with `scan` (by who started them), stopped
+/// while busy: an inquiry on the radio while it pairs or connects slows the
+/// link down or breaks it (22 Nov: Control Center's page scanned every 8 s,
+/// Settings' for an hour, whatever was pairing)
+static SCANS: Mutex<Vec<(&'static str, std::process::Child)>> = Mutex::new(Vec::new());
+
+/// Held while something pairs or connects: `busy()` says so, and discovery
+/// stops at once (`scan` starts none until the last one is dropped)
+pub struct Busy(());
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        BUSY.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Something pairs or connects from now until the guard is dropped
+pub fn busy_guard() -> Busy {
+    BUSY.fetch_add(1, Ordering::SeqCst);
+    stop_scans();
+    Busy(())
+}
+
+/// A device is pairing or connecting (no rescans now)
+pub fn busy() -> bool {
+    BUSY.load(Ordering::SeqCst) > 0
+}
+
+/// Whether a rescan may start: the adapter is on and nothing is busy
+pub fn may_scan(powered: bool, busy: bool) -> bool {
+    powered && !busy
+}
+
+fn scans() -> std::sync::MutexGuard<'static, Vec<(&'static str, std::process::Child)>> {
+    SCANS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// `bluetoothctl --timeout <secs> scan on` for `who` (its last one replaced),
+/// unless a device is pairing or connecting: false then (ask again later)
+pub fn scan(who: &'static str, secs: u64) -> bool {
+    use std::process::{Command, Stdio};
+    let mut list = scans();
+    // (read under the lock: a guard taken meanwhile stops this one too)
+    if busy() {
+        return false;
+    }
+    // (the ones that ended by themselves reaped; `who`'s last one replaced)
+    list.retain_mut(|(w, c)| {
+        if *w == who {
+            let _ = c.kill();
+            let _ = c.wait();
+            return false;
+        }
+        !matches!(c.try_wait(), Ok(Some(_)))
+    });
+    let secs = secs.to_string();
+    match Command::new("bluetoothctl").args(["--timeout", secs.as_str(), "scan", "on"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+        Ok(c) => {
+            list.push((who, c));
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// Whether `who`'s discovery run is still going
+pub fn scanning(who: &'static str) -> bool {
+    scans().iter_mut().any(|(w, c)| *w == who && matches!(c.try_wait(), Ok(None)))
+}
+
+/// Stop `who`'s discovery run (its bluetoothctl leaves the bus: BlueZ ends
+/// the discovery it asked for)
+pub fn stop_scan(who: &'static str) {
+    scans().retain_mut(|(w, c)| {
+        if *w == who {
+            let _ = c.kill();
+            let _ = c.wait();
+            return false;
+        }
+        true
+    });
+}
+
+/// Stop every discovery run (something starts pairing or connecting)
+pub fn stop_scans() {
+    for (_, mut c) in scans().drain(..) {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
 }
 
 /// Why the last action on each device failed: shown on its row in place of
@@ -386,6 +488,22 @@ mod pair_tests {
         assert!(outcome("pair", Some(1), "Failed to pair: org.bluez.Error.AuthenticationRejected\n").unwrap_err().contains("turned the pairing down"));
         assert!(outcome("connect", None, "").unwrap_err().contains("connect to it again"));
         assert_eq!(outcome("remove", Some(1), "Failed to remove device: org.bluez.Error.Failed\n"), Err("Couldn't forget it. Try again.".to_string()));
+    }
+
+    #[test]
+    fn no_rescans_while_busy() {
+        assert!(may_scan(true, false));
+        assert!(!may_scan(true, true));
+        assert!(!may_scan(false, false));
+        // (the guard counts: two at once, busy until both are dropped)
+        let before = busy();
+        let a = busy_guard();
+        let b = busy_guard();
+        assert!(busy());
+        drop(a);
+        assert!(busy());
+        drop(b);
+        assert_eq!(busy(), before);
     }
 
     #[test]

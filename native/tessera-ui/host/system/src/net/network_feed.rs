@@ -386,7 +386,8 @@ impl Service for NetworkFeed {
                     h.ask("wifijoin.join", json!({"ssid": ssid, "hidden": w["hidden"], "security": if w["security"] == "nopass" { "open" } else { "psk" }, "psk": w["password"]}));
                 }
             }
-            "wifi" | "setWifi" => crate::util::run_async(&["nmcli", "radio", "wifi", if flag(1) { "on" } else { "off" }]),
+            // (the answer read, the state read again: blocked by rfkill, it says why)
+            "wifi" | "setWifi" => tessera_core::services::radio::toggle(tessera_core::services::radio::Radio::Wifi, flag(1)),
             "rescan" => {
                 crate::util::run_async(&["nmcli", "dev", "wifi", "rescan"]);
                 self.refresh(true);

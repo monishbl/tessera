@@ -1336,7 +1336,8 @@ impl ControlCenter {
                 if ss(&g("backends"), "btFix") == "unblock" {
                     ask(h, "backends.fixBluetooth", json!([]));
                 } else {
-                    spawn_cmd(strs(&["bluetoothctl", "power", if on { "off" } else { "on" }]));
+                    // (the answer read: blocked, it says why)
+                    tessera_core::services::radio::toggle(tessera_core::services::radio::Radio::Bluetooth, !on);
                 }
             }
             "focus" => {
@@ -1421,9 +1422,12 @@ impl ControlCenter {
             ("wifi", "refresh") => h.ask("network.rescan", json!([])),
             ("bluetooth", "switch") => {
                 let on = h.st.shell.get::<Bluetooth>().is_some_and(|b| b.powered);
-                spawn_cmd(strs(&["bluetoothctl", "power", if on { "off" } else { "on" }]));
+                tessera_core::services::radio::toggle(tessera_core::services::radio::Radio::Bluetooth, !on);
             }
-            ("bluetooth", "refresh") => spawn_cmd(strs(&["bluetoothctl", "--timeout", "8", "scan", "on"])),
+            // (none while a device pairs or connects: bluez::busy)
+            ("bluetooth", "refresh") => {
+                tessera_core::services::bluez::scan("controlcenter", 8);
+            }
             ("caffeine", "switch") => h.ask("system.setKeepAwake", json!([!bs(&g("system"), "keepAwake"), 0])),
             ("sharing", "switch") => {
                 let on = sharing_level(&hs(h, "sharing"), h.cfg()).0 != "off";
@@ -1659,10 +1663,12 @@ impl ControlCenter {
             let be = g("backends");
             let state = ss(&be, "btState").to_string();
             let powered = h.st.shell.get::<Bluetooth>().is_some_and(|b| b.powered);
-            // (discovery on while the list shows: bluetoothctl's scan, renewed)
-            if (state.is_empty() || state == "ok") && powered && now_ms() - self.bt_scan_at >= 8000 {
+            // (discovery on while the list shows: bluetoothctl's scan, renewed;
+            // paused while a device pairs or connects, as discovery disturbs
+            // it, and renewed at the next second after: bluez::busy)
+            let may = tessera_core::services::bluez::may_scan(powered, tessera_core::services::bluez::busy());
+            if (state.is_empty() || state == "ok") && may && now_ms() - self.bt_scan_at >= 8000 && tessera_core::services::bluez::scan("controlcenter", 9) {
                 self.bt_scan_at = now_ms();
-                spawn_cmd(strs(&["bluetoothctl", "--timeout", "9", "scan", "on"]));
             }
             // (BluetoothList: the notice checks again every 3 s until it's fixed)
             if !state.is_empty() && state != "ok" && now_ms() - self.bt_recheck_at >= 3000 {

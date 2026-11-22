@@ -119,6 +119,9 @@ class Polkit(unittest.TestCase):
         # a test runs only its fake helper, the real agent only polkit's
         self.assertIn("let fake = if self.real { None } else { Self::fake_helper() };", src)
         self.assertIn("if !self.real && fake.is_none() {", src)
+        # Bluetooth's pairing agent: the real shell's only (sandboxes share the system bus)
+        self.assertEqual(src.count("btagent::serve("), 1)
+        self.assertRegex(src, r"if self\.real \{\s*btagent::serve\(Self::send\(st\)\);")
         agent = read(POLKIT / "agent.rs")
         self.assertIn("if system { zbus::blocking::Connection::system() } else { zbus::blocking::Connection::session() }", agent)
         qml = read(ROOT / "shell/modules/polkit/Polkit.qml")
