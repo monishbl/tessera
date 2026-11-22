@@ -1312,7 +1312,8 @@ mod tests {
         assert_eq!(resolve("trackpad/gestures", ""), ("mouse/gestures".into(), "".into()));
         assert_eq!(resolve("dock", "Size"), ("menubar".into(), "Size".into()));
         assert_eq!(resolve("", ""), ("appearance".into(), "".into()));
-        assert_eq!(resolve("about/health", ""), ("about/health".into(), "".into()));
+        // (About → System health is part of the one Health page)
+        assert_eq!(resolve("about/health", ""), ("health".into(), "".into()));
     }
 
     #[test]

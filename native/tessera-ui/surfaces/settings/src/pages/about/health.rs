@@ -1,8 +1,10 @@
-//! System health (pages/about-health.qml): each service Tessera uses,
-//! checked by the shell when the page opens (services/Health.qml; the
-//! bridge asks it), with how to fix what's broken. A fix that runs as
-//! administrator is confirmed first: the row shows exactly what will run,
-//! and only the second press runs it (the shell runs it, never this).
+//! System health (pages/about-health.qml), now the services part of the
+//! one Health page (system/health.rs; the old id about/health goes there):
+//! each service Tessera uses, checked by the shell when the page opens
+//! (services/Health.qml; the bridge asks it), with how to fix what's
+//! broken. A fix that runs as administrator is confirmed first: the row
+//! shows exactly what will run, and only the second press runs it (the
+//! shell runs it, never this).
 
 use super::super::super::model::{btn, Ctx, Opt, Page, Row};
 use super::{b, feed, s, strings};
@@ -34,15 +36,10 @@ fn cap(t: &str) -> String {
     c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
 }
 
-pub fn page(cx: &mut Ctx, p: &mut Page) {
-    p.title = "System health".into();
-    let f = feed(cx);
-    let h = &f["health"];
-    let checks: Vec<Value> = h["checks"].as_array().cloned().unwrap_or_default();
+/// The services' line: (label, detail, any failing). `checks` as the feed
+/// has them, `checking` while the shell asks them
+pub fn summary(checks: &[Value], checking: bool) -> (String, String, bool) {
     let attention: Vec<&Value> = checks.iter().filter(|c| c["status"] == "fail" || c["status"] == "warn").collect();
-    let checking = b(&h["checking"]);
-    let err = s(&h["error"]);
-    let at = s(&h["checkedAt"]);
     let label = if checking && checks.is_empty() {
         "Checking…".to_string()
     } else if attention.is_empty() {
@@ -59,9 +56,23 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
     } else {
         attention.iter().map(|c| s(&c["name"])).collect::<Vec<_>>().join(", ")
     };
-    let failing = attention.iter().any(|c| c["status"] == "fail");
+    (label, detail, attention.iter().any(|c| c["status"] == "fail"))
+}
+
+/// The services part of Settings → Health (it was About → System health,
+/// whose id now goes there: map::RUST_ALIASES): their line with Copy
+/// report and Check again, what else is running, each group's checks with
+/// their fixes
+pub fn services(cx: &mut Ctx, p: &mut Page) {
+    let f = feed(cx);
+    let h = &f["health"];
+    let checks: Vec<Value> = h["checks"].as_array().cloned().unwrap_or_default();
+    let checking = b(&h["checking"]);
+    let err = s(&h["error"]);
+    let at = s(&h["checkedAt"]);
+    let (label, detail, failing) = summary(&checks, checking);
     let top = cx.on(|cx, a| cx.ask("about", if a.i == 0 { "health.copy" } else { "health.check" }, Value::Null));
-    p.group("")
+    p.group("Services")
         .footer(if !err.is_empty() {
             err
         } else if !at.is_empty() {
@@ -163,5 +174,16 @@ mod tests {
         assert_eq!((word("ok"), tone("ok")), ("OK", 0));
         assert_eq!((word("off"), tone("off")), ("Off", 3));
         assert_eq!(cap("pipewire-pulse"), "Pipewire-pulse");
+    }
+
+    #[test]
+    fn the_services_line() {
+        assert_eq!(summary(&[], true).0, "Checking…");
+        let ok = vec![json!({"name": "Sound", "status": "ok"}), json!({"name": "Wi-Fi", "status": "off"})];
+        assert_eq!(summary(&ok, false), ("All good".into(), "Every service Tessera uses is answering.".into(), false));
+        let bad = vec![json!({"name": "Sound", "status": "fail"}), json!({"name": "Bluetooth", "status": "warn"}), json!({"name": "Wi-Fi", "status": "ok"})];
+        assert_eq!(summary(&bad, false), ("2 things need attention".into(), "Sound, Bluetooth".into(), true));
+        let warn = vec![json!({"name": "Bluetooth", "status": "warn"})];
+        assert_eq!(summary(&warn, false), ("1 thing needs attention".into(), "Bluetooth".into(), false));
     }
 }

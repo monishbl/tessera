@@ -224,7 +224,7 @@ impl About {
             if old == "update" && new != "update" {
                 self.sheet.clear();
             }
-            if new == "about/health" {
+            if new == "health" || new == "about/health" {
                 h.ask("health.check", json!([]));
             } else if new == "about/bugreport" {
                 let b = st(h, "bugreport");
@@ -706,6 +706,17 @@ impl About {
                     h.ask("needs.install", json!([[a0s]]));
                 }
             }
+            // Back up and restore: the backup's apps from Arch's repositories
+            // and the AUR, through Software Update's job (the root helper, one
+            // password; the AUR helper), their names checked here too
+            "backup.packages" => {
+                if !self.up.running() {
+                    let args = backup_install_args(&a);
+                    if !args.is_empty() {
+                        self.up.update(&tx, &args);
+                    }
+                }
+            }
             // System health
             "health.check" => h.ask("health.check", json!([])),
             "health.copy" => h.ask("health.copyReport", json!([])),
@@ -1135,10 +1146,48 @@ pub fn update_args(v: &Value) -> Vec<String> {
     }
 }
 
+/// A pacman or AUR package's name as sysupdate.py and the root helper take
+/// one: ^[a-z0-9@._+-]+$, never an option or a dot first
+pub fn is_package(n: &str) -> bool {
+    !n.is_empty() && !n.starts_with(['-', '.']) && n.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "@._+-".contains(c))
+}
+
+/// Back up and restore's install ([[Arch's], [the AUR's]]) as sysupdate.py's
+/// arguments: --install a,b --aur-install c,d; any name that isn't a
+/// package's (an option, a path) and the whole request goes
+pub fn backup_install_args(a: &[Value]) -> Vec<String> {
+    let names = |v: Option<&Value>| -> Option<Vec<String>> {
+        let list: Vec<String> = v.and_then(Value::as_array).map(|l| l.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
+        list.iter().all(|n| is_package(n)).then_some(list)
+    };
+    let (Some(repo), Some(aur)) = (names(a.first()), names(a.get(1))) else { return Vec::new() };
+    let mut out = Vec::new();
+    if !repo.is_empty() {
+        out.extend(["--install".to_string(), repo.join(",")]);
+    }
+    if !aur.is_empty() {
+        out.extend(["--aur-install".to_string(), aur.join(",")]);
+    }
+    out
+}
+
 #[cfg(test)]
 mod update_args_tests {
     use super::update_args;
     use serde_json::json;
+
+    #[test]
+    fn a_backups_packages_go_to_software_update_checked() {
+        use super::backup_install_args as args;
+        assert_eq!(args(&[json!(["firefox", "fnm"]), json!(["yay-bin"])]), ["--install", "firefox,fnm", "--aur-install", "yay-bin"]);
+        assert_eq!(args(&[json!([]), json!(["nvm"])]), ["--aur-install", "nvm"]);
+        assert!(args(&[json!([]), json!([])]).is_empty());
+        // (a name that's an option, or with a comma, a space, a capital: nothing at all)
+        assert!(args(&[json!(["firefox", "--noconfirm"]), json!([])]).is_empty());
+        assert!(args(&[json!(["a,b"]), json!([])]).is_empty());
+        assert!(args(&[json!(["Firefox"]), json!([])]).is_empty());
+        assert!(args(&[json!([]), json!(["x y"])]).is_empty());
+    }
     #[test]
     fn flat_and_nested_both_read() {
         let want = vec!["--install".to_string(), "fprintd".into(), "--aur-install".into(), "libfprint-tod".into()];

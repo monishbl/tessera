@@ -290,7 +290,9 @@ const RUST_PAGES: &[(&str, &str, &[(&str, &str)])] = &[
     // about
     ("update", include_str!("pages/about/update.rs"), &[("options", "update/options"), ("back", "update/back")]),
     ("about", include_str!("pages/about/about.rs"), &[]),
-    ("about/health", include_str!("pages/about/health.rs"), &[]),
+    // (System health: a part of the one Health page now)
+    ("health", include_str!("pages/about/health.rs"), &[]),
+    ("about/backup", include_str!("pages/about/backup.rs"), &[]),
     ("about/bugreport", include_str!("pages/about/bugreport.rs"), &[]),
     ("about/loginitems", include_str!("pages/about/loginitems.rs"), &[]),
 ];

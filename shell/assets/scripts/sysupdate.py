@@ -347,6 +347,24 @@ BACKTRACE = re.compile(r"^\s*(stack backtrace:|\d+: |at \S+:\d+|note: run with `
 def finish(st, text, error=""):
     set_(state=st, phase="done", text=text, error=error, finished=time.time(),
          percent=100 if st == "done" else state["percent"])
+    # (Settings → Health: a system update's end, worked or failed; failed
+    # twice in a row is an alert. Not the fake run's, nor an install's)
+    if state.get("kind") == "update" and not HEALTH_FAKE["on"] and st in ("done", "error"):
+        health_record(st == "done", text + (": " + error if error else ""))
+
+
+HEALTH_FAKE = {"on": False}  # (this run is the fake one: nothing recorded)
+
+
+def health_record(ok, why):
+    """The update's end in the health record (health_event.py, beside this)"""
+    try:
+        spec = importlib.util.spec_from_file_location("health_event", os.path.join(HERE, "health_event.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.update("system", ok, "" if ok else why, "system")
+    except Exception:  # (never the update's failure)
+        pass
 
 
 def tail(n=6):
@@ -1270,6 +1288,7 @@ def hold_awake(why):
 
 def run(fake, plan):
     global log
+    HEALTH_FAKE["on"] = bool(fake)
     os.makedirs(DIR, exist_ok=True)
     lockf = open(LOCK, "w")
     try:

@@ -240,7 +240,11 @@ code=$?
 sleep 0.2 # (the progress reader's last lines)
 err="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("error",""))' "$T/result.json" 2>/dev/null)"
 backup="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("backup",""))' "$T/result.json" 2>/dev/null)"
-[[ $code -ne 0 && -z "$err" ]] && err="The updater stopped unexpectedly (see $T/log)."
+if [[ $code -ne 0 && -z "$err" ]]; then
+    err="The updater stopped unexpectedly (see $T/log)."
+    # (Settings → Health: the updater couldn't say so itself)
+    python3 -I "$SHELL_DIR/assets/scripts/health_event.py" update tessera failed "$err" "$MODE" 2>/dev/null
+fi
 cp "$T/result.json" "$RUN/tessera-update-result.json" 2>/dev/null # for the new shell's Software Update page
 
 # The new Hyprland config (keybinds, gestures, look), then exactly one shell
@@ -304,6 +308,7 @@ sleep 1 # (the bar and dock fade in)
 if [[ -n "$err" ]]; then
     status error 100 "The update didn't finish" "$err"$'\x1f'"${backup:-}"
 elif [[ $up == 0 ]]; then
+    python3 -I "$SHELL_DIR/assets/scripts/health_event.py" update tessera failed "Tessera didn't start again after the update" restart 2>/dev/null
     status error 100 "Tessera didn't start again" "Press Super+Ctrl+Escape to start it, or run tools/tessera-update.py check in the Tessera folder."$'\x1f'"$backup"
 else
     status done 100 "Update installed"

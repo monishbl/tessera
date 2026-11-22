@@ -113,8 +113,13 @@ pub fn section_of(page: &str) -> Option<&'static Section> {
 
 /// Where an older id goes now: (page, part) or None
 pub fn alias(page: &str) -> Option<(&'static str, &'static str)> {
-    ALIASES.iter().find(|a| a.0 == page).map(|a| (a.1, a.2))
+    ALIASES.iter().chain(RUST_ALIASES).find(|a| a.0 == page).map(|a| (a.1, a.2))
 }
+
+/// Older page ids only the Rust Settings moved (SettingsMap.js is frozen):
+/// (id, page, part). About → System health is part of the one Health page
+/// now (22 Nov): links, search hits and `open settings about/health` land there
+pub const RUST_ALIASES: &[(&str, &str, &str)] = &[("about/health", "health", "")];
 
 /// A search with any former name swapped for today's (longest first)
 pub fn search_query(q: &str) -> String {
@@ -133,7 +138,12 @@ pub fn page_of_file(file: &str) -> (String, String) {
     if let Some(p) = PARTS.iter().find(|p| p.0 == file) {
         return (p.1.to_string(), p.2.to_string());
     }
-    (file.replacen('-', "/", 1), String::new())
+    let page = file.replacen('-', "/", 1);
+    // (a QML page the Rust Settings shows elsewhere: its hits go there)
+    match RUST_ALIASES.iter().find(|a| a.0 == page) {
+        Some(a) => (a.1.to_string(), a.2.to_string()),
+        None => (page, String::new()),
+    }
 }
 
 #[cfg(test)]
@@ -174,7 +184,10 @@ mod tests {
     #[test]
     fn pages_of_files() {
         assert_eq!(page_of_file("dock"), ("menubar".into(), "Dock".into()));
-        assert_eq!(page_of_file("about-health"), ("about/health".into(), "".into()));
+        // (System health is a part of the one Health page in the Rust Settings)
+        assert_eq!(page_of_file("about-health"), ("health".into(), "".into()));
+        assert_eq!(alias("about/health"), Some(("health", "")));
+        assert_eq!(page_of_file("about-bugreport"), ("about/bugreport".into(), "".into()));
         assert_eq!(page_of_file("appearance"), ("appearance".into(), "".into()));
         assert_eq!(section_of("about/health").unwrap().name, "About");
         assert_eq!(alias("trackpad"), Some(("mouse", "Trackpad")));
