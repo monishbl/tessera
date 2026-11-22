@@ -322,6 +322,39 @@ Names must match `^[a-z0-9@_+][a-z0-9@._+-]*$`, versions
 above may be held. Both `tessera-bundle.py` and the root helper check this,
 the root helper on its own (it never loads anything from your home).
 
+### Dependencies on update
+
+However Tessera is updated, the packages the **new** version needs are in
+place, at versions it supports, before it runs. One step decides it,
+`tools/tessera_deps.py`, from the new version's own `tools/packages.sh` and
+`compat.json` (read as text, never run):
+
+- **missing**: in `PACKAGES`, not installed (`tessera-packages.sh status <new ref or folder>`);
+- **too old**: below its `MINIMUM=( "name>=version" … )` entry in
+  `packages.sh`, or Hyprland's / Quickshell's `min` in `compat.json`
+  (Tessera's own Quickshell build stands in for an older system one). It's
+  upgraded (`pacman -S --needed`, to the repositories' version) with the
+  missing ones; `tessera-packages.sh` lists it as `outdated` and in `missing`;
+- **stops the update**: a needed package your repositories don't have (one
+  the new version adds, or one with a minimum), or only at a version that
+  doesn't fit (still too old, or above Hyprland's `max`). Nothing changes, and
+  it says which package and what to do (update the system first, turn on the
+  repository, or wait for a Tessera that supports it). A package already
+  installed above a `max` is only a note;
+- **AUR** ones (the pointer theme) are a note, never installed by an update;
+  **dropped** ones are removed only when you choose (Software Update's
+  option, or `tessera update`'s question).
+
+Where each way of updating runs it (`tessera-update.py deps_needs`):
+
+| Path | When | How |
+|---|---|---|
+| Software Update → Update Tessera | `stage`, before anything is downloaded into place (a bundle: after its download is checked, in the lock's run) | Settings installs the missing (and outdated) ones first, then `stage` checks again and installs anything left: the polkit dialog, one password |
+| `tessera update` | the same `stage` | asked in the terminal (`Install them now (one password)? [Y/n]`); with nobody at the terminal it stops and says how |
+| Restart shell now, the screen locking, the next login | `finish` | checked only (no password can be asked with the shell stopped): unmet, the update isn't installed, it's let go, and Software Update says why and offers it again |
+| The older full update (`update-run.sh` without `finish`) | `apply` | checked only, the same way |
+| `install.sh` (and `tessera update` in a developer's checkout) | after its `pacman -Syu --needed` | `tessera_deps.py check`: one still too old stops it, saying why |
+
 ### How a copy updates
 
 `tessera-bundle.py mode`:
