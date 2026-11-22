@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Website and install guide
+    url: https://tessera.monishbl.in
+    about: The install line, the two looks and answers to common questions.
+  - name: Report a bug without a GitHub account
+    url: https://tessera.monishbl.in/bugs/
+    about: The web form. Tessera's Settings has a Report a bug page too.
+  - name: Security problem
+    url: https://github.com/monishbl/tessera/security/advisories/new
+    about: Report it privately, not in a public issue.

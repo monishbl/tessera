@@ -1,0 +1,20 @@
+pkgbase = tessera-git
+	pkgdesc = A desktop shell for Hyprland in two looks, Glass and Material (setup command)
+	pkgver = r698.a2c7484
+	pkgrel = 1
+	url = https://tessera.monishbl.in
+	install = tessera-git.install
+	arch = any
+	license = GPL-3.0-or-later
+	makedepends = git
+	depends = bash
+	depends = git
+	depends = curl
+	depends = sudo
+	optdepends = python-rich: the full-screen interactive installer
+	optdepends = snapper: a snapshot before installing
+	optdepends = timeshift: a snapshot before installing
+	source = tessera::git+https://github.com/monishbl/tessera.git
+	sha256sums = SKIP
+
+pkgname = tessera-git

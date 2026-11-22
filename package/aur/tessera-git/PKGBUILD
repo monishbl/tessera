@@ -1,0 +1,45 @@
+# Maintainer: monishbl <https://github.com/monishbl>
+#
+# DRAFT, not published yet (docs/LAUNCH.md has the steps).
+#
+# Tessera installs per user and updates itself (Software Update, `tessera
+# update`), like ./install.sh does from a clone: the shell goes to
+# ~/.config/quickshell/tessera, its source to ~/.local/share/tessera/repo, and
+# the root parts (login screen, root helper) are set up by the installer with
+# sudo, under /usr/lib/tessera and /usr/share/tessera. So this package doesn't
+# put the shell in /usr. It ships the setup command, `tessera-setup`
+# (setup.sh), which downloads Tessera and runs its installer: every question
+# first, then the whole plan, nothing changed until you start.
+#
+# It must not own /usr/bin/tessera, /usr/lib/tessera or /usr/share/tessera:
+# the installer writes those.
+
+pkgname=tessera-git
+pkgver=r698.a2c7484
+pkgrel=1
+pkgdesc="A desktop shell for Hyprland in two looks, Glass and Material (setup command)"
+arch=('any')
+url="https://tessera.monishbl.in"
+license=('GPL-3.0-or-later')
+depends=('bash' 'git' 'curl' 'sudo')
+optdepends=('python-rich: the full-screen interactive installer'
+            'snapper: a snapshot before installing'
+            'timeshift: a snapshot before installing')
+makedepends=('git')
+install=tessera-git.install
+source=("tessera::git+https://github.com/monishbl/tessera.git")
+sha256sums=('SKIP')
+
+pkgver() {
+    cd tessera
+    printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+package() {
+    cd tessera
+    install -Dm755 setup.sh "$pkgdir/usr/bin/tessera-setup"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 THIRD_PARTY_NOTICES.md "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY_NOTICES.md"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+    install -Dm644 docs/INSTALL.md "$pkgdir/usr/share/doc/$pkgname/INSTALL.md"
+}

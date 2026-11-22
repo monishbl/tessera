@@ -1,257 +1,150 @@
+<div align="center">
+
+<img src="site/public/media/hero.jpg" alt="Tessera: the Badge, a wavy glass seal, over a soft flower" width="720">
+
 # Tessera
 
-(Using it under its earlier name? Your settings and folders move over by themselves; [docs/rename-to-tessera.md](docs/rename-to-tessera.md) has what's left to run once.)
+**Glass. Or Material.** A desktop for Hyprland on Arch Linux.
 
-A glass desktop shell for Hyprland, after macOS, with everything end4's illogical-impulse dots offer and more: Stages, window tiling, Focus modes, an App Drawer and a matching login screen. A second look, Material, follows Android. It's written from scratch in Rust ([Slint](https://slint.dev) on Wayland layer-shell, `native/tessera-ui`) and tuned for integrated GPUs. The earlier [Quickshell](https://quickshell.org) (QML) shell in `shell/` is kept, frozen, as the basic fallback: it starts only when the Rust shell fails to start twice in a row, with a notice and **Try again**.
+[![Licence: GPL-3.0-or-later](https://img.shields.io/badge/licence-GPL--3.0--or--later-blue)](LICENSE)
+[![Arch Linux](https://img.shields.io/badge/Arch_Linux-1793D1?logo=archlinux&logoColor=white)](https://archlinux.org)
+[![Hyprland 0.56–0.57](https://img.shields.io/badge/Hyprland-0.56%E2%80%930.57-58E1FF)](compat.json)
+[![Website](https://img.shields.io/badge/website-tessera.monishbl.in-4F46E5)](https://tessera.monishbl.in)
+[![GitHub stars](https://img.shields.io/github/stars/monishbl/tessera?style=flat)](https://github.com/monishbl/tessera/stargazers)
 
-## What's in it
+[Website](https://tessera.monishbl.in) · [Install](#install) · [Features](docs/FEATURES.md) · [Docs](docs/README.md) · [Report a bug](https://tessera.monishbl.in/bugs/)
 
-**Desktop**
-- Transparent menu bar with everything end4's bar offers:
-  - system, app and Window menus, plus the window title
-  - Spaces with app icons (click or scroll to switch)
-  - tray icons with glass menus, Now Playing and a recording indicator
-  - status items with their own menus: battery and energy mode, Wi-Fi, Bluetooth, sound, CPU and memory, weather, keyboard layout
-  - every item can be hidden in Settings → Menu bar, including the app and Window menus, Search, AI, Quick Settings and the clock
-  - optional buttons: screenshot, colour picker, mic, keyboard, dark mode, energy mode, recording
-  - unread notifications as a bell with a dot, a dot, or a count; scroll gestures (left half brightness, right half volume), auto-hide, per-screen
-  - click a menu to open it, another title to switch, the same title to close
-- **The island** in the menu bar, black like the iPhone's: dots for your spaces, a compact live activity (recording, timer, music, stopwatch), and alerts that spring open with their own animation: headphones and other Bluetooth devices connecting (with a battery ring), USB devices and drives (with Open), displays, the charger filling its ring, sound moving to another output, low battery, track changes, Focus, CPU or memory running hot. When the CPU package passes a temperature you set (90 °C by default), a "Running hot" alert opens and, until it cools, the closed island turns red with heat ripples from the active space. Alerts that arrive together stack in one island and stagger in, each leaving on its own time. Live activities (music, a timer, the stopwatch, recording) sit in the closed island: art, a scrolling title and playing bars, with controls; they replace the space dots, or sit around or beside them (Settings → Menu bar, where every piece can be switched off). Point at it for a mini player over the album art with seek, open-the-player and volume. Several live at once: scroll over the island to switch, or list them all. Pin it open with the pin or a right-click. Notifications can appear there as iOS-style cards instead of banners. Hover it for details; the volume and brightness HUD can show there too. Preview any alert with `tessera-ui ipc call island demo device` (or usb, display, audio, charging, battery, notification).
-- **Overview:** tap Super for this screen's spaces as plain containers with a tile per open window (app icon and name). Drag a tile to another space, or type to search apps.
-- **Privacy dots:** orange while an app uses the microphone, green for the camera, purple while the screen is shared; click for which apps.
-- **More live activities:** downloads and file copies (cp, mv, rsync, dd) with progress and speed; calls and meetings (Discord, Zoom, Teams, Slack, Google Meet and more) with mute, open and leave. Wi-Fi, VPN, hotspot and Ethernet changes are alerts. The status row of the open island shows the CPU temperature next to CPU.
-- Window decorations (Settings → Appearance): none, window controls, or macOS title bars via the hyprbars plugin. Window controls are a small pill at the top of each window that opens into close, minimize and zoom; with the glass plugin, Hyprland draws them so they move with the window.
-- Window corners: adjustable radius with continuous (squircle) corners
-- Minimize: windows park in the dock's Minimized section
-- **Dock:** recent apps, minimized windows, a Downloads stack and Trash, right-click menus, optional magnification and macOS-style auto-hide (rest at the bottom edge to bring it up). Unread-count badges from apps that report them (Telegram, Discord, Thunderbird...) and a dot when an app wants attention. Click the app in front again for App Windows.
-- **Desktop widgets** on a snapping grid: Clock, World Clock, Weather, Calendar, Reminders (with due dates), Batteries, Battery History, Now Playing, System, Screen Time, Stocks, Shortcuts (one-click buttons), Photos, Note (each with its own text) and **Widget Stack** (several widgets in one, scroll to flip; it brings forward music, the next event or a low battery), in small, medium and large sizes. Drag to move; right-click for sizes, Remove and the widget's own options; Edit Widgets (right-click the desktop) opens a gallery to add more.
-- **Files on the desktop** (~/Desktop) on the same grid, from the top right: double-click to open, drag to arrange, right-click for Quick Preview, Share, Move to Trash (with Undo). **Use Stacks** groups them by kind.
-- Rounded screen corners
+</div>
 
-**Windows**
-- **Tiling:** halves, quarters, thirds, fill and centre from the Window menu, from the tile grid that opens when you rest on the green window button, or with Super+Ctrl+Arrows / F / C. **Drag a window to a screen edge or corner** and a glass preview shows where it will go (needs the glass plugin). Arrange two to four windows side by side; Return to Previous Size puts a window back.
-- **App Windows:** one app's windows from every space (three fingers down, or click the app in front in the dock).
-- **Picture in Picture:** browsers' video pop-outs float small in a corner on every space; any window can do it from the Window menu or Super+Shift+P.
-- **Window tabs:** merge windows into tabs (Window menu or Super+T, Super+[ / ] to switch). Tabs look like Hyprland's bar restyled, or Tessera's own with icons (Settings → Appearance).
-- **Stages:** one group of windows in front, the rest as thumbnails on the left. New apps open in their own stage; Shift-click a thumbnail to merge it into the front one. Turn it on in Quick Settings.
+![The Tessera desktop over green leaves: the island at the top shows a pair of earbuds connected, with left, right and case batteries](site/public/media/shots/hero.webp)
 
-**Apps**
-- **App Drawer** (Super+Ctrl+Space or the dock's Apps button): every app in category folders or A–Z, with search and keyboard navigation.
-- **App icon styles** (Settings → Appearance): Default, Dark, Clear, Tinted, or Auto (dark in dark mode), like macOS.
+## Why Tessera
 
-**Panels**
-- **Quick Settings:** each control its own glass chip (or on one glass panel: Settings → Menu Bar & Dock → Quick Settings → Panel background): Wi-Fi, Bluetooth, Focus, Now Playing, display and sound sliders and more. Choose Edit Controls to add, remove, resize and drag controls, from a gallery that also has game mode, anti-flashbang, Identify Song, keyboard, colour picker, screenshot, recording, battery, weather, CPU and memory, EasyEffects and Cloudflare WARP (hidden when their tool isn't installed). Right-click a control (or click a wide one's label) for its details, which open as a second popover beside Quick Settings: Wi-Fi networks, Bluetooth devices, Focus modes, and sound output with a per-app mixer.
-- **Notification Center:** history grouped by app, calendar with your events, to-do list, and a Pomodoro timer with stopwatch.
-- **Notifications:** glass banners with actions. Several stack into one with an expand button, and only a new one slides in.
-- **Search:** apps, calculator, unit and currency conversion ("10 km to mi", "100 usd in eur"), definitions ("define serendipity"), actions, calendar events, `;` clipboard history, `:` emoji, `/` files by name and by what's inside, `>` commands, web search. Shift+Space or Ctrl+Y on a file opens Quick Preview. Ask AI right in Search (`?` or the Ask row) for a short answer, then continue in the sidebar. Type "remind me to call mum at 5pm" to add a reminder.
-- **Clipboard** (Super+V): history with image previews, search, pins that survive restarts, paste as plain text.
-- **Quick Preview:** previews of images, video, audio, PDFs, text and folders without opening an app (Search, the Downloads stack, desktop files).
-- **Nearby sharing**, like AirDrop: send files to phones and computers running LocalSend (Settings → Phone & Sharing → Send files, Share in Quick Preview and on desktop files, or “Send Files” in Search), and receive from them after an Accept in the island (Settings → Phone & Sharing → Visible to: No one, Everyone for 10 min, Everyone). Sending works with receiving off. Android phones too, through **Quick Share** (Nearby Share), built in: phones find this computer in their Quick Share sheet and it finds them in the share sheet, with the same Accept in the island and the PIN both screens show (the same Visible to choice in Settings → Phone & Sharing).
-- **All Windows:** live window previews and Spaces.
-- **Sidebar:**
-  - **AI chat:** add your own models in Settings → AI: display name, model ID, provider, credentials and connection details. Supports Google AI Studio, Vertex AI (Gemini), Anthropic, OpenAI, OpenRouter, Ollama and custom OpenAI-compatible endpoints. Saved models appear in the sidebar and Search; new installations have no preset model list.
-  - **Translator**
-  - **Anime image browser:** safe-rated results unless you switch on Explicit.
+A desktop for Hyprland in two looks: glass that bends what's behind it, or Material in your wallpaper's colours. An island in the menu bar, your Android phone and earbuds close at hand, and an assistant that's yours. On Arch Linux, next to the desktop you already have.
 
-**Focus and calendar**
-- **Focus modes:** Do Not Disturb, Work, Personal, Sleep, and your own. Each lets chosen apps through, can change the wallpaper and light/dark mode while on, and can run on a schedule, for an hour, or until the evening. The active mode shows in the menu bar.
-- **Calendar:** subscribe to Google, iCloud, Outlook or Nextcloud calendars with their .ics link (Settings → Calendar). Events show in Notification Center and Search, with reminder notifications. Add your own reminders in plain words.
+- **Complete.** Menu bar, dock, island, Quick Settings, Notification Center, Search, lock and login screens, Settings and Software, all built to match. Everything end4's illogical-impulse dots offer, and more.
+- **Yours to keep.** Updates never overwrite a setting you've changed, and an update that breaks something can be undone.
+- **Light.** The interface is written in Rust ([Slint](https://slint.dev), `native/tessera-ui`), with the original [Quickshell](https://quickshell.org) shell as an automatic fallback. Tuned for integrated GPUs; it idles at a fraction of a percent of CPU.
+- **Safe to try.** One line runs it on its own console. Your `~/.config` and your usual session aren't touched.
 
-**Tools**
-- Screenshots of the screen, a window or a selection; Super+Shift+5 opens a toolbar like macOS. Area screenshots open in Swappy to crop, draw and annotate (Settings → Keyboard Shortcuts).
-- **Ask about the screen** (Super+Shift+A): select part of the screen and ask the AI about it ("what's this error?").
-- **Circle to search** (Super+Shift+Space, a 3-finger long press, or the circle button in the AI sidebar): circle, scribble over or box anything on the screen and the AI says what it is. **Search the web** under the answer sends the picture to Google Lens (only when you click it) and opens the results.
-- Copy text from the screen (OCR), translate text on screen, record the screen.
-- Overlay widgets (Super+G): notes, resources, recorder, volume mixer, floating image, crosshair, MangoHud FPS limit. Widgets can be pinned and made click-through.
-- On-screen keyboard, colour picker, keyboard-shortcut cheatsheet, periodic table.
+## Highlights
 
-**System**
-- **Lock screen** (Settings → Lock Screen): Widgets layout (large clock, small widgets, Now Playing with controls, notifications) or Classic layout; cards in glass, frost or solid; light, dark or automatic text; notification previews optional.
-- **Bedside Mode:** on a charging laptop left alone, the lock screen becomes a large clock, two widgets or your photos (red at night), and the screen stays on.
-- Power dialog, polkit password prompt, volume and brightness HUD.
-- **Sound effects:** a chime at login, the shutter for screenshots, paper for Empty Trash (Settings → Notifications).
-- **Match apps** (Settings → Appearance): GTK, Qt/KDE, terminal (foot, kitty, Alacritty) and browser colours from your accent or wallpaper, with matugen. **Accessibility:** Reduce transparency and Increase contrast. Icons are each app's own logo, restyled to match the look (clear glass, or Material You themed); icon themes such as Colloid, Tela circle or Papirus are optional. GTK apps use Adwaita and the pointer is Bibata.
-- **Login screen** that matches the lock screen (greetd), set up with `./install.sh --greeter`.
-- **Wallpapers:** dynamic (time of day using sunrise and sunset, or light/dark pictures), live video wallpapers that pause when covered, and an Auto appearance that turns light at sunrise and dark at sunset. **Wallpaper sets** are found in your wallpaper folder automatically: pictures named "Name Light" and "Name Dark" switch with the theme, and a sub-folder of pictures follows the time of day; pick one in Settings → Wallpaper. (macOS wallpapers are Apple's and aren't included; if you have them, name them that way, e.g. "Beach Light.jpg" / "Beach Dark.jpg".)
-- Battery warnings, update notices, idle handling (hypridle).
-- Settings app (Super+,) for appearance, wallpaper, menu bar, dock, desktop and weather, notifications, Focus, calendar, AI, sidebar and shortcuts.
+### Two looks, one desktop
 
-## Glass
+Glass, after macOS. Or Material, after Android: colours from your wallpaper, bold shapes and springy motion. Every feature works in both. Switch in Settings → Appearance → Look.
 
-Choose the material in Settings → Appearance: Glass, Frost or Solid, or your own mix of the three with Advanced… (lens, frost and opacity sliders; the 3D highlights fade as it frosts and are gone when solid):
+<p>
+<img src="site/public/media/shots/looks-g.webp" alt="The Glass look: Quick Settings in clear glass that bends the pastel tiles behind it" width="49%">
+<img src="site/public/media/shots/looks-m.webp" alt="The Material look: the same Quick Settings in tones taken from the tiles, with wide sliders and round tiles" width="49%">
+</p>
 
-| Material | What it does | Cost |
-|---|---|---|
-| **Glass** (default) | Refracts and lenses whatever is behind it, windows included | Low |
-| Frosted | Blurs what's behind it | Low |
-| Solid | No transparency; also makes the menu bar opaque | None |
+### The island
 
-**Lens** sets how thick the glass looks: Thin (edge lensing only), Depth (a thick lens that bends the whole shape), or Auto (depth on large panels, thin on small controls).
+A black island in the menu bar. It shows your spaces, keeps music, timers and recordings live, and springs open for earbuds connecting, drives, the charger, low battery and a CPU running hot.
 
-Real glass over windows needs the **tessera-glass** Hyprland plugin, which the installer builds (or Settings → Appearance → Build plugin…). Hyprland then draws the glass itself, and only where it repaints anyway, so static glass costs nothing. Without the plugin, Glass refracts the wallpaper only and falls back to Frosted over windows. Rebuild the plugin after a Hyprland update; until then Tessera uses Frosted.
+<img src="site/public/media/shots/island-g.webp" alt="An island card: earbuds connected, with left, right and case batteries" width="480">
 
-The shell idles below 0.1% CPU. A live wallpaper is the exception while it's visible (about 10% of a core for a 720p video in testing); it pauses when windows cover most of the screen.
+### Quick Share and Fast Pair
 
-**Motion** (Settings → Appearance): Subtle, or Expressive for springier popovers, buttons and dock. Press and drag on a popover, menu or button and it gives like rubber, then springs back; nothing moves on hover.
+Send photos and files to and from Android phones, over Wi-Fi Direct at full speed without dropping your Wi-Fi, or over Bluetooth when there's no network at all. Open your earbuds' case and they're there, with their picture; one click connects them and shows each battery. LocalSend works too, for other computers and phones.
+
+<img src="site/public/media/shots/share-g.webp" alt="A Quick Share card: receiving 2 photos from a phone, 46%" width="480">
+
+### Point at it. Ask about it.
+
+- **Search** answers sums, conversions and dates as you type: "18% of 2450", "days until christmas", "time in Tokyo", "remind me to call mum at 6".
+- **Circle anything** on the screen and look it up. The picture goes to the web only when you ask.
+- **Copy text from pictures**, read on this computer, nothing uploaded.
+- **The AI sidebar** runs the model you choose: local with Ollama, or any provider you have a key for. Nothing is sent anywhere until you set one up, and chats stay on this computer.
+
+<img src="site/public/media/shots/spotlight-flower.webp" alt="Search over a white flower: 18% of 2450 answered as 441 in a large card" width="640">
+
+### Everything in its place
+
+Alerts, your calendar, to-dos and focus in one sheet. Something that keeps changing stays one entry, with every update kept under it.
+
+<img src="site/public/media/shots/nc-live.webp" alt="Notification Center: one entry for a low battery with 3 updates folded under it, earbuds connected, and the month's calendar" width="480">
+
+### And everything you'd expect
+
+Window tiling, snapping and Stages · All Windows and the App Drawer · clipboard history and an emoji picker · screenshots with markup and screen recording · Focus modes · desktop widgets and Widget Stacks · dynamic and live wallpapers · a matching lock and login screen with Bedside Mode · live captions and offline dictation · night light · per-app volume · Software for the Arch repositories and Flathub.
+
+The full list, with keys and gestures: **[docs/FEATURES.md](docs/FEATURES.md)**.
 
 ## Install
 
-On Arch Linux (a fresh install or your current one), one line does everything:
+**Requirements:** Arch Linux or an Arch-based system (CachyOS, EndeavourOS), Hyprland 0.56–0.57 (the installer sets it up), and a GPU with 3D acceleration (in a VM too).
+
+**Try it** next to your desktop:
 
 ```sh
-bash <(curl -fsSL https://raw.githubusercontent.com/monishbl/tessera/main/setup.sh)
+bash <(curl -fsSL https://tessera.monishbl.in/get)
 ```
 
-It downloads from GitHub, and only when that fails from the other sources in `tools/sources.txt` (`TESSERA_MIRRORS` overrides it). Software Update fetches new code from the official GitHub repository only. Before installing packages it checks your pacman mirror lists (Arch's and CachyOS's): ones that are short or behind are re-ranked first (the old lists kept as `*.tessera-backup`), and when the AUR is down, AUR packages come from Arch's GitHub mirror of it.
-
-It downloads Tessera to `~/.local/share/tessera/repo` and runs the installer. It asks which way you'd like: **interactive** (full screen, arrow keys and space to tick, with live progress and a summary; it needs `python-rich` and offers to install it) or **classic** (one question at a time). Either way every question comes first, then the whole plan (each package, file and service), and nothing changes until you start. The installer then:
-1. checks your system (Arch, sudo, internet, disk space, a GPU render device, virtual machine)
-2. takes a snapshot first when snapper or Timeshift is set up
-3. updates the system and installs Hyprland, Quickshell and everything Tessera uses (all from the official repositories)
-4. optionally installs the Bibata pointer from the AUR (it sets up `yay` if you have no AUR helper), the Apple and Fluent emoji styles (default no), and icon themes (Colloid, Tela circle, Numix Circle, Flat Remix, Papirus; default none: Tessera styles the apps' own icons)
-5. installs what this computer's hardware is missing, as you choose: firmware (Intel SOF sound, Broadcom Wi-Fi), video decoding and Vulkan for each GPU, NVIDIA's driver (only when you tick it), the fingerprint reader's and face camera's drivers (each asked), and a display scale for a sharp screen. See it with `./install.sh --plan`
-6. compiles the shaders and builds the glass plugin against your Hyprland, installing it as `~/.local/share/tessera/tessera-glass.so` (written to a new file and swapped in, so a running session isn't disturbed)
-7. installs the shell (`~/.config/quickshell/tessera`) and its Hyprland config, backing up yours once (`~/.config/hypr.pre-tessera`)
-8. saves the look, light or dark and login style you picked (Tessera's own wallpapers are bundled; nothing is downloaded for them)
-9. turns on NetworkManager, Bluetooth, power profiles and, in a VM, the guest tools
-10. sets up the Tessera login screen (greetd), or starts Hyprland when you log in on tty1
-11. checks the result and tells you how to fix anything that's off
-
-Nothing of yours is removed or turned off unless you chose it: PulseAudio, another network service or another login screen is only replaced when you say so (with `--yes`, never). An optional step that fails is reported and skipped. The installer can be run again at any time (it updates), and everything is logged to `~/.cache/tessera/install.log`. From a clone: `./install.sh`. Options: `--tui` or `--cli` (which installer), `--yes` (no questions: the essentials only, never optional features such as face or fingerprint unlock or the login screen unless you name them; Software Update uses it), `--plan` (show the plan only), `--dry-run`, `--dev` (link the shell to the clone), `--no-deps`, `--no-greeter`, `--no-extras`, `--no-snapshot`, `--verify`; the choices as flags are in `./install.sh --help`.
-
-Afterwards the `tessera` command looks after it:
-
-| Command | |
-|---|---|
-| `tessera doctor` | check everything (in a session, also that the shell and glass plugin are running) |
-| `tessera update` | get the latest Tessera and install it |
-| `tessera rebuild` | rebuild the glass plugin and shaders, e.g. after a Hyprland update |
-| `tessera repair` | restart the shell (duplicated bars, a frozen shell); apps keep running |
-| `tessera logs` | the shell's log |
-| `tessera uninstall` | remove Tessera, put your Hyprland config and login screen back |
-
-**In a virtual machine** (for trying it or a demo): give it 4 GB of memory, 2+ cores and 3D acceleration, or Hyprland can't start: in virt-manager, *Video: Virtio* with *3D acceleration* and *Display Spice: OpenGL* on; in VirtualBox, *VMSVGA* with *Enable 3D Acceleration*. Install Arch (e.g. `archinstall` with a user that has sudo, NetworkManager, and no desktop), log in, run the line above and restart. The installer turns on the software cursor and the guest tools for the VM by itself.
-
-Put your own Hyprland changes in `~/.config/hypr/custom.lua`. Tessera loads it last, and an error in it won't break the rest of the config.
-
-Optional extras:
-- `songrec` for Identify Song
-- `mangohud` for the FPS limit
-- `ollama` for local AI
-- `easyeffects`, `cloudflare-warp-bin` for their toggles
-- hyprbars for title bars: Settings → Appearance → Decorations → Title bars → Install… builds it with `hyprpm`
-
-To preview the login screen from your session: `TESSERA_GREETER_MOCK=1 qs -p shell/greeter.qml` (the password is "tessera"). Tessera runs on Quickshell 0.2 or newer, including end4's pinned build, so the installer doesn't replace an installed one.
-
-## Keys
-
-Super is ⌘. Press **Super+/** for the full list, which is read live from Hyprland.
-
-| Keys | Action |
-|---|---|
-| Super (tap) | Overview of spaces, with search |
-| Super+Space | Search |
-| Super+Ctrl+Space | App Drawer |
-| Super+V | Clipboard history |
-| Super+Tab | All Windows |
-| Super+A | AI and tools sidebar |
-| Super+C / Super+N | Quick Settings / Notification Center |
-| Super+, | Settings |
-| Super+Shift+3 / 4 / 5 | Screenshot screen / area / tools |
-| Super+Shift+S | Screenshot of the screen (saved straight away) |
-| Super+Ctrl+Shift+S | Screenshot of an area |
-| Super+Escape | Close everything (if a panel is stuck) |
-| Super+Ctrl+Escape | Repair the shell: duplicated bars or a frozen shell. Restarts only the shell; apps and windows keep running (also in the system menu) |
-| Super+Shift+T / Y | Copy text from screen / translate screen |
-| Super+Shift+A | Ask AI about part of the screen |
-| Super+Shift+Space | Circle to search |
-| Super+Shift+R | Start or stop recording |
-| Super+G / Super+K | Overlay widgets / on-screen keyboard |
-| Super+Ctrl+Q | Lock |
-| Super+Q, F, D | Close, full screen, zoom window |
-| Super+Ctrl+Arrows | Tile to a half of the screen |
-| Super+Ctrl+F / C / R | Fill, centre, return to previous size |
-| Super+Shift+P | Picture in Picture |
-| Super+T, Super+[ / ] | Merge into tabs (or move a tab out), previous / next tab |
-| Super+1–9 | Spaces |
-| Super+scroll | Next or previous space |
-
-**Gestures**
-
-| Gesture | Action |
-|---|---|
-| 3 fingers left or right | Switch spaces |
-| 3 fingers up / down | Overview / App Windows |
-| 4 fingers left / right | Sidebar / Notification Center |
-| Pinch / spread 4 fingers | App Drawer / Show Desktop |
-| 3 fingers, long press | Circle to search (needs Tessera's glass plugin) |
-| Three-finger drag (Settings → Trackpad) | Move the window under your fingers; the swipes above move to 4 fingers |
-| Touchscreen: pull down from the menu bar | Quick Settings (right third) or Notification Center |
-| Touchscreen: swipe up from the bottom edge | Show a hidden dock |
-
-## Files
-
-To send files with **LocalSend**, open LocalSend on the receiving phone or computer and connect both devices to the same network. In Tessera, go to **Settings → Phone & Sharing → Send files…**, choose one or more files, then click the receiving device. You can also use **Share…** on a desktop file or **Share** in Quick Preview. The receiving device must accept the transfer.
-
-For Android's **Quick Share** (formerly Nearby Share), Tessera speaks the protocol itself; nothing else needs installing. In Settings → Phone & Sharing → Nearby sharing, set **Visible to** to *Everyone for 10 min* or *Everyone* (the same choice as the Quick Settings tile; it covers Android phones and LocalSend devices): phones on the same Wi-Fi then see this computer in their Quick Share sheet, and you're asked in the island before anything is saved (files go to Downloads, or the folder you choose; links and Wi-Fi networks can be opened or copied). To send, use Share on a file and pick the phone; it must have Quick Share open and be visible to Everyone. Without a shared network it works over Bluetooth (turn it on; Settings → Phone & Sharing offers a button): the phone and this computer find each other and connect over Bluetooth LE, then the transfer moves to a Wi-Fi Direct link for full speed, which asks for your password once (it needs root for a moment; nothing stays configured afterwards). Without the password, or without Wi-Fi, it carries on over Bluetooth, which is slow. If they can't find each other, make sure avahi-daemon is running; with a firewall on (ufw, firewalld, nftables or iptables), Tessera opens sharing's ports only while you're visible to others or sharing (Quick Share 53318–53319, DHCP and mDNS; LocalSend 53317; 53319–53320 while a QR-code share or a Chromecast plays a file from this computer) and closes them after, without a password for an administrator at the computer; Settings → Privacy & Security → Firewall says what's open now. If phones ask to pair over Bluetooth, Settings → Phone & Sharing → **Stop pairing prompts** turns off BlueZ's experimental features (Ranging and LE Audio controls), which cause it. For testing with a phone, `TESSERA_QS_DEBUG=1` logs what happens to `$XDG_RUNTIME_DIR/tessera-quickshare.log` (no keys, PINs or passwords).
-
-Dolphin's KDE colors and the desktop light/dark preference follow Tessera even when **Match apps** is off. Fonts, icons and widget styles are preserved. Reopen Dolphin if it retains an old palette after changing modes.
-
-For **AI**, open **Settings → AI**, choose a provider, enter the exact model ID from your account, optionally give it a display name, and add a credential. Custom servers also need their API base URL. Save the model, then select it from the sidebar's model menu or Settings. Models can be edited and removed, and the same model ID can be saved for different providers or connections. Credentials stay in the system keyring or a private file, separate from model settings; existing provider keys and the previously selected model are imported.
-
-**Vertex AI** supports [Express mode API keys](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/start/express-mode/overview) or an OAuth access token with your Google Cloud project and region (including `global`). Pasted OAuth access tokens are short-lived and must be replaced when they expire. Adaptive thinking is an optional per-model setting for Anthropic models that support it.
-
-- `~/.config/tessera/config.json`: settings. Edits apply live.
-- `~/.config/tessera/focus.json` and `calendars.json`: Focus modes and calendar subscriptions (also editable in Settings).
-- `~/.local/state/tessera/`: layout, to-dos, notes, clipboard pins, your reminders, AI chat and API keys when no keyring is running. Private files are owner-only.
-- `~/.cache/tessera/`: the baked glass backdrop, Quick Preview's PDF pages.
-- With Match apps on: `tessera-colors.*` files next to your GTK, terminal and Qt configs (each config gets one include line); turning it off empties them.
-
-## Trying it without installing
-
-From a text console (Ctrl+Alt+F3), run `./dev.sh tty`. It starts Tessera as its own Hyprland session with real input, while your normal desktop keeps running (Ctrl+Alt+F2 to switch back, Super+Shift+Escape twice or Ctrl+Alt+Backspace to end). Its settings live in the sandbox folder.
-
-If it freezes:
-- A watchdog restarts the shell when it stops responding; Super+Ctrl+Alt+R restarts it by hand, Super+Escape closes any stuck panel.
-- If the whole session hangs, switch to another console (Ctrl+Alt+F4) or your normal desktop and run `./dev.sh tty-stop` (`--force` to kill it outright, `--dry-run` to see what it would stop). It only touches the test session.
-
-## Development
-
-All development happens in a nested Hyprland inside a distrobox (`./dev.sh`), never on the live session. It has its own home folder, runtime directory, D-Bus session and a headless 1920×1080 test output for screenshots.
+It clones Tessera into `~/tessera` and asks before installing packages. Then switch to a free console (Ctrl+Alt+F3), log in, and run:
 
 ```sh
-./dev.sh create      # one-time: create the container and install the toolchain
-./dev.sh up          # start the sandbox (Alt stands in for Super)
-./dev.sh reload      # rebuild shaders and restart the shell
-./dev.sh ipc panels open controlCenter TESSERA-TEST   # drive the UI
-./dev.sh shot shot.png                               # screenshot the test output
-./dev.sh hyprctl …   # talk to the sandbox compositor
-./dev.sh logs | down
-./dev.sh perf [secs] [phases]   # CPU, memory, frames and glass copies per scripted phase
+cd ~/tessera && ./demo.sh --check && ./dev.sh tty
 ```
 
-What the sandbox shares with the host, and how it's guarded:
-- **Audio:** the host's PipeWire, so volume changes are real. `TESSERA_HOST_AUDIO=0` turns this off.
-- **System D-Bus:** network and Bluetooth toggles act on real hardware.
-- **Guarded:** power actions only notify, the polkit agent isn't registered, and host AI keys are stripped.
-- **Processes:** distrobox shares the host process list. `./dev.sh down` and `reload` find sandbox processes by their runtime directory, so never use `pkill`.
+Super+Shift+Escape (pressed twice) ends it. To remove it, delete `~/tessera`.
 
-Layout: `native/tessera-ui/` (the shell: Rust and Slint; `native/tessera-ui/RUST-ONLY.md` lists what only it has), `shell/` (the frozen QML fallback for Quickshell, plus the helper scripts in `shell/assets/scripts/` both shells use), `hypr/` (Hyprland config), `sandbox/` (nested compositor), `tools/` (shader, icon, emoji and wallpaper generators). [ROADMAP.md](ROADMAP.md) tracks status.
+**Install it as your desktop:**
 
-## Not included
+```sh
+bash <(curl -fsSL https://tessera.monishbl.in/get) --install
+```
 
-- **Editing subscribed calendars:** calendars added by URL (iCal/webcal subscriptions) are read-only. Events and tasks of a connected Google, iCloud or Microsoft 365 account can be added, edited and deleted, and the change goes back to the account.
+The installer asks every question first, shows the whole plan (each package, file and service), and changes nothing until you start. What it touches:
 
-- **Global app menus:** Linux apps would need an AppMenu registrar service, and Tessera doesn't provide one. The menu bar shows the app and window menus instead.
-- **hyprglass "Ultra" tier:** the plugin hooks Hyprland internals and wasn't tested here. Auto, Glass, Frosted and Solid cover the looks without it.
-- **Vertical or bottom bar:** end4 offers these; a macOS menu bar stays at the top.
+- packages from the official repositories (plus optional AUR extras you tick);
+- your Hyprland config, backed up once to `~/.config/hypr.pre-tessera`;
+- the shell in `~/.config/quickshell/tessera`, settings in `~/.config/tessera`;
+- optionally the Tessera login screen (greetd); another login screen is only replaced if you say so.
 
-Fonts and icons: Phosphor (MIT), Tessera Sans Flex (Google Sans Flex, OFL-1.1) and Tessera Symbols (Material Symbols, Apache-2.0) are bundled; Inter and Papirus are used when installed. The bundled wallpapers are generated by `tools/gen-wallpapers.sh`. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+It takes a snapshot first when snapper or Timeshift is set up, and logs to `~/.cache/tessera/install.log`.
 
+**Uninstall:** `tessera uninstall` puts your Hyprland config and login screen back. Packages stay installed and your settings are kept.
 
-### Google Calendar, Tasks and Keep
+Mirrors, every installer option, virtual machines and the `tessera` command: **[docs/INSTALL.md](docs/INSTALL.md)**.
 
-Settings → Google connects Calendar and Tasks through desktop Online Accounts; users sign in without creating a Google Cloud project. A custom Desktop OAuth client remains an advanced option. Events appear in Calendar/Today/Search; tasks appear alongside local reminders with completion, rename and deletion support. Choose a Google task list for new tasks or keep them local. Keep opens in your browser; native personal Keep synchronization is not supported. See [setup, security and limitations](docs/google-integration.md).
+## Update and undo
+
+Tessera checks for updates every few hours. Open **Settings → Software Update** to see what's new, or run `tessera update`.
+
+- **Your changes win.** If an update touches a setting, shortcut or file you've changed, you decide before anything installs: keep yours, or take the new one. Settings and shortcuts are backed up first.
+- **Undo.** Something broke after a system update? Go back to the exact package versions you had, from the package cache: Settings → Software Update, or `tessera undo-update` (it works from a text console too).
+- **Held back when untested.** A Hyprland newer than the tested range ([compat.json](compat.json)) waits until Tessera supports it.
+- **Channels.** Stable follows the `main` branch; Beta gets changes first.
+
+<img src="site/public/media/shots/settings-update.webp" alt="Settings, Software Update: go back to before the last update, listing the packages it changed" width="640">
+
+## The two looks
+
+| | Glass | Material |
+|---|---|---|
+| After | macOS | Android (Material 3 Expressive) |
+| Surfaces | Glass, Frost or Solid, or your own mix | Tones from your wallpaper |
+| Tuning | Lens, frost, tint and light split, each on its own slider | Colours follow the wallpaper |
+| Status | The default | Experimental: if it doesn't start, Tessera switches back to Glass and tells you |
+
+Real glass over windows comes from **tessera-glass**, a Hyprland plugin the installer builds. Without it, Glass bends the wallpaper only and uses Frost over windows. Switching looks restarts the shell in a few seconds; your apps stay open. More in [docs/material-look.md](docs/material-look.md).
+
+## Documentation
+
+- [Features](docs/FEATURES.md): everything, area by area, with keys and gestures
+- [Install](docs/INSTALL.md): requirements, mirrors, installer options, VMs, the `tessera` command
+- [The Material look](docs/material-look.md)
+- [Google Calendar and Tasks](docs/google-integration.md)
+- [Battery saver](docs/battery-saver.md)
+- [Changelog](CHANGELOG.md) and [roadmap](ROADMAP.md)
+- [All docs](docs/README.md)
+
+## Contributing
+
+Bug reports, ideas and pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md): it covers the sandbox (`./dev.sh`), the tests and the commit style. Please follow the [code of conduct](CODE_OF_CONDUCT.md), and report security issues privately as described in [SECURITY.md](SECURITY.md).
+
+Found a bug? Use **Report a bug** in Tessera's Settings, the [web form](https://tessera.monishbl.in/bugs/), or [open an issue](https://github.com/monishbl/tessera/issues/new/choose) with the output of `tessera doctor`.
 
 ## Licence
 
@@ -259,4 +152,13 @@ Tessera is free software: you can redistribute it and/or modify it under the ter
 
 The fonts, icons, protocol definitions and data Tessera bundles from others keep their own licences; [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists each one, and the licence texts are in [LICENSES/](LICENSES).
 
+## Credits
+
+- [Hyprland](https://hyprland.org), [Quickshell](https://quickshell.org) and [Slint](https://slint.dev), which Tessera is built on.
+- [end4's illogical-impulse](https://github.com/end-4/dots-hyprland): Tessera's default keys and gestures follow its layout ([ROADMAP.md](ROADMAP.md) compares the two).
+- [RQuickShare](https://github.com/Martichou/rquickshare), credited for Quick Share interoperability.
+- Phosphor icons, Google Sans Flex and Material Symbols (bundled as Tessera Sans Flex and Tessera Symbols), Inter. Photos from Unsplash.
+
 **Trademarks.** macOS, AirPlay, iCloud and iPhone are trademarks of Apple Inc.; Android, Quick Share, Fast Pair, Chromecast and Material You are trademarks of Google LLC. They are named here only to say what Tessera works with or resembles. Tessera is not affiliated with or endorsed by Apple or Google.
+
+**An earlier name.** Tessera had a working name until November 2026. If you used it then, your settings and folders move over by themselves; [docs/rename-to-tessera.md](docs/rename-to-tessera.md) lists what's left to run once.

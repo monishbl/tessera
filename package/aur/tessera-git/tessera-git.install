@@ -1,0 +1,24 @@
+post_install() {
+    cat <<'EOF'
+==> Tessera installs for your user. As yourself (not root), run:
+      tessera-setup
+    It downloads Tessera and runs its installer: every question first, then
+    the whole plan, and nothing changes until you start.
+    Afterwards `tessera update` and Settings > Software Update keep it current;
+    `tessera uninstall` removes it.
+EOF
+}
+
+post_upgrade() {
+    cat <<'EOF'
+==> Tessera updates itself: use Settings > Software Update or `tessera update`.
+    Running `tessera-setup` again also updates it.
+EOF
+}
+
+pre_remove() {
+    cat <<'EOF'
+==> Removing this package removes only the `tessera-setup` command.
+    To remove Tessera itself, run `tessera uninstall` as your user first.
+EOF
+}
