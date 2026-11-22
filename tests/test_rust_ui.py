@@ -268,6 +268,10 @@ class Agreement(unittest.TestCase):
             qml = (ROOT / f"shell/modules/settings/RustBridge{group.capitalize()}.qml").read_text()
             self.assertIn(f"feed: {{ {group}: feed }}", qml)
             answered = set(re.findall(r'case "([A-Za-z.]+)":', qml)) | ({"ie.x"} if 'what.startsWith("ie.")' in qml else set())
+            # (a Rust-only act is answered by the Rust host's bridge instead)
+            host = ROOT / f"native/tessera-ui/host/system/src/sysinfo/bridge_{group}.rs"
+            if host.exists():
+                answered |= set(re.findall(r'"([A-Za-z.]+)" =>', host.read_text()))
             for p in (surface("settings") / f"src/pages/{group}").glob("*.rs"):
                 for what in re.findall(rf'cx\.ask\("{group}", "([A-Za-z.]+)"', p.read_text()):
                     self.assertTrue(what in answered or what in FROZEN_QML or (what.startswith("ie.") and "ie.x" in answered), f"{group}: {what}")

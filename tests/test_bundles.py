@@ -480,6 +480,8 @@ class Lock(unittest.TestCase):
         url = B.archive_url("hyprland", "0.57.1-1", "x86_64")
         self.assertEqual(url, "https://archive.archlinux.org/packages/h/hyprland/hyprland-0.57.1-1-x86_64.pkg.tar.zst")
         self.assertEqual(R.lock_archive_url("hyprland", "0.57.1-1", "x86_64"), url)
+        # (a CachyOS rebuild's pkgrel: Arch's file)
+        self.assertEqual(R.lock_archive_url("hyprland", "0.57.1-1.1", "x86_64"), url)
         self.assertTrue(R.ARCHIVE_URL.match(B.archive_url("aquamarine", "1:0.9.5-2", "x86_64")))
         for args in (("hyprland", "0.57.1-1", "arm64"), ("../h", "1-1", "x86_64"), ("hyprland", "1-1/../../x", "x86_64")):
             with self.assertRaises(B.Failed):

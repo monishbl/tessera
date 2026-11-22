@@ -2442,6 +2442,9 @@ def lock_archive_url(name, version, arch):
     parts (never an address from the lock)"""
     if not NAME.match(name) or not PKG_VERSION.match(version) or arch not in PKG_ARCH:
         raise Refused(f"no archive address for {name} {version}")
+    # (a CachyOS rebuild, pkgrel "1.1", is Arch's "1" rebuilt: the archive
+    # only has Arch's; the held check already matches on pkgver)
+    version = re.sub(r"-(\d+)\.\d+$", r"-\1", version)
     url = f"https://archive.archlinux.org/packages/{name[0]}/{name}/{name}-{version}-{arch}.pkg.tar.zst"
     if not ARCHIVE_URL.match(url):
         raise Refused(f"no archive address for {name} {version}")
