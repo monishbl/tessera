@@ -91,6 +91,10 @@ From a clone: `./install.sh`. The full list is in `./install.sh --help`.
 
 `tessera uninstall` (or `./uninstall.sh`, with `--dry-run` to see what it would do) leaves packages installed and keeps your settings in `~/.config/tessera`.
 
+## If Tessera can't log you in
+
+Press Ctrl+Alt+F2, log in on the console, and run `sudo /usr/lib/tessera/tessera-root rescue`. Then go back to the login screen with Ctrl+Alt+F1 and log in with your password. [RECOVERY.md](RECOVERY.md) has the rest: what this undoes, how to put it back, and what protects the login.
+
 ## In a virtual machine
 
 For trying it or a demo: give it 4 GB of memory, 2+ cores and 3D acceleration, or Hyprland can't start.

@@ -576,6 +576,8 @@ class FingerprintPam(unittest.TestCase):
         # (made-up PAM files: the real PAM check is LoginScreensStillStart's)
         self.r.login_screen_starts = lambda *a, **k: True
         self.r.pam_problem = lambda *a, **k: ""
+        self.r.fingerprint_reader = lambda prefix="/": True  # (hardware: HardwareGates' tests)
+        self.r.tpm_present = lambda prefix="/": True
 
     def tearDown(self):
         self.dir.cleanup()
@@ -707,6 +709,8 @@ class Passkeys(unittest.TestCase):
         # (the real PAM check needs the real pam_u2f: LoginScreensStillStart has it)
         self.r.login_screen_starts = lambda *a, **k: True
         self.r.pam_problem = lambda *a, **k: ""
+        self.r.fingerprint_reader = lambda prefix="/": True  # (hardware: HardwareGates' tests)
+        self.r.tpm_present = lambda prefix="/": True
         self.me = pwd.getpwuid(os.getuid()).pw_name
         self.line = f"{self.me}:{'A' * 40},{'B+/=' * 10},es256,+presence+verification"
 

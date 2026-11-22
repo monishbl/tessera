@@ -1064,12 +1064,42 @@ def write_fp_gate(gate=FP_GATE):
     return True
 
 
-def fingerprint(on, where, etc=PAM_ETC, vendor=PAM_VENDOR, module=PAM_FPRINTD, gate=FP_GATE):
+# Features that need hardware never touch the login without it: a reader
+# (fingerprint on), a TPM (passkeys on). Read from /sys and the files the
+# drivers keep, never by asking the device (nothing is woken).
+FP_HWDB = "/usr/lib/udev/hwdb.d/60-autosuspend-fingerprint-reader.hwdb"
+FP_VENDORS = ("27c6", "06cb", "138a", "10a5", "1c7a", "2808", "147e", "08ff", "0a5c")  # (fingerprint.py's makers, and Broadcom's)
+FP_STORE = "/var/lib/fprint"
+
+
+def fingerprint_reader(prefix="/"):
+    """A fingerprint reader is plugged in: a USB device systemd's
+    fingerprint hwdb lists, or one by a reader maker, or fingers fprintd
+    has enrolled (a reader whose driver isn't in libfprint)"""
+    ids = set()
+    for d in glob.glob(_at(prefix, "/sys/bus/usb/devices/*")):
+        v, p = read_text(os.path.join(d, "idVendor")), read_text(os.path.join(d, "idProduct"))
+        if v and p:
+            ids.add((v.strip().lower(), p.strip().lower()))
+    known = {(v.lower(), p.lower()) for v, p in re.findall(r"^usb:v([0-9A-Fa-f]{4})p([0-9A-Fa-f]{4})", read_text(_at(prefix, FP_HWDB)) or "", re.M)}
+    if ids & known or any(v in FP_VENDORS for v, _ in ids):
+        return True
+    return any(files for _, _, files in os.walk(_at(prefix, FP_STORE)))
+
+
+def tpm_present(prefix="/"):
+    """A TPM 2.0 with its resource manager (/dev/tpmrm0): what Passkeys keep their key in"""
+    return bool(glob.glob(_at(prefix, "/sys/class/tpmrm/tpmrm*"))) or os.path.exists(_at(prefix, "/dev/tpmrm0"))
+
+
+def fingerprint(on, where, etc=PAM_ETC, vendor=PAM_VENDOR, module=PAM_FPRINTD, gate=FP_GATE, reader=None):
     """Returns the files changed."""
     if where not in FP_FILES:
         raise Refused("fingerprint: polkit, sudo or login")
     if on and not any(os.path.exists(m) for m in module):
         raise Refused("pam_fprintd isn't installed (fprintd)")
+    if on and not (fingerprint_reader() if reader is None else reader):
+        raise Refused("there's no fingerprint reader here, so no PAM file is changed")
     changed = []
     if on and where == "login" and write_fp_gate(gate):
         changed.append(gate)
@@ -1209,6 +1239,8 @@ def passkeys_pam(on, uid, line_file=None, etc=PAM_ETC, vendor=PAM_VENDOR, module
         have = ""
     changed = []
     if on:
+        if not tpm_present():
+            raise Refused("this computer has no TPM: Passkeys need one, so no PAM file is changed")
         if not any(os.path.exists(m) for m in module):
             raise Refused("pam_u2f isn't installed (pam-u2f): turn Passkeys off and on again to install it")
         if not line_file:
@@ -1251,6 +1283,8 @@ def passkeys(on, uid, prefix="/", run=subprocess.run, exists=os.path.exists):
     pam_u2f key out. Returns what changed."""
     rule = os.path.join(prefix, PK_RULE.lstrip("/"))
     changed = []
+    if on and not tpm_present(prefix):
+        raise Refused("this computer has no TPM (or it's turned off in the firmware settings): Passkeys need one, so nothing was set up")
     if on:
         if not all(exists(os.path.join(prefix, t.lstrip("/"))) for t in PK_TOOLS):
             p = run([PACMAN, "-S", "--needed", "--noconfirm", "--", *PK_PACKAGES], capture_output=True, text=True, timeout=900)

@@ -511,5 +511,80 @@ class RescueNote(unittest.TestCase):
         self.assertEqual(self.calls, [])
 
 
+class HardwareGates(unittest.TestCase):
+    """Features that need hardware never touch the login without it: read
+    from a stand-in /sys, nothing asked of a device"""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root)
+        self.r = load(SCRIPTS / "tessera-root.py", "tessera_root_hw")
+
+    def usb(self, vendor, product):
+        d = Path(self.root, "sys/bus/usb/devices", f"1-{vendor}")
+        d.mkdir(parents=True)
+        (d / "idVendor").write_text(vendor + "\n")
+        (d / "idProduct").write_text(product + "\n")
+
+    def test_no_reader(self):
+        self.usb("046d", "c52b")  # (a mouse's receiver)
+        self.assertFalse(self.r.fingerprint_reader(self.root))
+
+    def test_a_reader_by_its_maker_or_the_hwdb_or_enrolled_fingers(self):
+        self.usb("27c6", "609c")
+        self.assertTrue(self.r.fingerprint_reader(self.root))
+        other = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, other)
+        hwdb = Path(other, self.r.FP_HWDB.lstrip("/"))
+        hwdb.parent.mkdir(parents=True)
+        hwdb.write_text("usb:v1234p5678*\n ID_AUTOSUSPEND=1\n")
+        d = Path(other, "sys/bus/usb/devices/1-1")
+        d.mkdir(parents=True)
+        (d / "idVendor").write_text("1234\n")
+        (d / "idProduct").write_text("5678\n")
+        self.assertTrue(self.r.fingerprint_reader(other))
+        third = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, third)
+        self.assertFalse(self.r.fingerprint_reader(third))
+        Path(third, "var/lib/fprint/you/goodix").mkdir(parents=True)
+        Path(third, "var/lib/fprint/you/goodix/7").write_text("")
+        self.assertTrue(self.r.fingerprint_reader(third))
+
+    def test_fingerprint_on_without_a_reader_changes_nothing(self):
+        etc = Path(self.root, "etc")
+        etc.mkdir()
+        (etc / "greetd").write_text(GREETD_PAM)
+        module = Path(self.root, "pam_fprintd.so")
+        module.write_text("")
+        with self.assertRaises(self.r.Refused):
+            self.r.fingerprint(True, "login", etc=str(etc), vendor=str(Path(self.root, "vendor")), module=(str(module),),
+                               gate=str(Path(self.root, "gate")), reader=False)
+        self.assertEqual((etc / "greetd").read_text(), GREETD_PAM)
+        # (off still works without one)
+        self.r.fingerprint(False, "login", etc=str(etc), vendor=str(Path(self.root, "vendor")), module=(), reader=False)
+
+    def test_no_tpm_no_passkeys(self):
+        self.assertFalse(self.r.tpm_present(self.root))
+        run = Recorder()
+        with self.assertRaises(self.r.Refused):
+            self.r.passkeys(True, os.getuid(), prefix=self.root, run=run)
+        self.assertEqual(run.calls, [])  # (nothing installed either)
+        self.assertFalse(Path(self.root, self.r.PK_RULE.lstrip("/")).exists())
+        Path(self.root, "sys/class/tpmrm/tpmrm0").mkdir(parents=True)
+        self.assertTrue(self.r.tpm_present(self.root))
+
+    def test_no_tpm_no_passkey_lines(self):
+        self.r.tpm_present = lambda prefix="/": False
+        with self.assertRaises(self.r.Refused) as e:
+            self.r.passkeys_pam(True, os.getuid(), "/nonexistent", etc=self.root, keys=os.path.join(self.root, "k"))
+        self.assertIn("TPM", str(e.exception))
+
+    def test_face_never_touches_a_login(self):
+        src = (SCRIPTS / "tessera-root.py").read_text()
+        # (Howdy's line only in polkit's copy, shown to polkit's helper by its drop-in)
+        self.assertEqual(src.count("polkit_with_face("), 4)
+        self.assertNotIn("FACE_MARK", "".join(l for l in src.splitlines() if "FP_FILES[\"login\"]" in l))
+
+
 if __name__ == "__main__":
     unittest.main()
