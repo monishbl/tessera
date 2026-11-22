@@ -8,7 +8,11 @@ given 2 s and all of them 3 s, so a hung daemon shows up as "didn't answer"
 instead of holding the page.
 
   health-check.py [--shell-pid N] [--polkit yes|no|off] [--google]
-        every check, as JSON: [{id, name, group, status, detail, fix, canFix}]
+        every check, as JSON: [{id, name, group, status, detail, fix, canFix,
+        page, target, steps}]: every warn and fail has a remedy, at least
+        one of: a fix the page runs (canFix), the Settings page where that
+        setting lives (page, and the part of it to show: target; ids from
+        native/tessera-ui/surfaces/settings/src/map.rs), numbered steps
         status: ok | warn (works, but something's off) | fail | off (turned
         off on purpose, or not used)
   health-check.py text [same options]
@@ -26,6 +30,7 @@ Nothing runs until the page asks: there's no background polling.
 """
 import argparse
 import concurrent.futures
+import functools
 import importlib.util
 import json
 import os
@@ -49,6 +54,11 @@ PLUGIN_VERSION = 4  # what `hyprctl tessera-glass ping` answers when current
 
 GROUPS = ("Sound", "Network & sharing", "Power", "Desktop", "Tessera itself")
 
+# The Quickshell the idle timers' lock command reaches the shell through
+# (launch-shell.sh's: Tessera's own build when there is one)
+_OWN_QS = os.path.expanduser("~/.local/share/tessera/quickshell/bin/qs")
+QS_BIN = _OWN_QS if os.access(_OWN_QS, os.X_OK) else "qs"
+
 # The fixes this script will run, and nothing else: user services directly,
 # root ones (ROOT_FIXES, below) through pkexec. The firewall's: sharing's
 # ports asked for again, as they were last (sharing-check.py, which asks the
@@ -58,7 +68,19 @@ FIXES = {
     "wireplumber": ["systemctl", "--user", "restart", "wireplumber"],
     "portal": ["systemctl", "--user", "restart", "xdg-desktop-portal", "xdg-desktop-portal-hyprland"],
     "firewall": [sys.executable, "-I", os.path.join(HERE, "sharing-check.py"), "ports", "again"],
+    # (the session's own programs started again as the session starts them,
+    # on their own (setsid), and only when none runs: never a second one)
+    "hypridle": ["sh", "-c", 'pgrep -u "$(id -u)" -x hypridle >/dev/null || setsid -f "$0" "$1" </dev/null >/dev/null 2>&1',
+                 os.path.join(HERE, "start-idle.sh"), QS_BIN],
+    "clipboard": ["sh", "-c", 'pgrep -u "$(id -u)" -f "wl-paste --watch cliphist" >/dev/null || '
+                  'setsid -f wl-paste --watch cliphist store </dev/null >/dev/null 2>&1'],
+    # (what the shell does as it starts: only groups whose wrapper is gone, by their records)
+    "watchers": [sys.executable, "-I", os.path.join(HERE, "process-identity.py"), "reap"],
+    # (the native helpers' own build, in the folder the check looks in)
+    "native": ["bash", os.path.join(SHELL, "native", "build.sh")],
 }
+# Fixes that take longer than a restart (a build), in seconds
+FIX_TIMEOUT = {"native": 600}
 # Sharing's own checks (firewall, Bluetooth pairing prompts), and the root
 # fixes: the fixed list in the root helper (tessera-root.py)
 _spec = importlib.util.spec_from_file_location("sharing_check", os.path.join(HERE, "sharing-check.py"))
@@ -90,15 +112,30 @@ def run(cmd, timeout=EACH):
         return None, str(e)
 
 
-def result(id, name, group, status, detail="", fix=""):
+def result(id, name, group, status, detail="", fix="", page="", target="", steps=()):
+    """One check's row. page/target: the Settings page where its setting
+    lives (and the part of it to show); steps: what to do by hand, in order"""
     broken = status in ("fail", "warn")
     root = broken and id in ROOT_FIXES
     return {"id": id, "name": name, "group": group, "status": status, "detail": detail, "fix": fix,
+            "page": page, "target": target, "steps": list(steps),
             "canFix": broken and (id in FIXES or root), "fixRoot": root,
             # a root fix asks for the password (no root helper installed yet)
             "fixPassword": root and not sharing.helper_installed(),
             # what the button will run, shown before a root fix is confirmed
             "fixCommand": (SHOWN.get(id) or " ".join(ROOT_FIXES[id])) if root else ""}
+
+
+def no_fix(r):
+    """r without its Fix button (a fix that can't help here)"""
+    r.update(canFix=False, fixRoot=False, fixPassword=False, fixCommand="")
+    return r
+
+
+TERMINAL = "In a terminal, run: "
+RESTART = "Restart Tessera: Super+Ctrl+Escape"
+# (Health's list of programs doing Tessera's jobs twice: conflicts.py)
+ALSO_RUNNING = "Health's “Also running” list"
 
 
 def bus_value(out):
@@ -125,13 +162,16 @@ def check_pipewire(_):
             return result("pipewire", "PipeWire", "Sound", "ok", name)
         return result("pipewire", "PipeWire", "Sound", "warn",
                       f"{name} runs, but its PulseAudio part (pipewire-pulse) doesn't answer: most apps and the volume controls use it",
-                      "systemctl --user restart pipewire pipewire-pulse wireplumber (sudo pacman -S pipewire-pulse if it's missing)")
+                      "systemctl --user restart pipewire pipewire-pulse wireplumber (sudo pacman -S pipewire-pulse if it's missing)",
+                      page="sound", steps=["Press Fix: it restarts PipeWire, its PulseAudio part and WirePlumber",
+                                           "If it still says this: " + TERMINAL + "sudo pacman -S pipewire-pulse",
+                                           "Log out and in again"])
     code, out = run(["pactl", "info"])
     if code == 0 and "Server" in out:
         name = re.search(r"Server Name: (.*)", out)
         return result("pipewire", "PipeWire", "Sound", "ok", name.group(1).strip() if name else "Running")
     return result("pipewire", "PipeWire", "Sound", "fail", f"Sound server not answering ({out.strip()[:80]})",
-                  "systemctl --user restart pipewire pipewire-pulse wireplumber")
+                  "systemctl --user restart pipewire pipewire-pulse wireplumber", page="sound")
 
 
 def check_wireplumber(_):
@@ -139,9 +179,10 @@ def check_wireplumber(_):
     if code == 0 and out.strip() == "active":
         return result("wireplumber", "WirePlumber", "Sound", "ok", "Running")
     if code is None and out == "not installed":
-        return result("wireplumber", "WirePlumber", "Sound", "warn", "Couldn't ask systemd", "systemctl --user status wireplumber")
+        return result("wireplumber", "WirePlumber", "Sound", "warn", "Couldn't ask systemd", "systemctl --user status wireplumber",
+                      page="sound", steps=[TERMINAL + "systemctl --user status wireplumber", "If it isn't running, press Fix"])
     return result("wireplumber", "WirePlumber", "Sound", "fail", "Not running: devices and volume won't follow",
-                  "systemctl --user restart wireplumber")
+                  "systemctl --user restart wireplumber", page="sound")
 
 
 # ── Network & sharing ───────────────────────────────────────────────────
@@ -155,8 +196,11 @@ def check_networkmanager(_):
     code, out = run(["nmcli", "-t", "-f", "RUNNING,STATE", "general"])
     if code == 0 and out.startswith("running"):
         state = out.strip().split(":", 1)[-1]
-        return result("networkmanager", "NetworkManager", "Network & sharing", "ok" if state.startswith("connected") else "warn",
-                      "Connected" if state.startswith("connected") else f"Running, {state}")
+        if state.startswith("connected"):
+            return result("networkmanager", "NetworkManager", "Network & sharing", "ok", "Connected")
+        # (running, only not connected: starting it again wouldn't help)
+        return no_fix(result("networkmanager", "NetworkManager", "Network & sharing", "warn", f"Running, {state}",
+                             page="network", target="Wi-Fi", steps=["Open Wi-Fi & Bluetooth and choose a network"]))
     # Something else runs the network on purpose: switching is a choice (the
     # installer offers it), not a fix. (NetworkManager turned on but stopped
     # is still broken, even with iwd under it.)
@@ -167,7 +211,7 @@ def check_networkmanager(_):
             return result("networkmanager", "NetworkManager", "Network & sharing", "off",
                           f"Network managed by {'/'.join(others)}; Tessera's Wi-Fi menus need NetworkManager")
     return result("networkmanager", "NetworkManager", "Network & sharing", "fail", "Not running: Wi-Fi and the network menu won't work",
-                  "sudo systemctl enable --now NetworkManager")
+                  "sudo systemctl enable --now NetworkManager", page="network", target="Wi-Fi")
 
 
 def adapters(tree):
@@ -187,15 +231,16 @@ def check_bluetooth(_):
             if c == 0 and bus_value(v) is True:
                 return result("bluetooth", name, "Network & sharing", "ok", "On")
         return result("bluetooth", name, "Network & sharing", "off", "Off. Quick Share needs it to find phones without Wi-Fi",
-                      "Turn it on in Quick Settings or Settings → Bluetooth")
+                      "Turn it on in Quick Settings or Settings → Bluetooth", page="network", target="Bluetooth")
     if not any(os.path.exists(os.path.join(SYSTEM, d, "bluetooth/bluetoothd")) for d in ("usr/lib", "usr/libexec")) and \
             not shutil.which("bluetoothd"):
         r = result("bluetooth", name, "Network & sharing", "fail", "BlueZ (the Bluetooth service) isn't installed",
-                   "sudo pacman -S bluez bluez-utils, then sudo systemctl enable --now bluetooth")
-        r.update(canFix=False, fixRoot=False, fixPassword=False, fixCommand="")  # (installing isn't one of the fixes)
-        return r
+                   "sudo pacman -S bluez bluez-utils, then sudo systemctl enable --now bluetooth",
+                   steps=[TERMINAL + "sudo pacman -S bluez bluez-utils", TERMINAL + "sudo systemctl enable --now bluetooth",
+                          "Come back here and press Check again"])
+        return no_fix(r)  # (installing isn't one of the fixes)
     return result("bluetooth", name, "Network & sharing", "fail", "The Bluetooth service isn't running",
-                  "sudo systemctl enable --now bluetooth")
+                  "sudo systemctl enable --now bluetooth", page="network", target="Bluetooth")
 
 
 def check_avahi(_):
@@ -204,7 +249,7 @@ def check_avahi(_):
         return result("avahi", "Avahi (finding nearby devices)", "Network & sharing", "ok", bus_value(out))
     return result("avahi", "Avahi (finding nearby devices)", "Network & sharing", "fail",
                   "Not running: LocalSend and Quick Share can't find devices on your network",
-                  "sudo systemctl enable --now avahi-daemon")
+                  "sudo systemctl enable --now avahi-daemon", page="phone", target="Nearby sharing")
 
 
 def check_firewall(_):
@@ -223,7 +268,10 @@ def check_firewall(_):
                    f"{kind}: sharing's ports didn't {'close' if closing else 'open'}: " +
                    (f["error"] or "Tessera's system helper isn't installed yet.") +
                    ("" if closing else " Phones can't reach this computer while it's visible."),
-                   "Run Software Update once" if older else "Try again: the Fix button here")
+                   "Run Software Update once" if older else "Try again: the Fix button here",
+                   page="update" if older else "security", target="" if older else "Firewall",
+                   steps=["Open Software Update and install what it offers: it installs Tessera's system helper",
+                          "Then turn visibility on again in Phone & Sharing"] if older else ())
         r["canFix"] = not older  # (an older helper: only an update helps)
         return r
     if f["open"]:
@@ -240,7 +288,8 @@ def check_btpairing(_):
                       "Phones connect for Quick Share without pairing")
     return result("btpairing", name, "Network & sharing", "warn",
                   "BlueZ's experimental Ranging and LE Audio control profiles make phones ask to pair when they send with Quick Share",
-                  "Turn those profiles off (headphone batteries keep working): the Fix button, which restarts Bluetooth")
+                  "Turn those profiles off (headphone batteries keep working): the Fix button, which restarts Bluetooth",
+                  page="phone", target="Android phones (Quick Share)")
 
 
 def check_portal(_):
@@ -249,11 +298,14 @@ def check_portal(_):
     if code != 0:
         return result("portal", "Desktop portal", "Desktop", "fail",
                       "Not answering: file pickers, screen sharing and screenshots from apps won't open",
-                      "systemctl --user restart xdg-desktop-portal xdg-desktop-portal-hyprland")
+                      "systemctl --user restart xdg-desktop-portal xdg-desktop-portal-hyprland",
+                      steps=["Press Fix: it restarts the portals", "If it still says this, log out and in again"])
     code2, names = run(["busctl", "--user", "list", "--activatable"])
     if code2 == 0 and "org.freedesktop.impl.portal.desktop.hyprland" not in names:
-        return result("portal", "Desktop portal", "Desktop", "warn", "The Hyprland portal isn't installed: screen sharing won't work",
-                      "sudo pacman -S xdg-desktop-portal-hyprland")
+        # (restarting the portals doesn't install it)
+        return no_fix(result("portal", "Desktop portal", "Desktop", "warn", "The Hyprland portal isn't installed: screen sharing won't work",
+                             "sudo pacman -S xdg-desktop-portal-hyprland",
+                             steps=[TERMINAL + "sudo pacman -S xdg-desktop-portal-hyprland", "Log out and in again"]))
     return result("portal", "Desktop portal", "Desktop", "ok", f"File chooser version {bus_value(out)}")
 
 
@@ -264,7 +316,9 @@ def check_goa(opts):
     if code == 0 and "org.gnome.OnlineAccounts" in out:
         return result("goa", "GNOME Online Accounts", "Network & sharing", "ok", "Available")
     return result("goa", "GNOME Online Accounts", "Network & sharing", "fail", "Not installed: Google sign-in needs it",
-                  "sudo pacman -S gnome-online-accounts")
+                  "sudo pacman -S gnome-online-accounts", page="accounts", target="Google",
+                  steps=[TERMINAL + "sudo pacman -S gnome-online-accounts", "Log out and in again",
+                         "Open Accounts: your Google account should be connected again"])
 
 
 def check_geoclue(_):
@@ -272,7 +326,8 @@ def check_geoclue(_):
     if code == 0 and "org.freedesktop.GeoClue2" in out:
         return result("geoclue", "Location (GeoClue)", "Network & sharing", "ok", "Available")
     return result("geoclue", "Location (GeoClue)", "Network & sharing", "warn",
-                  "Not installed: weather uses your network's rough location instead", "sudo pacman -S geoclue")
+                  "Not installed: weather uses your network's rough location instead", "sudo pacman -S geoclue",
+                  steps=[TERMINAL + "sudo pacman -S geoclue", "Log out and in again"])
 
 
 # ── Power ───────────────────────────────────────────────────────────────
@@ -283,7 +338,7 @@ def check_upower(_):
     if code == 0:
         return result("upower", "UPower (battery)", "Power", "ok", f"Version {bus_value(out)}")
     return result("upower", "UPower (battery)", "Power", "fail", "Not answering: battery level and charging won't show",
-                  "sudo systemctl enable --now upower")
+                  "sudo systemctl enable --now upower", page="power")
 
 
 # Power managers that power-profiles-daemon would fight with (Tessera leaves it
@@ -308,16 +363,24 @@ def check_profiles(_):
     if other:
         return result("profiles", "Energy modes", "Power", "off", f"Managed by {other}")
     return result("profiles", "Energy modes", "Power", "fail", "power-profiles-daemon isn't running: Low Power and Performance won't work",
-                  "sudo systemctl enable --now power-profiles-daemon")
+                  "sudo systemctl enable --now power-profiles-daemon", page="power", target="Energy mode")
 
 
 def check_hypridle(_):
     code, out = run(["pgrep", "-u", str(os.getuid()), "-x", "hypridle"])
     if code == 0 and out.strip():
         return result("hypridle", "Idle and lock", "Power", "ok", "Running")
+    if not shutil.which("hypridle"):
+        return no_fix(result("hypridle", "Idle and lock", "Power", "fail",
+                             "hypridle isn't installed: the screen won't dim, lock or sleep when you're away",
+                             "sudo pacman -S hypridle", page="power", target="When you're away",
+                             steps=[TERMINAL + "sudo pacman -S hypridle", "Log out and in again"]))
     return result("hypridle", "Idle and lock", "Power", "fail",
                   "Not running: the screen won't dim, lock or sleep when you're away",
-                  "Log out and in again; if it stays, run hypridle from a terminal to see why")
+                  "Log out and in again; if it stays, run hypridle from a terminal to see why",
+                  page="power", target="When you're away",
+                  steps=["Press Fix: it starts the idle timers again", "If it still says this, log out and in again",
+                         "Still not running: " + TERMINAL + "hypridle, and read what it says"])
 
 
 # ── Desktop ─────────────────────────────────────────────────────────────
@@ -327,7 +390,8 @@ def check_notifications(opts):
                      "GetConnectionUnixProcessID", "s", "org.freedesktop.Notifications"])
     if code != 0:
         return result("notifications", "Notifications", "Desktop", "fail", "Nothing is receiving notifications",
-                      "Restart Tessera: Super+Ctrl+Escape")
+                      "Restart Tessera: Super+Ctrl+Escape", page="notifications",
+                      steps=[RESTART, "If it still says this, log out and in again"])
     m = re.search(r"(\d+)\s*$", out.strip())
     pid = int(m.group(1)) if m else 0
     owner = ""
@@ -341,7 +405,11 @@ def check_notifications(opts):
         return result("notifications", "Notifications", "Desktop", "ok", "Tessera shows them")
     return result("notifications", "Notifications", "Desktop", "warn",
                   f"Another program ({owner or 'unknown'}) is showing notifications instead of Tessera",
-                  f"Stop it from starting with your session (pid {pid}), then restart Tessera")
+                  f"Stop it from starting with your session (pid {pid}), then restart Tessera", page="notifications",
+                  steps=[f"Find {owner or 'it'} in {ALSO_RUNNING}, your Hyprland config's exec-once lines or ~/.config/autostart",
+                         f"Stop it from starting with your session (if it's a service: systemctl --user disable --now {owner})"
+                         if owner else "Stop it from starting with your session",
+                         RESTART])
 
 
 def check_polkit(opts):
@@ -351,17 +419,22 @@ def check_polkit(opts):
         return result("polkit", "Password prompts", "Desktop", "ok", "Tessera asks for your password")
     return result("polkit", "Password prompts", "Desktop", "fail",
                   "Tessera's password prompt isn't registered: apps asking for admin rights will fail",
-                  "Close any other polkit agent (polkit-gnome, polkit-kde), then restart Tessera: Super+Ctrl+Escape")
+                  "Close any other polkit agent (polkit-gnome, polkit-kde), then restart Tessera: Super+Ctrl+Escape",
+                  page="security",
+                  steps=[f"Stop any other password agent (polkit-gnome, polkit-kde) from starting with your session: {ALSO_RUNNING} names it",
+                         RESTART])
 
 
 def check_clipboard(_):
     if not shutil.which("cliphist"):
-        return result("clipboard", "Clipboard history", "Desktop", "fail", "cliphist isn't installed", "sudo pacman -S cliphist")
+        return result("clipboard", "Clipboard history", "Desktop", "fail", "cliphist isn't installed", "sudo pacman -S cliphist",
+                      steps=[TERMINAL + "sudo pacman -S cliphist", "Log out and in again (the session starts its recorder)"])
     code, out = run(["pgrep", "-u", str(os.getuid()), "-f", "wl-paste --watch cliphist"])
     if code == 0 and out.strip():
         return result("clipboard", "Clipboard history", "Desktop", "ok", "Recording")
     return result("clipboard", "Clipboard history", "Desktop", "fail", "Nothing is recording what you copy",
-                  "Log out and in again (the session starts it)")
+                  "Log out and in again (the session starts it)",
+                  steps=["Press Fix: it starts the recorder again", "If it still says this, log out and in again"])
 
 
 def check_recorder(_):
@@ -369,8 +442,13 @@ def check_recorder(_):
         return result("recorder", "Screen recording", "Desktop", "ok", "gpu-screen-recorder")
     if shutil.which("wf-recorder"):
         return result("recorder", "Screen recording", "Desktop", "warn", "Using wf-recorder: no pause, one sound source",
-                      "sudo pacman -S gpu-screen-recorder")
-    return result("recorder", "Screen recording", "Desktop", "fail", "No screen recorder installed", "sudo pacman -S gpu-screen-recorder")
+                      "sudo pacman -S gpu-screen-recorder", steps=[TERMINAL + "sudo pacman -S gpu-screen-recorder"])
+    return result("recorder", "Screen recording", "Desktop", "fail", "No screen recorder installed", "sudo pacman -S gpu-screen-recorder",
+                  steps=[TERMINAL + "sudo pacman -S gpu-screen-recorder"])
+
+
+FREE_SPACE = ["Empty the Trash", "Delete big files you don't need from Downloads",
+              "Remove old packages: " + TERMINAL + "sudo pacman -Sc"]
 
 
 def check_disk(_):
@@ -378,13 +456,14 @@ def check_disk(_):
     try:
         free = shutil.disk_usage(path if os.path.exists(path) else os.path.expanduser("~")).free
     except OSError as e:
-        return result("disk", "Disk space", "Desktop", "warn", str(e))
+        return result("disk", "Disk space", "Desktop", "warn", str(e),
+                      steps=["Check that your home folder's disk is there and not read-only", "Press Check again"])
     gb = free / 1024 ** 3
     if gb < 0.5:
         return result("disk", "Disk space", "Desktop", "fail", f"{gb:.1f} GB free: settings and history may fail to save",
-                      "Free some space (empty the Trash, or sudo pacman -Sc for old packages)")
+                      "Free some space (empty the Trash, or sudo pacman -Sc for old packages)", steps=FREE_SPACE)
     if gb < 2:
-        return result("disk", "Disk space", "Desktop", "warn", f"{gb:.1f} GB free", "Free some space soon")
+        return result("disk", "Disk space", "Desktop", "warn", f"{gb:.1f} GB free", "Free some space soon", steps=FREE_SPACE)
     return result("disk", "Disk space", "Desktop", "ok", f"{gb:.0f} GB free")
 
 
@@ -412,6 +491,37 @@ def compat():
         return {}
 
 
+@functools.lru_cache(maxsize=None)
+def install_mode():
+    """How this copy is installed and updates: bundle (a signed version,
+    nothing built here: its plugin and helpers came built, and a file
+    written into it breaks its check), git (a normal install following a
+    branch) or dev (a checkout of your own). tools/tessera-bundle.py says;
+    without it, a bundle.json beside the source means a bundle"""
+    forced = os.environ.get("TESSERA_UPDATE_MODE", "")
+    if forced in ("bundle", "git", "dev"):
+        return forced
+    src = source()
+    try:
+        spec = importlib.util.spec_from_file_location("tessera_bundle", os.path.join(src, "tools", "tessera-bundle.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.mode(src)
+    except Exception:
+        return "bundle" if os.path.isfile(os.path.join(src, "bundle.json")) else "dev"
+
+
+def bundle_steps(what):
+    """A bundle's part missing or out of step (what: "glass plugin", …):
+    nothing is built on a bundle install, so Software Update (it puts the
+    held packages back at the versions the bundle was built with and fetches
+    a whole version), then the links put back"""
+    ensure = os.path.join(source(), "tools", "tessera-bundle.py")
+    return ["Open Software Update and install what it offers: it brings this version's " + what +
+            " and the Hyprland it's built for", "Log out and in again",
+            "Still the same: " + TERMINAL + f"python3 -I {ensure} ensure, then log out and in"]
+
+
 def version_tuple(v):
     return tuple(int(x) for x in re.findall(r"\d+", v)[:3])
 
@@ -423,7 +533,8 @@ def check_hyprland(_):
     except ValueError:
         tag = ""
     if not tag:
-        return result("hyprland", "Hyprland", "Tessera itself", "fail", "Couldn't ask Hyprland", "Is this a Hyprland session?")
+        return result("hyprland", "Hyprland", "Tessera itself", "fail", "Couldn't ask Hyprland", "Is this a Hyprland session?",
+                      steps=["Log out", "Choose the Tessera (Hyprland) session at the login screen, then log in"])
     rng = compat().get("hyprland", {})
     v = version_tuple(tag)
     lo = version_tuple(rng.get("min", "0"))
@@ -439,10 +550,13 @@ def check_hyprland(_):
     if v >= lo:
         return result("hyprland", "Hyprland", "Tessera itself", "warn",
                       f"{tag.lstrip('v')} is newer than Tessera is tested with ({hi}): the glass or some settings may not work",
-                      "Run Software Update when a Tessera that supports it is out")
+                      "Run Software Update when a Tessera that supports it is out", page="update",
+                      steps=["Open Software Update and install Tessera's update when there is one",
+                             "Until then, if the glass or a setting misbehaves, Report a Bug and say what you saw"])
     return result("hyprland", "Hyprland", "Tessera itself", "warn",
                   f"{tag.lstrip('v')} is older than Tessera needs ({rng.get('min', '?')})",
-                  "Run Software Update (it updates the system)")
+                  "Run Software Update (it updates the system)", page="update",
+                  steps=["Open Software Update and install the system update", "Log out and in again"])
 
 
 def check_plugin(_):
@@ -458,14 +572,28 @@ def check_plugin(_):
             return result("plugin", "Glass plugin", "Tessera itself", "warn",
                           f"Loaded (version {n}), but pointer boundaries are off: this Hyprland build "
                           + ("has no pointer function Tessera can hook" if hook.group(1) == "notfound" else "refused Tessera's pointer hook"),
-                          "Glass and focus-follow work. If Hyprland was just updated, log out and in; otherwise pointer boundaries stay off with this Hyprland build")
+                          "Glass and focus-follow work. If Hyprland was just updated, log out and in; otherwise pointer boundaries stay off with this Hyprland build",
+                          page="appearance/glass",
+                          steps=["If Hyprland was updated since you logged in: log out and in again",
+                                 "Still off after that: pointer boundaries stay off with this Hyprland build; glass and focus-follow keep working"])
         if n >= PLUGIN_VERSION:
             return result("plugin", "Glass plugin", "Tessera itself", "ok", f"Loaded (version {n})")
+        if install_mode() == "bundle":
+            # (a bundle's plugin comes built: none is built here)
+            return result("plugin", "Glass plugin", "Tessera itself", "warn",
+                          f"An older build is loaded (version {n}): pointer and focus fixes need the new one",
+                          "Run Software Update, then log out and in", page="update", steps=bundle_steps("glass plugin"))
         return result("plugin", "Glass plugin", "Tessera itself", "warn",
                       f"An older build is loaded (version {n}): pointer and focus fixes need the new one",
-                      "Run Software Update, or rebuild it: tessera rebuild plugin; then log out and in")
+                      "Run Software Update, or rebuild it: Settings → Appearance → Glass → Rebuild glass; then log out and in",
+                      page="appearance/glass", steps=["Open Glass and press Rebuild glass", "Log out and in again"])
+    if install_mode() == "bundle":
+        return result("plugin", "Glass plugin", "Tessera itself", "fail", "Not loaded: glass falls back to frosted",
+                      "Run Software Update, then log out and in", page="update", steps=bundle_steps("glass plugin"))
     return result("plugin", "Glass plugin", "Tessera itself", "fail", "Not loaded: glass falls back to frosted",
-                  "Settings → Appearance → Glass → Build plugin, or: tessera rebuild plugin")
+                  "Settings → Appearance → Glass → Build glass",
+                  page="appearance/glass", steps=["Open Glass and press Build glass (or Rebuild glass)",
+                                                  "If it says the build failed, Show log says why"])
 
 
 def check_native(_):
@@ -473,8 +601,16 @@ def check_native(_):
     have = os.path.isdir(os.path.join(build, "qml", "Tessera", "Native")) and os.path.exists(os.path.join(build, "glass-ipc"))
     if have:
         return result("native", "Native helpers", "Tessera itself", "ok", "Built")
+    script = os.path.join(SHELL, "native", "build.sh")
+    if install_mode() == "bundle":
+        # (they come built in a bundle; one built into it would fail its check)
+        return no_fix(result("native", "Native helpers", "Tessera itself", "warn", "Missing from this version: glass updates use a slower path",
+                             "Run Software Update", page="update", steps=bundle_steps("native helpers")))
+    if not os.path.isfile(script):
+        return no_fix(result("native", "Native helpers", "Tessera itself", "warn", "Not built: glass updates use a slower path",
+                             "tessera rebuild", steps=[TERMINAL + "tessera rebuild", RESTART]))
     return result("native", "Native helpers", "Tessera itself", "warn", "Not built: glass updates use a slower path",
-                  "tessera rebuild native")
+                  f"bash {script}", steps=["Press Fix: it builds them (a minute or two; it needs cmake and qt6-declarative)", RESTART])
 
 
 def check_quickshell(opts):
@@ -491,19 +627,27 @@ def check_quickshell(opts):
     qs = compat().get("quickshell", {})
     want, least = qs.get("bundled", ""), qs.get("min", "") or qs.get("bundled", "")
     if not m:
-        return result("quickshell", "Quickshell", "Tessera itself", "warn", "Couldn't read its version")
+        return result("quickshell", "Quickshell", "Tessera itself", "warn", "Couldn't read its version", page="about/bugreport",
+                      steps=[TERMINAL + f"{exe} --version", "If it doesn't answer, Report a Bug with what it says"])
     # (Software Update doesn't build Quickshell: the fix is the build script, by hand)
-    build = os.path.join(source(), "tools", "build-quickshell.sh") + (f" v{want}" if want else "")
+    script = os.path.join(source(), "tools", "build-quickshell.sh")
+    build = script + (f" v{want}" if want else "")
     restart = ", then restart Tessera: Super+Ctrl+Escape"
     have = m.group(1)
     if "/tessera/quickshell/" in exe:  # Tessera's own build
         if want and have != want:
+            # (it builds into Tessera's data folder, outside any version: every
+            # install can; without the script, Software Update's held Quickshell)
             return result("quickshell", "Quickshell", "Tessera itself", "warn", f"Tessera's own build is {have}; this Tessera expects {want}",
-                          "Rebuild it: " + build + restart)
+                          "Rebuild it: " + build + restart,
+                          steps=[TERMINAL + build, RESTART] if os.path.isfile(script) else bundle_steps("Quickshell"),
+                          page="" if os.path.isfile(script) else "update")
         return result("quickshell", "Quickshell", "Tessera itself", "ok", f"{have} (Tessera's own build)")
     if least and version_tuple(have) < version_tuple(least):
         return result("quickshell", "Quickshell", "Tessera itself", "warn", f"{have}, older than Tessera needs ({least})",
-                      "Build Tessera its own: " + build + restart)
+                      "Build Tessera its own: " + build + restart,
+                      steps=[TERMINAL + build, RESTART] if os.path.isfile(script) else bundle_steps("Quickshell"),
+                      page="" if os.path.isfile(script) else "update")
     return result("quickshell", "Quickshell", "Tessera itself", "ok", have)
 
 
@@ -511,18 +655,23 @@ def check_watchers(_):
     code, out = run([sys.executable, "-I", os.path.join(HERE, "process-identity.py"), "reap", "--dry-run"])
     lines = [l for l in (out or "").splitlines() if l.strip()]
     if code is None:
-        return result("watchers", "Background helpers", "Tessera itself", "warn", out)
+        return no_fix(result("watchers", "Background helpers", "Tessera itself", "warn", out, steps=[RESTART]))
     if not lines:
         return result("watchers", "Background helpers", "Tessera itself", "ok", "None left behind")
     return result("watchers", "Background helpers", "Tessera itself", "warn",
                   f"{len(lines)} left behind by an earlier shell (they use battery)",
-                  "Restart Tessera (Super+Ctrl+Escape): it ends them as it starts")
+                  "Restart Tessera (Super+Ctrl+Escape): it ends them as it starts",
+                  steps=["Press Fix: it ends them (only helpers whose shell is gone)", "Or " + RESTART + ": it ends them as it starts"])
 
 
 CHECKS = [check_pipewire, check_wireplumber, check_networkmanager, check_bluetooth, check_avahi, check_firewall,
           check_btpairing, check_goa, check_geoclue,
           check_upower, check_profiles, check_hypridle, check_portal, check_notifications, check_polkit, check_clipboard,
           check_recorder, check_disk, check_hyprland, check_plugin, check_native, check_quickshell, check_watchers]
+
+
+# (a check that failed or didn't answer: nothing is known about the service)
+UNANSWERED = ["Press Check again", "If it says the same, Copy report and send it with Report a Bug"]
 
 
 def check_all(opts):
@@ -544,7 +693,7 @@ def check_all(opts):
                 r = f.result()
             except Exception as e:  # a check's own bug mustn't hide the others
                 name = futures[f].__name__.removeprefix("check_")
-                r = result(name, name, "Tessera itself", "warn", f"Check failed: {e}")
+                r = result(name, name, "Tessera itself", "warn", f"Check failed: {e}", page="about/bugreport", steps=UNANSWERED)
             out[futures[f]] = r
     except concurrent.futures.TimeoutError:
         pass
@@ -555,7 +704,7 @@ def check_all(opts):
             rows.append(out[c])
         else:
             name = c.__name__.removeprefix("check_")
-            rows.append(result(name, name, "Tessera itself", "warn", "Didn't answer in time"))
+            rows.append(result(name, name, "Tessera itself", "warn", "Didn't answer in time", page="about/bugreport", steps=UNANSWERED))
     return rows
 
 
@@ -583,6 +732,10 @@ def main(argv):
     ap.add_argument("--google", action="store_true")
     opts = ap.parse_args(argv)
     if opts.cmd == "fix":
+        if opts.id == "native" and install_mode() == "bundle":
+            # (nothing is built into a bundle's folder: its check would fail)
+            print(json.dumps({"ok": False, "error": "This Tessera came as a bundle: Software Update brings its native helpers."}))
+            return 1
         if opts.id in FIXES:
             cmd = FIXES[opts.id]
         elif opts.id in ROOT_FIXES:
@@ -593,7 +746,7 @@ def main(argv):
             print(json.dumps({"ok": False, "error": "There's no automatic fix for that; run the command shown."}))
             return 1
         try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=FIX_TIMEOUT.get(opts.id, 120))
             if cmd[1:2] == [sharing.HELPER] and p.returncode == sharing.tessera_root.REFUSED_EXIT:
                 # (an older helper without this fix: the command itself, with the password)
                 cmd = ["pkexec"] + ROOT_FIXES[opts.id]

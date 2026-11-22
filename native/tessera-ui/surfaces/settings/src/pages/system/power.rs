@@ -107,6 +107,8 @@ pub fn power(cx: &mut Ctx, p: &mut Page) {
     let ppd = pw["ppd"].as_bool().unwrap_or(false);
     let battery = pw["hasBattery"].as_bool().unwrap_or(false);
     let perf = pw["hasPerformance"].as_bool().unwrap_or(false);
+    // (the battery service, energy modes or the idle timers not working: Health's rows)
+    super::super::about::health::problems(cx, p, &["upower", "profiles", "hypridle"], "power");
 
     // ── Energy mode ──
     let mut rows = Vec::new();

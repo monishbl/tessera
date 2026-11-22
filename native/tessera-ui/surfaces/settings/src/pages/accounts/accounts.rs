@@ -47,6 +47,8 @@ fn buttons(cx: &mut Ctx, list: Vec<(Opt, &'static str, Value)>) -> (Vec<Opt>, St
 }
 
 fn google(cx: &mut Ctx, p: &mut Page) {
+    // (GNOME Online Accounts missing, which Google sign-in needs: Health's row)
+    super::super::about::health::problems(cx, p, &["goa"], "accounts");
     let f = feed(cx);
     let g = &f["google"];
     let now = crate::util::now_ms();
