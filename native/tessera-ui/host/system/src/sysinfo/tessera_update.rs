@@ -137,6 +137,35 @@ pub fn job_seen(file: Option<Value>, asked: f64, now: f64, alive: impl Fn(i64) -
     }
 }
 
+/// "The update didn't start", with why: the last lines the helper wrote to
+/// its launch log (its own error, a Python traceback), when it wrote any
+pub fn didnt_start_words(log: &str) -> String {
+    let tail: Vec<&str> = log.lines().map(str::trim_end).filter(|l| !l.trim().is_empty()).collect();
+    let tail = &tail[tail.len().saturating_sub(4)..];
+    if tail.is_empty() {
+        "The update didn't start.".to_string()
+    } else {
+        format!("The update didn't start: {}", tail.join(" · "))
+    }
+}
+
+/// A helper started in the background (setsid -f) with its output kept in
+/// `log` (the shell used to throw it away, so a helper that died at once
+/// left only "didn't start", 22 Nov)
+pub fn launch_logged(cmd: Vec<String>, log: String) {
+    std::thread::spawn(move || {
+        use std::process::{Command, Stdio};
+        if let Some(d) = std::path::Path::new(&log).parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let (out, err) = match std::fs::File::create(&log).and_then(|f| Ok((f.try_clone()?, f))) {
+            Ok((a, b)) => (Stdio::from(a), Stdio::from(b)),
+            Err(_) => (Stdio::null(), Stdio::null()),
+        };
+        let _ = Command::new(&cmd[0]).args(&cmd[1..]).stdin(Stdio::null()).stdout(out).stderr(err).status();
+    });
+}
+
 fn pid_alive(pid: i64) -> bool {
     std::fs::read(format!("/proc/{pid}/cmdline")).map(|c| String::from_utf8_lossy(&c).contains("tessera-update")).unwrap_or(false)
 }
@@ -373,6 +402,10 @@ impl TesseraUpdate {
     fn job_dir() -> String {
         format!("{}/tessera/update-job", state_home())
     }
+    /// What the last helper started from here wrote (launch_logged)
+    fn launch_log() -> String {
+        format!("{}/launch.log", Self::job_dir())
+    }
     fn read_job(&self, tx: &Tx) {
         let (t, p) = (tx.clone(), format!("{}/status.json", Self::job_dir()));
         std::thread::spawn(move || {
@@ -408,8 +441,7 @@ impl TesseraUpdate {
         }
         c.extend(channel_args(&self.channel));
         c.extend(how_args(&self.how));
-        let c: Vec<&str> = c.iter().map(String::as_str).collect();
-        tessera_core::services::bridge::run(&c);
+        launch_logged(c, Self::launch_log());
         self.staged = None;
         self.job = Some(json!({"state": "running", "phase": "prepare", "percent": 0, "text": "Preparing", "started": helpers::now_s()}));
         self.t_job.every(tx, 500);
@@ -688,13 +720,17 @@ impl TesseraUpdate {
                 // (a job just asked for: the last job's file, read before the
                 // new one wrote its own, isn't this one's news)
                 let asked = self.job.as_ref().filter(|x| x["state"] == "running" && x["pid"].is_null()).and_then(|x| x["started"].as_f64()).unwrap_or(0.0);
-                let j = job_seen(j, asked, helpers::now_s(), pid_alive);
+                let mut j = job_seen(j, asked, helpers::now_s(), pid_alive);
+                // (didn't start: why, from what the helper wrote)
+                if let Some(x) = j.as_mut().filter(|x| x["error"] == "The update didn't start.") {
+                    x["error"] = json!(didnt_start_words(&std::fs::read_to_string(Self::launch_log()).unwrap_or_default()));
+                }
                 if let Some(j) = j {
                     // (cut off by a reboot, a logout, a crash: started again
                     // from what it was asked, in the background)
                     if job_cut_off(&j, pid_alive) && !self.repo.is_empty() && self.allowed() {
                         let helper = self.helper();
-                        tessera_core::services::bridge::run(&["setsid", "-f", "python3", "-I", &helper, "resume", "--config", &config_dir()]);
+                        launch_logged(["setsid", "-f", "python3", "-I", &helper, "resume", "--config", &config_dir()].iter().map(|s| s.to_string()).collect(), Self::launch_log());
                         self.job = Some(json!({"state": "running", "phase": "prepare", "percent": 0, "text": "Picking up where the update stopped", "started": helpers::now_s()}));
                     } else if !(was == "running" && j["state"] == "running" && j["pid"].is_null()) {
                         self.job = Some(j);
@@ -876,6 +912,16 @@ mod tests {
         assert!(!job_cut_off(&json!({"state": "running", "pid": 4242}), |_| true));
         assert!(job_cut_off(&json!({"state": "running"}), |_| true));
         assert!(!job_cut_off(&json!({"state": "ready", "pid": 4242}), |_| false));
+    }
+
+    #[test]
+    fn didnt_start_says_why_when_the_helper_wrote_something() {
+        assert_eq!(didnt_start_words(""), "The update didn't start.");
+        assert_eq!(didnt_start_words("\n  \n"), "The update didn't start.");
+        let tb = "Traceback (most recent call last):\n  File \"x\", line 1\n    import y\nModuleNotFoundError: No module named 'y'\n";
+        assert_eq!(didnt_start_words(tb), "The update didn't start: Traceback (most recent call last): ·   File \"x\", line 1 ·     import y · ModuleNotFoundError: No module named 'y'");
+        let long = (1..=9).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        assert_eq!(didnt_start_words(&long), "The update didn't start: line 6 · line 7 · line 8 · line 9");
     }
 
     #[test]
