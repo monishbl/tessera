@@ -13,6 +13,21 @@ conflict you decide, and nothing is applied until all of them are decided.
     tessera-update.py finish --config <dir> [--if-ready] -> install what stage made ready (the restart)
     tessera-update.py staged | discard | cancel        -> what's staged; forget it; stop the stage job
     tessera-update.py lock-holder [--mark]             -> who holds the repo lock (a stale one is taken apart)
+    tessera-update.py stage … --how wait|build          -> no bundle for the new version yet: wait (the
+                                                          default: nothing is done) or build it here now
+
+Bundles (tools/tessera-bundle.py, docs/releases.md): a normal install (one
+that runs from a bundle, or setup.sh's checkout with nothing of its own)
+updates by bundle. `check` then says how big the download is ("bundle":
+size, and the held packages it moves) or that there's none yet
+("noBundle": Wait or Build now); `stage` downloads and checks it, puts the
+held packages at their tested versions (sysupdate.py run --lock, one
+password) and unpacks it beside the current version; `finish` writes your
+choices and swaps it in (one rename). A copy that runs from a bundle has no
+git: its check reads the channel's signed pointer (the newest bundle's
+manifest) and asks GitHub only which commit the branch is at (git
+ls-remote). A git install moves to a bundle with its first bundle update;
+with none for the new version, Build now updates it through git as before.
 
 Background updates (Software Update's Update, docs/releases.md): `stage`
 runs with the shell up and changes nothing it uses. It takes the repo
@@ -177,7 +192,22 @@ def show(rev, path):
     return None if b is None else b.decode("utf-8", "replace")
 
 
+# Revisions that aren't git's: "dir:<folder>" (a version's files, a bundle
+# installed or unpacked) and names in VIRTUAL ({path: text}: a bundle
+# manifest's settings files, before it's downloaded)
+VIRTUAL = {}
+
+
 def show_bytes(rev, path):
+    if rev.startswith("dir:"):
+        try:
+            with open(os.path.join(rev[4:], path), "rb") as fh:
+                return fh.read()
+        except OSError:
+            return None
+    if rev in VIRTUAL:
+        t = VIRTUAL[rev].get(path)
+        return t.encode() if isinstance(t, str) else t
     r = subprocess.run(["git", "-C", REPO, "show", f"{rev}:{path}"], capture_output=True)
     return r.stdout if r.returncode == 0 else None
 
@@ -472,9 +502,13 @@ def peek(config_dir, channel=None, mark=False, now=None):
     (only for a newer version: going back to another channel is asked in
     Settings, never pushed). mark: write down that it was mentioned now."""
     now = time.time() if now is None else now
-    if not is_checkout():
+    if is_bundle():
+        p = bundle_check(config_dir, True, channel)
+        p.pop("conflicts", None)
+    elif not is_checkout():
         return {"error": NOT_A_CHECKOUT, "notify": False}
-    p = position(config_dir, True, channel)
+    else:
+        p = position(config_dir, True, channel)
     seen = load_json(notice_path(), {})
     seen = seen if isinstance(seen, dict) else {}
     try:
@@ -535,10 +569,346 @@ def is_checkout():
 NOT_A_CHECKOUT = "This copy of Tessera isn't a git checkout, so it can't update itself. Get it with the install command from tessera.monishbl.in."
 
 
+# ── Bundles (tools/tessera-bundle.py; docs/releases.md, "Bundles") ────────
+# A normal install updates by bundle: the whole of the new version, built
+# and signed by the release builder, downloaded, checked and swapped in; no
+# git and no compiling here. A developer's checkout keeps git (above). With
+# no bundle for the new version yet, Software Update asks: wait for the
+# download (the default), or build now (here, gently: about ten minutes).
+HOW = ("", "wait", "build")
+_BUNDLES = None
+
+
+def bundles():
+    """tools/tessera-bundle.py, loaded by its path (once)"""
+    global _BUNDLES
+    if _BUNDLES is None:
+        import importlib.machinery
+        import importlib.util
+        loader = importlib.machinery.SourceFileLoader("tessera_bundle", os.path.join(REPO, "tools", "tessera-bundle.py"))
+        spec = importlib.util.spec_from_loader("tessera_bundle", loader)
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        _BUNDLES = mod
+    return _BUNDLES
+
+
+def is_bundle():
+    """This copy runs from a bundle (versions/<id>: no git)"""
+    return os.path.isfile(os.path.join(REPO, "bundle.json")) and not is_checkout()
+
+
+def update_mode():
+    """bundle | git | dev (tessera-bundle.py's mode)"""
+    try:
+        return bundles().mode(REPO)
+    except Exception:
+        return "bundle" if is_bundle() else "dev"
+
+
+def own_manifest():
+    m = load_json(os.path.join(REPO, "bundle.json"), {})
+    return m if isinstance(m, dict) else {}
+
+
+def head_commit():
+    """The commit this copy is (a bundle's manifest says, else git)"""
+    if is_bundle():
+        return own_manifest().get("commit", "")
+    return git("rev-parse", "HEAD", check=False).strip()
+
+
+def bundle_minutes(commit, now=None):
+    """About how long until a new version's bundle is out (the builder takes
+    about 45 minutes after a push), from its commit's age; 0 when unknown"""
+    t = commit_time(commit) if commit and is_checkout() else 0
+    if not t:
+        return 0
+    age = (now or time.time()) - t
+    return max(5, int((PREPARE_TYPICAL - age) // 60) + 1) if 0 <= age < PREPARE_TYPICAL else 0
+
+
+def bundle_report(commit, channel, plan=None):
+    """What a check says about COMMIT's bundle: {"bundle": {"size",
+    "variant", "moves", "movesText"}, "how": "bundle"} when there's one,
+    else {"noBundle": {"minutes", "why"}, "how": "ask"}"""
+    p = plan if plan is not None else bundles().plan(commit, channel if channel in CHANNELS else "stable")
+    if p.get("available"):
+        return {"bundle": {"size": p["size"], "variant": p["variant"], "moves": p["moves"], "movesText": p["movesText"]},
+                "how": "bundle"}
+    return {"noBundle": {"minutes": bundle_minutes(commit), "why": p.get("why", ""), "offline": p.get("available") is None},
+            "how": "ask"}
+
+
+def bundle_channel(config_dir, channel=None):
+    ch = channel or configured_channel(config_dir)
+    if ch in CHANNELS:
+        return ch
+    m = own_manifest().get("channel")
+    return m if m in CHANNELS else "stable"
+
+
+def remote_head(branch):
+    """BRANCH's newest commit on Tessera's GitHub (git ls-remote: nothing is
+    downloaded), or "" when it can't tell"""
+    url = (SOURCES.git_sources() or [""])[0]
+    if not url or not shutil.which("git") or os.environ.get("TESSERA_BUNDLES"):
+        return os.environ.get("TESSERA_REMOTE_HEAD", "")  # (tests)
+    try:
+        r = subprocess.run(["git", "ls-remote", url, "refs/heads/" + branch], capture_output=True, text=True, timeout=30,
+                           env=dict(os.environ, **SOURCES.QUIET_GIT))
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    h = (r.stdout.split() or [""])[0]
+    return h if re.fullmatch(r"[0-9a-f]{40}", h) else ""
+
+
+def bundle_check(config_dir, fetch=True, channel=None, latest=None, head=None):
+    """check() for a copy that runs from a bundle: the channel's newest
+    bundle (its signed manifest, the rolling release's pointer) against
+    this one, the conflicts from the settings files its manifest carries.
+    The branch moved on with no bundle yet: "noBundle" (Wait or Build now)."""
+    B = bundles()
+    ch = bundle_channel(config_dir, channel)
+    own = own_manifest()
+    cur, cur_t = own.get("commit", ""), int(own.get("time") or 0)
+    out = {"channel": ch, "channelName": NAMES[ch], "branch": CHANNELS[ch], "upstream": "origin/" + CHANNELS[ch], "local": "",
+           "current": cur[:8], "date": cur_t, "available": False, "mode": "bundle", "kind": "none", "latest": cur[:8],
+           "latestDate": cur_t, "behind": 0, "ahead": 0, "own": 0, "downgrade": False,
+           "notes": [], "conflicts": [], "keeps": [], "leaving": [], "rebuild": [], "changelog": []}
+    if not fetch and latest is None:
+        return out
+    m = latest
+    if m is None:
+        try:
+            m = B.latest(ch)
+        except B.Failed as e:
+            if e.kind != "missing":
+                return dict(out, error="Couldn't reach the update server: " + e.why)
+            m = None
+    head = remote_head(CHANNELS[ch]) if head is None else head
+    target, have = "", False
+    switched = own.get("channel") not in (ch, "local")
+    if m and m["commit"] != cur and (int(m.get("time") or 0) >= cur_t or switched) and not B.is_bad(m["commit"]):
+        target, have = m["commit"], True
+    elif head and head != cur and (not m or head != m["commit"]) and not B.is_bad(head):
+        target = head  # (the branch moved on; its bundle isn't out yet)
+    if not target:
+        return out
+    downgrade = have and int(m.get("time") or 0) < cur_t
+    out.update(target=target, latest=target[:8], latestDate=int(m.get("time") or 0) if have else 0, behind=1,
+               kind="switch" if downgrade else "update", available=True, downgrade=downgrade)
+    if not have:
+        out.update(noBundle={"minutes": 0, "why": "not published yet", "offline": False}, how="ask")
+        return out
+    variant = B.ni().detect_cpu() or "generic"
+    entry = m["variants"].get(variant) or m["variants"].get("generic") or {}
+    lock = m["packages"]
+    moves = B.package_moves(lock, B.installed_packages(list(lock["held"]) + list(lock["minimum"])),
+                            B.repo_versions(list(lock["held"])))
+    out.update(bundle={"size": entry.get("size", 0), "variant": variant, "moves": moves, "movesText": B.moves_words(moves)},
+               how="bundle")
+    have_heads = {e["heading"] for e in changelog_entries(show("dir:" + REPO, "CHANGELOG.md"))}
+    out["changelog"] = [e for e in changelog_entries(m.get("changelog") or "") if e["heading"] not in have_heads]
+    VIRTUAL["bundle:new"] = dict(m.get("texts") or {})
+    settings_conflicts(out, config_dir, "dir:" + REPO, "bundle:new")
+    return out
+
+
+def held_written(names):
+    """Are exactly these packages held already (/etc/pacman.d/tessera-hold.conf)?"""
+    try:
+        with open(os.environ.get("TESSERA_HOLD_CONF") or "/etc/pacman.d/tessera-hold.conf") as f:
+            text = f.read()
+    except OSError:
+        return not names
+    held = set()
+    for line in text.splitlines():
+        k, _, v = line.partition("=")
+        if k.strip() == "IgnorePkg":
+            held |= set(v.split())
+    return held == set(names)
+
+
+def packages_step(vdir, system, say=None):
+    """The root part of a bundle's package lock: sysupdate.py run --lock
+    from the version being installed (so its own root helper is the one
+    that runs, set up first when the installed one is older), one password.
+    Raises SystemExit with why when it didn't finish."""
+    script = os.path.join(vdir, "shell", "assets", "scripts", "sysupdate.py")
+    cmd = [sys.executable, "-I", script, "run", "--lock", os.path.join(vdir, "bundle.json")] + (["--system"] if system else [])
+    status = os.path.join(runtime_dir(), "tessera-sysupdate", "status.json")
+    p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    last = ""
+    while p.poll() is None:
+        st = load_json(status, {}) or {}
+        t = st.get("text", "") if isinstance(st, dict) else ""
+        if t and t != last and say:
+            say(t)
+            last = t
+        time.sleep(0.5)
+    st = load_json(status, {}) or {}
+    if not isinstance(st, dict) or st.get("state") != "done":
+        state = st.get("state") if isinstance(st, dict) else ""
+        if state == "cancelled":
+            raise SystemExit("The packages this Tessera was tested with weren't installed (the password was cancelled). Nothing was changed.")
+        raise SystemExit("The packages this Tessera was tested with weren't installed: " +
+                         ((st.get("error") or st.get("text")) if isinstance(st, dict) else "") + ". Nothing of Tessera was changed.")
+
+
+def bundle_stage(config_dir, choices, extra, channel, how, mode_, report):
+    """stage() for a bundle: the new version downloaded, checked and
+    unpacked beside the current one, its held packages moved into place
+    (one password), and written down as staged. None: not a bundle's to do
+    (a git install building here: stage() goes on as before)."""
+    B = bundles()
+    if mode_ == "git":
+        report.update(bundle_report(report["target"], report.get("channel")))
+    target = report["target"]
+    ch = report.get("channel") if report.get("channel") in CHANNELS else "stable"
+    if report.get("noBundle"):
+        if how == "build":
+            if mode_ == "git":
+                return None  # (built here from git, as before)
+            return bundle_build_stage(config_dir, choices, report, ch)
+        mins = (report["noBundle"] or {}).get("minutes") or 0
+        return {"staged": False, "state": "waiting", "latest": report.get("latest", ""),
+                "message": f"Tessera {report.get('latest', '')} is still being published" +
+                           (f" (usually ready in about {mins} min)" if mins else "") + ". It's offered as soon as the download is out."}
+    missing = [c["id"] for c in report["conflicts"] if choices.get(c["id"]) not in c["choices"]]
+    if missing:
+        raise SystemExit("Decide every conflict first: " + ", ".join(missing))
+    discard()
+    job_progress(3, "Preparing", "prepare", latest=report.get("latest", ""), current=report.get("current", ""))
+
+    def said(text, got, size):
+        mb_got, mb_all = got / 1e6, size / 1e6
+        job_progress(5 + int(60 * got / max(1, size)), f"{text} · {mb_got:.0f} of {mb_all:.0f} MB" if text.startswith("Downloading") else text,
+                     "download", how="bundle", bytes=got, total=size)
+    try:
+        got = B.fetch(target, ch, say=said)
+    except B.Failed as e:
+        raise SystemExit("Tessera's new version couldn't be downloaded: " + e.why) from None
+    vid = got["id"]
+    vdir = B.version_dir(vid)
+    lock = got["manifest"]["packages"]
+    moves = B.package_moves(lock, B.installed_packages(list(lock["held"]) + list(lock["minimum"])), B.repo_versions(list(lock["held"])))
+    if moves["held"] or moves["system"] or not held_written(moves["hold"]):
+        words = B.moves_words(moves)
+        job_progress(70, "Putting the tested packages in place" + (": " + words if words else ""), "packages",
+                     held=moves["held"], minimum=moves["minimum"])
+        packages_step(vdir, moves["system"], lambda t: job_progress(75, t, "packages"))
+    into = staged_dir()
+    os.makedirs(into, exist_ok=True)
+    staged = {"format": 2, "kind": "bundle", "repo": os.path.realpath(REPO), "from": head_commit(), "to": target, "bundle": vid,
+              "latest": report.get("latest", ""), "current": report.get("current", ""), "channel": report.get("channel", ""),
+              "mode": mode_, "choices": choices, "moves": moves, "size": got.get("size", 0), "parts": [], "failed": [],
+              "ui": {"how": "bundle", "bytes": got.get("size", 0), "label": "tessera-ui: in the bundle (" + got["variant"] + ")"},
+              "at": int(time.time()), "changelog": report.get("changelog", []), "notes": report.get("notes", [])}
+    write_json(os.path.join(into, "staged.json"), staged)
+    job_progress(100, "Ready to restart", "ready")
+    return {"staged": True, "state": "ready", "latest": staged["latest"], "parts": [], "failed": [], "ui": staged["ui"], "bundle": vid}
+
+
+def bundle_build_stage(config_dir, choices, report, ch):
+    """Build now, for a copy that runs from a bundle: the new version's
+    sources (a shallow clone from GitHub), built here gently into a bundle
+    of its own (versions/<id>-local), staged like a downloaded one"""
+    B = bundles()
+    src = os.path.join(_xdg("XDG_CACHE_HOME", "~/.cache"), "tessera", "build-here-src")
+    url = (SOURCES.git_sources() or [""])[0]
+    job_progress(3, "Getting the sources", "prepare", latest=report.get("latest", ""), current=report.get("current", ""))
+    shutil.rmtree(src, ignore_errors=True)
+    r = subprocess.run(["git", "clone", "--quiet", "--depth", "1", "--branch", CHANNELS[ch], url, src], capture_output=True, text=True,
+                       timeout=1800, env=dict(os.environ, **SOURCES.QUIET_GIT))
+    if r.returncode != 0:
+        raise SystemExit("Tessera's sources couldn't be downloaded: " + (r.stderr.strip().splitlines() or ["git clone failed"])[-1])
+    commit = subprocess.run(["git", "-C", src, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    report["conflicts"] = []
+    settings_conflicts(report, config_dir, "dir:" + REPO, "dir:" + src)
+    choices = settled_choices(report, choices)
+    try:
+        vid = B.build_here(src, commit, "local", say=lambda t: job_progress(20, t, "build", how="build"))
+    except B.Failed as e:
+        raise SystemExit("Tessera couldn't be built here: " + e.why) from None
+    vdir = B.version_dir(vid)
+    into = staged_dir()
+    os.makedirs(into, exist_ok=True)
+    staged = {"format": 2, "kind": "bundle", "repo": os.path.realpath(REPO), "from": head_commit(), "to": commit, "bundle": vid,
+              "latest": commit[:8], "current": report.get("current", ""), "channel": report.get("channel", ""), "mode": "bundle",
+              "choices": choices, "moves": {"held": [], "minimum": [], "system": False, "hold": []}, "size": 0, "parts": [], "failed": [],
+              "ui": {"how": "build", "bytes": 0, "label": "tessera-ui: built here"}, "at": int(time.time()), "changelog": [], "notes": []}
+    write_json(os.path.join(into, "staged.json"), staged)
+    shutil.rmtree(src, ignore_errors=True)
+    job_progress(100, "Ready to restart", "ready")
+    return {"staged": True, "state": "ready", "latest": staged["latest"], "parts": [], "failed": [], "ui": staged["ui"], "bundle": vid,
+            "vdir": vdir}
+
+
+def bundle_finish(config_dir, s):
+    """The restart into a staged bundle (the shell stopped): your settings
+    choices written, the version swapped in (current, one rename), the
+    links and the hypr merge after it; on any failure before the swap
+    nothing changes, after it the previous version comes back."""
+    B = bundles()
+    vid = s.get("bundle", "")
+    vdir = B.version_dir(vid)
+    if not os.path.isfile(os.path.join(vdir, "bundle.json")):
+        raise SystemExit("The prepared update's files are gone. Check for updates again.")
+    progress(5, "Backing up your settings")
+    stamp = time.strftime("%Y%m%d-%H%M%S") + "-" + str(time.time_ns() % 1000000000)
+    backup = os.path.join(config_dir, "backups", "update-" + stamp)
+    os.makedirs(backup, exist_ok=True)
+    for name in ("config.json", "keybinds.json"):
+        if os.path.exists(os.path.join(config_dir, name)):
+            shutil.copy2(os.path.join(config_dir, name), backup)
+    # The decisions again, against exactly the files of the version staged
+    report = {"conflicts": []}
+    settings_conflicts(report, config_dir, "dir:" + REPO, "dir:" + vdir)
+    choices = settled_choices(report, s.get("choices") or {})
+    swapped = False
+    try:
+        progress(30, "Updating settings and shortcuts")
+        apply_after_merge(config_dir, choices, report, [], {}, None)
+        progress(60, "Swapping in the new version")
+        act = B.activate(vid)
+        swapped = True
+    except BaseException as e:
+        why = str(e) or e.__class__.__name__
+        try:
+            if swapped:
+                B.undo()
+            for name in ("config.json", "keybinds.json"):
+                if os.path.exists(os.path.join(backup, name)):
+                    shutil.copy2(os.path.join(backup, name), os.path.join(config_dir, name))
+            restored = " Nothing was changed: Tessera and your settings are as they were."
+        except Exception as e2:
+            restored = f" It couldn't all be put back ({e2}). Your settings backup is in {backup}."
+        raise SystemExit("The update didn't finish: " + why + "." + restored)
+    progress(85, "Finishing up")
+    try:
+        B.prune(keep=[vid])
+    except Exception:
+        pass
+    # (a new shell from this update that doesn't stay up goes back to the
+    # version before it: launch-shell.sh's rollback, tessera-bundle.py rollback)
+    try:
+        write_json(fresh_path(), {"to": s.get("to", ""), "from": s.get("from", ""), "bundle": vid, "at": int(time.time())})
+    except OSError:
+        pass
+    c = act.get("config") or {}
+    return {"applied": True, "backup": backup, "stash": None, "built": [], "failed": [], "bundle": vid,
+            "ui": {"ok": True, "changed": True, "label": s.get("ui", {}).get("label", "")},
+            "config": {"shell": "linked", "hypr": bool(c.get("hypr")), "notes": c.get("notes") or [], "new_files": c.get("new_files") or []},
+            "now": (s.get("to") or "")[:8], "changelog": s.get("changelog", []), "notes": s.get("notes", [])}
+
+
 def check(config_dir, fetch=True, channel=None, pin=None):
     """The full report: position() on this copy's channel, plus what's new
     (or, going back, what goes away), the conflicts to decide, and how
     tessera-ui comes with it."""
+    if is_bundle():
+        return bundle_check(config_dir, fetch, channel)
     if not is_checkout():
         return {"error": NOT_A_CHECKOUT}
     report = position(config_dir, fetch, channel, pin)
@@ -550,11 +920,16 @@ def check(config_dir, fetch=True, channel=None, pin=None):
     # How tessera-ui comes with it ("tessera-ui: ready-made (v3)"; the line
     # Software Update shows): tools/native-install.py plan
     if fetch:
-        report["ui"] = native_plan(new_id, report["channel"])
-        wait = preparing(report["ui"], new_id) if report["available"] else None
-        if wait:
-            report["available"] = False
-            report["preparing"] = wait
+        report["mode"] = update_mode()
+        if report["mode"] == "git" and report["available"] and report["channel"] in CHANNELS:
+            # (a normal install: its update is a bundle, or a question when there's none yet)
+            report.update(bundle_report(new_id, report["channel"]))
+        else:
+            report["ui"] = native_plan(new_id, report["channel"])
+            wait = preparing(report["ui"], new_id) if report["available"] else None
+            if wait:
+                report["available"] = False
+                report["preparing"] = wait
     # A version whose shell didn't start here (launch-shell.sh went back to
     # the build before it) isn't offered again; a newer one is
     if report["available"] and not pin and is_bad(new_id):
@@ -590,6 +965,20 @@ def check(config_dir, fetch=True, channel=None, pin=None):
                                     "labels": {"mine": "Keep mine", "new": "Use the update's (yours goes to the backup folder)"}})
     report["keeps"] = sorted(local - incoming)  # your edits the update doesn't touch: kept
 
+    settings_conflicts(report, config_dir, base, new)
+
+    # What gets rebuilt after it's applied: each part whose own sources
+    # change (part_key), or whose build isn't there
+    report["rebuild"] = parts_needed(new)
+    return report
+
+
+
+
+def settings_conflicts(report, config_dir, base, new):
+    """The conflicts in your settings and shortcuts between the versions BASE
+    and NEW (git revisions, or show()'s "dir:" and VIRTUAL ones), added to
+    report["conflicts"]"""
     config = load_json(os.path.join(config_dir, "config.json"), {})
     old_def, new_def = setting_defaults(base), setting_defaults(new)
 
@@ -656,11 +1045,6 @@ def check(config_dir, fetch=True, channel=None, pin=None):
                                     "detail": "The update gives these keys to “" + b.get("label", bid) + "”; you use them for “" + str(hit[2]) + "”.",
                                     "yours": {"kind": hit[0], "id": hit[1]},
                                     "choices": ["mine", "new"], "labels": {"mine": "Keep mine (" + str(hit[2]) + ")", "new": "Use the new one"}})
-
-    # What gets rebuilt after it's applied: each part whose own sources
-    # change (part_key), or whose build isn't there
-    report["rebuild"] = parts_needed(new)
-    return report
 
 
 def setting_defaults(rev):
@@ -850,6 +1234,11 @@ WHAT_WORDS = {"stage": "getting an update ready", "resume": "getting an update r
 
 
 def lock_path():
+    if not is_checkout():
+        # (a copy that runs from a bundle: one lock for all its versions)
+        d = data_dir()
+        os.makedirs(d, exist_ok=True)
+        return os.path.join(d, "update.lock")
     return os.path.join(REPO, ".git", "tessera-update.lock")
 
 
@@ -1097,6 +1486,11 @@ def apply(config_dir, choices, extra=(), channel=None, staged=None):
     programs and parts swapped in (nothing is downloaded or built: the
     shell's restart takes seconds)."""
     lock = repo_lock()  # noqa: F841 (held while this runs)
+    if not staged and update_mode() == "bundle":
+        done = stage(config_dir, choices, extra, channel)
+        if not done.get("staged"):
+            return {"applied": False, "message": done.get("message", "Already up to date.")}
+        return bundle_finish(config_dir, read_staged())
     report = check(config_dir, fetch=False, channel=channel, pin=staged["to"] if staged else None)
     if report.get("error"):
         raise SystemExit(report["error"])
@@ -1946,9 +2340,10 @@ def staged_info():
     s = read_staged()
     if not s.get("to"):
         return {"ready": False}
-    head = git("rev-parse", "HEAD", check=False).strip()
+    head = head_commit()
     return {"ready": True, "valid": head == s.get("from") and s.get("repo", os.path.realpath(REPO)) == os.path.realpath(REPO), "latest": s.get("latest", ""), "current": s.get("current", ""),
-            "at": s.get("at", 0), "parts": s.get("parts", []), "ui": s.get("ui", {}), "channel": s.get("channel", "")}
+            "at": s.get("at", 0), "parts": s.get("parts", []), "ui": s.get("ui", {}), "channel": s.get("channel", ""),
+            "kind": s.get("kind", "git"), "moves": s.get("moves", {}), "size": s.get("size", 0)}
 
 
 # Conflicts that weren't there when the update was prepared (a setting
@@ -1973,7 +2368,7 @@ def settled_choices(report, choices):
     return out
 
 
-def stage(config_dir, choices, extra=(), channel=None, job=None):
+def stage(config_dir, choices, extra=(), channel=None, job=None, how=""):
     """Software Update's Update, in the background with the shell running:
     the new version made ready beside the installed one (its programs,
     patched or downloaded or built; its parts built from a staging
@@ -1983,10 +2378,19 @@ def stage(config_dir, choices, extra=(), channel=None, job=None):
     global JOB
     JOB = job
     lock = repo_lock()  # noqa: F841 (held while this runs)
-    report = check(config_dir, fetch=False, channel=channel)
+    # (a copy that runs from a bundle has nothing downloaded to compare with: it asks)
+    report = check(config_dir, fetch=is_bundle(), channel=channel)
     if report.get("error"):
         raise SystemExit(report["error"])
-    if report["available"] and not report.get("downgrade"):
+    mode_ = update_mode()
+    if mode_ in ("bundle", "git") and report["available"]:
+        done = bundle_stage(config_dir, choices, extra, channel, how, mode_, report)
+        if done is not None:
+            return done
+        how = "build"  # (a git install, Build now: as before, built here)
+    elif mode_ == "bundle":
+        return {"staged": False, "state": "none", "message": "Already up to date."}
+    if report["available"] and not report.get("downgrade") and how != "build":
         if preparing(native_plan(report["target"], report.get("channel")), report["target"]):
             report["available"] = False
             report["preparing"] = True
@@ -2039,8 +2443,11 @@ def finish(config_dir, if_ready=False):
         return {"applied": False, "message": "" if if_ready else "The prepared update is for another copy of Tessera."}
     lock = repo_lock()  # noqa: F841 (before anything: a stage still running keeps its work)
     try:
-        if git("rev-parse", "HEAD").strip() != s.get("from"):
+        if head_commit() != s.get("from"):
             raise SystemExit("Tessera changed since the update was prepared. Check for updates again.")
+        if s.get("kind") == "bundle":
+            progress(20, "Installing the update")
+            return bundle_finish(config_dir, s)
         progress(20, "Installing the update")
         return apply(config_dir, {}, (), s.get("channel") if s.get("channel") in CHANNELS else None, staged=s)
     finally:
@@ -2081,6 +2488,7 @@ def resume(a):
         return {"resumed": False, "ended": True}
     a.rebuild = req.get("rebuild") or ""
     a.channel = req.get("channel") if req.get("channel") in CHANNELS else None
+    a.how = req.get("how") if req.get("how") in HOW else ""
     out = run_stage(a, req.get("config") or a.config, req.get("choices") or {})
     return dict(out, resumed=True)
 
@@ -2245,16 +2653,17 @@ def run_stage(a, config_dir, choices):
         return {"error": str(e), "busy": True}
     job = Job()
     awake = hold_awake("Updating Tessera")  # noqa: F841 (held while this runs)
-    write_json(os.path.join(job.dir, "request.json"), {"config": config_dir, "choices": choices, "rebuild": a.rebuild, "channel": a.channel})
+    write_json(os.path.join(job.dir, "request.json"), {"config": config_dir, "choices": choices, "rebuild": a.rebuild, "channel": a.channel,
+                                                      "how": getattr(a, "how", "")})
 
     def stop(*_):
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, stop)
     try:
-        out = stage(config_dir, choices, [r for r in a.rebuild.split(",") if r], a.channel, job=job)
+        out = stage(config_dir, choices, [r for r in a.rebuild.split(",") if r], a.channel, job=job, how=getattr(a, "how", ""))
         _remove_request(job.dir)
         job.end(out.get("state", "done"), percent=100, text={"ready": "Ready to restart", "none": out.get("message", ""),
-                                                            "done": "Done"}.get(out.get("state"), "Done"))
+                                                            "waiting": out.get("message", ""), "done": "Done"}.get(out.get("state"), "Done"))
         return out
     except KeyboardInterrupt:
         discard()
@@ -2271,12 +2680,76 @@ def run_stage(a, config_dir, choices):
         return {"error": "The updater stopped: " + (str(e) or e.__class__.__name__)}
 
 
+def cli_choices(report):
+    """The decisions `tessera update` makes without asking: the ones that
+    change nothing of yours (SETTLED), a renamed setting moved, a dropped
+    one let go"""
+    out = {}
+    for c in report.get("conflicts", []):
+        pick = SETTLED.get(c["kind"]) or ("move" if "move" in c["choices"] else "drop" if c["kind"] == "removed" else "")
+        if pick in c["choices"]:
+            out[c["id"]] = pick
+    return out
+
+
+def cli_update(config_dir, channel=None, how=""):
+    """`tessera update` for a normal install (a bundle, or a git install
+    that moves to one): the check, then the download made ready; with none
+    for the new version yet it asks Wait or Build now on a terminal, and
+    waits when nobody's there. Exit 3: a developer's checkout (git, as before)."""
+    if update_mode() == "dev":
+        return 3
+    if not config_dir:
+        config_dir = os.path.join(_xdg("XDG_CONFIG_HOME", "~/.config"), "tessera")
+    report = check(config_dir, True, channel)
+    if report.get("error"):
+        print(report["error"], file=sys.stderr)
+        return 1
+    if not report.get("available"):
+        print("Tessera is up to date (" + report.get("current", "") + ").")
+        return 0
+    print(f"Tessera {report.get('current', '')} → {report.get('latest', '')} ({report.get('channelName', '')})")
+    if report.get("noBundle") and not how:
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            mins = (report["noBundle"] or {}).get("minutes") or 0
+            print("Its download isn't out yet" + (f" (usually ready in about {mins} min)" if mins else "") + ".")
+            try:
+                reply = input("  [W]ait for the download (the default), or [b]uild it here now (gently, about 10 minutes)? ").strip().lower()
+            except EOFError:
+                reply = ""
+            how = "build" if reply.startswith("b") else "wait"
+        else:
+            how = "wait"
+    if report.get("noBundle") and how == "wait":
+        print("Waiting for the download: run tessera update again later (Software Update offers it as soon as it's out).")
+        return 0
+    b = report.get("bundle") or {}
+    if b:
+        print(f"Downloading {b.get('size', 0) / 1e6:.0f} MB" + (f"; moving {b['movesText']}" if b.get("movesText") else ""))
+    try:
+        out = stage(config_dir, cli_choices(report), (), channel, how=how)
+    except SystemExit as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    if out.get("staged"):
+        print("Ready. It's installed when the shell restarts: tessera repair now, or at your next login.")
+        return 0
+    if out.get("state") == "waiting":
+        print(out.get("message", "Waiting for the download."))
+        return 0
+    if update_mode() == "git" and how == "build":
+        return 3  # (built here from git: tools/tessera goes on as before)
+    print(out.get("message", ""))
+    return 0
+
+
 def main():
     unblock_signals()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", choices=["check", "apply", "info", "peek", "fetch", "stage", "finish", "discard", "staged", "cancel",
-                                        "recover", "resume", "lock-holder"])
+                                        "recover", "resume", "lock-holder", "cli"])
     ap.add_argument("--choices-json", help="stage: the conflicts' choices as JSON text")
+    ap.add_argument("--how", default="", choices=list(HOW), help="stage: no bundle for the new version yet: wait (nothing done) or build it here")
     ap.add_argument("--if-ready", action="store_true", help="finish: quietly nothing when nothing is staged (launch-shell.sh at login)")
     ap.add_argument("--channel", choices=sorted(CHANNELS), help="this channel instead of config.json's update.channel")
     ap.add_argument("--mark", action="store_true", help="peek: write down that a new version was mentioned; lock-holder: the job's status says who's running")
@@ -2286,13 +2759,16 @@ def main():
     ap.add_argument("--rebuild", default="", help="apply: also rebuild these (comma-separated: plugin,native,shaders)")
     a = ap.parse_args()
     LOCK_WHAT["what"] = a.command
+    if a.command == "cli":
+        return cli_update(a.config, a.channel, a.how)
     try:
         if a.command == "lock-holder":
             out = lock_report(a.mark)
         elif a.command == "check":
             out = check(a.config, fetch=not a.no_fetch, channel=a.channel)
         elif a.command == "info":
-            out = position(a.config, False, a.channel) if is_checkout() else {"error": NOT_A_CHECKOUT}
+            out = bundle_check(a.config, False, a.channel) if is_bundle() else \
+                position(a.config, False, a.channel) if is_checkout() else {"error": NOT_A_CHECKOUT}
         elif a.command == "peek":
             out = peek(a.config, a.channel, a.mark)
         elif a.command == "fetch":

@@ -47,6 +47,17 @@ READY "patches" and in the manifest, tessera-ui-<tree>-<variant>.<program>.
 from-<12>.zst); each is checked against the manifest and signed like the
 archives, and published with them.
 
+Bundles (tools/tessera-bundle.py): a set whose READY says "type":
+"bundle" is one commit's bundle: both archives (tessera-<commit>-<variant>.
+bundle.tar.zst) and its manifest (tessera-<commit>.bundle.json), checked
+the same way (sizes, checksums, the manifest's commit, channel, release and
+both archives; the commit's native/ is its tree when the checkout here has
+it), signed with the trusted comment "<file> commit=<commit>
+channel=<channel>" (what installs check), and for a rolling release the
+manifest also as tessera-latest.bundle.json (the channel's pointer, signed
+on its own), uploaded last and downloaded back to compare. A rolling
+release keeps its three newest bundles.
+
 When it runs: 30 s after login and every 2 minutes (tessera-publish.timer);
 each look is one ssh (`tessera-release --health`: the sets waiting and the
 builder's status). Nothing else runs unless a set waits. server1 out of
@@ -99,6 +110,35 @@ TAG_RE = re.compile(r"^v[0-9A-Za-z._-]+$")
 MANIFEST_RE = re.compile(r"^tessera-ui-([0-9a-f]{40})\.manifest\.json$")
 PATCH_RE = re.compile(r"^tessera-ui-([0-9a-f]{40})-(x86-64-v3|generic)\.(tessera-ui|tessera-events)\.from-([0-9a-f]{12})\.zst$")
 WAIT_ALERT = 3600  # a set waiting longer than this is said once
+BUNDLE_MANIFEST_RE = re.compile(r"^tessera-([0-9a-f]{40})\.bundle\.json$")
+LATEST = "tessera-latest.bundle.json"  # (a rolling release's pointer: its newest bundle's manifest)
+
+
+def is_bundle(s):
+    return s.get("type") == "bundle"
+
+
+def bundle_files(commit):
+    """What server1 sends for a bundle: both archives and the manifest"""
+    return sorted([f"tessera-{commit}-x86-64-v3.bundle.tar.zst", f"tessera-{commit}-generic.bundle.tar.zst",
+                   f"tessera-{commit}.bundle.json"])
+
+
+def to_sign(s):
+    """The files of a set signed here: what server1 sent, and for a rolling
+    release's bundle the pointer too"""
+    if is_bundle(s):
+        return bundle_files(s["commit"]) + ([LATEST] if s.get("tag") in ROLLING else [])
+    return unsigned_files(s["tree"], set_patches(s))
+
+
+def published_names(s):
+    return sorted(to_sign(s) + [n + ".minisig" for n in to_sign(s)])
+
+
+def set_key(s):
+    """The set's folder name, here and on server1: the tree, or a bundle's commit"""
+    return s.get("commit") if is_bundle(s) else s.get("tree")
 
 
 class Refused(Exception):
@@ -229,7 +269,7 @@ def sign(dest, s):
     """Signs the set's three files in DEST and checks each signature
     against the commit's tools/tessera-ui.pub."""
     tree, commit = s["tree"], s["commit"]
-    patches = set_patches(s)
+    patches = set_patches(s) if not is_bundle(s) else []
     status(state="signing")
     pub_text, pub_from = pubkey_for(commit)
     pub_path = os.path.join(dest, ".tessera-ui.pub")
@@ -237,22 +277,24 @@ def sign(dest, s):
         f.write(pub_text)
     pw = read_password()
     try:
-        for n in unsigned_files(tree, patches):
+        for n in to_sign(s):
             path = os.path.join(dest, n)
-            # (the trusted comment is signed too: installs check tree= in it)
-            r = subprocess.run(["minisign", "-S", "-s", KEY, "-m", path, "-t", f"{n} tree={tree} commit={commit}"],
+            # (the trusted comment is signed too: installs check tree= in it,
+            # or a bundle's commit=)
+            comment = [n, f"commit={commit}", f"channel={s.get('channel', '')}"] if is_bundle(s) else [n, f"tree={tree}", f"commit={commit}"]
+            r = subprocess.run(["minisign", "-S", "-s", KEY, "-m", path, "-t", " ".join(comment)],
                                input=pw + b"\n", capture_output=True, timeout=120)
             if r.returncode != 0:
                 why = r.stderr.decode(errors="replace").strip().splitlines()
                 raise Refused(f"signing {n} failed: " + (why[-1] if why else f"exit {r.returncode}")
                               + f" (is {PASSWORD} the key's password?)")
             trusted = verify_sig(pub_path, path)
-            if trusted.split() != [n, f"tree={tree}", f"commit={commit}"]:
+            if trusted.split() != comment:
                 raise Refused(f"{n}'s signed comment is {trusted!r}, not this file, tree and commit")
     finally:
         del pw
     os.remove(pub_path)
-    log(f"{s['tag']}: signed tree {tree[:12]}; signatures checked against tools/tessera-ui.pub from {pub_from}")
+    log(f"{s['tag']}: signed {'bundle ' + commit[:12] if is_bundle(s) else 'tree ' + tree[:12]}; signatures checked against tools/tessera-ui.pub from {pub_from}")
 
 
 # ── Fetch and check ──────────────────────────────────────────────────────
@@ -343,7 +385,52 @@ def verify_sig(pub_path, path):
     raise Refused(f"minisign gave no signed comment for {os.path.basename(path)}")
 
 
+def fetch_and_check_bundle(s):
+    """A bundle set from server1, checked like a program set"""
+    tag, tree, commit, name = s.get("tag", ""), s.get("tree", ""), s.get("commit", ""), s.get("name", "")
+    if not (tag in ROLLING or TAG_RE.match(tag)) or not HEX40.match(tree) or not HEX40.match(commit):
+        raise Refused(f"server1 listed a bundle this doesn't publish ({tag!r}, {commit!r})")
+    if tag in ROLLING and name != ROLLING[tag]:
+        raise Refused(f"{tag} is {ROLLING[tag]}'s release, not {name!r}'s")
+    if TAG_RE.match(tag) and name != tag:
+        raise Refused(f"the bundle for {tag} says it's {name!r}")
+    files = s.get("files") or {}
+    want = bundle_files(commit)
+    if sorted(files) != want:
+        raise Refused(f"the bundle set has {sorted(files)}, not both archives and the manifest")
+    dest = os.path.join(STAGE, tag, commit)
+    shutil.rmtree(dest, ignore_errors=True)
+    os.makedirs(dest)
+    status(state="fetching", current=f"{tag}/{commit}")
+    remote = f"tessera-release/out/{tag}/{commit}"
+    retry("copying the bundle from server1", lambda: run(SCP + [f"{HOST}:{remote}/{n}" for n in want] + [dest + "/"], "copying the bundle from server1", timeout=3600))
+    status(state="checking")
+    for n in want:
+        p = os.path.join(dest, n)
+        if os.path.getsize(p) != files[n].get("size") or sha256_of(p) != files[n].get("sha256"):
+            raise Refused(f"{n} changed on the way from server1")
+    with open(os.path.join(dest, f"tessera-{commit}.bundle.json")) as f:
+        m = json.load(f)
+    if (m.get("format"), m.get("name"), m.get("commit"), m.get("tree"), m.get("tag"), m.get("channel")) != \
+            (1, "tessera-bundle", commit, tree, tag, s.get("channel")):
+        raise Refused("the bundle's manifest names another version or release")
+    for v in ("x86-64-v3", "generic"):
+        e = (m.get("variants") or {}).get(v) or {}
+        p = os.path.join(dest, f"tessera-{commit}-{v}.bundle.tar.zst")
+        if e.get("file") != os.path.basename(p) or e.get("size") != os.path.getsize(p) or e.get("sha256") != sha256_of(p):
+            raise Refused(f"the {v} bundle doesn't match its manifest")
+    known = git("rev-parse", "--verify", "--quiet", f"{commit}:native")
+    if known is not None and known.strip() != tree:
+        raise Refused(f"commit {commit[:12]}'s native/ isn't tree {tree[:12]}")
+    if s.get("tag") in ROLLING:
+        shutil.copyfile(os.path.join(dest, f"tessera-{commit}.bundle.json"), os.path.join(dest, LATEST))
+    log(f"{tag}: bundle {commit[:12]} fetched and checked: sizes, checksums, manifest")
+    return dest, m
+
+
 def fetch_and_check(s):
+    if is_bundle(s):
+        return fetch_and_check_bundle(s)
     tag, tree, commit, name = s.get("tag", ""), s.get("tree", ""), s.get("commit", ""), s.get("name", "")
     if not (tag in ROLLING or TAG_RE.match(tag)) or not HEX40.match(tree) or not HEX40.match(commit):
         raise Refused(f"server1 listed a set this doesn't publish ({tag!r}, {tree!r})")
@@ -429,7 +516,46 @@ def can_publish():
                       f"(gh auth switch to an account that can)")
 
 
+def publish_bundle_github(s, dest, m):
+    """A bundle set to its release: the archives, then the manifest, then
+    the pointer (a rolling release's), each with its signature; a rolling
+    release keeps its three newest bundles. The last one uploaded comes back
+    from GitHub to compare."""
+    tag, commit = s["tag"], s["commit"]
+    status(state="publishing")
+    names = published_names(s)
+    if subprocess.run(["gh", "release", "view", tag], capture_output=True,
+                      env=dict(os.environ, GH_REPO=GH_REPO, GH_PROMPT_DISABLED="1")).returncode != 0:
+        raise Refused(f"there's no release {tag} yet (its program set goes first)")
+    order = [n for n in names if ".tar.zst" in n] + [n for n in names if BUNDLE_MANIFEST_RE.match(n.replace(".minisig", ""))] + \
+        [n for n in names if n.startswith(LATEST)]
+    for group in (order[:4], order[4:6], order[6:]):
+        if group:
+            gh("release", "upload", tag, *[os.path.join(dest, n) for n in group], "--clobber")
+    if tag in ROLLING:
+        assets = json.loads(gh("release", "view", tag, "--json", "assets"))["assets"]
+        manifests = sorted((a for a in assets if BUNDLE_MANIFEST_RE.match(a["name"])), key=lambda a: a["createdAt"], reverse=True)
+        for a in manifests[KEEP:]:
+            old = BUNDLE_MANIFEST_RE.match(a["name"])[1]
+            if old == commit:
+                continue
+            for b in assets:
+                if b["name"].startswith("tessera-" + old):
+                    gh("release", "delete-asset", tag, b["name"], "--yes")
+            log(f"{tag}: removed the older bundle {old[:12]}")
+    base = f"https://github.com/{GH_REPO}/releases/download/{tag}"
+    back = LATEST if tag in ROLLING else f"tessera-{commit}.bundle.json"
+    got = os.path.join(dest, ".downloaded")
+    retry("downloading the manifest back", lambda: run(["curl", "-fsSL", "--retry", "3", "--proto", "=https", "-o", got, f"{base}/{back}"], "downloading the manifest back"))
+    if sha256_of(got) != sha256_of(os.path.join(dest, back)):
+        raise Refused(f"GitHub serves another {back} than was uploaded")
+    os.remove(got)
+    return [f"{base}/{n}" for n in names]
+
+
 def publish_github(s, dest, m):
+    if is_bundle(s):
+        return publish_bundle_github(s, dest, m)
     tag, tree, commit = s["tag"], s["tree"], s["commit"]
     status(state="publishing")
     names = expected_files(tree, set_patches(s))
@@ -499,7 +625,7 @@ def publish_gitlab(s, dest):
         with open(GITLAB_PROJECT_FILE) as f:
             project = f.read().strip() or project
     api = "https://gitlab.com/api/v4/projects/" + urllib.parse.quote(project, safe="")
-    names = expected_files(tree, set_patches(s))
+    names = published_names(s)
     try:
         for n in [n for n in names if ".manifest.json" not in n] + [n for n in names if ".manifest.json" in n]:
             with open(os.path.join(dest, n), "rb") as f:
@@ -556,7 +682,7 @@ def main(argv=None):
                 status(state="idle", current=None, pid=None, checked=now(), reach=str(e)[:200])
                 return 0
             raise
-        status(waiting=[f"{s.get('tag')}/{s.get('tree')}" for s in sets], reach=None)
+        status(waiting=[f"{s.get('tag')}/{set_key(s)}" for s in sets], reach=None)
         alert_health(sets, builder)
         if sets:
             preflight(publish=not a.dry_run)
@@ -569,7 +695,7 @@ def main(argv=None):
     failed = []
     for s in sets:
         t0 = time.time()
-        key = f"{s.get('tag')}/{s.get('tree')}"
+        key = f"{s.get('tag')}/{set_key(s)}"
         try:
             dest, m = fetch_and_check(s)
             sign(dest, s)
@@ -578,12 +704,12 @@ def main(argv=None):
                 continue
             urls = publish_github(s, dest, m)
             publish_gitlab(s, dest)
-            run(SSH + [HOST, f"bin/tessera-release --mark-published {s['tag']} {s['tree']}"], "marking it published on server1",
+            run(SSH + [HOST, f"bin/tessera-release --mark-published {s['tag']} {set_key(s)}"], "marking it published on server1",
                 timeout=120)
             sizes = {os.path.basename(u): os.path.getsize(os.path.join(dest, os.path.basename(u)))
                      for u in urls if u.endswith(".tar.zst")}
             secs = int(time.time() - t0)
-            STATE.setdefault("published", {})[s["tag"]] = {
+            STATE.setdefault("published", {})[s["tag"] + (":bundle" if is_bundle(s) else "")] = {
                 "tree": s["tree"], "commit": s["commit"], "name": s.get("name"), "at": now(), "seconds": secs,
                 "urls": urls, "sizes": sizes}
             status()

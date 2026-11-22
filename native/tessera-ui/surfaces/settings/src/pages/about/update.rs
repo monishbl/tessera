@@ -77,6 +77,31 @@ fn st(title: impl Into<String>, detail: impl Into<String>, icon: &'static str, b
     Status { title: title.into(), detail: detail.into(), icon, button: button.map(|(l, a)| (l.to_string(), a.to_string())), busy: false, enabled: true }
 }
 
+/// The new version is a bundle that isn't published yet (the check's
+/// "noBundle"): Wait for the download, or Build now
+pub fn no_download(t: &Value) -> bool {
+    b(&t["available"]) && t["noBundle"].is_object()
+}
+
+/// A bundle's download, in words: "85 MB download", and the held packages
+/// it moves ("moves hyprland 0.57.1 → 0.57.2")
+pub fn bundle_words(t: &Value) -> String {
+    let bu = &t["bundle"];
+    if !bu.is_object() {
+        return String::new();
+    }
+    let mb = bu["size"].as_f64().unwrap_or(0.0) / 1e6;
+    let mut out = if mb >= 1.0 { format!("{mb:.0} MB download") } else { String::new() };
+    let moves = s(&bu["moves"]);
+    if !moves.is_empty() {
+        if !out.is_empty() {
+            out.push_str(" · ");
+        }
+        out.push_str(&format!("moves {moves}"));
+    }
+    out
+}
+
 /// Tessera's update needs decisions first (the decisions sheet), and could go now
 fn needs_decisions(u: &Value) -> bool {
     let t = &u["t"];
@@ -150,6 +175,28 @@ pub fn status(u: &Value) -> Status {
     }
     if b(&t["offline"]) {
         return st("Can't reach the update server", "Check your internet connection, then try again.", "warning-circle", Some(("Try again", "su.check")));
+    }
+    // No download yet for the new version (bundles): wait for it, the
+    // default, or Build now (the Tessera row's other button); not while
+    // system updates wait, which "Updates are ready" offers
+    if checked && no_download(t) && n(&sy["count"]) == 0 && s(&t["how"]) != "build" {
+        let v = short(&s(&t["latest"]));
+        let mins = n(&t["noBundle"]["minutes"]);
+        let soon = if mins > 0 { format!(" (usually within about {mins} min)") } else { String::new() };
+        if s(&t["how"]) == "wait" {
+            return st(
+                format!("Waiting for Tessera {v}'s download"),
+                format!("It's offered as soon as it's published{soon}. Or build it here now: about 10 minutes, gently in the background."),
+                "clock",
+                Some(("Check now", "su.check")),
+            );
+        }
+        return st(
+            format!("Tessera {v} has no download yet"),
+            format!("It's still being published{soon}. Wait for the download, or build it here now: about 10 minutes, gently in the background."),
+            "arrow-circle-up",
+            Some(("Wait for the download", "tu.wait")),
+        );
     }
     if checked && b(&u["anything"]) {
         let decide = needs_decisions(u);
@@ -275,7 +322,17 @@ pub fn job_line(job: &Value) -> String {
     let mb = job["bytes"].as_f64().unwrap_or(0.0) / 1e6;
     match job["phase"].as_str().unwrap_or("") {
         "download" if job["how"] == "patch" => format!("Downloading a patch · {mb:.1} MB"),
+        // (a bundle: how far, of how much)
+        "download" if job["how"] == "bundle" => {
+            let total = job["total"].as_f64().unwrap_or(0.0) / 1e6;
+            if total >= 1.0 { format!("Downloading Tessera · {mb:.0} of {total:.0} MB") } else { format!("Downloading Tessera · {mb:.0} MB") }
+        }
         "download" => format!("Downloading the update · {mb:.1} MB"),
+        // (the held packages moved to their tested versions, by the root helper)
+        "packages" => {
+            let t = s(&job["text"]);
+            if t.is_empty() { "Putting the tested packages in place".into() } else { t }
+        }
         "build" => "Building Tessera".into(),
         "parts" => {
             let t = s(&job["text"]);
@@ -347,6 +404,21 @@ pub fn tessera_part(u: &Value) -> Part {
         let mut buttons = Vec::new();
         if notes {
             buttons.push(bt("What's new", "sheet:notes", 4, true));
+        }
+        // (no download yet: Wait, the default, or Build now)
+        if no_download(t) {
+            let waiting = s(&t["how"]) == "wait";
+            detail.push_str(if waiting { " · waiting for the download" } else { " · no download yet" });
+            if !waiting {
+                buttons.push(bt("Wait for the download", "tu.wait", 0, true));
+            }
+            buttons.push(bt("Build now", "tu.buildNow", if waiting { 0 } else { 4 }, b(&u["allowed"]) && !b(&u["running"])));
+            return Part { detail, buttons, progress: None };
+        }
+        let words = bundle_words(t);
+        if !words.is_empty() {
+            detail.push_str(" · ");
+            detail.push_str(&words);
         }
         let decide = needs_decisions(u);
         buttons.push(bt("Update", if decide { "sheet:decide" } else { "tu.update" }, 0, decide || b(&t["canUpdate"])));
@@ -1261,5 +1333,51 @@ mod tests {
         assert_eq!(offer_line(&json!({"result": {"ok": [], "failed": [{}, {}], "error": ""}})), "2 features need a step from you");
         assert_eq!(offer_line(&json!({"result": {"ok": [{}], "failed": [], "error": ""}})), "All set up");
         assert_eq!(capital("no camera"), "No camera");
+    }
+
+    #[test]
+    fn no_download_yet_asks_wait_or_build_now() {
+        let nb = json!({"available": true, "latest": "656db163", "noBundle": {"minutes": 20}, "how": ""});
+        let u = feed(json!({"anything": true, "t": nb.clone()}));
+        // (asked: Wait is the status's one button, the default)
+        let x = status(&u);
+        assert_eq!((x.title.as_str(), button(&x)), ("Tessera 656db163 has no download yet", ("Wait for the download", "tu.wait")));
+        assert!(x.detail.contains("usually within about 20 min") && x.detail.contains("about 10 minutes"));
+        let p = tessera_part(&u);
+        assert_eq!(p.detail, "2bfff4d0 → 656db163 · no download yet");
+        let acts: Vec<(&str, &str, i32)> = p.buttons.iter().map(|b| (b.0.as_str(), b.1.as_str(), b.2)).collect();
+        assert_eq!(acts, vec![("Wait for the download", "tu.wait", 0), ("Build now", "tu.buildNow", 4)]);
+        // Waiting: nothing runs; Build now stays on offer
+        let u = feed(json!({"anything": true, "t": {"available": true, "latest": "656db163", "noBundle": {"minutes": 0}, "how": "wait"}}));
+        let x = status(&u);
+        assert_eq!((x.title.as_str(), button(&x)), ("Waiting for Tessera 656db163's download", ("Check now", "su.check")));
+        assert!(!x.detail.contains("usually"));
+        let p = tessera_part(&u);
+        assert_eq!(p.detail, "2bfff4d0 → 656db163 · waiting for the download");
+        assert_eq!(p.buttons.iter().map(|b| b.1.as_str()).collect::<Vec<_>>(), vec!["tu.buildNow"]);
+        // System updates waiting too: "Updates are ready" comes first
+        let x = status(&feed(json!({"anything": true, "t": nb.clone(), "s": {"count": 3, "canUpdate": true}})));
+        assert_eq!(x.title, "Updates are ready");
+        // Not offered in the dev sandbox
+        let p = tessera_part(&feed(json!({"allowed": false, "t": nb})));
+        assert!(p.buttons.is_empty() || p.buttons.iter().all(|b| !b.3 || b.1 != "tu.buildNow"));
+    }
+
+    #[test]
+    fn a_bundle_says_its_size_and_the_packages_it_moves() {
+        let t = json!({"available": true, "latest": "656db163", "canUpdate": true,
+                       "bundle": {"size": 84_600_000, "moves": "hyprland 0.57.1 → 0.57.2", "held": 1}});
+        assert_eq!(bundle_words(&t), "85 MB download · moves hyprland 0.57.1 → 0.57.2");
+        assert_eq!(bundle_words(&json!({"bundle": {"size": 84_600_000, "moves": ""}})), "85 MB download");
+        assert_eq!(bundle_words(&json!({})), "");
+        let p = tessera_part(&feed(json!({"t": t})));
+        assert_eq!(p.detail, "2bfff4d0 → 656db163 · 85 MB download · moves hyprland 0.57.1 → 0.57.2");
+        assert_eq!(p.buttons.last().map(|b| b.1.as_str()), Some("tu.update"));
+        // The download as it goes, and the packages' step
+        assert_eq!(job_line(&json!({"phase": "download", "how": "bundle", "bytes": 31_000_000, "total": 84_600_000})), "Downloading Tessera · 31 of 85 MB");
+        assert_eq!(job_line(&json!({"phase": "download", "how": "bundle", "bytes": 3_000_000})), "Downloading Tessera · 3 MB");
+        assert_eq!(job_line(&json!({"phase": "packages", "text": "Moving the held packages to their tested versions"})),
+                   "Moving the held packages to their tested versions");
+        assert_eq!(job_line(&json!({"phase": "packages"})), "Putting the tested packages in place");
     }
 }

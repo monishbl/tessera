@@ -81,7 +81,8 @@ With the password:
       no record). See "login-switch" below.
 With the password, once, at the start:
   update [--snapshot snapper|timeshift] [--system] [--ignore a,b]
-         [--install a,b] [--remove a,b] [--downgrade f,g] [--mirrors l,m] [--setup <shell folder>] [--broker]
+         [--install a,b] [--remove a,b] [--downgrade f,g] [--mirrors l,m] [--setup <shell folder>]
+         [--lock <file>] [--broker]
       the whole system part of an update (sysupdate.py starts it): snapshot,
       this helper's own files (--setup), pacman -Syu, Tessera's packages,
       dropped ones. --mirrors: these mirror lists are behind (sysupdate.py
@@ -100,6 +101,17 @@ With the password, once, at the start:
       update has). Only pacman runs, from /usr/bin, its arguments checked
       (check_pacman); output and exit code go back the same way. It ends
       when sysupdate.py closes the socket, so nothing outlives the update.
+      --lock <file>: the package lock of the Tessera version being installed
+      (a bundle's, tools/tessera-bundle.py: read as you, every name and
+      version checked here): the held packages (only the Hyprland family
+      and Quickshell, HELD_FAMILY) put at exactly their tested version, from
+      the repositories when they have it, else Arch's archive
+      (archive.archlinux.org, the address made here from the checked name
+      and version), then held there (IgnorePkg, in /etc/pacman.d/tessera-
+      hold.conf, which /etc/pacman.conf's [options] includes, one marked
+      line) until the next Tessera version moves them. Minimum versions are
+      a system update's (--system). Written first, so the system update
+      never moves a held package; exit 25 when the moves fail.
       --features <ids> [the features' options below]: after the AUR step
       (sysupdate.py asks for it over the same socket, {"features": true}),
       or straight after the packages without one, the features below; the
@@ -1934,7 +1946,26 @@ def login_ui_vouched(data, record, key=None):
         if sha not in signed:
             raise Refused("tessera-ui isn't the program its signed manifest names (its checksum differs)")
         return "signed"
-    if src in ("built", "built-tuned"):
+    if src == "bundle":
+        # (a version installed as a bundle, tools/tessera-bundle.py: its
+        # manifest lists every file's sha256, signed as a whole)
+        manifest, sig = record.get("manifest"), record.get("minisig")
+        if not isinstance(manifest, str) or not isinstance(sig, str) or not manifest or not sig:
+            raise Refused("tessera-ui's signed bundle manifest wasn't kept")
+        trusted = verify_minisign(RELEASE_KEY if key is None else key, manifest.encode(), sig)
+        try:
+            m = json.loads(manifest)
+        except ValueError:
+            raise Refused("tessera-ui's signed manifest isn't JSON") from None
+        commit = m.get("commit") if isinstance(m, dict) else None
+        if not isinstance(commit, str) or not commit or "commit=" + commit not in trusted.split() or m.get("name") != "tessera-bundle":
+            raise Refused("tessera-ui's signed manifest is for another version")
+        variants = m.get("variants") if isinstance(m.get("variants"), dict) else {}
+        signed = {((v.get("files") or {}).get("bin/tessera-ui") or {}).get("sha256") for v in variants.values() if isinstance(v, dict)}
+        if sha not in signed:
+            raise Refused("tessera-ui isn't the program its signed manifest names (its checksum differs)")
+        return "signed"
+    if src in ("built", "built-tuned", "bundle-built"):
         want = record.get("sha256")
         if not isinstance(want, str) or not want:
             raise Refused("tessera-ui was built here before its checksum was recorded: build it again to use it at the login screen")
@@ -1942,6 +1973,17 @@ def login_ui_vouched(data, record, key=None):
             raise Refused("tessera-ui changed after it was built here (its checksum differs from the build's record)")
         return "built"
     raise Refused("there's no record of where tessera-ui came from")
+
+
+def resolve_in_home(path, home):
+    """PATH, or where its links lead when it's a link (run as you): only to a
+    file in HOME (else Refused). A link that leads nowhere stays as it is."""
+    if not os.path.islink(path):
+        return path
+    real = os.path.realpath(path)
+    if not real.startswith(os.path.realpath(home).rstrip("/") + "/"):
+        raise Refused("tessera-ui leads out of your home: the login screen's copy isn't refreshed")
+    return real
 
 
 def read_login_ui(uid, home=None, key=None):
@@ -1957,6 +1999,9 @@ def read_login_ui(uid, home=None, key=None):
         raise Refused("there's no home folder to take the login screen from")
     path, rec_path = os.path.join(home, LOGIN_UI_FROM), os.path.join(home, LOGIN_UI_RECORD)
     with as_user(uid):
+        # (a bundle install's are links into its current version: the files
+        # they lead to are checked, and must be in your home)
+        path, rec_path = resolve_in_home(path, home), resolve_in_home(rec_path, home)
         dst = os.lstat(os.path.dirname(path))
         fst = os.lstat(path)
         try:
@@ -2348,6 +2393,182 @@ PKGFILE = re.compile(r"^[a-z0-9@_+][a-z0-9@._+-]*-[^-/]+-[^-/]+-[a-z0-9_]+\.pkg\
 ARCHIVE_URL = re.compile(r"^https://archive\.archlinux\.org/packages/[a-z0-9]/[a-z0-9@._+-]+/[a-z0-9@._+:-]+\.pkg\.tar\.(zst|xz)$")  # (":": an epoch)
 
 
+# ── The package lock (update --lock: a Tessera version's tested packages) ─
+# The same rules as tools/tessera-bundle.py's check_lock, kept here: this
+# helper is one file, and never loads anything from your home.
+HELD_FAMILY = ("hyprland", "aquamarine", "hyprutils", "hyprlang", "hyprgraphics", "hyprcursor", "hyprwayland-scanner",
+               "quickshell")
+HELD_OPTIONAL = ("quickshell", "hyprwayland-scanner")  # (left alone when not installed)
+PKG_VERSION = re.compile(r"^(?:[0-9]+:)?[0-9A-Za-z._+~]+-[0-9]+(?:\.[0-9]+)?$")
+PKG_ARCH = ("x86_64", "any")
+MAX_LOCK = 8 * 1024 * 1024  # (a bundle's whole manifest may be passed)
+HOLD_CONF = "/etc/pacman.d/tessera-hold.conf"
+PACMAN_CONF = "/etc/pacman.conf"
+HOLD_MARK = "# tessera: the packages Tessera holds at its tested versions (tessera-root update --lock)"
+HOLD_INCLUDE = "Include = " + HOLD_CONF
+VERCMP = "/usr/bin/vercmp"
+
+
+def check_lock(doc):
+    """{"held": {name: {"version", "arch"}}, "minimum": {name: version}}
+    from a lock file, or a bundle manifest's "packages"; every name and
+    version checked, held ones only from HELD_FAMILY. Raises Refused."""
+    if isinstance(doc, dict) and isinstance(doc.get("packages"), dict) and doc.get("name") == "tessera-bundle":
+        doc = doc["packages"]
+    if not isinstance(doc, dict):
+        raise Refused("not a package lock")
+    held, minimum = doc.get("held", {}), doc.get("minimum", {})
+    if not isinstance(held, dict) or not isinstance(minimum, dict) or len(held) > 32 or len(minimum) > 512:
+        raise Refused("not a package lock")
+    out = {"held": {}, "minimum": {}}
+    for n, e in sorted(held.items()):
+        if not isinstance(n, str) or not NAME.match(n) or n not in HELD_FAMILY:
+            raise Refused(f"not a package Tessera holds: {n!r}")
+        if not isinstance(e, dict) or not isinstance(e.get("version"), str) or not PKG_VERSION.match(e["version"]):
+            raise Refused(f"{n}: not a package version")
+        arch = e.get("arch", "x86_64")
+        if arch not in PKG_ARCH:
+            raise Refused(f"{n}: not an architecture")
+        out["held"][n] = {"version": e["version"], "arch": arch}
+    for n, v in sorted(minimum.items()):
+        if not isinstance(n, str) or not NAME.match(n) or not isinstance(v, str) or not PKG_VERSION.match(v):
+            raise Refused(f"not a package and version: {n!r}")
+        out["minimum"][n] = v
+    return out
+
+
+def lock_archive_url(name, version, arch):
+    """Arch's archive file for exactly that package: made here, from checked
+    parts (never an address from the lock)"""
+    if not NAME.match(name) or not PKG_VERSION.match(version) or arch not in PKG_ARCH:
+        raise Refused(f"no archive address for {name} {version}")
+    url = f"https://archive.archlinux.org/packages/{name[0]}/{name}/{name}-{version}-{arch}.pkg.tar.zst"
+    if not ARCHIVE_URL.match(url):
+        raise Refused(f"no archive address for {name} {version}")
+    return url
+
+
+def _pkg_upstream(v):
+    """epoch:pkgver, without the package release"""
+    head, sep, _ = v.rpartition("-")
+    return head if sep else v
+
+
+def _versions(args, run):
+    """{name: version} from pacman -Q or -Si (LANG=C)"""
+    try:
+        r = run([PACMAN, *args], capture_output=True, text=True, timeout=60, env=dict(os.environ, LANG="C", LC_ALL="C"))
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    out, name = {}, None
+    for line in (r.stdout or "").splitlines():
+        if args[0] == "-Q":
+            f = line.split()
+            if len(f) == 2:
+                out[f[0]] = f[1]
+            continue
+        k, _, v = line.partition(":")
+        if k.strip() == "Name":
+            name = v.strip()
+        elif k.strip() == "Version" and name and name not in out:
+            out[name] = v.strip()
+    return out
+
+
+def same_version(a, b, run=subprocess.run):
+    """pacman's vercmp says a == b"""
+    if a == b:
+        return True
+    try:
+        r = run([VERCMP, a, b], capture_output=True, text=True, timeout=10)
+        return r.stdout.strip() == "0"
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def lock_moves(lock, run=subprocess.run):
+    """What the lock moves now: {"repo": [names], "archive": [urls], "hold":
+    [names], "words": [...]}: a held package whose pkgver isn't the tested
+    one is moved (the repositories' copy when it's exactly that version,
+    else the archive's); one not installed is installed, unless optional"""
+    names = list(lock["held"])
+    have = _versions(["-Q", "--", *names], run) if names else {}
+    repo = _versions(["-Si", "--", *names], run) if names else {}
+    out = {"repo": [], "archive": [], "hold": [], "words": []}
+    for n, e in lock["held"].items():
+        if n not in have and n in HELD_OPTIONAL:
+            continue
+        out["hold"].append(n)
+        want = e["version"]
+        if n in have and same_version(_pkg_upstream(have[n]), _pkg_upstream(want), run):
+            continue
+        out["words"].append(f"{n} {have.get(n, '(not installed)')} -> {want}")
+        if repo.get(n) == want:
+            out["repo"].append(n)
+        else:
+            out["archive"].append(lock_archive_url(n, want, e["arch"]))
+    return out
+
+
+def hold_text(names):
+    return ("# Written by Tessera (tessera-root update --lock): these packages stay at the\n"
+            "# versions this Tessera was tested with, until the next Tessera version moves\n"
+            "# them. Remove this file (or the Include line in /etc/pacman.conf) to stop it.\n"
+            + ("IgnorePkg = " + " ".join(names) + "\n" if names else ""))
+
+
+def with_hold_include(text):
+    """pacman.conf with the marked Include line first in [options], or None
+    when it's there already. Raises Refused without an [options] section."""
+    lines = text.splitlines(keepends=True)
+    if any(l.strip() == HOLD_INCLUDE for l in lines):
+        return None
+    for i, l in enumerate(lines):
+        if l.strip() == "[options]":
+            return "".join(lines[:i + 1] + [HOLD_MARK + "\n", HOLD_INCLUDE + "\n"] + lines[i + 1:])
+    raise Refused("/etc/pacman.conf has no [options] section")
+
+
+def write_hold(names, prefix="/"):
+    """The held packages written down (HOLD_CONF), and pacman.conf including
+    it (kept once as pacman.conf.pre-tessera before the first change)"""
+    at = lambda f: os.path.join(prefix, f.lstrip("/"))
+    for n in names:
+        if not NAME.match(n) or n not in HELD_FAMILY:
+            raise Refused(f"not a package Tessera holds: {n!r}")
+    write_root(at(HOLD_CONF), hold_text(sorted(set(names))).encode(), 0o644)
+    with open(at(PACMAN_CONF)) as f:
+        text = f.read()
+    new = with_hold_include(text)
+    if new is not None:
+        if not os.path.exists(at(PACMAN_CONF) + ".pre-tessera"):
+            shutil.copy2(at(PACMAN_CONF), at(PACMAN_CONF) + ".pre-tessera")
+        write_root(at(PACMAN_CONF), new.encode(), 0o644)
+    return "Held at their tested versions: " + (", ".join(sorted(set(names))) or "nothing")
+
+
+def apply_lock(lock, say, out, run=subprocess.run):
+    """The held packages to their tested versions (lock_moves): one pacman
+    transaction for the repositories' and one for the archive's. True when
+    everything is where the lock says (or nothing had to move)."""
+    m = lock_moves(lock, run)
+    if not m["repo"] and not m["archive"]:
+        say("The held packages are at their tested versions")
+        return True
+    for w in m["words"]:
+        say("Moving " + w)
+    env = dict(os.environ, LANG="C", LC_ALL="C")
+    if m["repo"] and run([PACMAN, "-S", "--needed", "--noconfirm", "--", *m["repo"]], stdout=out, stderr=subprocess.STDOUT,
+                         env=env).returncode != 0:
+        say("The held packages couldn't be moved (pacman -S)")
+        return False
+    if m["archive"] and run([PACMAN, "-U", "--needed", "--noconfirm", "--", *m["archive"]], stdout=out, stderr=subprocess.STDOUT,
+                            env=env).returncode != 0:
+        say("The held packages couldn't be moved from Arch's archive (archive.archlinux.org)")
+        return False
+    return True
+
+
 def package_dirs(uid, run=subprocess.run):
     dirs = []
     try:
@@ -2376,7 +2597,7 @@ def check_package_file(v, dirs):
 def parse_update(args, dirs=None):
     """update's arguments, strictly: known flags only, package names checked."""
     p = {"snapshot": "", "system": False, "ignore": [], "install": [], "remove": [], "downgrade": [], "mirrors": [], "setup": "",
-         "broker": False, "features": None}
+         "broker": False, "features": None, "lock": ""}
     feat = []
     i = 0
     while i < len(args):
@@ -2398,7 +2619,7 @@ def parse_update(args, dirs=None):
                 feat += [a, args[i + 1]]
             i += 2
             continue
-        if a not in ("--snapshot", "--ignore", "--install", "--remove", "--downgrade", "--mirrors", "--setup") or i + 1 >= len(args):
+        if a not in ("--snapshot", "--ignore", "--install", "--remove", "--downgrade", "--mirrors", "--setup", "--lock") or i + 1 >= len(args):
             raise Refused(f"unknown argument: {a}")
         v = args[i + 1]
         i += 2
@@ -2408,6 +2629,10 @@ def parse_update(args, dirs=None):
             p["snapshot"] = v
         elif a == "--setup":
             p["setup"] = check_folder(v)
+        elif a == "--lock":
+            if not v.startswith("/") or "\0" in v:
+                raise Refused("--lock: a file's full path")
+            p["lock"] = v
         elif a == "--downgrade":
             p["downgrade"] = [check_package_file(f, dirs or []) for f in v.split(",") if f]
         elif a == "--mirrors":
@@ -2591,11 +2816,25 @@ def update(args, uid, out=sys.stdout):
     if p["system"] and p["mirrors"]:
         if not refresh_mirrors(p["mirrors"], say, out):
             say("The mirrors couldn't be re-ranked: going on with the ones there are")
+    lock = None
+    if p["lock"]:
+        # (checked before anything changes: a lock that isn't one stops here)
+        try:
+            lock = check_lock(json.loads(read_as(uid, p["lock"], MAX_LOCK)))
+        except ValueError:
+            raise Refused("the package lock isn't JSON") from None
+        # Held first: the system update below never moves them
+        say("@@step hold")
+        say(write_hold(lock_moves(lock)["hold"]))
     code = subprocess.run(["/bin/sh", "-c", UPDATE_SCRIPT, "sh", p["snapshot"], ",".join(p["ignore"]),
                            ",".join(p["install"]), ",".join(p["remove"]), "1" if p["system"] else "0"],
                           stdout=out, stderr=subprocess.STDOUT).returncode
     if code != 0:
         return code
+    if lock is not None:
+        say("@@step lock")
+        if not apply_lock(lock, say, out):
+            return 25
     on_features = (lambda s: features(p["features"], uid, s)) if p["features"] else None
     say("@@root-done")
     if p["broker"]:

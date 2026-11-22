@@ -65,9 +65,14 @@ pub fn job_words(job: &Value) -> (String, String) {
         "running" => {
             let title = match job["phase"].as_str().unwrap_or("") {
                 "download" if job["how"] == "patch" => format!("Downloading a patch · {mb:.1} MB"),
+                // (a bundle: the whole version, how far of how much)
+                "download" if job["how"] == "bundle" => match job["total"].as_f64().unwrap_or(0.0) / 1e6 {
+                    total if total >= 1.0 => format!("Downloading Tessera · {mb:.0} of {total:.0} MB"),
+                    _ => format!("Downloading Tessera · {mb:.0} MB"),
+                },
                 "download" => format!("Downloading · {mb:.1} MB"),
                 "build" => "Building Tessera".to_string(),
-                "parts" => s("text"),
+                "parts" | "packages" => s("text"),
                 _ => "Preparing the update".to_string(),
             };
             (title, "You can keep working. The shell restarts only when you choose.".into())
@@ -80,6 +85,8 @@ pub fn job_words(job: &Value) -> (String, String) {
         "cancelled" => ("Update cancelled".into(), "Nothing was changed.".into()),
         "done" => ("Done".into(), "The glass plugin was rebuilt. It loads the next time you log in.".into()),
         "none" => ("Tessera is up to date".into(), s("text")),
+        // (no download for the new version yet, and you chose to wait: nothing ran)
+        "waiting" => ("Waiting for the download".into(), s("text")),
         // (the repo lock held by an update running elsewhere: tessera-update.py's words)
         "busy" => ("Software Update is already running".into(), s("error")),
         _ => (String::new(), String::new()),
@@ -157,6 +164,10 @@ pub struct TesseraUpdate {
     pub error: String,
     pub result: Option<Value>,
     pub choices: Map<String, Value>,
+    /// No download yet for the new version (the check's "noBundle"): what
+    /// you chose, "wait" (the default: nothing runs) or "build" (Build now:
+    /// the job builds it here, gently); "" until asked
+    pub how: String,
     pub packages: Value, // { missing, unavailable, dropped, reasons }
     pub packages_checking: bool,
     /// update.channel as the helper gets it ("stable", "beta"; empty: the
@@ -201,6 +212,7 @@ impl Default for TesseraUpdate {
             error: String::new(),
             result: None,
             choices: Map::new(),
+            how: String::new(),
             packages: json!({"missing": [], "unavailable": [], "dropped": []}),
             packages_checking: false,
             channel: String::new(),
@@ -232,6 +244,15 @@ fn config_dir() -> String {
 pub fn channel_args(channel: &str) -> Vec<String> {
     match channel {
         "stable" | "beta" => vec!["--channel".into(), channel.into()],
+        _ => vec![],
+    }
+}
+
+/// The helper's --how for the Wait / Build now answer: only Build now is
+/// passed (waiting runs nothing; a stage without it waits too)
+pub fn how_args(how: &str) -> Vec<String> {
+    match how {
+        "build" => vec!["--how".into(), "build".into()],
         _ => vec![],
     }
 }
@@ -386,6 +407,7 @@ impl TesseraUpdate {
             c.push(rebuild.join(","));
         }
         c.extend(channel_args(&self.channel));
+        c.extend(how_args(&self.how));
         let c: Vec<&str> = c.iter().map(String::as_str).collect();
         tessera_core::services::bridge::run(&c);
         self.staged = None;
@@ -738,6 +760,10 @@ impl TesseraUpdate {
                 self.choices = kept;
                 // The packages of the version that would be installed
                 let upstream = if r["available"] == true { r["upstream"].as_str().unwrap_or("").to_string() } else { String::new() };
+                // (a download out now: the Wait / Build now answer is over with)
+                if r["noBundle"].is_null() {
+                    self.how.clear();
+                }
                 self.report = Some(r);
                 self.read_info(tx); // (the channel's branch may be new here)
                 self.check_packages(tx, &upstream);
@@ -822,6 +848,13 @@ mod tests {
         assert!(d.starts_with("Couldn't reach the update server.") && d.contains("Try again"));
         assert_eq!(w(json!({"state": "cancelled"})), "Update cancelled");
         assert_eq!(w(json!({"state": "none"})), "Tessera is up to date");
+        // (bundles: the download of the whole version, the held packages, and waiting for a download)
+        assert_eq!(w(json!({"state": "running", "phase": "download", "how": "bundle", "bytes": 31_000_000, "total": 84_600_000})),
+                   "Downloading Tessera · 31 of 85 MB");
+        assert_eq!(w(json!({"state": "running", "phase": "packages", "text": "Moving the held packages to their tested versions"})),
+                   "Moving the held packages to their tested versions");
+        assert_eq!(job_words(&json!({"state": "waiting", "text": "Tessera 5e6f7a8b is still being published."})),
+                   ("Waiting for the download".to_string(), "Tessera 5e6f7a8b is still being published.".to_string()));
         // (an update running elsewhere: never "another update", always since when and where)
         let (t, d) = job_words(&json!({"state": "busy", "error": "Software Update is already running (started 21:58) in another session. Wait for it to finish, then try again."}));
         assert_eq!(t, "Software Update is already running");
@@ -887,6 +920,13 @@ mod tests {
         assert_eq!(channel_args("beta"), vec!["--channel".to_string(), "beta".into()]);
         assert_eq!(channel_args("stable"), vec!["--channel".to_string(), "stable".into()]);
         assert!(channel_args("").is_empty() && channel_args("nightly").is_empty());
+    }
+
+    #[test]
+    fn only_build_now_goes_to_the_helper() {
+        assert_eq!(how_args("build"), vec!["--how".to_string(), "build".into()]);
+        // (waiting runs nothing; nothing chosen yet is a stage that waits)
+        assert!(how_args("wait").is_empty() && how_args("").is_empty() && how_args("rm -rf").is_empty());
     }
 
     #[test]

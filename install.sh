@@ -46,6 +46,9 @@ ORIG_TERM="${TERM:-}"
 export TERM="${TERM:-xterm-256color}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# (run from a bundle's version folder, tools/tessera-bundle.py: nothing is built, the shell is linked)
+BUNDLE=0
+[[ -f "$ROOT/bundle.json" ]] && BUNDLE=1
 CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}"
@@ -1350,6 +1353,13 @@ desktop_look() {
 }
 
 build() {
+    # A copy that runs from a bundle (tools/tessera-bundle.py) has all of it
+    # built already, for the Hyprland it holds: its files are checked against
+    # their signature, so nothing is built into them
+    if [[ $BUNDLE == 1 ]]; then
+        note "This Tessera came as a bundle: its shaders, glass plugin, helpers and programs are built already"
+        return 0
+    fi
     # Shaders (compiled with Qt's qsb) and the Liquid Glass plugin, built
     # against the installed Hyprland. The plugin source is kept so it can be
     # rebuilt after Hyprland updates (tessera rebuild, or Settings).
@@ -1422,7 +1432,11 @@ install_files() {
     if [[ -e "$CONFIG/quickshell/tessera" || -L "$CONFIG/quickshell/tessera" ]]; then
         run rm -rf "$CONFIG/quickshell/tessera"
     fi
-    if [[ $DEV == 1 ]]; then
+    if [[ $BUNDLE == 1 ]]; then
+        # (a bundle's: the link through current, tessera-bundle.py ensure
+        # below, so an update's one rename swaps the shell too)
+        run ln -s "$DATA/tessera/current/shell" "$CONFIG/quickshell/tessera"
+    elif [[ $DEV == 1 ]]; then
         run ln -s "$ROOT/shell" "$CONFIG/quickshell/tessera"
     else
         run cp -r "$ROOT/shell" "$CONFIG/quickshell/tessera"
@@ -1498,7 +1512,13 @@ install_files() {
     fi
     # The tessera command (doctor, update, rebuild, repair, uninstall) and where Tessera came from
     run mkdir -p "$DATA/tessera"
-    [[ $DRY == 1 ]] || printf '%s\n' "$ROOT" >"$DATA/tessera/source"
+    if [[ $BUNDLE == 1 ]]; then
+        # (current, not this version's own folder; and the programs' and
+        # plugin's links through it)
+        run python3 -I "$ROOT/tools/tessera-bundle.py" ensure >/dev/null
+    else
+        [[ $DRY == 1 ]] || printf '%s\n' "$ROOT" >"$DATA/tessera/source"
+    fi
     run install -m 755 "$ROOT/tools/tessera" "$BIN/tessera"
     case ":$PATH:" in
         *":$BIN:"*) ;;

@@ -18,6 +18,13 @@ as the AUR step's pacman ({"features": true}), then the parts done as you
 (features.py apply-user). Same single password. Each feature's result is
 in status.json's "features" ({id: {"ok", "error"}}); one that fails never
 stops the others.
+    sysupdate.py run … --lock FILE
+--lock: a Tessera version's package lock (a bundle's manifest, or its
+"packages"; tools/tessera-bundle.py): the root helper holds the Hyprland
+family and Quickshell at the tested versions (moving them there first, from
+the repositories or Arch's archive) and leaves the rest to --system. The
+Tessera update runs this from the version it's installing, before swapping
+it in (tools/tessera-update.py), so its own root helper is the one used.
     sysupdate.py run --undo [--snapshot …]
                                 go back to before the last update: the
                                 package versions it replaced, from pacman's
@@ -187,7 +194,7 @@ def at(lo, hi, frac):
     return int(max(state["percent"], min(99, p)))
 
 
-WEIGHT = {"snapshot": 6, "setup": 1, "system": 64, "packages": 12, "remove": 4, "aur": 14, "undo": 60, "features": 10}
+WEIGHT = {"snapshot": 6, "setup": 1, "hold": 1, "system": 64, "lock": 20, "packages": 12, "remove": 4, "aur": 14, "undo": 60, "features": 10}
 
 
 def begin(step):
@@ -198,6 +205,7 @@ def begin(step):
     before = sum(WEIGHT.get(x, 10) for x in steps[:steps.index(step)]) if step in steps else 0
     span = (100 * before / total, 100 * (before + WEIGHT.get(step, 10)) / total)
     text = {"snapshot": "Taking a snapshot", "setup": "Setting up Tessera's system helper", "system": "Checking for updates", "packages": "Installing Tessera's packages",
+            "hold": "Holding the tested packages", "lock": "Moving the held packages to their tested versions",
             "remove": "Removing unused packages", "aur": "Updating from the AUR",
             "undo": "Going back to the earlier versions", "features": "Setting up features"}.get(step, step)
     set_(step=step, phase=step if step != "system" else "sync", text=text, done=0, total=0, percent=at(0, 0, 0))
@@ -875,14 +883,16 @@ def login_ui_stale(home=None):
         return False
     if not isinstance(rec, dict):
         return False
-    if rec.get("source") in ("built", "built-tuned"):
+    if rec.get("source") in ("built", "built-tuned", "bundle-built"):
         if rec.get("sha256") != sha:
             return False
-    elif rec.get("source") == "ready-made":
+    elif rec.get("source") in ("ready-made", "bundle"):
         try:
             m = json.loads(rec.get("manifest") or "")
             variants = m.get("variants") or {}
-            if not rec.get("minisig") or sha not in {((v.get("programs") or {}).get("tessera-ui") or {}).get("sha256") for v in variants.values() if isinstance(v, dict)}:
+            key = (lambda v: ((v.get("files") or {}).get("bin/tessera-ui") or {}).get("sha256")) if rec["source"] == "bundle" else \
+                (lambda v: ((v.get("programs") or {}).get("tessera-ui") or {}).get("sha256"))
+            if not rec.get("minisig") or sha not in {key(v) for v in variants.values() if isinstance(v, dict)}:
                 return False
         except (ValueError, AttributeError):
             return False
@@ -910,6 +920,8 @@ def root_command(plan, broker):
             cmd += ["--" + k, ",".join(plan[k])]
     if plan["setup"]:
         cmd += ["--setup", plan.get("setup_dir") or SHELL]
+    if plan.get("lock"):
+        cmd += ["--lock", plan["lock"]]
     # (only the features with a part of root's: the rest are packages, or done as you)
     root_ids = [x for x in plan.get("features") or [] if x in ROOT_FEATURES]
     if root_ids:
@@ -1181,6 +1193,10 @@ def real_run(plan):
         if code == 24:
             return finish("error", "Going back didn't finish",
                           "Nothing was changed. " + tail(3))
+        if code == 25:
+            return finish("error", "The tested Hyprland couldn't be installed",
+                          "The packages this Tessera was tested with couldn't be moved into place (the repositories or "
+                          "Arch's archive, archive.archlinux.org). Nothing of Tessera was changed. " + tail(3))
         if code == 23:
             return finish("error", "Unused packages weren't removed",
                           "Everything else is done. Something else may still need them: " + tail(3))
@@ -1440,8 +1456,12 @@ def plan_of(a, fake=False):
     p["setup_dir"] = (stage_incoming(incoming) if incoming and not fake else None) or SHELL
     # (and the login screen's tessera-ui, when yours is another program now)
     p["setup"] = not fake and (not helper_current(p["setup_dir"]) or login_ui_stale())
-    p["kind"] = "update" if p["system"] or "--aur" in a else "features" if p["features"] else "install"
-    p["steps"] = ([("snapshot")] if p["snapshot"] else []) + (["setup"] if p["setup"] else []) + (["system"] if p["system"] else []) + \
+    # A Tessera version's package lock (an absolute path; the root helper reads and checks it)
+    lock = a[a.index("--lock") + 1] if "--lock" in a and a.index("--lock") + 1 < len(a) else ""
+    p["lock"] = lock if lock.startswith("/") and os.path.isfile(lock) else ""
+    p["kind"] = "update" if p["system"] or "--aur" in a else "lock" if p["lock"] else "features" if p["features"] else "install"
+    p["steps"] = ([("snapshot")] if p["snapshot"] else []) + (["setup"] if p["setup"] else []) + (["hold"] if p["lock"] else []) + \
+        (["system"] if p["system"] else []) + (["lock"] if p["lock"] else []) + \
         (["packages"] if p["install"] else []) + (["remove"] if p["remove"] else []) + (["aur"] if "--aur" in a or p["aur_install"] else []) + \
         (["features"] if p["features"] else [])
     return p
