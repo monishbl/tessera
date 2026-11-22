@@ -362,6 +362,45 @@ def finish(st, text, error=""):
 
 
 HEALTH_FAKE = {"on": False}  # (this run is the fake one: nothing recorded)
+# The root part's boot check, at its end (tessera-root.py boot_check_and_repair)
+BOOT_CHECK = os.path.join(SYSTEM, "var/lib/tessera/boot-check.json")
+
+
+def boot_check_notice(path=None, notify=None):
+    """After the root part: whether the next login will work (the root
+    helper checked as its last step, and undid its own part in anything
+    wrong). Anything found goes in status.json's "bootCheck" and is said
+    loudly, in Software Update and as a notification, before anyone logs out
+    or restarts. Returns the record read, or None."""
+    try:
+        with open(path or BOOT_CHECK) as f:
+            rec = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(rec, dict) or not isinstance(rec.get("time"), (int, float)) or rec["time"] < state["started"] - 5:
+        return None  # (an older helper, or an older check: nothing about this update)
+    problems = [p.get("what", "") for p in rec.get("problems") or [] if isinstance(p, dict)]
+    did = [d for d in rec.get("did") or [] if isinstance(d, str)]
+    set_(bootCheck={"ok": bool(rec.get("ok")), "problems": problems, "did": did})
+    if rec.get("ok") and not did:
+        return rec
+    if problems:
+        title = "Don't log out or restart yet"
+        body = ("The login screen may not start: " + "; ".join(problems[:3])
+                + ". Open Settings → Health → Login screen, or see docs/RECOVERY.md.")
+    else:
+        title = "The login screen was repaired"
+        body = "Tessera undid its own change that would have stopped the login screen: " + "; ".join(did[:3]) + \
+            ". Settings → Health shows what, and how to put it back once fixed."
+    set_(text=(state.get("text") or "Updated") + (" — the login screen needs attention" if problems else " — the login screen was repaired"),
+         error=((state.get("error") or "") + " " + title + ": " + body).strip())
+    out(f"sysupdate: {title}: {body}")
+    try:
+        (notify or subprocess.run)(["notify-send", "-u", "critical", "-a", "Software Update", "-i", "dialog-warning", title, body],
+                                   stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return rec
 
 
 def health_record(ok, why):
@@ -1361,6 +1400,8 @@ def run(fake, plan):
             fake_run(plan) if fake else real_run(plan)
             if undo is not None and state["state"] == "done" and not fake:
                 gone_back(undo["at"], undo["packages"])
+            if not fake and authed:
+                boot_check_notice()
     except Exception as e:  # anything unexpected still ends in a readable state
         out(f"sysupdate: {e!r}")
         finish("error", "The update stopped", str(e))
