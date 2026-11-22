@@ -29,6 +29,16 @@
 //!   (keyboards: shown until it's paired, Cancel stops the pairing), a PIN or
 //!   passkey to type here (the field), or a device asking to pair. While one
 //!   shows, it comes before a password request (BlueZ gives it 60 s).
+//!
+//! ── Passkeys (passkeys.rs) ───────────────────────────────────────────────
+//!   The passkeys daemon (native/tessera-passkeys) asks here too, the real
+//!   shell only: "Sign in to github.com as sam with your passkey", a key
+//!   for the glyph, then a finger or the password, as a password prompt.
+//!   Its conversation is the daemon's own PAM check over its socket (polkit
+//!   helper's lines), so the waiting for a finger, the password field and
+//!   "Incorrect password" are this dialog's as they are. In the queue with
+//!   polkit's requests; the daemon ending one (the browser gave up, or it
+//!   stopped) takes it off.
 //! Not like the QML: Material's hero shape changes without morphing; Glass's
 //! fingerprint turns red on a miss but doesn't pulse or shake (FingerGlyph);
 //! the real agent is untested here (its socket handshake follows polkit
@@ -46,6 +56,7 @@ use tessera_core::*;
 
 pub mod agent;
 pub mod btagent;
+pub mod passkeys;
 
 use tessera_core::services::hypr::Glass;
 use tessera_core::shell::Part;
@@ -54,6 +65,7 @@ use tessera_core::theme;
 use tessera_core::wayland::{Spec, State, Surface};
 use agent::{Line, Reply, Request, SessionLine};
 use btagent::{Answer, BtReply, BtRequest, Field};
+use passkeys::PasskeyRequest;
 use slint::ComponentHandle;
 use smithay_client_toolkit::shell::wlr_layer::{Anchor, KeyboardInteractivity, Layer};
 use smithay_client_toolkit::shell::WaylandSurface;
@@ -127,7 +139,24 @@ struct Req {
     message: String,
     cookie: String,
     user: String,
-    reply: Reply,
+    /// polkit's request: its answer
+    reply: Option<Reply>,
+    /// the passkeys daemon's request (its id): its own check decides
+    passkey: Option<u64>,
+}
+
+impl Req {
+    /// Over: polkit hears the answer; the passkeys daemon a Cancel, when
+    /// `tell` (not when it ended the request itself, nor when the shell quits:
+    /// the next shell asks again)
+    fn answer(&self, ok: bool, tell: bool) {
+        if let Some(r) = &self.reply {
+            r.send(ok);
+        }
+        if let (Some(id), false, true) = (self.passkey, ok, tell) {
+            passkeys::refuse(id);
+        }
+    }
 }
 
 /// What the dialog shows, from a request's conversation
@@ -338,7 +367,8 @@ impl Polkit {
             ui.set_ok_label("Allow".into());
             ui.set_ok_shown(true);
             ui.set_ok_needs_text(true);
-            ui.set_glyph(LOCK.into());
+            let key = self.queue.first().is_some_and(|r| r.passkey.is_some()) && !self.preview;
+            ui.set_glyph((if key { crate::icons::glyph_or("key", "lock") } else { LOCK }).into());
             ui.set_message(message.into());
             ui.set_prompt(if self.preview { "Password".into() } else { prompt_of(&self.ask.prompt).into() });
             ui.set_secret(self.preview || self.ask.secret);
@@ -378,6 +408,17 @@ impl Polkit {
         self.started_at = crate::util::now_ms();
         let Some(r) = self.queue.first() else { return };
         self.conv += 1;
+        // (a passkey: the daemon's own check, over its socket)
+        if let Some(id) = r.passkey {
+            match passkeys::converse(self.conv, id, Self::send(st)) {
+                Ok(s) => self.session = Some(s),
+                Err(e) => {
+                    eprintln!("tessera-ui: polkit: passkeys' check didn't start ({e})");
+                    self.error = "Couldn't ask for your fingerprint or password. Try again.".into();
+                }
+            }
+            return;
+        }
         // (a test runs only its fake helper; the real agent only polkit's)
         let fake = if self.real { None } else { Self::fake_helper() };
         if !self.real && fake.is_none() {
@@ -394,6 +435,11 @@ impl Polkit {
 
     /// The request in front is over (answered or cancelled)
     fn finish(&mut self, st: &mut State, ok: bool) {
+        self.finish_as(st, ok, true)
+    }
+
+    /// `finish`; `tell`: a passkey's daemon hears a refusal (not when it ended it)
+    fn finish_as(&mut self, st: &mut State, ok: bool, tell: bool) {
         if let Some(mut s) = self.session.take() {
             s.stop();
         }
@@ -401,7 +447,7 @@ impl Polkit {
         self.quick_fails = 0;
         if !self.queue.is_empty() {
             let r = self.queue.remove(0);
-            r.reply.send(ok);
+            r.answer(ok, tell);
         }
         self.error.clear();
         self.waiting = false;
@@ -410,6 +456,44 @@ impl Polkit {
             self.start_session(st);
         }
         self.push(st);
+    }
+
+    // ── Passkeys (the passkeys daemon's requests) ───────────────────────
+
+    fn passkey_request(&mut self, st: &mut State, r: PasskeyRequest) {
+        match r {
+            PasskeyRequest::Begin { id, purpose, rp, user } => {
+                if self.queue.iter().any(|q| q.passkey == Some(id)) {
+                    return;
+                }
+                let first = self.queue.is_empty();
+                let message = passkeys::message(&purpose, &rp, &user);
+                self.queue.push(Req { message, cookie: format!("passkey:{id}"), user: agent::user_of(unsafe { libc::getuid() }), reply: None, passkey: Some(id) });
+                if first {
+                    self.error.clear();
+                    self.start_session(st);
+                }
+                self.push(st);
+            }
+            // (the daemon ended it: approved, or the browser gave up)
+            PasskeyRequest::End { id } => self.passkey_gone(st, |q| q == Some(id)),
+            PasskeyRequest::Lost => self.passkey_gone(st, |q| q.is_some()),
+        }
+    }
+
+    fn passkey_gone(&mut self, st: &mut State, which: impl Fn(Option<u64>) -> bool) {
+        // (the ones waiting behind first, so finishing the front one starts a request that's still there)
+        let front = self.queue.first().is_some_and(|r| which(r.passkey));
+        let mut i = 0;
+        self.queue.retain(|r| {
+            i += 1;
+            i == 1 || !which(r.passkey)
+        });
+        if front {
+            self.finish_as(st, false, false);
+        } else {
+            self.push(st);
+        }
     }
 
     // ── Bluetooth pairing ───────────────────────────────────────────────
@@ -644,6 +728,8 @@ impl Part for Polkit {
         // bus; never a test's, as sandboxes share the system bus)
         if self.real {
             btagent::serve(Self::send(st));
+            // (and the passkeys daemon's prompt, when it runs: passkeys.rs)
+            passkeys::watch(Self::send(st));
         }
         eprintln!(
             "tessera-ui: polkit: {}",
@@ -657,7 +743,7 @@ impl Part for Polkit {
                 match *r {
                     Request::Begin { message, cookie, user, reply, .. } => {
                         let first = self.queue.is_empty();
-                        self.queue.push(Req { message, cookie, user, reply });
+                        self.queue.push(Req { message, cookie, user, reply: Some(reply), passkey: None });
                         if first {
                             self.error.clear();
                             self.start_session(st);
@@ -668,7 +754,7 @@ impl Part for Polkit {
                         if self.queue.first().is_some_and(|r| r.cookie == cookie) {
                             self.finish(st, false);
                         } else if let Some(i) = self.queue.iter().position(|r| r.cookie == cookie) {
-                            self.queue.remove(i).reply.send(false);
+                            self.queue.remove(i).answer(false, true);
                         }
                     }
                     // (and Settings → Health hears it: only the QML prompt told it,
@@ -689,6 +775,10 @@ impl Part for Polkit {
         };
         let msg = match msg.downcast::<BtRequest>() {
             Ok(r) => return self.bt_request(st, *r),
+            Err(m) => m,
+        };
+        let msg = match msg.downcast::<PasskeyRequest>() {
+            Ok(r) => return self.passkey_request(st, *r),
             Err(m) => m,
         };
         let msg = match msg.downcast::<SessionLine>() {
@@ -783,7 +873,7 @@ impl Part for Polkit {
     fn quit(&mut self, _: &mut State) {
         // (requests still open are refused: polkit asks the next agent)
         for r in self.queue.drain(..) {
-            r.reply.send(false);
+            r.answer(false, false);
         }
         for b in self.bt.drain(..) {
             if let Some(r) = b.reply {
