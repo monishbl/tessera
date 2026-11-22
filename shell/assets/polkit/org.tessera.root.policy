@@ -176,6 +176,31 @@
     <annotate key="org.freedesktop.policykit.exec.argv1">login-switch</annotate>
   </action>
 
+  <action id="org.tessera.root.boot-check">
+    <description>Check the login screen will start</description>
+    <message>Tessera wants to check that the login screen will start, and undo its own changes that would stop it.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/tessera/tessera-root</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">boot-check</annotate>
+  </action>
+
+  <!-- (the login rescue's Restore: Tessera's lines back in the login screen's PAM files) -->
+  <action id="org.tessera.root.rescue">
+    <description>Put back what the login rescue took out</description>
+    <message>Tessera wants to put back the login settings the login rescue took out.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/tessera/tessera-root</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">rescue</annotate>
+  </action>
+
   <action id="org.tessera.root.wifi-helper">
     <description>Set up a direct Wi-Fi link for Quick Share</description>
     <message>Tessera wants to set up a faster Wi-Fi link for Quick Share.</message>

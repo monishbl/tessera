@@ -39,6 +39,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 
 
 def app_dir(base):
@@ -477,6 +478,54 @@ def check_passkeys(_):
     return result("passkeys", "Passkeys", "Desktop", "ok", "On, " + ("no passkeys yet" if n == 0 else "1 saved" if n == 1 else f"{n} saved"))
 
 
+LOGIN_STEPS = ["Don't log out or restart until this is fixed",
+               "Press Fix: Tessera checks again and undoes its own change that's in the way (it asks for your password)",
+               "Still failing: see docs/RECOVERY.md. If there's no login screen later, Ctrl+Alt+F2 gives a console: "
+               "log in there and run sudo /usr/lib/tessera/tessera-root rescue"]
+RESTORE_STEPS = [TERMINAL + "pkexec /usr/lib/tessera/tessera-root rescue undo (puts back what was taken out, "
+                 "once it would no longer stop the login screen)",
+                 "Or leave it: logging in with the password works as before"]
+
+
+def read_json(path):
+    try:
+        with open(path) as f:
+            v = json.load(f)
+        return v if isinstance(v, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def check_login(_):
+    """Will the next login work? What can be read without root, now (the
+    login screen's config, its PAM files' password path), with the root
+    helper's last check (after the last update) and the login rescue's note"""
+    tr = sharing.tessera_root
+    at = lambda p: os.path.join(SYSTEM, p.lstrip("/"))
+    name = "Login screen"
+    try:
+        live = tr.boot_check(SYSTEM, hyprland=False)
+    except Exception as e:  # (a check's own bug: said, never the page's)
+        live = {"ok": True, "problems": [], "error": str(e)}
+    last = read_json(at(tr.BOOT_CHECK)) or {}
+    problems = [p["what"] for p in live["problems"]] + [p.get("what", "") for p in last.get("problems") or []
+                                                      if isinstance(p, dict) and p.get("id", "").startswith(("hyprland", "pam:"))]
+    problems = list(dict.fromkeys(p for p in problems if p))
+    if problems:
+        return result("login", name, "Tessera itself", "fail", "The login screen may not start: " + "; ".join(problems[:2]),
+                      " ".join(tr.FIXES["login"]), page="lock", steps=LOGIN_STEPS)
+    note = read_json(at(tr.RESCUE_NOTE))
+    if note:
+        when = time.strftime("%d %b %H:%M", time.localtime(note.get("time", 0))) if isinstance(note.get("time"), (int, float)) else "lately"
+        did = [d for d in note.get("did") or [] if isinstance(d, str)]
+        return no_fix(result("login", name, "Tessera itself", "warn",
+                             f"The login rescue stepped in ({when}): " + ("; ".join(did[:2]) or "see the note"),
+                             page="lock", steps=RESTORE_STEPS))
+    if live.get("error"):
+        return result("login", name, "Tessera itself", "warn", "Couldn't check: " + live["error"], page="about/bugreport", steps=UNANSWERED)
+    return result("login", name, "Tessera itself", "ok", "Will start" + (" (checked after the last update too)" if last.get("ok") else ""))
+
+
 def check_clipboard(_):
     if not shutil.which("cliphist"):
         return result("clipboard", "Clipboard history", "Desktop", "fail", "cliphist isn't installed", "sudo pacman -S cliphist",
@@ -719,7 +768,7 @@ def check_watchers(_):
 CHECKS = [check_pipewire, check_wireplumber, check_networkmanager, check_bluetooth, check_avahi, check_firewall,
           check_btpairing, check_goa, check_geoclue,
           check_upower, check_profiles, check_hypridle, check_portal, check_notifications, check_polkit, check_passkeys, check_clipboard,
-          check_recorder, check_disk, check_hyprland, check_plugin, check_native, check_quickshell, check_watchers]
+          check_recorder, check_disk, check_hyprland, check_plugin, check_native, check_quickshell, check_watchers, check_login]
 
 
 # (a check that failed or didn't answer: nothing is known about the service)

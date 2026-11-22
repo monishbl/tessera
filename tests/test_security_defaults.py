@@ -340,7 +340,9 @@ class RootHelper(unittest.TestCase):
 
     def test_the_fixes_are_fixed(self):
         self.assertEqual(set(R.FIXES), {"networkmanager", "bluetooth", "avahi", "upower", "profiles",
-                                        "btpairing", "fprintd"})
+                                        "btpairing", "fprintd", "login"})
+        # (login: the boot check, which only undoes Tessera's own PAM lines and edits)
+        self.assertEqual(R.FIXES["login"], [R.LIB + "/tessera-root", "boot-check", "--repair"])
         for bad in ("firewall; reboot", "../firewall", "", "FIREWALL"):
             with self.assertRaises(R.Refused):
                 R.fix_command(bad)

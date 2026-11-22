@@ -96,6 +96,26 @@ With the password:
       back by itself (login-fallback, login-check: systemd runs them). off:
       the one before again (<before>: the one install.sh noted, when there's
       no record). See "login-switch" below.
+  boot-check [--repair]
+      will the next login work? (the end of every update runs it, and
+      Settings → Health's Fix, as fix login): the login screen's PAM files
+      (its session starts, pam_setcred only; the password's path, read),
+      greetd's config, its command and user, Hyprland, Tessera's login
+      screen's files. --repair: Tessera's own part in anything wrong undone
+      (its marked PAM lines out, or the file before its edit back; greetd's
+      text login instead of a login screen that can't start), checked
+      again. JSON on stdout, kept in /var/lib/tessera/boot-check.json
+  rescue [undo|status]
+      from a console when there's no login screen (Ctrl+Alt+F2, log in,
+      sudo /usr/lib/tessera/tessera-root rescue): Tessera's lines out of the
+      login screens' PAM files, greetd's text login (agreety) instead of
+      Tessera's login screen, greetd started again. undo: all of it back,
+      once the real Linux-PAM finds no problem with it (the Restore button
+      the shell shows); status: the note (/var/lib/tessera/rescue/note.json)
+  login-rescue
+      systemd's own (tessera-login-rescue.service, when greetd.service
+      fails for good): one step further each time in a boot, Tessera's
+      lines out, then greetd's text login, then a console login on tty1
 With the password, once, at the start:
   update [--snapshot snapper|timeshift] [--system] [--ignore a,b]
          [--install a,b] [--remove a,b] [--downgrade f,g] [--mirrors l,m] [--setup <shell folder>]
@@ -492,6 +512,9 @@ FIXES = {
     "profiles": ["systemctl", "enable", "--now", "power-profiles-daemon"],
     "btpairing": ["/bin/sh", "-c", PAIRING_SCRIPT],
     "fprintd": ["/bin/sh", "-c", FPRINTD_SCRIPT],
+    # (Settings → Health → Login screen: the boot check, and Tessera's own
+    # part in anything wrong undone; boot_check_and_repair)
+    "login": [LIB + "/tessera-root", "boot-check", "--repair"],
 }
 
 
@@ -926,6 +949,8 @@ def password_reached(etc, name, text=None, vendor=PAM_VENDOR):
         chain = pam_auth_chain(name, texts)
     except ValueError:
         return False
+    if not any(module in PASSWORD_MODULES for _, module, marked in chain if not marked):
+        return None  # (no module this knows asks for it: not for this to judge)
     answers = {i: "module_unknown" for i, c in enumerate(chain) if c[2]}
     # (a password module that succeeds ends the walk too: each one's place
     # is what counts, so each is tried as the first to answer)
@@ -2904,6 +2929,572 @@ def login_check(prefix=None, run=subprocess.run):
     return "reverted"
 
 
+# ── boot readiness: the login screen will start ─────────────────────────
+# "It must not fail at boot at all" (22 Nov). After every update (the end of
+# `update`, whatever failed), as root: the things a login needs, read and
+# tried without logging anyone in:
+#   the login screen's PAM files (greetd's greeter service, greetd-greeter
+#     or greetd, and the person's, greetd's general.service): pam_setcred
+#     starts its session, and the password's path is intact (read, never
+#     run: pam_problem); any other login screen's file Tessera marked
+#   greetd's config parses; its default_session command is there and runs;
+#     its user exists
+#   Hyprland runs (--version), and Tessera's login screen's files are there
+# A problem in Tessera's own edits is undone straight away (repair: the
+# marked lines out, or the file before Tessera's edit back), checked again,
+# and recorded in BOOT_CHECK, which Software Update and Health read: they
+# say it loudly, before anyone logs out. Settings → Health's Fix runs the
+# same (fix login).
+BOOT_CHECK = "/var/lib/tessera/boot-check.json"
+RESCUE_DIR = "/var/lib/tessera/rescue"
+RESCUE_NOTE = RESCUE_DIR + "/note.json"
+RESCUE_STAGE = "/run/tessera/login-rescue"
+TEXT_GREETER = "/etc/greetd/tessera-text-greeter.toml"
+TEXT_DROPIN = "/etc/systemd/system/greetd.service.d/zz-tessera-text-greeter.conf"
+LOGIN_PAMS = {"greetd": "greetd", "ly": "ly", "sddm": "sddm", "lightdm": "lightdm", "lxdm": "lxdm"}
+# greetd.service fails for good (its start limit): the rescue, as root
+RESCUE_UNITS = {
+    "/etc/systemd/system/greetd.service.d/tessera-rescue.conf":
+        "# Tessera: when greetd keeps failing, the login rescue (tessera-root login-rescue)\n"
+        "# brings a way in back: Tessera's PAM lines out, then greetd's text login, then a\n"
+        "# console login on tty1. Delete this file to undo (uninstall.sh does).\n"
+        "[Unit]\nOnFailure=tessera-login-rescue.service\nStartLimitIntervalSec=30\nStartLimitBurst=5\n",
+    "/etc/systemd/system/tessera-login-rescue.service":
+        "# Tessera: started only by greetd.service failing (its drop-in tessera-rescue.conf)\n"
+        "[Unit]\nDescription=Tessera: bring a login back when the login screen keeps failing\n"
+        "After=tessera-login-fallback.service\n\n"
+        "[Service]\nType=oneshot\nExecStart=/usr/lib/tessera/tessera-root login-rescue\nTimeoutStartSec=120\n"
+        "# (the helper itself can't run: a console login, whatever happened)\n"
+        "ExecStopPost=/bin/sh -c '[ \"$SERVICE_RESULT\" = success ] || systemctl start --no-block getty@tty1.service'\n",
+}
+
+
+def greetd_config(prefix="/", path=None):
+    """greetd's config as a dict, or None when it doesn't parse"""
+    text = read_text(path or _at(prefix, GREETD_CONFIG))
+    if text is None:
+        return None
+    try:
+        import tomllib
+        return tomllib.loads(text)
+    except ImportError:
+        pass
+    except ValueError:
+        return None
+    # (Python before 3.11: the few keys read here)
+    conf, table = {}, None
+    for line in text.splitlines():
+        line = line.strip()
+        m = re.match(r"^\[([A-Za-z_]+)\]$", line)
+        if m:
+            table = conf.setdefault(m.group(1), {})
+            continue
+        m = re.match(r'^([A-Za-z_]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|(\d+))\s*(#.*)?$', line)
+        if m and table is not None:
+            table[m.group(1)] = m.group(2) if m.group(2) is not None else int(m.group(3))
+        elif line and not line.startswith("#"):
+            return None
+    return conf
+
+
+def command_program(command, prefix="/"):
+    """The program a greetd command runs (its first word that isn't an
+    environment setting), found as sh would: a path, or on PATH"""
+    try:
+        import shlex
+        words = shlex.split(command or "")
+    except ValueError:
+        return ""
+    words = [w for w in words if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", w)]
+    if words and words[0] == "env":
+        words = [w for w in words[1:] if not w.startswith("-")]
+    if not words:
+        return ""
+    if "/" in words[0]:
+        return _at(prefix, words[0])
+    for d in ("/usr/local/sbin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"):
+        if os.path.isfile(_at(prefix, f"{d}/{words[0]}")):
+            return _at(prefix, f"{d}/{words[0]}")
+    return ""
+
+
+def greeter_pam(etc, vendor, conf):
+    """The PAM services greetd uses: (the greeter's, the person's)"""
+    general = conf.get("general", {}) if isinstance(conf, dict) else {}
+    service = general.get("service") if isinstance(general.get("service"), str) else "greetd"
+    greeter = "greetd-greeter" if any(os.path.isfile(os.path.join(d, "greetd-greeter")) for d in (etc, vendor)) else service
+    return greeter, service
+
+
+def pam_text(etc, vendor, name):
+    text = read_text(os.path.join(etc, name))
+    return text if text is not None else read_text(os.path.join(vendor, name))
+
+
+def has_marks(text):
+    return bool(text) and (any(m in text for m in TESSERA_MARKS) or KEYRING_MARK in text)
+
+
+def boot_check(prefix="/", run=subprocess.run, which=shutil.which, hyprland=True):
+    """What would stop the next login (see above): {"ok", "problems":
+    [{"id", "what", "file"}], "dm"}. Reads and tries only: nothing changes."""
+    etc, vendor = _at(prefix, PAM_ETC), _at(prefix, PAM_VENDOR)
+    problems = []
+
+    def problem(id, what, file=""):
+        problems.append({"id": id, "what": what, "file": file})
+    dm = current_dm(prefix)
+    names = []
+    if dm == "greetd":
+        conf = greetd_config(prefix)
+        if conf is None:
+            problem("greetd-config", f"greetd's config ({GREETD_CONFIG}) is missing or doesn't parse", GREETD_CONFIG)
+            conf = {}
+        session = conf.get("default_session") if isinstance(conf.get("default_session"), dict) else {}
+        command = session.get("command") if isinstance(session.get("command"), str) else ""
+        if conf and not command:
+            problem("greetd-config", "greetd's config has no default_session command", GREETD_CONFIG)
+        elif command:
+            prog = command_program(command, prefix)
+            if not prog or not os.access(prog, os.X_OK):
+                problem("greeter-command", f"the login screen's command isn't there: {command}", GREETD_CONFIG)
+            if "/usr/share/tessera/" in command:
+                for rel in ("greeter-session.sh", "greeter.lua", "shell/assets/scripts/greeter-start.sh"):
+                    if not os.path.isfile(_at(prefix, f"{LOGIN_SHARE}/{rel}")):
+                        problem("tessera-greeter", f"Tessera's login screen is missing {LOGIN_SHARE}/{rel}", LOGIN_SHARE)
+                        break
+        user = session.get("user") if isinstance(session.get("user"), str) else "greeter"
+        if prefix == "/":
+            try:
+                pwd.getpwnam(user)
+            except KeyError:
+                problem("greeter-user", f"the login screen's user ({user}) doesn't exist")
+        if hyprland and ("/usr/share/tessera/" in command or "Hyprland" in command or "hyprland" in command):
+            exe = which("Hyprland") or ""
+            code, _ = _cmd(run, exe, "--version") if exe else (None, "")
+            if code != 0:
+                problem("hyprland", "Hyprland doesn't run (Hyprland --version failed)" if exe else "Hyprland isn't installed")
+        names += list(dict.fromkeys(greeter_pam(etc, vendor, conf)))
+    elif dm in LOGIN_PAMS:
+        names.append(LOGIN_PAMS[dm])
+    # (every other login screen's file Tessera marked: it may be the next one used)
+    names += [n for n in FP_FILES["login"] if n not in names and has_marks(read_text(os.path.join(etc, n)))]
+    for name in names:
+        text = pam_text(etc, vendor, name)
+        if text is None:
+            if name in ("greetd", "greetd-greeter") and dm == "greetd":
+                problem("pam:" + name, f"there's no PAM file for {name}", os.path.join(PAM_ETC, name))
+            continue
+        why = pam_problem(etc, name, text, login=True, vendor=vendor)
+        if why:
+            problem("pam:" + name, why, os.path.join(PAM_ETC, name))
+        elif name != "greetd-greeter" and password_reached(etc, name, text, vendor) is False:
+            # (the system's own stack, not Tessera's lines: said, never "repaired")
+            problem("password:" + name, f"{name}: nothing in it gets to the password", os.path.join(PAM_ETC, name))
+    for name in ("sudo", "polkit-1"):
+        text = pam_text(etc, vendor, name)
+        if has_marks(text):
+            why = password_path_problem(etc, name, text, vendor)
+            if why:
+                problem("pam:" + name, why, os.path.join(PAM_ETC, name))
+    return {"ok": not problems, "problems": problems, "dm": dm}
+
+
+def pam_without_tessera(text):
+    """Every line Tessera added out: the fingerprint's, passkeys', face's,
+    and the keyring's (the marked comment and the line under it)"""
+    out, drop_next = [], False
+    for line in text.splitlines(keepends=True):
+        if drop_next and "pam_gnome_keyring" in line:
+            drop_next = False
+            continue
+        drop_next = False
+        if KEYRING_MARK in line:
+            drop_next = True
+            continue
+        if any(m in line for m in TESSERA_MARKS):
+            continue
+        out.append(line)
+    return "".join(out)
+
+
+def keep_for_rescue(prefix, path, stamp):
+    """A copy of PATH (as it is) in the rescue folder; returns where"""
+    text = read_text(path)
+    if text is None:
+        return ""
+    d = _at(prefix, f"{RESCUE_DIR}/{stamp}")
+    os.makedirs(d, mode=0o755, exist_ok=True)
+    dest = os.path.join(d, os.path.basename(path))
+    write_root(dest, text.encode(), 0o644)
+    return dest
+
+
+def repair_pam(prefix, name, stamp, strip_only=False):
+    """NAME's PAM file without Tessera's lines, else the copy from before
+    Tessera's edit, whichever the real Linux-PAM finds no problem with
+    first. Returns (what was done, the copy of the file before) or ("", "")."""
+    etc, vendor = _at(prefix, PAM_ETC), _at(prefix, PAM_VENDOR)
+    path = os.path.join(etc, name)
+    text = read_text(path)
+    if text is None:
+        return "", ""
+    tries = [("took Tessera's lines out of", pam_without_tessera(text))]
+    if not strip_only:
+        backups = pam_backup_dir(etc)
+        for b in (os.path.join(backups, name), os.path.join(backups, name + ".first"), path + ".pre-tessera"):
+            t = read_text(b)
+            if t is not None:
+                tries.append((f"put back {b} as", t))
+    for how, new in tries:
+        if new == text or not new.strip():
+            continue
+        if pam_problem(etc, name, new, login=name in LOGIN_PAMS.values() or name == "greetd-greeter", vendor=vendor):
+            continue
+        saved = keep_for_rescue(prefix, path, stamp)
+        write_root(path, new.encode(), 0o644)
+        return f"{how} {os.path.join(PAM_ETC, name)}", saved
+    return "", ""
+
+
+def text_greeter_possible(prefix="/", which=shutil.which):
+    return bool(which("agreety") or os.path.isfile(_at(prefix, "/usr/bin/agreety"))) and \
+        bool(which("greetd") or os.path.isfile(_at(prefix, "/usr/bin/greetd")))
+
+
+def text_greeter_on(prefix="/", run=subprocess.run, which=shutil.which, hyprland_runs=True):
+    """greetd's own text login (agreety) instead of the login screen in its
+    config, from a config and a drop-in of their own (the config itself is
+    left as it is: text_greeter_off is two files gone). The session it
+    starts: Hyprland as the login screen's sessions start it."""
+    conf = greetd_config(prefix) or {}
+    vt = (conf.get("terminal") or {}).get("vt", 1) if isinstance(conf.get("terminal"), dict) else 1
+    if not (isinstance(vt, int) or (isinstance(vt, str) and re.match(r"^[a-z0-9]+$", vt))):
+        vt = 1
+    session = "/bin/bash -l"  # (no Hyprland that runs: a shell, to fix it from)
+    if hyprland_runs:
+        session = "start-hyprland" if which("start-hyprland") else "Hyprland" if which("Hyprland") else session
+    try:
+        pwd.getpwnam("greeter")
+        user = "greeter"
+    except KeyError:
+        user = "root" if prefix == "/" else "greeter"
+    agreety = which("agreety") or "/usr/bin/agreety"
+    greetd = which("greetd") or "/usr/bin/greetd"
+    toml = (f"# Tessera's login rescue: greetd's own text login while the login screen can't start\n"
+            f"# (tessera-root rescue undo, or the Restore button, goes back)\n"
+            f"[terminal]\nvt = {vt if isinstance(vt, int) else json.dumps(vt)}\n\n"
+            f"[default_session]\ncommand = \"{agreety} --cmd '{session}'\"\nuser = \"{user}\"\n")
+    write_root(_at(prefix, TEXT_GREETER), toml.encode(), 0o644)
+    write_root(_at(prefix, TEXT_DROPIN), (
+        "# Tessera's login rescue: greetd starts its own text login (tessera-text-greeter.toml).\n"
+        "# Delete this file (or press Restore in Tessera) to go back to the login screen.\n"
+        f"[Service]\nExecStart=\nExecStart={greetd} --config {TEXT_GREETER}\n").encode(), 0o644)
+    if prefix == "/":
+        _systemctl(run, "daemon-reload")
+    return [TEXT_GREETER, TEXT_DROPIN]
+
+
+def text_greeter_off(prefix="/", run=subprocess.run):
+    gone = []
+    for p in (TEXT_DROPIN, TEXT_GREETER):
+        if os.path.lexists(_at(prefix, p)):
+            os.unlink(_at(prefix, p))
+            gone.append(p)
+    if gone and prefix == "/":
+        _systemctl(run, "daemon-reload")
+    return gone
+
+
+def read_note(prefix="/"):
+    try:
+        n = json.loads(read_text(_at(prefix, RESCUE_NOTE)) or "{}")
+    except ValueError:
+        n = {}
+    return n if isinstance(n, dict) else {}
+
+
+def add_to_note(prefix, why, did, saved=None, text_greeter=None, log=None):
+    """The note the shell shows at the next login: what broke, what was
+    rolled back, and what Restore puts back"""
+    n = read_note(prefix)
+    n.setdefault("why", [])
+    n.setdefault("did", [])
+    n.setdefault("saved", {})
+    n["why"] = list(dict.fromkeys(n["why"] + list(why)))
+    n["did"] = n["did"] + list(did)
+    n["saved"].update({k: v for k, v in (saved or {}).items() if v and k not in n["saved"]})
+    if text_greeter is not None:
+        n["textGreeter"] = bool(text_greeter) or bool(n.get("textGreeter"))
+    if log:
+        n["log"] = log[-40:]
+    n["time"] = int(time.time())
+    n["boot"] = boot_id(prefix)
+    write_root(_at(prefix, RESCUE_NOTE), (json.dumps(n, sort_keys=True, indent=1) + "\n").encode(), 0o644)
+    return n
+
+
+def boot_repair(check, prefix="/", run=subprocess.run, which=shutil.which, stamp=None):
+    """Undoes Tessera's own part in what check found. Returns (did, saved,
+    text greeter turned on)."""
+    stamp = stamp or str(int(time.time()))
+    did, saved, text = [], {}, False
+    for p in check["problems"]:
+        if p["id"].startswith("pam:"):
+            name = p["id"][4:]
+            how, copy = repair_pam(prefix, name, stamp)
+            if how:
+                did.append(how)
+                saved[name] = copy
+        elif p["id"] == "greeter-user" and prefix == "/" and os.geteuid() == 0:
+            with contextlib.suppress(Refused):
+                ensure_greeter_user(run)
+                did.append("made greetd's greeter user again")
+    ids = {p["id"] for p in check["problems"]}
+    if ids & {"greetd-config", "greeter-command", "tessera-greeter", "hyprland"} and not os.path.exists(_at(prefix, TEXT_DROPIN)) \
+            and text_greeter_possible(prefix, which):
+        did += [f"greetd's text login (agreety) instead of the login screen, for now ({TEXT_DROPIN})"]
+        text_greeter_on(prefix, run, which, hyprland_runs="hyprland" not in ids)
+        text = True
+    return did, saved, text
+
+
+def boot_check_and_repair(prefix="/", run=subprocess.run, which=shutil.which, hyprland=True, repair=True):
+    """The check after an update (and Health's Fix): check, undo Tessera's
+    part in what's wrong, check again; recorded in BOOT_CHECK (and the
+    rescue note, when anything was undone). Returns the record."""
+    before = boot_check(prefix, run, which, hyprland)
+    did, saved, text = boot_repair(before, prefix, run, which) if repair and not before["ok"] else ([], {}, False)
+    after = boot_check(prefix, run, which, hyprland) if did else before
+    rec = {"ok": after["ok"], "problems": after["problems"], "found": before["problems"], "did": did,
+           "time": int(time.time()), "boot": boot_id(prefix)}
+    with contextlib.suppress(OSError):
+        write_root(_at(prefix, BOOT_CHECK), (json.dumps(rec, sort_keys=True) + "\n").encode(), 0o644)
+    if did:
+        with contextlib.suppress(OSError):
+            add_to_note(prefix, [p["what"] for p in before["problems"]], did, saved, text)
+    return rec
+
+
+def boot_check_said(rec, say):
+    """The check's result as the update's lines (sysupdate.py reads
+    BOOT_CHECK too)"""
+    if rec["ok"] and not rec["did"]:
+        say("@@boot-check ok")
+        return
+    for d in rec["did"]:
+        say("@@boot-check undid " + d)
+    for p in rec["problems"]:
+        say("@@boot-check problem " + p["what"])
+    if rec["ok"]:
+        say("@@boot-check ok")
+
+
+# ── the login rescue: greetd keeps failing as the computer starts ───────
+# tessera-login-rescue.service (OnFailure of greetd.service, after its start
+# limit), one step further each time it's started in a boot (RESCUE_STAGE,
+# in /run: the next boot starts over):
+#   1  what's wrong in Tessera's part undone (boot_check_and_repair); found
+#      nothing: Tessera's lines taken out of greetd's PAM files anyway
+#   2  greetd's own text login (agreety) instead of the login screen
+#   3  a console login on tty1 (getty), Tessera's lines out of every login
+#      screen's PAM file
+# Each step but the last starts greetd again (reset-failed, restart). What it
+# did goes in the note the shell shows at the next login, with Restore
+# (tessera-root rescue undo). It never raises: anything unexpected, getty.
+def journal_lines(run, n=30):
+    code, out = _cmd(run, "journalctl", "-b", "-u", "greetd.service", "-n", str(n), "--no-pager", "-o", "short-monotonic")
+    return out.splitlines()[-n:] if code == 0 else []
+
+
+def rescue_stage(prefix, bump=True):
+    p = _at(prefix, RESCUE_STAGE)
+    try:
+        stage = int((read_text(p) or "0").split()[0])
+    except (ValueError, IndexError):
+        stage = 0
+    if bump:
+        stage += 1
+        os.makedirs(os.path.dirname(p), mode=0o755, exist_ok=True)
+        with open(p, "w") as f:
+            f.write(f"{stage}\n")
+    return stage
+
+
+def login_rescue(prefix=None, run=subprocess.run, which=shutil.which, say=print):
+    """systemd's (see above). Returns what it did: repaired, text-login,
+    console, elsewhere"""
+    prefix = PREFIX if prefix is None else prefix
+    try:
+        return _login_rescue(prefix, run, which, say)
+    except Exception as e:  # (whatever it was: a way in)
+        say(f"tessera-root login-rescue: {e!r}: a console login on tty1")
+        _systemctl(run, "start", "--no-block", "getty@tty1.service")
+        return "console"
+
+
+def _login_rescue(prefix, run, which, say):
+    stage = rescue_stage(prefix)
+    log = journal_lines(run)
+    say(f"Tessera login rescue, step {stage}: greetd keeps failing")
+    for line in log[-10:]:
+        say("  " + line)
+    if current_dm(prefix) != "greetd":
+        # (login-fallback switched back to the login screen before; only
+        # Tessera's lines out of the one it starts now, if they're a problem)
+        rec = boot_check_and_repair(prefix, run, which, hyprland=False)
+        say("Another login screen starts now; " + ("; ".join(rec["did"]) or "nothing of Tessera's to undo"))
+        return "elsewhere"
+    stamp = f"{int(time.time())}-boot"
+    if stage == 1:
+        rec = boot_check_and_repair(prefix, run, which, hyprland=False)
+        did = rec["did"]
+        if not did:
+            saved = {}
+            for name in ("greetd", "greetd-greeter"):
+                how, copy = repair_pam(prefix, name, stamp, strip_only=True)
+                if how:
+                    did.append(how)
+                    saved[name] = copy
+            if did:
+                add_to_note(prefix, ["greetd kept failing as the computer started"], did, saved, log=log)
+        if did:
+            for d in did:
+                say("  " + d)
+            restart_greetd(run)
+            return "repaired"
+        stage = rescue_stage(prefix)
+    if stage == 2:
+        if text_greeter_possible(prefix, which) and not os.path.exists(_at(prefix, TEXT_DROPIN)):
+            text_greeter_on(prefix, run, which)
+            add_to_note(prefix, ["greetd kept failing as the computer started"],
+                        ["greetd's text login (agreety) instead of the login screen"], text_greeter=True, log=log)
+            say("  greetd's text login (agreety) instead of the login screen")
+            restart_greetd(run)
+            return "text-login"
+        stage = rescue_stage(prefix)
+    # 3 (and after): a console login, and Tessera's lines out everywhere
+    did, saved = [], {}
+    for name in FP_FILES["login"] + ["greetd-greeter", "login"]:
+        how, copy = repair_pam(prefix, name, stamp, strip_only=True)
+        if how:
+            did.append(how)
+            saved[name] = copy
+    did.append("a console login on tty1 (getty)")
+    add_to_note(prefix, ["greetd kept failing as the computer started, its text login too"], did, saved, log=log)
+    _systemctl(run, "start", "--no-block", "getty@tty1.service")
+    say("  a console login on tty1")
+    return "console"
+
+
+def restart_greetd(run):
+    _systemctl(run, "reset-failed", "greetd.service")
+    _systemctl(run, "restart", "--no-block", "greetd.service")
+
+
+def rescue(args, prefix=None, run=subprocess.run, which=shutil.which, say=print):
+    """tessera-root rescue: from a console (Ctrl+Alt+F2, then sudo), a login
+    now: Tessera's part in the login undone at once (every step of the
+    login rescue but the console), greetd started again. rescue undo: what
+    a rescue took out back, once the real Linux-PAM finds no problem with
+    it (the Restore button). rescue status: the note, as JSON."""
+    prefix = PREFIX if prefix is None else prefix
+    if args == ["status"]:
+        say(json.dumps(read_note(prefix), sort_keys=True))
+        return 0
+    if args == ["undo"]:
+        return rescue_undo(prefix, run, say)
+    if args:
+        raise Refused("usage: tessera-root rescue [undo|status]")
+    stamp = f"{int(time.time())}-rescue"
+    rec = boot_check_and_repair(prefix, run, which)
+    did, saved = list(rec["did"]), {}
+    for name in FP_FILES["login"] + ["greetd-greeter"]:
+        how, copy = repair_pam(prefix, name, stamp, strip_only=True)
+        if how:
+            did.append(how)
+            saved[name] = copy
+    text = False
+    if current_dm(prefix) == "greetd" and tessera_greetd(prefix) and text_greeter_possible(prefix, which) \
+            and not os.path.exists(_at(prefix, TEXT_DROPIN)):
+        text_greeter_on(prefix, run, which)
+        did.append("greetd's text login (agreety) instead of the login screen")
+        text = True
+    if did:
+        add_to_note(prefix, ["a rescue was asked for from a console"], did, saved, text_greeter=text, log=journal_lines(run))
+    for d in did:
+        say(d)
+    if current_dm(prefix) == "greetd":
+        restart_greetd(run)
+        say("greetd started again: the login is on tty1 (Ctrl+Alt+F1)")
+    say("Nothing of Tessera's to undo" if not did else "Once you're in, Tessera offers to put it back (or run: sudo /usr/lib/tessera/tessera-root rescue undo)")
+    return 0
+
+
+def rescue_undo(prefix, run, say):
+    """What the rescues took out, back (only what the real Linux-PAM finds
+    no problem with), and the login screen instead of the text login (only
+    when its files are there). The note goes once all of it is back."""
+    note = read_note(prefix)
+    etc, vendor = _at(prefix, PAM_ETC), _at(prefix, PAM_VENDOR)
+    left = {}
+    for name, copy in (note.get("saved") or {}).items():
+        if not isinstance(name, str) or not PAM_NAME.match(name) or not isinstance(copy, str):
+            continue
+        copy_path = copy
+        if not os.path.realpath(copy_path).startswith(os.path.realpath(_at(prefix, RESCUE_DIR)) + "/"):
+            continue  # (only a copy the rescue made)
+        text = read_text(copy_path)
+        if text is None:
+            continue
+        if text == read_text(os.path.join(etc, name)):
+            continue
+        why = pam_problem(etc, name, text, login=name in LOGIN_PAMS.values() or name == "greetd-greeter", vendor=vendor)
+        if why:
+            left[name] = copy
+            say(f"Not put back: {why}")
+            continue
+        write_pam(etc, name, text, vendor, check=False)
+        say(f"Put back {os.path.join(PAM_ETC, name)}")
+    if note.get("textGreeter") or os.path.exists(_at(prefix, TEXT_DROPIN)):
+        chk = boot_check(prefix, run, hyprland=True)
+        bad = [p for p in chk["problems"] if p["id"] in ("greetd-config", "greeter-command", "tessera-greeter", "hyprland")]
+        if bad:
+            say("The login screen stays greetd's text login: " + bad[0]["what"])
+            left["textGreeter"] = True
+        else:
+            for p in text_greeter_off(prefix, run):
+                say(f"Removed {p}: the login screen is back from the next start")
+    if left:
+        n = dict(note, saved={k: v for k, v in left.items() if k != "textGreeter"}, textGreeter=bool(left.get("textGreeter")))
+        write_root(_at(prefix, RESCUE_NOTE), (json.dumps(n, sort_keys=True, indent=1) + "\n").encode(), 0o644)
+        return 1
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(_at(prefix, RESCUE_NOTE))
+    return 0
+
+
+PAM_NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,40}$")
+
+
+def rescue_units(prefix="/", run=subprocess.run):
+    """setup's part: the login rescue's unit and greetd's drop-in, wherever
+    greetd is installed (gone with it). Returns what it wrote or removed."""
+    have = any(os.path.isfile(_at(prefix, f"{d}/greetd.service")) for d in UNIT_DIRS)
+    done = []
+    for path, text in RESCUE_UNITS.items():
+        p = _at(prefix, path)
+        if have and read_text(p) != text:
+            write_root(p, text.encode(), 0o644)
+            done.append(path)
+        elif not have and os.path.exists(p):
+            os.unlink(p)
+            done.append(path)
+    if done and prefix == "/":
+        _systemctl(run, "daemon-reload")
+    return done
+
+
 # ── fix ─────────────────────────────────────────────────────────────────
 def fix_command(id):
     if id not in FIXES:
@@ -2953,6 +3544,8 @@ def setup(src, uid, prefix=None, run=subprocess.run):
     written += migrate_old_names(prefix, run, src)
     # (passkeys' pam_u2f lines, gate and udev rule, as this helper writes them)
     written += [os.path.join(prefix, d.lstrip("/")) for d in passkeys_refresh(prefix)]
+    # (the login rescue, wherever greetd is installed: tessera-login-rescue.service)
+    written += [os.path.join(prefix, d.lstrip("/")) for d in rescue_units(prefix, run)]
     # ananicy-cpp reads its rules as it starts
     if prefix == "/" and any(d.startswith("/etc/ananicy.d/") or d == OLD_ANANICY_RULE for d in written):
         with contextlib.suppress(OSError, subprocess.SubprocessError):
@@ -3420,7 +4013,20 @@ def serve(sock, log=None, pacman=None, on_features=None):
 
 
 def update(args, uid, out=sys.stdout):
-    """Returns the exit code (see the top of this file)."""
+    """Returns the exit code (see the top of this file). Whatever happened,
+    the boot check last: will the next login work? (BOOT_CHECK)"""
+    try:
+        return _update(args, uid, out)
+    finally:
+        try:
+            boot_check_said(boot_check_and_repair(PREFIX), lambda line: (out.write(line + "\n"), out.flush()))
+        except Exception as e:  # (never the update's failure)
+            with contextlib.suppress(Exception):
+                out.write(f"@@boot-check problem the check itself failed: {e!r}\n")
+                out.flush()
+
+
+def _update(args, uid, out=sys.stdout):
     p = parse_update(args, package_dirs(uid))
     # Nothing sysupdate.py does (exiting, closing its end) may stop a transaction
     for s in (signal.SIGPIPE, signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
@@ -3721,6 +4327,17 @@ def main(argv):
                 raise Refused(f"{cmd} is the system's own, as the computer starts")
             print((login_fallback if cmd == "login-fallback" else login_check)())
             return 0
+        if cmd == "boot-check" and args in ([], ["--repair"]):
+            rec = boot_check_and_repair(PREFIX, repair=args == ["--repair"])
+            print(json.dumps(rec, sort_keys=True))
+            return 0 if rec["ok"] else 1
+        if cmd == "rescue":
+            return rescue(args)
+        if cmd == "login-rescue" and not args:
+            if "PKEXEC_UID" in os.environ or "SUDO_UID" in os.environ:
+                raise Refused(f"{cmd} is the system's own, as the computer starts: from a console, run rescue")
+            print(login_rescue())
+            return 0
         if cmd == "features" and args:
             p = parse_features(args)
             return 1 if features(p, uid, lambda t: print(t, flush=True)) else 0
@@ -3730,7 +4347,7 @@ def main(argv):
             return 0
         raise Refused("usage: tessera-root wallpaper <path> | login-look <json> | fix <id> | wifi-helper | fingerprint on|off <where> | passkeys on|off | passkeys-pam on <file>|off | phonecam on|off | face … | bootmenu on|off | "
                       "bootsplash <id>|system|none | quickshare-trust on|off | priority on|off | sharing-ports open [<set>…]|close | "
-                      "update … | features <ids> [--face-camera <camera>] [--fprintd-wait] [--login-look <json>] [--shell <folder>] | setup <folder> | login-switch on <shell folder> <look json> | login-switch off [<login manager>]")
+                      "update … | boot-check [--repair] | rescue [undo|status] | features <ids> [--face-camera <camera>] [--fprintd-wait] [--login-look <json>] [--shell <folder>] | setup <folder> | login-switch on <shell folder> <look json> | login-switch off [<login manager>]")
     except Refused as e:
         print(f"tessera-root: {e}", file=sys.stderr)
         return REFUSED_EXIT

@@ -261,7 +261,11 @@ auth       required                    pam_faillock.so      authsucc
         self.assertEqual(R.password_path_problem(self.etc, "polkit-1", text, vendor=self.vendor), "")
 
     def test_a_stack_without_a_password(self):
-        self.assertFalse(R.password_reached(self.etc, "x", "auth required pam_deny.so\n", vendor=self.vendor))
+        # (no module it knows: not for it to judge)
+        self.assertIsNone(R.password_reached(self.etc, "x", "auth required pam_deny.so\n", vendor=self.vendor))
+        # (pam_unix there, but jumped over)
+        self.assertFalse(R.password_reached(self.etc, "x", "auth [default=1] pam_permit.so\nauth required pam_unix.so\n"
+                                            "auth required pam_permit.so\n", vendor=self.vendor))
         self.assertIsNone(R.password_reached(self.etc, "nothing-here", vendor=self.vendor))
 
     def test_a_jump_over_the_password_is_caught(self):
