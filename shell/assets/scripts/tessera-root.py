@@ -283,11 +283,13 @@ def migrate_old_names(prefix, run=subprocess.run, src=None):
     for name in FP_FILES["login"]:
         p = os.path.join(at(PAM_ETC), name)
         text = read_text(p)
-        if text and FP_LINES["login"] in text and FP_GATE not in text:
+        if text and FP_LINES["login"] in text and (FP_GATE not in text or OLD_GATE_CONTROL + FP_GATE in text):
             if write_fp_gate(at(FP_GATE)):
                 done.append(FP_GATE)
-            write_root(p, pam_login_fingerprint(text).encode(), 0o644)
-            done.append(os.path.join(PAM_ETC, name))
+            new = pam_login_fingerprint(text)
+            if login_screen_starts(at(PAM_ETC), name, new):
+                write_root(p, new.encode(), 0o644)
+                done.append(os.path.join(PAM_ETC, name))
     # The boot animation in use, under its new name (the boot image keeps
     # the old copy, the same animation, until it's next rebuilt)
     current = current_theme(prefix)
@@ -585,7 +587,16 @@ case "$1" in
   *) exit 1 ;;
 esac
 """
-FP_LOGIN_HEAD = ["auth       [success=ignore default=1] pam_exec.so quiet " + FP_GATE + " check   " + FP_MARK]
+# A gate's control: skip the next line unless the gate says yes. Only while
+# authenticating (type=auth), and "ignore=ignore": pam_setcred without an
+# authentication first (greetd starting its greeter, autologin) otherwise
+# came back PAM_IGNORE through the skip, and greetd wouldn't start the login
+# screen at all (22 Nov: system1 couldn't log out or boot; pam_start_confdir
+# reproduces it, tests/test_root_helper.py)
+GATE_CONTROL = "auth       [success=ignore ignore=ignore default=1] pam_exec.so quiet type=auth "
+# (the line before 22 Nov's fix, rewritten on update: migrate_old_names)
+OLD_GATE_CONTROL = "auth       [success=ignore default=1] pam_exec.so quiet "
+FP_LOGIN_HEAD = [GATE_CONTROL + FP_GATE + " check   " + FP_MARK]
 FP_LOGIN_TAIL = ["session    optional     pam_exec.so quiet " + FP_GATE + " mark   " + FP_MARK]
 # (GDM isn't here: it asks for a finger by itself, gdm-fingerprint, once one is added)
 FP_FILES = {"polkit": ["polkit-1"], "sudo": ["sudo"], "login": ["greetd", "ly", "sddm", "lightdm", "lxdm"]}
@@ -612,6 +623,43 @@ def pam_with_fingerprint(text, line, head=(), tail=()):
 
 def pam_login_fingerprint(text):
     return pam_with_fingerprint(text, FP_LINES["login"], FP_LOGIN_HEAD, FP_LOGIN_TAIL)
+
+
+def login_screen_starts(etc, name, text, user="root"):
+    """Whether TEXT, as /etc/pam.d/NAME, still lets a login screen start
+    its session without a password first (greetd's greeter, autologin):
+    pam_setcred on a copy of the PAM files (pam_start_confdir, Linux-PAM
+    1.4+). False only on a clear failure; True when it can't be tried."""
+    import ctypes
+    import tempfile
+    try:
+        pam = ctypes.CDLL("libpam.so.0")
+        start = pam.pam_start_confdir
+    except (OSError, AttributeError):
+        return True
+    with tempfile.TemporaryDirectory(prefix="tessera-pam-") as d:
+        try:
+            for f in os.listdir(etc):
+                src = os.path.join(etc, f)
+                if os.path.isfile(src):
+                    shutil.copy(src, os.path.join(d, f))
+        except OSError:
+            return True
+        with open(os.path.join(d, name), "w") as f:
+            f.write(text)
+
+        class Conv(ctypes.Structure):
+            _fields_ = [("conv", ctypes.c_void_p), ("appdata", ctypes.c_void_p)]
+        cb_t = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
+        cb = cb_t(lambda n, m, r, a: 19)  # PAM_CONV_ERR: nobody to ask
+        conv = Conv(ctypes.cast(cb, ctypes.c_void_p), None)
+        h = ctypes.c_void_p()
+        if start(name.encode(), user.encode(), ctypes.byref(conv), d.encode(), ctypes.byref(h)) != 0:
+            return True
+        r = pam.pam_setcred(h, 2)  # PAM_ESTABLISH_CRED
+        pam.pam_end(h, r)
+        # 25 PAM_IGNORE (the 22 Nov fault), 4 PAM_SYSTEM_ERR, 6 PAM_PERM_DENIED
+        return r not in (25, 4, 6)
 
 
 def write_fp_gate(gate=FP_GATE):
@@ -654,6 +702,8 @@ def fingerprint(on, where, etc=PAM_ETC, vendor=PAM_VENDOR, module=PAM_FPRINTD, g
                     changed.append(dest)
                     continue
         if new != text or (on and src != dest):
+            if where == "login" and not login_screen_starts(etc, name, new):
+                raise Refused(f"{name}: the login screen wouldn't start with this change, so it wasn't made")
             write_root(dest, new.encode(), 0o644)
             changed.append(dest)
     return changed
