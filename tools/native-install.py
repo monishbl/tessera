@@ -109,7 +109,7 @@ PATCH_WINDOW = 28  # zstd --long: the patch window (2^28: room for a program up 
 # the list against the sources)
 UI_EXTRA = ("shell/assets/polkit/org.tessera.root.policy", "shell/common/Config.qml", "shell/common/material-symbols.js",
             "shell/common/phosphor.js", "shell/modules/cheatsheet/elements.js",
-            "shell/assets/scripts/health-check.py")
+            "shell/assets/scripts/health-check.py", "native/tessera-passkeys/tessera-passkeys.service")
 
 # x86-64-v3 (AVX2 and friends): every processor's flags in /proc/cpuinfo must
 # have these. LZCNT shows as "abm" on both Intel and AMD; XSAVE is the
