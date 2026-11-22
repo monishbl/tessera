@@ -587,6 +587,9 @@ pub fn security(cx: &mut Ctx, p: &mut Page) {
     // Fingerprint and Face (both shown only with a reader or an IR camera)
     p.part(cx, "", biometrics);
 
+    // Passkeys (Rust only: passkeys.rs)
+    super::passkeys::passkeys(cx, p);
+
     let island = cx.b("island.enabled");
     let ind = cx.s("privacy.screenShareIndicator");
     let values = ["island", "dot", "both"];
