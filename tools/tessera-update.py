@@ -863,6 +863,8 @@ def deps_needs(rev, mode="auto", ask=None, latest="", skip=()):
             print(f"  {n}" + (f"  ({reasons[n]})" if reasons.get(n) else ""))
         for o in plan["outdated"]:
             print(f"  {o['name']}  ({D.upstream(o['have']) or 'installed'} → {D.upstream(o['repo'])}; it needs {o['need']})")
+        if plan["outdated"]:
+            print("  (Some are installed but too old: the whole system is updated first, as Arch needs: no partial upgrades.)")
         if not ask("  Install them now (one password)? [Y/n] ", True):
             raise DepsUnmet(f"Not updated: {name} needs {words}. Nothing was changed.")
         if plan["dropped"]:

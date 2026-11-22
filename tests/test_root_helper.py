@@ -1546,3 +1546,43 @@ class LoginScreensStillStart(unittest.TestCase):
         gate.write_bytes(R.FP_GATE_TEXT)
         R.migrate_old_names(root, run=lambda *a, **k: subprocess.CompletedProcess(a, 0, "", ""))
         self.assertEqual((pam / "greetd").read_text(), R.pam_login_fingerprint(self.BASE))
+
+
+class NoPartialUpgrades(unittest.TestCase):
+    """An update that installs Tessera's packages without a system update:
+    one that's already installed (too old for the new version) is never
+    upgraded on its own (Arch has no partial upgrades): pacman -Syu first,
+    in the same run. Brand-new packages install from the current database."""
+
+    def run_script(self, installed, to_install, system="0", held=""):
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
+        log = d / "calls"
+        fake = d / "pacman"
+        fake.write_text("#!/bin/sh\necho \"$*\" >> %s\nif [ \"$1\" = -Q ]; then shift; [ \"$1\" = -- ] && shift\n"
+                        "  for p in \"$@\"; do case \" %s \" in *\" $p \"*) ;; *) exit 1 ;; esac; done; fi\nexit 0\n"
+                        % (log, " ".join(installed)))
+        fake.chmod(0o755)
+        env = dict(os.environ, PATH=f"{d}:{os.environ['PATH']}")
+        p = subprocess.run(["sh", "-c", R.UPDATE_SCRIPT, "sh", "", held, ",".join(to_install), "", system],
+                           env=env, capture_output=True, text=True, timeout=20)
+        calls = [l for l in log.read_text().splitlines() if not l.startswith("-Q")] if log.exists() else []
+        return p.returncode, calls
+
+    def test_new_packages_install_without_a_system_update(self):
+        rc, calls = self.run_script(["hyprland"], ["cliphist"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls, ["-S --needed --noconfirm -- cliphist"])
+
+    def test_an_upgrade_brings_the_whole_system_first(self):
+        rc, calls = self.run_script(["hyprland", "quickshell"], ["cliphist", "quickshell"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls, ["-Syu --noconfirm", "-S --needed --noconfirm -- cliphist quickshell"])
+
+    def test_held_packages_stay_held_then(self):
+        rc, calls = self.run_script(["quickshell"], ["quickshell"], held="hyprland")
+        self.assertEqual(calls[0], "-Syu --noconfirm --ignore hyprland")
+
+    def test_a_system_update_asked_for_runs_once(self):
+        rc, calls = self.run_script(["quickshell"], ["quickshell"], system="1")
+        self.assertEqual([c for c in calls if c.startswith("-Syu")], ["-Syu --noconfirm"])

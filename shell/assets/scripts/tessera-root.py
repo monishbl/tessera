@@ -2624,6 +2624,19 @@ if [ "$5" = 1 ]; then
     else pacman -Syu --noconfirm || exit 21; fi
 fi
 if [ -n "$3" ]; then
+    # One already installed is an upgrade: never on its own (Arch has no
+    # partial upgrades: it could need newer libraries than the rest has), so
+    # the whole system is updated first, in this same run
+    if [ "$5" != 1 ]; then
+        for p in $(echo "$3" | tr , ' '); do
+            if pacman -Q -- "$p" >/dev/null 2>&1; then
+                echo "@@step system"
+                if [ -n "$2" ]; then pacman -Syu --noconfirm --ignore "$2" || exit 21
+                else pacman -Syu --noconfirm || exit 21; fi
+                break
+            fi
+        done
+    fi
     echo "@@step packages"
     pacman -S --needed --noconfirm -- $(echo "$3" | tr , ' ') || exit 22
 fi
