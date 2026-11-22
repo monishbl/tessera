@@ -247,6 +247,148 @@ of an hour in Power Saver. Each is handled above: the cache outside the
 checkout, a toolchain change wiping it at once instead of half-reusing it,
 and the `local` profile.
 
+## Bundles: the whole of a version, ready-made
+
+A normal install no longer compiles anything when it updates. Each version
+(every commit of `main`, `beta` and each tag) is built on the release
+builder into one **bundle** per processor variant, signed on the laptop,
+downloaded whole, checked and swapped in with one rename
+(`tools/tessera-bundle.py`; the plan: `docs/UPDATE-PLAN.md`).
+
+### What a bundle is
+
+| File (in the channel's rolling release, or a tag's) | What it holds |
+|---|---|
+| `tessera-<commit>-x86-64-v3.bundle.tar.zst`, `…-generic.bundle.tar.zst` | the commit's files (less `native/`, `site/`, `tests/`), its built shaders (`.qsb`) and native helpers (`shell/native/build`), `bin/tessera-ui` and `bin/tessera-events` (that variant), and `plugin/tessera-glass.so` built against the Hyprland the lock holds |
+| `tessera-<commit>.bundle.json` (+ `.minisig`) | the manifest: commit, channel, release, date; for each variant the archive's size and sha256 and **every file's** sha256, size and mode (and its links); the **package lock**; the settings files Software Update compares (Config.qml, Theme.qml, keymap.json, the Rust defaults, the renames) and the changelog's newest entries |
+| `tessera-latest.bundle.json` (+ `.minisig`) | a rolling release only: the newest bundle's manifest, signed on its own: the channel's **pointer** |
+
+Signatures are minisign, by the same key as the programs
+(`tools/tessera-ui.pub`), the trusted comment `<file> commit=<commit>
+channel=<channel>`. An install checks, before anything is unpacked: the
+signature and its comment (this file, this commit), the manifest's format,
+the archive's size and sha256; then unpacks exactly the files and links the
+manifest lists (nothing else, no path with `..` or `.git`, no link that
+leads out of the bundle, links made last), each file's sha256 as it's
+written. Any of it failing and nothing is installed.
+
+### Where it goes
+
+```
+~/.local/share/tessera/
+  versions/<id>/            one version, unpacked (<id>: the commit's first 12; "-local" when built here)
+  current  -> versions/<id> the one in use: swapped by renaming a new link over it
+  previous -> versions/<id> the one before, kept for undo
+  bin/tessera-ui -> ../current/bin/tessera-ui     (and tessera-events, and their .json records)
+  tessera-glass.so -> current/plugin/tessera-glass.so   (where hypr/tessera/glass.lua loads it)
+  source                    …/tessera/current
+~/.config/quickshell/tessera -> ~/.local/share/tessera/current/shell
+```
+
+So the shell, its programs and the glass plugin change together, in the one
+rename of `current`; undo (`tessera-bundle.py undo`, and again to go
+forward) is the same rename back. A running shell keeps what it has open:
+the old version's folder stays as `previous`, older ones are pruned after
+an update. Settings and everything else of yours stay where they are and are
+never part of a bundle; the Hyprland files in `~/.config/hypr` are merged
+three ways as before (`tools/config-sync.py`: a clash keeps yours, the new
+file beside it as `.new`).
+
+### The package lock
+
+Recorded by the builder from its own system (`pacman -Q`):
+
+- **Held**, exactly: the Hyprland family the glass plugin's ABI depends on
+  (`hyprland`, `aquamarine`, `hyprutils`, `hyprlang`, `hyprgraphics`,
+  `hyprcursor`, `hyprwayland-scanner`) and `quickshell`. The root helper
+  (`tessera-root update --lock`) puts each at the tested version, compared by
+  its pkgver (a rebuild with another package release is the same), from the
+  repositories when they have exactly that version, else the **Arch Linux
+  Archive** (`https://archive.archlinux.org/packages/<l>/<name>/<name>-<version>-<arch>.pkg.tar.zst`,
+  made by the helper from the checked name and version, never a URL from
+  the lock), and holds them there: `IgnorePkg` in
+  `/etc/pacman.d/tessera-hold.conf`, which `/etc/pacman.conf`'s `[options]`
+  includes (one marked line; the file is kept once as
+  `pacman.conf.pre-tessera`). The next Tessera version moves them.
+  `quickshell` and `hyprwayland-scanner` are left alone where they aren't
+  installed.
+- **Minimum** (glibc, gcc-libs, Qt 6's modules, PipeWire, Wayland, mesa,
+  OpenSSL, Python and python-cryptography): never pinned. Below one, the
+  update's root step includes the system update (`pacman -Syu`, the held ones
+  ignored), so security updates keep flowing.
+
+Names must match `^[a-z0-9@_+][a-z0-9@._+-]*$`, versions
+`[epoch:]pkgver-pkgrel`, architectures `x86_64` or `any`; only the family
+above may be held. Both `tessera-bundle.py` and the root helper check this,
+the root helper on its own (it never loads anything from your home).
+
+### How a copy updates
+
+`tessera-bundle.py mode`:
+
+| Mode | Which copies | Updates |
+|---|---|---|
+| `bundle` | runs from `versions/` | bundles only; no git (the check reads the channel's signed pointer, and asks GitHub which commit the branch is at, `git ls-remote`) |
+| `git` | `setup.sh`'s checkout (`~/.local/share/tessera/repo`), its shell copied (not `install.sh --dev`), following `main` or `beta`, with no edits or commits of its own | its next update is a bundle, and moves it to the layout above (what was there kept in `~/.local/share/tessera/backups/before-bundles`; the checkout itself stays). With no bundle for the new version, Build now updates it through git as before |
+| `dev` | any other checkout (`~/tessera`, `install.sh --dev`, edits of your own), or `update.mode` `"dev"` in config.json | git, exactly as before (the rest of this file) |
+
+`TESSERA_UPDATE_MODE=bundle|git|dev` decides for one run.
+
+### Software Update
+
+- **Check**: "Tessera 1a2b3c4d → 5e6f7a8b · 85 MB download · moves
+  hyprland 0.57.1 → 0.57.2". The settings conflicts are worked out from the
+  manifest's settings files before anything is downloaded.
+- **No download yet** (the branch moved on, its bundle isn't published): the
+  status says "Tessera 5e6f7a8b has no download yet", with **Wait for the
+  download** (the default: nothing runs; the next check offers it) and
+  **Build now** (here, gently: `tools/build-native.sh`'s idle priority,
+  about ten minutes; the result is an unsigned bundle `versions/<id>-local`,
+  swapped in the same way).
+- **Update** (the background job, `tessera-update.py stage`): downloads the
+  bundle ("Downloading Tessera · 31 of 85 MB"), checks and unpacks it beside
+  the current version, then, when held packages must move or a minimum isn't
+  met, the root step: `sysupdate.py run --lock` from the version being
+  installed (its own root helper, set up first when the installed one is
+  older), one password ("Moving the held packages to their tested
+  versions"). Then "Ready to restart".
+- **Restart** (`finish`): your choices written to config.json and
+  keybinds.json (backed up first), `current` swapped, the links and the hypr
+  merge after it. A failure before the swap changes nothing; after it the
+  previous version comes back. A new shell that doesn't stay up goes back to
+  the previous version by itself (`launch-shell.sh` → `tessera-bundle.py
+  rollback`), and that version isn't offered again.
+- Going back to the previous Tessera doesn't move packages back; System's
+  **Go back to before the last update** does that, from pacman's cache.
+
+`tessera update` does the same in a terminal: on a terminal it asks "[W]ait
+for the download, or [b]uild it here now", unattended it waits;
+`--build-now` and `--wait` answer for it. The bundle is installed at the
+next shell restart (`tessera repair`, or the next login).
+
+```sh
+tools/tessera-bundle.py status          # the versions here, current and previous
+tools/tessera-bundle.py verify          # every file of the current version against its manifest
+tools/tessera-bundle.py undo            # back to the previous version (again: forward)
+tools/tessera-bundle.py plan --commit C --channel beta   # is there a bundle for C, how big, what it moves
+tools/tessera-bundle.py lock-check F    # is F a valid package lock
+```
+
+### The builder's part
+
+For each commit of `main`, `beta` and every tag (once its program set is
+built, or found in `built/<tree>`), `tessera-release` builds the commit's
+shaders, native helpers and glass plugin in its clone (so server1 needs
+Hyprland's headers, qt6-shadertools, cmake and Qt's development files; a
+plain Arch system, so the lock's versions are the Arch Linux Archive's),
+packs both variants with that commit's own `tools/tessera-bundle.py`
+(a commit without it gets none) and leaves the set in
+`out/<release>/<commit>/` with a `READY` whose `type` is `bundle`. The
+laptop's publisher checks, signs (and, for a rolling release, signs the
+pointer) and publishes it like a program set: the archives, then the
+manifest, then the pointer; three bundles kept per rolling release.
+`TESSERA_RELEASE_NO_BUNDLE=1` skips bundles.
+
 ## Which build is this?
 
 tessera-ui knows exactly what it is, and says it the same way everywhere:
@@ -423,9 +565,14 @@ For `main`, `beta` and every `v*` tag, each run:
    set for it is ready or published here. A commit without
    `tools/tessera-ui.pub` is skipped (said once in the log): nothing built from
    it could be checked. That's why `main` is skipped until it has the key.
-3. Builds both variants like the workflow: `cargo build --release --locked`
-   (the full `release` profile: LTO, one codegen unit; never `fast`) for
-   tessera-ui and tessera-events, `RUSTFLAGS="-C target-cpu=x86-64-v3"` and
+3. Builds both variants: `cargo build --locked` with the full `release`
+   profile (LTO, one codegen unit: about 45 minutes) for `main` and tags,
+   and the `local` profile (thin LTO, 16 codegen units: minutes) for `beta`;
+   a tree built for beta is built again with the release profile before it's
+   packed for main. mold links when it's installed (`-C
+   link-arg=-fuse-ld=mold`). The two variants build at once only when
+   MemTotal is 24 GB or more (two links at once); otherwise one after the
+   other. For tessera-ui and tessera-events, `RUSTFLAGS="-C target-cpu=x86-64-v3"` and
    `RUSTFLAGS=""`, with `TESSERA_BUILD_CHANNEL` (the target's channel),
    `TESSERA_BUILD_VARIANT`, `TESSERA_BUILD_KIND=release`,
    `TESSERA_BUILD_COMMIT` and `TESSERA_BUILD_DATE` for tessera-ui (so its

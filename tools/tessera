@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tessera: look after a Tessera install.
 #   tessera doctor            check that everything is in place and running
-#   tessera update            get the latest Tessera and install it
+#   tessera update [--build-now|--wait]  get the latest Tessera (a normal install: its signed bundle; no download yet: asks)
 #   tessera rebuild [--load]  rebuild the glass plugin, shaders and native helpers, and bring tessera-ui and tessera-events up to date (after a Hyprland or Qt update)
 #   tessera repair            restart the shell (duplicated bars, a frozen shell); apps keep running
 #   tessera undo-update       go back to before the last update (works from a text console too)
@@ -25,6 +25,26 @@ case "${1:-help}" in
         ;;
     update)
         need_src
+        # A normal install updates by bundle (tools/tessera-bundle.py): the
+        # whole new version, signed, downloaded and swapped in at the next
+        # shell restart; nothing is built here unless you choose Build now.
+        # Exit 3: a developer's checkout, which updates through git below.
+        # (--build-now / --wait: the answer when there's no download yet;
+        # without one it asks on a terminal and waits when unattended)
+        how="" rest=()
+        for x in "${@:2}"; do
+            case "$x" in
+                --build-now) how=build ;;
+                --wait) how=wait ;;
+                *) rest+=("$x") ;;
+            esac
+        done
+        set -- "$1" "${rest[@]}"
+        if [[ -f "$SRC/tools/tessera-bundle.py" ]]; then
+            python3 -I "$SRC/tools/tessera-update.py" cli --config "$CONFIG/tessera" ${how:+--how "$how"}
+            rc=$?
+            [[ $rc == 3 ]] || exit $rc
+        fi
         if [[ -d "$SRC/.git" ]]; then
             # (where it starts from: install.sh merges your Hyprland edits with
             # the update's against it, tools/config-sync.py)
@@ -50,6 +70,13 @@ case "${1:-help}" in
         ;;
     rebuild)
         need_src
+        # (a copy that runs from a bundle has everything built for the
+        # Hyprland it holds; its files are checked against their signature)
+        if [[ -f "$SRC/bundle.json" ]]; then
+            echo "This Tessera came as a bundle: its glass plugin, shaders and programs are built for the Hyprland and Qt it holds."
+            echo "Nothing to rebuild. To get a newer one: tessera update."
+            exit 0
+        fi
         "$SRC/tools/build-shaders.sh" || exit 1
         # The installed shell is a copy (unless installed with --dev): refresh its shaders
         if [[ ! -L "$CONFIG/quickshell/tessera" && -d "$CONFIG/quickshell/tessera" ]]; then

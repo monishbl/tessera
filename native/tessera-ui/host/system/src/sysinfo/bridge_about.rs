@@ -325,6 +325,12 @@ impl About {
                 "staged": tu.staged.as_ref().map(|x| s(&x["latest"])).unwrap_or(json!("")), "restarting": tu.restarting,
                 "canUpdate": su.can_update_tessera(tu, up), "undecided": tu.undecided(), "result": result,
                 "conflicts": conflicts, "choices": Value::Object(tu.choices.clone()),
+                // (a bundle: its download's size and the held packages it moves;
+                // none out yet: Wait or Build now, and which you chose)
+                "bundle": if r["bundle"].is_object() { json!({"size": r["bundle"]["size"].as_u64().unwrap_or(0), "moves": s(&r["bundle"]["movesText"]),
+                    "held": r["bundle"]["moves"]["held"].as_array().map(|a| a.len()).unwrap_or(0)}) } else { Value::Null },
+                "noBundle": if r["noBundle"].is_object() { json!({"minutes": r["noBundle"]["minutes"].as_u64().unwrap_or(0)}) } else { Value::Null },
+                "how": tu.how,
             },
             "s": {
                 "count": plan["sysCount"], "aurCount": plan["aurCount"], "aurAll": up.aur_list.len(), "includeAur": su.include_aur, "removeDropped": su.remove_dropped,
@@ -645,6 +651,14 @@ impl About {
             // (the two parts, each its own Update)
             "tu.update" => {
                 self.sheet.clear();
+                self.su.update_tessera(h, &tx, &mut self.tu, &mut self.up)
+            }
+            // No download yet for the new version: wait for it (nothing
+            // runs; the next check offers it once it's out), or build it now
+            "tu.wait" => self.tu.how = "wait".into(),
+            "tu.buildNow" => {
+                self.sheet.clear();
+                self.tu.how = "build".into();
                 self.su.update_tessera(h, &tx, &mut self.tu, &mut self.up)
             }
             "sys.update" => self.su.update_system(&tx, &mut self.tu, &mut self.up),

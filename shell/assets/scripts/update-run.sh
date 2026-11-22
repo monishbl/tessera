@@ -30,7 +30,8 @@
 # one (its holder gone, or only inherited) is taken, never a dead end.
 set -uo pipefail
 T="$1" REPO="$2" CONFIG="$3" MODE="${4:-}" LOCKED="${5:-}"
-[[ -n "$T" && -d "$T" && -n "$REPO" && -d "$REPO/.git" ]] || { echo "usage: update-run.sh <work dir> <repo> <config dir> [finish [locked]]" >&2; exit 2; }
+# (the repo: a git checkout, or a copy that runs from a bundle, tools/tessera-bundle.py)
+[[ -n "$T" && -d "$T" && -n "$REPO" && ( -d "$REPO/.git" || -f "$REPO/bundle.json" ) ]] || { echo "usage: update-run.sh <work dir> <repo> <config dir> [finish [locked]]" >&2; exit 2; }
 RUN="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 SIG="${HYPRLAND_INSTANCE_SIGNATURE:-}"
 SHELL_DIR="$REPO/shell"
@@ -110,6 +111,8 @@ screen() {
 # stale lock (its holder gone, or kept only by a shell that inherited the
 # descriptor) is taken apart by tessera-update.py lock-holder and taken.
 LOCKF="$REPO/.git/tessera-update.lock"
+# (a copy that runs from a bundle: tessera-update.py's lock_path, one for all its versions)
+[[ -d "$REPO/.git" ]] || LOCKF="${XDG_DATA_HOME:-$HOME/.local/share}/tessera/update.lock"
 take_repo_lock() {
     local _ start
     for _ in 1 2 3 4; do
@@ -251,6 +254,13 @@ if [[ -z "$err" ]] && command -v dbus-update-activation-environment >/dev/null; 
 fi
 status restart 92 "Restarting"
 hyprctl tessera-glass clear >/dev/null 2>&1
+# The new shell from the version now current: after a bundle went in (the
+# first one of a git install too), that's the bundle's, not this repo's
+CUR="${XDG_DATA_HOME:-$HOME/.local/share}/tessera/current"
+if [[ -z "$err" && -x "$CUR/shell/assets/scripts/launch-shell.sh" ]] &&
+    { [[ -f "$REPO/bundle.json" ]] || python3 -I -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1])).get("bundle") else 1)' "$T/result.json" 2>/dev/null; }; then
+    SHELL_DIR="$CUR/shell"
+fi
 if [[ -n "$tty_ctl" ]]; then
     exec 9>&- 6>&- 8>&- # the test session's starter takes the lock itself
     env -i "${tenv[@]}" "$tty_ctl" start

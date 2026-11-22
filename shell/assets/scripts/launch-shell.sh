@@ -159,6 +159,12 @@ rollback_ui() {
     [[ -s "$FRESH" && -f "$CHECKOUT/tools/native-install.py" ]] || return 1
     (( $(date +%s) - $(stat -c %Y "$FRESH" 2>/dev/null || echo 0) < 3600 )) || { rm -f "$FRESH"; return 1; }
     rm -f "$FRESH" # (once)
+    # (a copy that runs from a bundle: the whole previous version back, one
+    # rename, tools/tessera-bundle.py; the tessera-ui link follows it)
+    if [[ -f "$CHECKOUT/bundle.json" && -f "$CHECKOUT/tools/tessera-bundle.py" ]]; then
+        python3 -I "$CHECKOUT/tools/tessera-bundle.py" rollback --json >/dev/null 2>&1
+        return
+    fi
     python3 -I "$CHECKOUT/tools/native-install.py" rollback --json >/dev/null 2>&1
 }
 standalone_ui() {

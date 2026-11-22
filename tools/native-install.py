@@ -888,6 +888,11 @@ def label(info):
     s = info.get("source")
     if s == "ready-made":
         return "ready-made (" + SHORT.get(info.get("variant"), info.get("variant") or "?") + ")"
+    if s == "bundle":
+        # (a version installed whole, tools/tessera-bundle.py)
+        return "in the bundle (" + SHORT.get(info.get("variant"), info.get("variant") or "?") + ")"
+    if s == "bundle-built":
+        return "in a bundle built here"
     if s == "built-tuned":
         return "built here, tuned"
     if s == "built":

@@ -390,7 +390,105 @@ class BuildEnv(unittest.TestCase):
         self.assertIn('build_env(t, variant)', BUILDER.read_text())
 
 
+class Bundles(unittest.TestCase):
+    """server1's bundle for a commit (its parts' builds faked: the shaders,
+    helpers and plugin need Hyprland's and Qt's headers), as the laptop
+    fetches and checks it. Signing needs minisign (Release above)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="tessera-release-bundle-")
+        self.d = Path(self.tmp.name)
+        self.rb = rb = load("tessera_release_builder_bundles", BUILDER)
+        root = self.d / "server/tessera-release"
+        rb.ROOT, rb.SRC, rb.OUT, rb.BUILT = str(root), str(root / "src"), str(root / "out"), str(root / "built")
+        rb.TARGETS, rb.LOGS = str(root / "target"), str(root / "logs")
+        rb.CACHE, rb.LOG, rb.STATUS = str(self.d / "cache"), str(self.d / "cache/r.log"), str(self.d / "cache/r.json")
+        rb.STATE.clear()
+        src = Path(rb.SRC)
+        (src / "native/tessera-ui").mkdir(parents=True)
+        (src / "native/tessera-ui/Cargo.toml").write_text('[package]\nname = "tessera-ui"\nversion = "0.4.2"\n')
+        (src / "shell").mkdir()
+        (src / "shell/shell.qml").write_text("ShellRoot {}\n")
+        (src / "tools").mkdir()
+        for t in ("tessera-bundle.py", "native-install.py", "tessera_sources.py", "sources.txt", "tessera-ui.pub"):
+            shutil.copy(ROOT / "tools" / t, src / "tools" / t)
+        subprocess.run(["git", "init", "-q", "-b", "beta", str(src)], check=True)
+        git(src, "add", "-A")
+        git(src, "commit", "-q", "-m", "one")
+        self.commit = git(src, "rev-parse", "HEAD")
+        self.tree = git(src, "rev-parse", "HEAD:native")
+        self.target = {"name": "beta", "kind": "branch", "tag": "tessera-ui-beta", "channel": "beta", "commit": self.commit}
+        built = Path(rb.BUILT, self.tree)
+        built.mkdir(parents=True)
+        for variant, _ in rb.VARIANTS:
+            rel = Path(rb.TARGETS) / variant / "release"
+            rel.mkdir(parents=True)
+            for name in ("tessera-ui", "tessera-events"):
+                fake_program(rel / name, f"{name} 0.4.2")
+        self.variants = {v: rb.pack(str(built), self.tree, v, git(src, "log", "-1", "--format=%ct")) for v, _ in rb.VARIANTS}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def fake_parts(self, plugin_dir, logf):
+        Path(plugin_dir, "tessera-glass.so").write_bytes(b"\x7fELF glass")
+        Path(plugin_dir, "tessera-glass.built-for").write_text("0.57.1\n")
+
+    def test_a_commits_bundle_is_made_and_the_laptop_checks_it(self):
+        rb = self.rb
+        with mock.patch.object(rb, "build_parts", self.fake_parts):
+            ready = rb.make_bundle(self.target, self.tree, self.variants)
+        c = self.commit
+        self.assertEqual((ready["type"], ready["commit"], ready["tree"], ready["latest"]), ("bundle", c, self.tree, True))
+        here = Path(rb.OUT, "tessera-ui-beta", c)
+        self.assertEqual(sorted(os.listdir(here)), sorted(["READY", f"tessera-{c}.bundle.json", f"tessera-{c}-x86-64-v3.bundle.tar.zst",
+                                                         f"tessera-{c}-generic.bundle.tar.zst"]))
+        B = load("tessera_bundle_rb", ROOT / "tools/tessera-bundle.py")
+        m = B.check_manifest(json.loads((here / f"tessera-{c}.bundle.json").read_text()), c)
+        self.assertIn("plugin/tessera-glass.so", m["variants"]["generic"]["files"])
+        self.assertNotIn("native/tessera-ui/Cargo.toml", m["variants"]["generic"]["files"])
+        # Listed for the laptop beside the program sets, and checked there like one
+        self.assertIn(c, [s.get("commit") for s in rb.list_ready() if s.get("type") == "bundle"])
+        pr = load("tessera_publish_release_bundles", PUBLISHER)
+        pr.STAGE = str(self.d / "laptop/stage")
+        pr.CACHE, pr.LOG, pr.STATUS = str(self.d / "laptop"), str(self.d / "laptop/p.log"), str(self.d / "laptop/p.json")
+        pr.STATE.clear()
+
+        def fake_run(cmd, what, timeout=600, **kw):
+            *srcs, dest = [x for x in cmd if ":" in x or x.endswith("/")]
+            for s in srcs:
+                shutil.copy(Path(rb.OUT, s.split(":", 1)[1].split("/out/", 1)[1]), dest)
+            return ""
+        s = [x for x in rb.list_ready() if x.get("type") == "bundle"][0]
+        with mock.patch.object(pr, "run", fake_run), mock.patch.object(pr, "REPO", rb.SRC):
+            dest, m2 = pr.fetch_and_check(s)
+        self.assertEqual(m2["commit"], c)
+        # (a rolling release's bundle is signed as its pointer too)
+        self.assertEqual(pr.to_sign(s), sorted(pr.bundle_files(c)) + [pr.LATEST])
+        self.assertTrue(os.path.exists(os.path.join(dest, pr.LATEST)))
+        self.assertEqual(pr.set_key(s), c)
+        # A tampered archive is refused
+        f = Path(rb.OUT, "tessera-ui-beta", c, f"tessera-{c}-generic.bundle.tar.zst")
+        f.write_bytes(f.read_bytes() + b"x")
+        with mock.patch.object(pr, "run", fake_run), mock.patch.object(pr, "REPO", rb.SRC):
+            with self.assertRaises(pr.Refused):
+                pr.fetch_and_check(s)
+
+    def test_a_commit_from_before_bundles_gets_none(self):
+        rb = self.rb
+        git(Path(rb.SRC), "rm", "-q", "tools/tessera-bundle.py")
+        git(Path(rb.SRC), "commit", "-q", "-m", "old")
+        t = dict(self.target, commit=git(Path(rb.SRC), "rev-parse", "HEAD"))
+        with mock.patch.object(rb, "make_bundle", side_effect=AssertionError("made")):
+            rb.do_bundle(t, self.tree, True)
+        with mock.patch.dict(os.environ, {"TESSERA_RELEASE_NO_BUNDLE": "1"}), mock.patch.object(rb, "make_bundle", side_effect=AssertionError("made")):
+            rb.do_bundle(self.target, self.tree, True)
+
+
 class Units(unittest.TestCase):
+    def setUp(self):
+        self.rb = load("tessera_release_builder_units", BUILDER)
+
     def test_timers(self):
         # server1 builds every ten minutes (a push starts it at once too:
         # tools/push-release); the laptop, which signs, looks 30 s after login
@@ -407,9 +505,35 @@ class Units(unittest.TestCase):
     def test_builds_go_through_tbuild_not_urgent_full_release(self):
         src = BUILDER.read_text()
         self.assertIn('TBUILD_URGENT=""', src)
-        self.assertIn('"build", "--release", "--locked"', src)
-        self.assertNotIn("--profile", src)
         self.assertIn('("x86-64-v3", "-C target-cpu=x86-64-v3"), ("generic", "")', src)
+        # (22 Nov: beta with the "local" profile, thin LTO, minutes; stable
+        # and tags the full release profile)
+        rb = self.rb
+        self.assertEqual((rb.profile_for("beta"), rb.profile_for("stable"), rb.profile_for("release")), ("local", "release", "release"))
+        self.assertIn('["--release"] if profile == "release" else ["--profile", profile]', src)
+
+    def test_mold_when_installed_and_both_variants_at_once_with_the_memory(self):
+        rb = self.rb
+        self.assertEqual(rb.linker_flags(lambda n: "/usr/bin/mold" if n == "mold" else None), "-C link-arg=-fuse-ld=mold")
+        self.assertEqual(rb.linker_flags(lambda n: None), "")
+        self.assertEqual(rb.with_flags("-C target-cpu=x86-64-v3", "-C link-arg=-fuse-ld=mold"), "-C target-cpu=x86-64-v3 -C link-arg=-fuse-ld=mold")
+        self.assertEqual(rb.with_flags("", ""), "")
+        self.assertEqual(rb.mem_total("MemTotal:       32768000 kB\nMemFree: 1 kB\n"), 32768000 * 1024)
+        self.assertGreaterEqual(rb.mem_total("MemTotal: 25165824 kB\n"), rb.PARALLEL_RAM)
+        self.assertLess(rb.mem_total("MemTotal: 15728640 kB\n"), rb.PARALLEL_RAM)
+        self.assertEqual(rb.mem_total(""), 0)
+
+    def test_a_beta_build_is_never_packed_for_stable(self):
+        rb = self.rb
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "x.tar.zst").write_bytes(b"x")
+            v = {"file": "x.tar.zst", "size": 1, "sha256": rb.sha256_of(str(Path(d) / "x.tar.zst")), "profile": "local"}
+            (Path(d) / "variant-generic.json").write_text(json.dumps(v))
+            self.assertIsNotNone(rb.variant_ok(d, "generic", "local"))
+            self.assertIsNone(rb.variant_ok(d, "generic", "release"))
+            v["profile"] = "release"
+            (Path(d) / "variant-generic.json").write_text(json.dumps(v))
+            self.assertIsNotNone(rb.variant_ok(d, "generic", "local"))  # (a release build will do for beta)
 
     def test_server1_never_signs_or_publishes(self):
         src = BUILDER.read_text()
