@@ -59,7 +59,7 @@ elif name == "busctl":
     elif "GetConnectionUnixProcessID" in args: print("u " + os.environ.get("FAKE_SHELL_PID", "1"))
     else: sys.exit(1)
 elif name == "hyprctl":
-    if "tessera-glass" in args: print("tessera-glass " + os.environ.get("FAKE_PLUGIN", "4"))
+    if "tessera-glass" in args: print("tessera-glass " + os.environ.get("FAKE_PLUGIN", "6"))
     elif "version" in args: print('{"tag": "' + os.environ.get("FAKE_HYPR", "v0.56.2") + '"}')
 elif name == "qs":
     print("Quickshell " + os.environ.get("FAKE_QS", "0.3.2") + " (revision x)")

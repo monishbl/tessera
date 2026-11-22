@@ -50,7 +50,7 @@ SHELL = os.path.dirname(os.path.dirname(HERE))
 REPO = os.path.dirname(SHELL)
 EACH = 2.0   # seconds a check may take
 TOTAL = 3.0  # seconds for all of them together
-PLUGIN_VERSION = 4  # what `hyprctl tessera-glass ping` answers when current
+PLUGIN_VERSION = 5  # what `hyprctl tessera-glass ping` answers when current
 
 GROUPS = ("Sound", "Network & sharing", "Power", "Desktop", "Tessera itself")
 

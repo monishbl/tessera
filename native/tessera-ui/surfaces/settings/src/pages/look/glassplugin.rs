@@ -85,7 +85,10 @@ pub fn problem(glass: bool, loaded: bool, version: i64, st: &Value) -> Option<Pr
         let detail = if how.is_empty() { "Building…".to_string() } else { format!("Building… {how}") };
         return Some(Problem { busy: true, fraction, progress: how, blocked: false, ..p("building", detail, "Building…") });
     }
-    let outdated = loaded && (version == 3 || version == 4);
+    // (5: glass fades with its layer; what health-check.py's PLUGIN_VERSION
+    // also calls current. A build from before 22 Nov whose pointer hook
+    // failed answered 2: rebuilding it gives the true answer)
+    let outdated = loaded && version < 5;
     if loaded && !outdated {
         return None;
     }
@@ -103,6 +106,11 @@ pub fn problem(glass: bool, loaded: bool, version: i64, st: &Value) -> Option<Pr
             p("unloaded", "The glass plugin is built, but Hyprland hasn't loaded it".into(), "Rebuild glass")
         }
     };
+    if st["bundle"] == true && !row.log {
+        // a bundle's plugin comes built with its version: nothing to build here
+        row.detail = format!("{} · Software Update brings the right build", row.detail);
+        row.button = "Software Update";
+    }
     if st["skipped"] == true {
         row.detail = format!("{} · Skipped in a sandbox", row.detail);
     }
@@ -124,9 +132,12 @@ pub fn current(cx: &Ctx) -> Option<Problem> {
 /// The buttons a problem offers (Show log, then the primary one)
 fn actions(cx: &mut Ctx, pr: &Problem) -> (Vec<super::super::super::model::Opt>, String) {
     let log = pr.log;
+    let update = pr.button == "Software Update";
     let act = cx.on(move |cx, a| {
         if log && a.i == 0 {
             cx.ask("look", "glassBuildLog", Value::Null);
+        } else if update {
+            cx.go("update", "");
         } else {
             cx.ask("look", "buildPlugin", json!([]));
         }
@@ -173,6 +184,20 @@ mod tests {
             base[k] = x.clone();
         }
         base
+    }
+
+    #[test]
+    fn a_bundle_install_is_sent_to_software_update_not_a_build() {
+        let p = problem(true, true, 4, &st(json!({"builtFor": "0.57.2", "built": true, "bundle": true}))).unwrap();
+        assert_eq!(p.button, "Software Update");
+        assert!(p.detail.contains("Software Update brings the right build"));
+        let p = problem(true, false, 0, &st(json!({"bundle": true}))).unwrap();
+        assert_eq!(p.button, "Software Update");
+        // (a checkout still builds)
+        assert_eq!(problem(true, true, 4, &st(json!({"builtFor": "0.57.2", "built": true}))).unwrap().button, "Rebuild glass");
+        // (an old build answering 2 is older; 5 and 6 are current)
+        assert_eq!(problem(true, true, 2, &st(json!({"builtFor": "0.57.2", "built": true}))).unwrap().kind, "outdated");
+        assert!(problem(true, true, 6, &st(json!({"builtFor": "0.57.2", "built": true}))).is_none());
     }
 
     #[test]

@@ -125,6 +125,18 @@ fn now_s() -> f64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
+/// A bundle install (tools/tessera-bundle.py's mode()): its plugin comes
+/// built with the version, so the remedy is Software Update, never a build here
+fn bundle_install(root: &std::path::Path, data: &std::path::Path) -> bool {
+    match tessera_core::env::var("TESSERA_UPDATE_MODE").as_deref() {
+        Some("bundle") => return true,
+        Some("git") | Some("dev") => return false,
+        _ => {}
+    }
+    let real = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    real(root).starts_with(real(&data.join("versions"))) || root.join("bundle.json").is_file()
+}
+
 /// One reading of the files (cheap: a few small files; on the reader's thread)
 fn read_files(running: &str, headers: &str) -> Value {
     let snap: Value = std::fs::read_to_string(tessera_core::build_progress::path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
@@ -139,6 +151,7 @@ fn read_files(running: &str, headers: &str) -> Value {
         "build": build_of(&snap, now, alive),
         "other": other_of(&snap, now, alive),
         "fake": fake,
+        "bundle": bundle_install(&tessera_core::env::root(), &data),
     })
 }
 
