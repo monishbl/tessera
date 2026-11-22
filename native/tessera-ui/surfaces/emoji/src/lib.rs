@@ -96,6 +96,21 @@ pub struct Placement {
     pub pointer: Option<(f64, f64)>,
     /// x, y, w, h, address
     pub window: Option<(f64, f64, f64, f64, String)>,
+    /// the focused window's class (a terminal pastes with Ctrl+Shift+V)
+    pub class: String,
+}
+
+/// Terminals: their paste is Ctrl+Shift+V (as the clipboard history's list)
+const TERMINALS: &[&str] = &["kitty", "foot", "footclient", "alacritty", "org.wezfurlong.wezterm", "com.mitchellh.ghostty", "ghostty", "org.kde.konsole", "konsole", "org.gnome.terminal", "gnome-terminal-server", "org.gnome.ptyxis", "xterm", "urxvt", "st", "tilix", "blackbox"];
+
+/// A pick is pasted, as the clipboard history does: Hyprland sends Ctrl+V
+/// (terminals Ctrl+Shift+V) with the real keyboard. Typing it with wtype
+/// (until 22 Nov) swapped in wtype's own keymap: Chromium/Electron apps got
+/// boxes for emoji (VS Code: ▯) and Firefox ones stray shortcuts (Zen opened
+/// sidebars), so the pick had to be pasted by hand
+fn paste_mods(class: &str) -> &'static str {
+    let c = class.to_ascii_lowercase();
+    if TERMINALS.iter().any(|t| c == *t) { "CTRL SHIFT" } else { "CTRL" }
 }
 
 /// The panel's top-left on a screen (origin ox, oy; size sw, sh), as
@@ -492,10 +507,12 @@ impl Emoji {
         let n = self.opening;
         std::thread::spawn(move || {
             let pointer = hypr::request("j/cursorpos").ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()).and_then(|v| Some((v["x"].as_f64()?, v["y"].as_f64()?)));
-            let window = hypr::request("j/activewindow").ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()).and_then(|v| {
+            let active = hypr::request("j/activewindow").ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+            let window = active.as_ref().and_then(|v| {
                 Some((v["at"][0].as_f64()?, v["at"][1].as_f64()?, v["size"][0].as_f64()?, v["size"][1].as_f64()?, v["address"].as_str()?.to_string()))
             });
-            to(Box::new(M::Placed(Placement { pointer, window })));
+            let class = active.as_ref().and_then(|v| v["class"].as_str()).unwrap_or("").to_string();
+            to(Box::new(M::Placed(Placement { pointer, window, class })));
         });
         let to = Self::send(st);
         self.place_timer.start(slint::TimerMode::SingleShot, Duration::from_millis(250), move || to(Box::new(M::PlaceTimeout(n))));
@@ -838,8 +855,9 @@ impl Emoji {
         self.mem.record(key, kind, crate::util::now_ms());
         self.mem.save();
         let target = self.placement.window.as_ref().map(|w| w.4.clone()).unwrap_or_default();
+        let mods = paste_mods(&self.placement.class);
         self.close(true);
-        crate::util::pipe_to(&["wl-copy"], text.clone().into_bytes());
+        crate::util::pipe_to(&["wl-copy"], text.into_bytes());
         if copy_only {
             return;
         }
@@ -849,7 +867,8 @@ impl Emoji {
                 let _ = hypr::request(&format!("dispatch hl.dsp.focus({{ window = \"address:0x{}\" }})", target.trim_start_matches("0x")));
             }
             std::thread::sleep(Duration::from_millis(60));
-            crate::util::pipe_to(&["wtype", "-"], text.into_bytes());
+            // (the copy above is the clipboard by now: wl-copy was asked 200 ms ago)
+            let _ = hypr::request(&format!("dispatch hl.dsp.send_shortcut({{ mods = \"{mods}\", key = \"V\" }})"));
         });
     }
 
@@ -1406,18 +1425,18 @@ mod tests {
     #[test]
     fn opens_by_the_pointer_in_the_focused_window() {
         let w = Some((100.0, 100.0, 1200.0, 800.0, "0xabc".to_string()));
-        let p = Placement { pointer: Some((400.0, 300.0)), window: w.clone() };
+        let p = Placement { pointer: Some((400.0, 300.0)), window: w.clone(), ..Default::default() };
         assert_eq!(place(SCREEN, &p, (420.0, 428.0)), (408.0, 320.0));
         // no room right or below: flipped to the other side
-        let p = Placement { pointer: Some((1700.0, 850.0)), window: Some((0.0, 0.0, 1920.0, 1080.0, "a".into())) };
+        let p = Placement { pointer: Some((1700.0, 850.0)), window: Some((0.0, 0.0, 1920.0, 1080.0, "a".into())), ..Default::default() };
         assert_eq!(place(SCREEN, &p, (420.0, 428.0)), (1272.0, 414.0));
         // the pointer outside the window: centred in the window
-        let p = Placement { pointer: Some((1500.0, 1000.0)), window: w };
+        let p = Placement { pointer: Some((1500.0, 1000.0)), window: w, ..Default::default() };
         assert_eq!(place(SCREEN, &p, (420.0, 428.0)), (490.0, 286.0));
         // nothing known: the middle of the screen
         assert_eq!(place(SCREEN, &Placement::default(), (420.0, 428.0)), (750.0, 326.0));
         // a window on another screen doesn't count; on this one, its own coordinates
-        let p = Placement { pointer: Some((2500.0, 300.0)), window: Some((2000.0, 0.0, 800.0, 600.0, "b".into())) };
+        let p = Placement { pointer: Some((2500.0, 300.0)), window: Some((2000.0, 0.0, 800.0, 600.0, "b".into())), ..Default::default() };
         assert_eq!(place(SCREEN, &p, (420.0, 428.0)), (750.0, 326.0));
         assert_eq!(place((1920.0, 0.0, 1920.0, 1080.0), &p, (420.0, 428.0)), (588.0, 20.0 + 300.0));
     }
@@ -1441,6 +1460,15 @@ mod tests {
         assert_eq!(emoji_font(&json!({"emoji": {"style": "apple"}}), &fonts), "Apple Color Emoji");
         assert_eq!(emoji_font(&json!({"emoji": {"style": "windows"}}), &fonts), "Noto Color Emoji");
         assert_eq!(emoji_font(&json!({}), &fonts), "Noto Color Emoji");
+    }
+
+    #[test]
+    fn a_pick_pastes_with_the_terminals_own_shortcut() {
+        assert_eq!(paste_mods("kitty"), "CTRL SHIFT");
+        assert_eq!(paste_mods("com.mitchellh.ghostty"), "CTRL SHIFT");
+        assert_eq!(paste_mods("com.microsoft.VSCode"), "CTRL");
+        assert_eq!(paste_mods("zen"), "CTRL");
+        assert_eq!(paste_mods(""), "CTRL");
     }
 
     #[test]
