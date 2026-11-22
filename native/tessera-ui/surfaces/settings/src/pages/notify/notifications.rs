@@ -102,6 +102,8 @@ fn sound_row(cx: &mut Ctx, key: &'static str, label: &str, custom: bool, always:
 }
 
 pub fn notifications(cx: &mut Ctx, p: &mut Page) {
+    // (another program showing them, or nothing receiving them: Health's row)
+    super::super::about::health::problems(cx, p, &["notifications"], "notifications");
     // Do Not Disturb (Focus.on: the shell's)
     let on = feed(cx)["focus"]["on"].as_bool().unwrap_or(false);
     let dnd = cx.on(move |cx, _| {

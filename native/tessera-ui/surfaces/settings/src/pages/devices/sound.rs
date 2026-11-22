@@ -77,6 +77,8 @@ pub fn sound(cx: &mut Ctx, p: &mut Page) {
     let snd: Sound = shell.get::<Sound>().cloned().unwrap_or_default();
     let f = feed(cx);
     let air = &f["airplay"];
+    // (the sound server down: Health's rows for it, with Restart audio)
+    super::super::about::health::problems(cx, p, &["pipewire", "wireplumber"], "sound");
 
     // ── Output ──
     let sink = snd.sink().cloned();

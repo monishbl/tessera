@@ -34,7 +34,7 @@ fn load(live: Option<Sample>) -> Value {
         "now": tessera_core::util::now_ms() / 1000,
         "mem": if pss > 0 { pss } else { rss },
         "recording": recording,
-        "samples": samples.iter().map(|s| json!([s.t, s.d, s.mem(), s.cpu_ms, s.s16, s.s33, s.worst, s.crashes, s.frames, s.missed])).collect::<Vec<_>>(),
+        "samples": samples.iter().map(|s| json!([s.t, s.d, s.mem(), s.cpu_ms, s.s16, s.s33, s.worst, s.crashes, s.frames, s.missed, s.pressure])).collect::<Vec<_>>(),
         "events": events,
         "reports": reports,
     })
@@ -46,7 +46,7 @@ fn samples_of(v: &Value) -> Vec<Sample> {
         .as_array()
         .map(|a| {
             a.iter()
-                .map(|s| Sample { t: s[0].as_i64().unwrap_or(0), d: s[1].as_i64().unwrap_or(300).max(1), pss: n(s, 2), cpu_ms: n(s, 3), s16: n(s, 4), s33: n(s, 5), worst: n(s, 6), crashes: n(s, 7), frames: n(s, 8), missed: n(s, 9), ..Default::default() })
+                .map(|s| Sample { t: s[0].as_i64().unwrap_or(0), d: s[1].as_i64().unwrap_or(300).max(1), pss: n(s, 2), cpu_ms: n(s, 3), s16: n(s, 4), s33: n(s, 5), worst: n(s, 6), crashes: n(s, 7), frames: n(s, 8), missed: n(s, 9), pressure: n(s, 10), ..Default::default() })
                 .collect()
         })
         .unwrap_or_default()
@@ -132,8 +132,46 @@ fn failed_updates_today(events: &[Value], now: i64) -> Vec<&'static str> {
         .collect()
 }
 
-/// The line at the top: (what, more, all well)
-pub fn status(events: &[Value], samples: &[Sample], now: i64) -> (String, String, bool) {
+/// The line at the top: what, more, whether all is well, and what to do
+/// about it (numbered steps, a page to open)
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Top {
+    pub label: String,
+    pub detail: String,
+    pub ok: bool,
+    pub steps: Vec<String>,
+    /// (page, part to show)
+    pub open: Option<(&'static str, &'static str)>,
+    /// the detail already says when this run started
+    pub says_start: bool,
+}
+
+/// Report a Bug: where a crash, a part turned off or a fallback goes next
+const BUG: (&str, &str) = ("about/bugreport", "");
+
+fn steps(s: &[&str]) -> Vec<String> {
+    s.iter().map(|x| x.to_string()).collect()
+}
+
+/// Slow moments while the computer was short of memory: what to do
+const SHORT_OF_MEMORY: &[&str] = &[
+    "Close apps you aren't using, browser tabs above all",
+    "Run big builds while you're away, or with fewer jobs at once so they use less memory",
+    "If it happens with little else open, Report a Bug and say what you were doing",
+];
+/// Slow moments otherwise
+const SLOW: &[&str] = &[
+    "If it's while windows move or open over the glass, try Frosted or Solid in Appearance → Glass",
+    "If the computer runs hot, turn on Cool-down in Battery & Power",
+    "If it keeps happening, Report a Bug and say what you were doing",
+];
+
+/// The last start (this run's), from the record
+pub fn run_start(events: &[Value]) -> Option<i64> {
+    events.iter().rev().find(|e| e["ev"] == "start").and_then(|e| e["t"].as_i64())
+}
+
+pub fn status(events: &[Value], samples: &[Sample], now: i64) -> Top {
     let day = tessera_core::util::local_day;
     let today = |e: &&Value| e["t"].as_i64().is_some_and(|t| day(t) == day(now));
     let week = |e: &&Value| e["t"].as_i64().is_some_and(|t| now - t < 7 * 86400);
@@ -141,6 +179,7 @@ pub fn status(events: &[Value], samples: &[Sample], now: i64) -> (String, String
     let fallbacks = events.iter().filter(today).filter(|e| e["ev"] == "fallback").count();
     let parts = events.iter().filter(today).filter(|e| e["ev"] == "crash" && e["fatal"] != true).count();
     let offs: Vec<String> = events.iter().filter(today).filter(|e| e["ev"] == "off").filter_map(|e| e["part"].as_str()).map(part_name).collect();
+    let bad = |label: String, detail: String, st: &[&str], open: Option<(&'static str, &'static str)>| Top { label, detail, ok: false, steps: steps(st), open, says_start: false };
     if restarts > 0 {
         let kinds: Vec<&str> = events.iter().filter(today).filter(|e| is_restart(e)).filter_map(|e| e["why"].as_str()).collect();
         let why = if kinds.iter().all(|k| *k == "watchdog") {
@@ -150,54 +189,120 @@ pub fn status(events: &[Value], samples: &[Sample], now: i64) -> (String, String
         } else {
             "It stopped and was started again."
         };
-        return (format!("{} today", count(restarts, "restart", "restarts")), format!("{why} The events below say when and why."), false);
+        let st: &[&str] = if kinds.iter().any(|k| *k == "stopped") {
+            &["If the computer was short of memory then (a big build, many browser tabs), close what you don't need", "Save the crash report from an event below, if it has one", "Send it with Report a Bug"]
+        } else {
+            &["Save the crash report from an event below, if it has one", "Send it with Report a Bug"]
+        };
+        return bad(format!("{} today", count(restarts, "restart", "restarts")), format!("{why} The events below say when and why."), st, Some(BUG));
     }
     if fallbacks > 0 {
-        return ("Switched to the basic shell today".into(), "Tessera stopped twice in a row, so the basic shell stood in until it was started again.".into(), false);
+        return bad(
+            "Switched to the basic shell today".into(),
+            "Tessera stopped twice in a row, so the basic shell stood in until it was started again.".into(),
+            &["Nothing to do if it's back: Tessera tries again by itself", "If it keeps switching, Report a Bug"],
+            Some(BUG),
+        );
     }
     if let Some(first) = offs.first() {
-        return (format!("{} was turned off today", cap(first)), "It stopped 3 times in 2 minutes. It comes back when you log in again.".into(), false);
+        return bad(
+            format!("{} was turned off today", cap(first)),
+            "It stopped 3 times in 2 minutes. It comes back when you log in again.".into(),
+            &["Log out and in again to bring it back", "Save its crash report from an event below and send it with Report a Bug"],
+            Some(BUG),
+        );
     }
     if parts > 0 {
-        return (format!("{} recovered today", count(parts, "part", "parts")), "A part of Tessera stopped after an error and was started again. Everything else kept working.".into(), false);
+        return bad(
+            format!("{} recovered today", count(parts, "part", "parts")),
+            "A part of Tessera stopped after an error and was started again. Everything else kept working.".into(),
+            &["Nothing to do if it doesn't happen again", "If it does, save the crash report from an event below and send it with Report a Bug"],
+            Some(BUG),
+        );
     }
     if let Some(what) = failed_updates_today(events, now).first() {
-        return (format!("{} didn't finish today", update_name(what)), "The events below say why. Try it again from Software Update.".into(), false);
+        return bad(
+            format!("{} didn't finish today", update_name(what)),
+            "The events below say why. Try it again from Software Update.".into(),
+            &["Open Software Update and try again", "If it stops again, the event below says why"],
+            Some(("update", "")),
+        );
     }
     let day_ago = now - 86400;
-    let long: u64 = samples.iter().filter(|s| s.t >= day_ago).map(|s| s.s33).sum();
-    let worst = samples.iter().filter(|s| s.t >= day_ago).map(|s| s.worst).max().unwrap_or(0);
+    let recent: Vec<&Sample> = samples.iter().filter(|s| s.t >= day_ago).collect();
+    let long: u64 = recent.iter().map(|s| s.s33).sum();
+    let worst = recent.iter().map(|s| s.worst).max().unwrap_or(0);
     if long >= 20 {
-        return ("Some slow moments today".into(), format!("Tessera paused for over two frames {long} times in the last 24 hours (the longest {worst} ms)."), false);
+        // This run's and the earlier ones' (a sample is this run's when it
+        // ends after the start: the bucket the start fell in is), and those
+        // while the computer was short of memory
+        let up = run_start(events);
+        let this_run: u64 = recent.iter().filter(|s| up.map_or(true, |u| s.t + s.d > u)).map(|s| s.s33).sum();
+        let before = long - this_run;
+        let squeezed: u64 = recent.iter().filter(|s| s.pressure >= tessera_core::health::PRESSURE_PCT).map(|s| s.s33).sum();
+        let mut detail = format!("Tessera paused for over two frames {long} times in the last 24 hours (the longest {worst} ms).");
+        let says_start = up.is_some() && before > 0;
+        if let Some(u) = up.filter(|_| before > 0) {
+            detail.push_str(&format!(" {this_run} since it started ({}), {before} before that.", since(u, now)));
+        }
+        let short = squeezed > 0 && squeezed * 2 >= long;
+        if short {
+            detail.push_str(" Most happened while the computer was short of memory (for example a big build or many browser tabs).");
+        }
+        let label = if up.is_some() && this_run * 10 < long { "Some slow moments, before this start" } else { "Some slow moments today" };
+        return Top { says_start, ..bad(label.into(), detail, if short { SHORT_OF_MEMORY } else { SLOW }, Some(BUG)) };
     }
     let earlier = events.iter().filter(week).filter(|e| is_restart(e) || e["ev"] == "fallback" || e["ev"] == "off").count();
     let more = if earlier == 0 { "No crashes or restarts in the last 7 days.".to_string() } else { format!("No crashes or restarts today; {} in the last 7 days.", count(earlier, "problem", "problems")) };
-    ("Running smoothly".into(), more, true)
+    Top { label: "Running smoothly".into(), detail: more, ok: true, ..Default::default() }
 }
 
 /// What one event was, for people: (title, explanation, what to offer)
 pub enum Offer {
     None,
+    /// Save report (the crash report's file name)
     Report(String),
+    /// Use the other GPU (else Cool-down, where Graphics processor is)
     OtherGpu,
+    /// Open a page: (page, part to show)
+    Open(&'static str, &'static str),
+}
+
+/// An explanation with what to do by hand after it, numbered
+fn with_steps(text: &str, st: &[&str]) -> String {
+    format!("{text}\n{}", super::super::about::health::numbered(&steps(st)))
 }
 
 pub fn explain(e: &Value) -> Option<(String, String, Offer)> {
-    let report = || e["report"].as_str().filter(|r| !r.is_empty()).map(|r| Offer::Report(r.to_string())).unwrap_or(Offer::None);
+    // (a crash: its report, else Report a Bug)
+    let report = || e["report"].as_str().filter(|r| !r.is_empty()).map(|r| Offer::Report(r.to_string())).unwrap_or(Offer::Open(BUG.0, BUG.1));
     let part = e["part"].as_str().unwrap_or("");
+    let bug: &[&str] = &["If it happens again, Report a Bug and say what you were doing"];
     Some(match e["ev"].as_str()? {
         "start" => match e["why"].as_str()? {
-            "crash" => ("Restarted after a crash".into(), "Tessera stopped after an error and was started again. The crash report has the details.".into(), report()),
-            "stopped" => ("Restarted after it stopped".into(), "Tessera ended without saying why (the computer may have run out of memory) and was started again.".into(), Offer::None),
-            "watchdog" => ("Restarted because it stopped responding".into(), "Tessera didn't answer for over a minute, so it was started again.".into(), Offer::None),
+            "crash" => ("Restarted after a crash".into(), with_steps("Tessera stopped after an error and was started again. The crash report has the details.", &["Save its crash report (Save report), if it was kept", "Send it with Report a Bug"]), report()),
+            "stopped" => (
+                "Restarted after it stopped".into(),
+                with_steps(
+                    "Tessera ended without saying why (the computer may have run out of memory) and was started again.",
+                    &["If the computer was short of memory then (a big build, many browser tabs), close what you don't need", "If it happens with memory to spare, Report a Bug"],
+                ),
+                Offer::Open(BUG.0, BUG.1),
+            ),
+            "watchdog" => ("Restarted because it stopped responding".into(), with_steps("Tessera didn't answer for over a minute, so it was started again.", bug), Offer::Open(BUG.0, BUG.1)),
             "retry" => ("Back from the basic shell".into(), "Tessera started again after the basic shell had stood in for it.".into(), Offer::None),
             _ => return None,
         },
         "crash" if e["fatal"] != true => (format!("{} stopped and recovered", cap(&part_name(part))), "An error was caught and this part was started again. Everything else kept working.".into(), report()),
-        "off" => (format!("{} was turned off", cap(&part_name(part))), "It stopped 3 times in 2 minutes, so it stays off until you log in again.".into(), Offer::None),
+        "off" => (
+            format!("{} was turned off", cap(&part_name(part))),
+            with_steps("It stopped 3 times in 2 minutes, so it stays off until you log in again.", &["Log out and in again to bring it back", "If it stops again, Report a Bug"]),
+            Offer::Open(BUG.0, BUG.1),
+        ),
         "fallback" => {
             let why = e["why"].as_str().unwrap_or("").trim();
-            ("Switched to the basic shell".into(), if why.is_empty() { "Tessera stopped twice in a row, so the basic shell stood in.".to_string() } else { format!("{why}. The basic shell stood in until Tessera was started again.") }, Offer::None)
+            let text = if why.is_empty() { "Tessera stopped twice in a row, so the basic shell stood in.".to_string() } else { format!("{why}. The basic shell stood in until Tessera was started again.") };
+            ("Switched to the basic shell".into(), with_steps(&text, &["Tessera tries again by itself at its next start", "If it keeps switching, Report a Bug"]), Offer::Open(BUG.0, BUG.1))
         }
         "lock" => ("Screen locked again after a restart".into(), "Tessera ended while your screen was locked; it locked again as it started, so nothing was left open.".into(), Offer::None),
         "gpu-slow" => {
@@ -213,11 +318,15 @@ pub fn explain(e: &Value) -> Option<(String, String, Offer)> {
                 "finish" | "restart" => " while it was being installed",
                 _ => "",
             };
-            (format!("{} didn't finish", update_name(e["what"].as_str().unwrap_or(""))), if why.is_empty() { format!("It stopped{step}. Try again from Software Update.") } else { format!("It stopped{step}: {why}") }, Offer::None)
+            (format!("{} didn't finish", update_name(e["what"].as_str().unwrap_or(""))), if why.is_empty() { format!("It stopped{step}. Try again from Software Update.") } else { format!("It stopped{step}: {why}") }, Offer::Open("update", ""))
         }
         "gpu-fallback" => {
             let (from, to) = (e["from"].as_str().unwrap_or("chosen"), e["to"].as_str().unwrap_or("desktop's"));
-            (format!("Couldn't draw on {from}: back on {to}"), format!("Tessera couldn't start on the {from} GPU with this desktop, so Graphics processor was set to Same as the desktop."), Offer::None)
+            (
+                format!("Couldn't draw on {from}: back on {to}"),
+                with_steps(&format!("Tessera couldn't start on the {from} GPU with this desktop, so Graphics processor was set to Same as the desktop."), &["Leave it on Same as the desktop", "To try the other GPU again after an update: Cool-down → Graphics processor"]),
+                Offer::Open("power/cooldown", "Performance"),
+            )
         }
         _ => return None,
     })
@@ -339,6 +448,16 @@ pub fn stability_rows(s: &health::Stability, now: i64) -> (Vec<(String, String, 
     (rows, format!("How the Rust shell has held up, to decide when the basic shell that stands in for it can go.{covers}"))
 }
 
+/// A row with "Open <page>": the page where what's wrong is dealt with
+fn open_button(cx: &mut Ctx, row: Row, (page, target): (&'static str, &'static str)) -> Row {
+    let Some(name) = super::super::about::health::page_name(page) else { return row };
+    let act = cx.on(move |cx, _| cx.go(page, target));
+    row.buttons(vec![btn(format!("Open {name}"))], act)
+}
+
+/// A missed share of animation frames this high is worth acting on (%)
+const MISSED_PCT: f64 = 10.0;
+
 pub fn page(cx: &mut Ctx, p: &mut Page) {
     p.title = String::new();
     let live = health::live();
@@ -367,13 +486,19 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
     }
 
     // ── How it's going ──
-    let (label, detail, ok) = status(&events, &samples, now);
-    let up = events.iter().rev().find(|e| e["ev"] == "start").and_then(|e| e["t"].as_i64());
-    let detail = match up {
-        Some(t) if v["recording"] == true => format!("{detail} Running since {}.", since(t, now)),
-        _ => detail,
+    let top = status(&events, &samples, now);
+    let mut detail = match run_start(&events) {
+        Some(t) if v["recording"] == true && !top.says_start => format!("{} Running since {}.", top.detail, since(t, now)),
+        _ => top.detail.clone(),
     };
-    p.group("").row(Row::new(label).detail(detail).icon(if ok { "check-circle" } else { "warning-circle" }));
+    if !top.steps.is_empty() {
+        detail = format!("{detail}\n{}", super::super::about::health::numbered(&top.steps));
+    }
+    let row = Row::new(top.label.clone()).detail(detail).icon(if top.ok { "check-circle" } else { "warning-circle" });
+    p.group("").row(match top.open {
+        Some(open) => open_button(cx, row, open),
+        None => row,
+    });
     setup_steps(cx, p);
 
     // ── The services ──
@@ -447,7 +572,18 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
     ));
     if frames + missed > 0 {
         let share = missed as f64 / (frames + missed) as f64 * 100.0;
-        g.row(Row::new("Animation frames missed").detail("Measured while the timing log or the graphics check was on").shows(pct(share)));
+        let row = Row::new("Animation frames missed");
+        if share >= MISSED_PCT {
+            // (many missed: the faster GPU, or a lighter glass)
+            let detail = format!(
+                "{} measured while the timing log or the graphics check was on.\n{}",
+                pct(share),
+                super::super::about::health::numbered(&steps(&["Choose the faster GPU in Cool-down → Graphics processor (it uses more power)", "Or try Frosted or Solid in Appearance → Glass"]))
+            );
+            g.row(open_button(cx, row.detail(detail), ("power/cooldown", "Performance")));
+        } else {
+            g.row(row.detail("Measured while the timing log or the graphics check was on").shows(pct(share)));
+        }
     }
 
     // ── Recent events ──
@@ -485,7 +621,10 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
                 });
                 row.buttons(vec![btn("Use the other GPU").icon("arrow-clockwise")], act)
             }
-            _ => row,
+            // (one GPU here, or it isn't known which is faster: where it's chosen)
+            Offer::OtherGpu => open_button(cx, row, ("power/cooldown", "Performance")),
+            Offer::Open(page, target) => open_button(cx, row, (page, target)),
+            Offer::None => row,
         };
         g.row(row);
     }
@@ -499,23 +638,78 @@ mod tests {
         health::parse_lines(s)
     }
 
+    fn st(events: &[Value], samples: &[Sample], now: i64) -> (String, String, bool) {
+        let t = status(events, samples, now);
+        (t.label, t.detail, t.ok)
+    }
+
+    #[test]
+    fn slow_moments_say_this_run_from_earlier_and_memory_pressure() {
+        let now = tessera_core::util::now_ms() / 1000;
+        let up = now - 3600;
+        let start = ev(&format!("{{\"t\":{},\"ev\":\"start\",\"why\":\"normal\"}}\n{{\"t\":{up},\"ev\":\"start\",\"why\":\"normal\"}}", now - 20000));
+        // (367 before this start, all while memory was short; 3 since)
+        let mut s: Vec<Sample> = (0..10).map(|i| Sample { t: up - 10000 + i * 300, d: 300, s33: 36, worst: 470, pressure: 40, ..Default::default() }).collect();
+        s.push(Sample { t: up - 300, d: 300, s33: 7, pressure: 30, ..Default::default() });
+        s.push(Sample { t: up + 600, d: 300, s33: 3, ..Default::default() });
+        let top = status(&start, &s, now);
+        assert_eq!(top.label, "Some slow moments, before this start");
+        assert!(top.detail.contains("370 times") && top.detail.contains("3 since it started") && top.detail.contains("367 before that"), "{}", top.detail);
+        assert!(top.detail.contains("short of memory"), "{}", top.detail);
+        assert!(top.says_start && !top.ok);
+        assert_eq!(top.steps[0], SHORT_OF_MEMORY[0]);
+        assert_eq!(top.open, Some(BUG));
+        // (the bucket the start fell in is this run's)
+        let straddle = vec![Sample { t: up - 100, d: 400, s33: 25, ..Default::default() }];
+        let top = status(&start, &straddle, now);
+        assert!(!top.says_start && top.label == "Some slow moments today" && !top.detail.contains("short of memory"), "{}", top.detail);
+        assert_eq!(top.steps[0], SLOW[0]);
+    }
+
+    #[test]
+    fn every_warning_has_a_remedy() {
+        let now = tessera_core::util::now_ms() / 1000;
+        for line in [
+            "{\"t\":T,\"ev\":\"start\",\"why\":\"crash\"}",
+            "{\"t\":T,\"ev\":\"fallback\"}",
+            "{\"t\":T,\"ev\":\"off\",\"part\":\"dock\"}",
+            "{\"t\":T,\"ev\":\"crash\",\"part\":\"dock\"}",
+            "{\"t\":T,\"ev\":\"update\",\"what\":\"system\",\"ok\":false}",
+        ] {
+            let e = ev(&line.replace('T', &now.to_string()));
+            let top = status(&e, &[], now);
+            assert!(!top.ok && !top.steps.is_empty() && top.open.is_some(), "{line}");
+            // (the event itself: a button, a page, or steps)
+            let (_, d, o) = explain(&e[0]).unwrap();
+            assert!(!matches!(o, Offer::None) || d.contains("\n1. "), "{line}");
+        }
+        for line in ["{\"t\":1,\"ev\":\"start\",\"why\":\"stopped\"}", "{\"t\":1,\"ev\":\"start\",\"why\":\"watchdog\"}", "{\"t\":1,\"ev\":\"gpu-fallback\",\"from\":\"NVIDIA\"}"] {
+            let (_, d, o) = explain(&ev(line)[0]).unwrap();
+            assert!(matches!(o, Offer::Open(..)) && d.contains("\n1. "), "{line}");
+        }
+        // (a crash without its report: Report a Bug)
+        assert!(matches!(explain(&ev("{\"t\":1,\"ev\":\"crash\",\"part\":\"dock\"}")[0]).unwrap().2, Offer::Open("about/bugreport", "")));
+        let pages = [BUG.0, "update", "power/cooldown"];
+        assert!(pages.iter().all(|p| super::super::super::about::health::page_name(p).is_some()));
+    }
+
     #[test]
     fn the_top_line_says_how_it_is_going() {
         let now = tessera_core::util::now_ms() / 1000;
-        let (l, d, ok) = status(&[], &[], now);
+        let (l, d, ok) = st(&[], &[], now);
         assert!(ok && l == "Running smoothly" && d.contains("No crashes"), "{l} {d}");
         let two = ev(&format!("{{\"t\":{now},\"ev\":\"start\",\"why\":\"crash\"}}\n{{\"t\":{now},\"ev\":\"start\",\"why\":\"watchdog\"}}\n{{\"t\":{now},\"ev\":\"start\",\"why\":\"normal\"}}"));
-        let (l, _, ok) = status(&two, &[], now);
+        let (l, _, ok) = st(&two, &[], now);
         assert_eq!((l.as_str(), ok), ("2 restarts today", false));
         let part = ev(&format!("{{\"t\":{now},\"ev\":\"crash\",\"part\":\"dock\"}}"));
-        assert_eq!(status(&part, &[], now).0, "1 part recovered today");
+        assert_eq!(st(&part, &[], now).0, "1 part recovered today");
         let off = ev(&format!("{{\"t\":{now},\"ev\":\"off\",\"part\":\"dock\"}}"));
-        assert_eq!(status(&off, &[], now).0, "The dock was turned off today");
+        assert_eq!(st(&off, &[], now).0, "The dock was turned off today");
         let slow = vec![Sample { t: now - 600, s33: 25, worst: 140, ..Default::default() }];
-        assert_eq!(status(&[], &slow, now).0, "Some slow moments today");
+        assert_eq!(st(&[], &slow, now).0, "Some slow moments today");
         // (a crash last week, nothing today: smooth, and it says so)
         let old = ev(&format!("{{\"t\":{},\"ev\":\"start\",\"why\":\"crash\"}}", now - 3 * 86400));
-        let (l, d, ok) = status(&old, &[], now);
+        let (l, d, ok) = st(&old, &[], now);
         assert!(ok && l == "Running smoothly" && d.contains("1 problem in the last 7 days"), "{d}");
     }
 
@@ -542,12 +736,12 @@ mod tests {
         assert_eq!(d, "It stopped: pacman: a conflict");
         // (one that worked isn't listed)
         assert!(explain(&e[1]).is_none());
-        let (l, _, ok) = status(&e, &[], now);
+        let (l, _, ok) = st(&e, &[], now);
         assert_eq!((l.as_str(), ok), ("The system update didn't finish today", false));
         // (tried again and it worked: all well)
         let mut again = e.clone();
         again.push(json!({"t": now, "ev": "update", "what": "system", "ok": true}));
-        assert!(status(&again, &[], now).2);
+        assert!(st(&again, &[], now).2);
         let staged = ev(&format!("{{\"t\":{now},\"ev\":\"update\",\"what\":\"tessera\",\"ok\":false,\"step\":\"stage\"}}"));
         assert_eq!(explain(&staged[0]).unwrap().1, "It stopped while it was being made ready. Try again from Software Update.");
     }

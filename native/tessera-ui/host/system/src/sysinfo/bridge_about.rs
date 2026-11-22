@@ -114,6 +114,26 @@ fn st(h: &Host, name: &str) -> Value {
 /// Health.groups (the order System health shows them in)
 const HEALTH_GROUPS: &[&str] = &["Sound", "Network & sharing", "Power", "Desktop", "Tessera itself"];
 
+/// The feature pages that show their own health checks when one is broken
+/// (about/health.rs `problems`): opening one asks the checks again when the
+/// last look is older than `HEALTH_STALE_MS`
+pub const HEALTH_PAGES: &[&str] = &["sound", "appearance/glass", "notifications", "power", "accounts", "security"];
+const HEALTH_STALE_MS: f64 = 5.0 * 60.0 * 1000.0;
+
+/// Should opening `page` ask the health checks again? (the last look at
+/// `checked_at` ms, `now` ms; 0: never)
+pub fn health_due(page: &str, checked_at: f64, now: f64, checking: bool) -> bool {
+    if checking {
+        return false;
+    }
+    page == "health" || page == "about/health" || (HEALTH_PAGES.contains(&page) && (checked_at <= 0.0 || now - checked_at > HEALTH_STALE_MS))
+}
+
+/// A check's steps: its strings
+fn steps(v: &Value) -> Value {
+    json!(v.as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>()).unwrap_or_default())
+}
+
 fn pkgs(l: &[Value]) -> Vec<Value> {
     l.iter().map(|x| json!({"name": x["name"].as_str().unwrap_or(""), "from": x["from"].as_str().unwrap_or(""), "to": x["to"].as_str().unwrap_or("")})).collect()
 }
@@ -224,7 +244,9 @@ impl About {
             if old == "update" && new != "update" {
                 self.sheet.clear();
             }
-            if new == "health" || new == "about/health" {
+            let health = st(h, "health");
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as f64).unwrap_or(0.0);
+            if health_due(&new, health["checkedAt"].as_f64().unwrap_or(0.0), now, health["checking"] == true) {
                 h.ask("health.check", json!([]));
             } else if new == "about/bugreport" {
                 let b = st(h, "bugreport");
@@ -418,7 +440,7 @@ impl About {
     fn feed(&self, h: &Host) -> Value {
         let up = &self.up;
         let health = st(h, "health");
-        let checks: Vec<Value> = health["checks"].as_array().map(|a| a.iter().map(|c| json!({"id": c["id"], "name": s(&c["name"]), "group": s(&c["group"]), "status": s(&c["status"]), "detail": s(&c["detail"]), "fix": s(&c["fix"]), "canFix": c["canFix"] == true, "fixRoot": c["fixRoot"] == true, "fixPassword": c["fixPassword"] == true, "fixCommand": s(&c["fixCommand"])})).collect()).unwrap_or_default();
+        let checks: Vec<Value> = health["checks"].as_array().map(|a| a.iter().map(|c| json!({"id": c["id"], "name": s(&c["name"]), "group": s(&c["group"]), "status": s(&c["status"]), "detail": s(&c["detail"]), "fix": s(&c["fix"]), "canFix": c["canFix"] == true, "fixRoot": c["fixRoot"] == true, "fixPassword": c["fixPassword"] == true, "fixCommand": s(&c["fixCommand"]), "page": s(&c["page"]), "target": s(&c["target"]), "steps": steps(&c["steps"])})).collect()).unwrap_or_default();
         let checked_at = health["checkedAt"].as_f64().unwrap_or(0.0);
         let conf = st(h, "conflicts");
         let muted = conf["muted"].as_array().cloned().unwrap_or_default();
@@ -1028,6 +1050,19 @@ impl Service for About {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn feature_pages_ask_the_health_checks_when_the_last_look_is_old() {
+        let now = 10_000_000.0;
+        assert!(health_due("health", now - 1000.0, now, false));
+        assert!(health_due("sound", 0.0, now, false));
+        assert!(!health_due("sound", now - 60_000.0, now, false));
+        assert!(health_due("appearance/glass", now - 10.0 * 60_000.0, now, false));
+        assert!(!health_due("displays", 0.0, now, false));
+        assert!(!health_due("health", 0.0, now, true));
+        assert_eq!(steps(&json!(["a", 1, "b"])), json!(["a", "b"]));
+        assert_eq!(steps(&Value::Null), json!([]));
+    }
+
     #[test]
     fn export_defaults() {
         assert_eq!(ie_default(&["gestures".into()]), "~/Documents/tessera-gestures.json");

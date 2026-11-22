@@ -581,6 +581,8 @@ pub fn security(cx: &mut Ctx, p: &mut Page) {
     }
     let feed = cx.feed;
     let sys = &feed["system"];
+    // (Tessera's password prompt not registered: Health's row)
+    super::super::about::health::problems(cx, p, &["polkit"], "security");
 
     // Fingerprint and Face (both shown only with a reader or an IR camera)
     p.part(cx, "", biometrics);

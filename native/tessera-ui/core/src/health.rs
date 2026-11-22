@@ -9,8 +9,12 @@
 //!   thread over 16 / 33 ms), `w` (the worst, ms), `fr`/`mf` (animation
 //!   frames on screen / missed, when wp_presentation was asked: the wake
 //!   log or the slow-GPU watch) and `c` (parts that panicked and were made
-//!   again). Memory is read from /proc/self/smaps_rollup, CPU time from
-//!   getrusage (the whole process, its threads too).
+//!   again), `mp` (the share of the bucket, in %, that the computer was
+//!   short of memory: some task waited for it, /proc/pressure/memory's
+//!   `some total`; so Health can tell Tessera's own slow moments from those
+//!   while a big build or many browser tabs filled the memory). Memory is
+//!   read from /proc/self/smaps_rollup, CPU time from getrusage (the whole
+//!   process, its threads too).
 //! - **Events**, when they happen (rare): `{"t":…,"ev":"start","why":…}`
 //!   (why: normal, crash, stopped, watchdog, retry; and the GPU),
 //!   `stop` (an orderly end), `crash` (a part's panic, or the loop's:
@@ -54,6 +58,9 @@ pub const EVENT_BYTES: usize = 32 * 1024;
 pub const STALL_MS: f64 = 16.0;
 /// …and this, a long one: two frames
 pub const LONG_STALL_MS: f64 = 33.0;
+/// A bucket whose memory pressure (`mp`, %) is this or more: the computer
+/// was short of memory then
+pub const PRESSURE_PCT: u64 = 5;
 
 /// Where the record is
 pub fn path() -> PathBuf {
@@ -69,6 +76,8 @@ pub struct Counts {
     pub frames: u32,
     pub missed: u32,
     pub crashes: u32,
+    /// memory pressure over the bucket (%), filled in as it's written
+    pub pressure: u32,
 }
 
 impl Counts {
@@ -94,6 +103,8 @@ thread_local! {
     static BUCKET: Cell<(i64, Option<Instant>)> = const { Cell::new((0, None)) };
     /// the process's CPU time (µs) at the bucket's start
     static CPU_AT: Cell<i64> = const { Cell::new(0) };
+    /// the memory pressure's `some total` (µs) at the bucket's start
+    static PSI_AT: Cell<Option<u64>> = const { Cell::new(None) };
 }
 
 /// Recording on this thread (the shell's loop): the start event (its reason
@@ -141,6 +152,27 @@ fn begin_bucket(now_secs: i64) {
     let left = (start + BUCKET_SECS - now_secs).max(1) as u64;
     BUCKET.with(|b| b.set((start, Some(Instant::now() + Duration::from_secs(left)))));
     CPU_AT.with(|c| c.set(cpu_us()));
+    PSI_AT.with(|c| c.set(memory_stall_us()));
+}
+
+/// The time some task waited for memory since boot (µs; None: no PSI here)
+pub fn memory_stall_us() -> Option<u64> {
+    psi_some_total(&std::fs::read_to_string("/proc/pressure/memory").ok()?)
+}
+
+/// `some … total=N` of a /proc/pressure file
+pub fn psi_some_total(text: &str) -> Option<u64> {
+    let line = text.lines().find(|l| l.starts_with("some "))?;
+    line.split_whitespace().find_map(|w| w.strip_prefix("total=")).and_then(|n| n.parse().ok())
+}
+
+/// The share of `secs` (%, rounded) spent waiting for memory, from two
+/// `some total`s (0 when either is missing)
+pub fn pressure_pct(at: Option<u64>, now: Option<u64>, secs: i64) -> u32 {
+    match (at, now) {
+        (Some(a), Some(n)) if n >= a && secs > 0 => ((n - a) as f64 / (secs as f64 * 10_000.0)).round().min(100.0) as u32,
+        _ => 0,
+    }
 }
 
 /// The process's processor time so far (µs, every thread)
@@ -200,9 +232,12 @@ fn close_bucket(now: bool) {
     let (start, _) = BUCKET.with(Cell::get);
     let counts = NOW.with(|c| std::mem::take(&mut *c.borrow_mut()));
     let cpu_ms = (cpu_us() - CPU_AT.with(Cell::get)).max(0) / 1000;
+    let psi_at = PSI_AT.with(Cell::get);
     let end = crate::util::now_ms() / 1000;
     begin_bucket(end);
     let job = move || {
+        let mut counts = counts;
+        counts.pressure = pressure_pct(psi_at, memory_stall_us(), (end - start).max(1));
         let (rss, pss) = memory();
         append(&path(), &sample_line(start, (end - start).max(1), rss, pss, cpu_ms, &counts));
     };
@@ -227,7 +262,7 @@ pub fn stop() {
 /// One sample's line
 pub fn sample_line(t: i64, d: i64, rss: u64, pss: u64, cpu_ms: i64, c: &Counts) -> String {
     let mut s = format!("{{\"t\":{t},\"d\":{d},\"rss\":{rss},\"pss\":{pss},\"cpu\":{cpu_ms}");
-    for (k, v) in [("s16", c.s16), ("s33", c.s33), ("w", c.worst_ms.round() as u32), ("fr", c.frames), ("mf", c.missed), ("c", c.crashes)] {
+    for (k, v) in [("s16", c.s16), ("s33", c.s33), ("w", c.worst_ms.round() as u32), ("fr", c.frames), ("mf", c.missed), ("c", c.crashes), ("mp", c.pressure)] {
         if v > 0 {
             s.push_str(&format!(",\"{k}\":{v}"));
         }
@@ -423,6 +458,8 @@ pub struct Sample {
     pub frames: u64,
     pub missed: u64,
     pub crashes: u64,
+    /// memory pressure (%): `mp`
+    pub pressure: u64,
 }
 
 impl Sample {
@@ -443,6 +480,7 @@ impl Sample {
             frames: n("fr"),
             missed: n("mf"),
             crashes: n("c"),
+            pressure: n("mp"),
         })
     }
     /// Memory (KiB): the fair share when it was read, else resident
@@ -483,6 +521,7 @@ pub fn live() -> Option<Sample> {
         frames: c.frames as u64,
         missed: c.missed as u64,
         crashes: c.crashes as u64,
+        pressure: pressure_pct(PSI_AT.with(Cell::get), memory_stall_us(), (now - start).max(1)) as u64,
         ..Default::default()
     })
 }
@@ -731,10 +770,10 @@ mod tests {
     fn samples_are_short_lines_that_read_back() {
         let quiet = sample_line(1_763_380_800, 300, 61234, 50123, 912, &Counts::default());
         assert_eq!(quiet, r#"{"t":1763380800,"d":300,"rss":61234,"pss":50123,"cpu":912}"#);
-        let c = Counts { s16: 3, s33: 1, worst_ms: 41.6, frames: 120, missed: 4, crashes: 1 };
+        let c = Counts { s16: 3, s33: 1, worst_ms: 41.6, frames: 120, missed: 4, crashes: 1, pressure: 37 };
         let busy = sample_line(1_763_381_100, 300, 1, 2, 3, &c);
         let s = Sample::from(&serde_json::from_str(&busy).unwrap()).unwrap();
-        assert_eq!((s.s16, s.s33, s.worst, s.frames, s.missed, s.crashes, s.mem()), (3, 1, 42, 120, 4, 1, 2));
+        assert_eq!((s.s16, s.s33, s.worst, s.frames, s.missed, s.crashes, s.mem(), s.pressure), (3, 1, 42, 120, 4, 1, 2, 37));
         // (a week of quiet samples fits the cap with room)
         assert!(quiet.len() * 7 * 288 < KEEP_BYTES);
         // (an event isn't a sample)
@@ -789,6 +828,19 @@ mod tests {
         let tail = read_tail(&p, 1000);
         assert!(tail.lines().all(|l| l == line) && !tail.is_empty());
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn memory_pressure_over_a_bucket() {
+        let t = "some avg10=0.00 avg60=1.20 avg300=0.40 total=123456789\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=4567\n";
+        assert_eq!(psi_some_total(t), Some(123_456_789));
+        assert_eq!(psi_some_total("full avg10=0 total=5\n"), None);
+        // (60 s of 300 waiting: 20%)
+        assert_eq!(pressure_pct(Some(1_000_000), Some(61_000_000), 300), 20);
+        assert_eq!(pressure_pct(Some(0), Some(1_000), 300), 0);
+        assert_eq!(pressure_pct(None, Some(5), 300), 0);
+        // (a counter that went back, a reboot between: nothing claimed)
+        assert_eq!(pressure_pct(Some(9), Some(5), 300), 0);
     }
 
     #[test]

@@ -66,8 +66,21 @@ elif name == "qs":
 else:
     sys.stdout.write(answers.get(name, ""))
 '''
-COMMANDS = ["pkexec", "pactl", "pw-cli", "systemctl", "nmcli", "busctl", "pgrep", "hyprctl", "qs", "cliphist", "gpu-screen-recorder", "wf-recorder"]
-SCHEMA = {"id": str, "name": str, "group": str, "status": str, "detail": str, "fix": str, "canFix": bool, "fixRoot": bool, "fixCommand": str}
+COMMANDS = ["pkexec", "pactl", "pw-cli", "systemctl", "nmcli", "busctl", "pgrep", "hyprctl", "qs", "cliphist", "gpu-screen-recorder", "wf-recorder",
+            "hypridle", "setsid", "wl-paste"]
+SCHEMA = {"id": str, "name": str, "group": str, "status": str, "detail": str, "fix": str, "canFix": bool, "fixRoot": bool, "fixCommand": str,
+          "page": str, "target": str, "steps": list}
+SETTINGS = ROOT / "native/tessera-ui/surfaces/settings/src"
+
+
+def settings_pages():
+    """The page ids Settings builds: map.rs's sections and the pages each
+    group's mod.rs matches (sub-pages like appearance/glass)"""
+    import re
+    ids = set(re.findall(r's!\("([a-z/]+)"', (SETTINGS / "map.rs").read_text()))
+    for mod in (SETTINGS / "pages").glob("*/mod.rs"):
+        ids |= set(re.findall(r'^\s*"([a-z/]+)" =>', mod.read_text(), re.M))
+    return ids
 GROUPS = {"Sound", "Network & sharing", "Power", "Desktop", "Tessera itself"}
 
 
@@ -334,6 +347,103 @@ class HealthCheck(unittest.TestCase):
         out = self.check("fix", "avahi", FAKE_MODE="fail")
         self.assertEqual(json.loads(out.stdout)["ok"], False)
         self.assertIn("didn't work", json.loads(out.stdout)["error"])
+
+    def runs(self):
+        """Every check's rows over a set of broken systems"""
+        (self.sysroot / "etc/ufw").mkdir(parents=True, exist_ok=True)
+        (self.sysroot / "etc/ufw/ufw.conf").write_text("ENABLED=yes\n")
+        (self.sysroot / "etc/bluetooth").mkdir(parents=True, exist_ok=True)
+        (self.sysroot / "etc/bluetooth/main.conf").write_text("[General]\nExperimental = true\n")
+        configs = [dict(FAKE_MODE="fail"), dict(FAKE_DOWN="pactl"), dict(FAKE_DOWN="pw-cli,pactl"), dict(FAKE_DOWN="busctl:org.bluez"),
+                   dict(FAKE_ADAPTERS="/org/bluez/hci0", FAKE_POWERED="none"), dict(FAKE_PLUGIN="2", FAKE_HYPR="v0.58.0"),
+                   dict(FAKE_PLUGIN="6 shadow nohook:notfound"), dict(FAKE_PLUGIN="6 nohook:failed"), dict(FAKE_HYPR="v0.55.1"),
+                   dict(FAKE_QS="0.2.1"), dict(FAKE_SHELL_PID=str(os.getpid())), dict(FAKE_DOWN="busctl:FileChooser"),
+                   dict(FAKE_DOWN="busctl:--activatable"), dict(FAKE_DOWN="nmcli,busctl:ActiveProfile", FAKE_UNITS="iwd,NetworkManager"),
+                   dict(FAKE_DOWN="pgrep"), dict(FAKE_SLOW="nmcli"), dict(FAKE_SLOW="busctl")]
+        yield {"google": True}, self.rows("--google", FAKE_MODE="fail").values()  # (Google connected: Online Accounts checked)
+        for env in configs:
+            yield env, self.rows(**env).values()
+
+    def test_every_problem_has_a_remedy(self):
+        seen = set()
+        for env, rows in self.runs():
+            for r in rows:
+                for key, kind in SCHEMA.items():
+                    self.assertIsInstance(r[key], kind, (r["id"], key))
+                if r["status"] in ("warn", "fail"):
+                    seen.add(r["id"])
+                    self.assertTrue(r["canFix"] or r["page"] or r["steps"], (env, r["id"], r["detail"]))
+                    self.assertTrue(all(isinstance(s, str) and s for s in r["steps"]), r["id"])
+        # (the runs reach most checks' problems)
+        self.assertGreaterEqual(len(seen), 18, seen)
+
+    def test_remedy_pages_are_settings_pages(self):
+        import re
+        pages = settings_pages()
+        self.assertIn("appearance/glass", pages)
+        self.assertIn("sound", pages)
+        named = set()
+        for m in re.finditer(r'page="([^"]+)"(?: if \w+ else "([^"]+)")?', SCRIPT.read_text()):
+            named |= {x for x in m.groups() if x}
+        for env in (dict(FAKE_MODE="fail"), dict(FAKE_PLUGIN="6 nohook:failed")):
+            named |= {r["page"] for r in self.rows(**env).values() if r["page"]}
+        self.assertGreaterEqual(len(named), 8, named)
+        for page in named:
+            self.assertIn(page, pages, page)
+
+    def test_the_pointer_hook_and_old_plugin_point_at_glass(self):
+        r = self.rows(FAKE_PLUGIN="6 nohook:failed")["plugin"]
+        self.assertEqual((r["status"], r["page"]), ("warn", "appearance/glass"))
+        self.assertIn("log out and in", r["steps"][0])
+        self.assertEqual(self.rows(FAKE_PLUGIN="2")["plugin"]["page"], "appearance/glass")
+        self.assertEqual(self.rows(FAKE_MODE="fail")["plugin"]["page"], "appearance/glass")
+
+    def test_remedies_fit_each_install_mode(self):
+        # A bundle: nothing is built here; Software Update brings its plugin and helpers
+        for mode in ("bundle", "git", "dev"):
+            rows = self.rows(FAKE_MODE="fail", TESSERA_UPDATE_MODE=mode)
+            plugin, old = rows["plugin"], self.rows(FAKE_PLUGIN="2", TESSERA_UPDATE_MODE=mode)["plugin"]
+            hook = self.rows(FAKE_PLUGIN="6 nohook:failed", TESSERA_UPDATE_MODE=mode)["plugin"]
+            self.assertEqual(hook["page"], "appearance/glass", mode)  # (the same in every mode: log out and in)
+            if mode == "bundle":
+                for r in (plugin, old):
+                    self.assertEqual(r["page"], "update")
+                    self.assertTrue(any("Software Update" in s for s in r["steps"]))
+                    self.assertNotIn("rebuild", r["fix"].lower())
+                    self.assertTrue(any("tessera-bundle.py" in s and " ensure" in s for s in r["steps"]))
+            else:
+                self.assertEqual((plugin["page"], old["page"]), ("appearance/glass", "appearance/glass"), mode)
+                self.assertNotIn("tessera rebuild plugin", plugin["fix"] + old["fix"])  # (not a real command)
+        # (the native helpers: built here, but never into a bundle's folder)
+        native = self.rows(TESSERA_UPDATE_MODE="bundle")["native"]
+        if native["status"] == "warn":
+            self.assertFalse(native["canFix"])
+            self.assertEqual(native["page"], "update")
+        out = self.check("fix", "native", TESSERA_UPDATE_MODE="bundle")
+        self.assertFalse(json.loads(out.stdout)["ok"])
+        self.assertNotIn("build.sh", self.log.read_text() if self.log.exists() else "")
+
+    def test_session_programs_start_again_only_when_none_runs(self):
+        rows = self.rows(FAKE_DOWN="pgrep")
+        self.assertTrue(rows["clipboard"]["canFix"])
+        self.assertTrue(rows["hypridle"]["canFix"])
+        out = self.check("fix", "clipboard", FAKE_DOWN="pgrep")
+        self.assertTrue(json.loads(out.stdout)["ok"], out.stdout)
+        self.assertIn("setsid -f wl-paste --watch cliphist store", self.log.read_text())
+        self.log.write_text("")
+        self.check("fix", "clipboard")  # (one runs: nothing started)
+        self.assertNotIn("setsid", self.log.read_text())
+        self.check("fix", "hypridle", FAKE_DOWN="pgrep")
+        self.assertIn("start-idle.sh", self.log.read_text())
+        # (hypridle not installed: installing isn't a fix. Only the stand-ins
+        # and Python on PATH, so the system's own hypridle isn't found)
+        (self.bin / "hypridle").unlink()
+        py = Path(self.tmp.name) / "py"
+        py.mkdir()
+        (py / "python3").symlink_to(sys.executable)
+        r = self.rows(FAKE_DOWN="pgrep", PATH=f"{self.bin}:{py}")["hypridle"]
+        self.assertFalse(r["canFix"])
+        self.assertIn("pacman -S hypridle", r["steps"][0])
 
     def test_text_report_is_scrubbed(self):
         out = self.check("text", FAKE_MODE="fail")

@@ -441,6 +441,12 @@ pub fn nearest(values: &[f32], v: f32) -> i32 {
 pub fn glass(cx: &mut Ctx, p: &mut Page) {
     p.title = if cx.material { "Match apps".into() } else { "Glass".into() };
     super::glassplugin::top(cx, p);
+    // (what the row above doesn't cover: a current plugin whose pointer hook
+    // didn't take; Health's row for it, with its steps)
+    let loaded = feed(cx)["glassPlugin"].as_bool().unwrap_or(cx.shell.plugin);
+    if !cx.material && loaded && super::glassplugin::current(cx).is_none() {
+        super::super::about::health::problems(cx, p, &["plugin"], "appearance/glass");
+    }
 
     // Material has no glass, so this page keeps only Match apps, and says why
     if cx.material {
