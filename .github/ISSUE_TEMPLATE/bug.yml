@@ -1,0 +1,61 @@
+name: Bug report
+description: Something in Tessera doesn't work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Before you paste anything, check it holds no passwords, API keys, emails, or Wi-Fi and Bluetooth names you'd rather keep private.
+        A security problem? Don't open an issue: see [SECURITY.md](https://github.com/monishbl/tessera/blob/main/SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+      placeholder: |
+        1. Open Quick Settings
+        2. Click Wi-Fi
+        3. The panel closes instead of listing networks
+    validations:
+      required: true
+  - type: dropdown
+    id: look
+    attributes:
+      label: Look
+      options:
+        - Glass
+        - Material
+        - Both
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: how
+    attributes:
+      label: How you run Tessera
+      options:
+        - Installed as my desktop
+        - Trying it on its own console (./dev.sh tty)
+        - In a virtual machine
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `tessera doctor`
+      description: Run `tessera doctor` in a terminal and paste everything it prints. Trying it without installing? Run `./demo.sh --check` in your Tessera folder instead.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log (optional)
+      description: "`tessera logs` shows the shell's log. Paste the lines from around when it happened."
+      render: text
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else (optional)
+      description: Screenshots, your GPU, whether it started after an update, and so on.

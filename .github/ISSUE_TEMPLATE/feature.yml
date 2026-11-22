@@ -1,0 +1,30 @@
+name: Feature request
+description: An idea for something Tessera could do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you'd like to do
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How it could work
+      description: Where it would live (menu bar, Quick Settings, Settings…) and what it would look like. Sketches and examples help.
+    validations:
+      required: true
+  - type: dropdown
+    id: look
+    attributes:
+      label: Look
+      options:
+        - Both
+        - Glass
+        - Material
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else (optional)
