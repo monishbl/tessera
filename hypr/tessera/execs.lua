@@ -23,5 +23,18 @@ end)
 -- while the screen is locked). A check is two pgreps, nothing more
 do
     local cfg = (os.getenv("XDG_CONFIG_HOME") ~= nil and os.getenv("XDG_CONFIG_HOME") ~= "") and os.getenv("XDG_CONFIG_HOME") or (os.getenv("HOME") .. "/.config")
-    hl.timer(function() hl.exec_cmd(cfg .. "/quickshell/tessera/assets/scripts/keep-shell.sh -c tessera") end, { timeout = 5000, type = "repeat" })
+    -- (the timer only once Hyprland is running, as in findpointer.lua: one
+    -- made while Hyprland first reads its config crashes 0.57 in
+    -- CEventLoopManager::scheduleRecalc; `Hyprland --verify-config`, which
+    -- the installer runs, crashed on it every time, 22 Nov. A reload, with a
+    -- monitor there, makes it at once)
+    local function start()
+        hl.timer(function() hl.exec_cmd(cfg .. "/quickshell/tessera/assets/scripts/keep-shell.sh -c tessera") end, { timeout = 5000, type = "repeat" })
+    end
+    local ok, mon = pcall(hl.get_active_monitor)
+    if ok and mon then
+        start()
+    else
+        hl.on("hyprland.start", start)
+    end
 end

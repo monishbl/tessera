@@ -1790,9 +1790,15 @@ verify() {
     fi
     # Hyprland config: Hyprland checks it itself
     if [[ -f "$CONFIG/hypr/hyprland.lua" ]]; then
-        local out
-        out=$(hypr --verify-config --config "$CONFIG/hypr/hyprland.lua" 2>&1 | grep -viE '^\s*$|welcome|hyprland ver|config ok|verifying|built from' || true)
-        if echo "$out" | grep -qiE 'error|cannot|failed|traceback|unknown'; then
+        local out raw rc
+        # (no core file: a crash here is reported below, not left as a dump;
+        # 22 Nov: Hyprland 0.57 crashed on the check every time, with no error
+        # printed, and this said "checks out")
+        raw=$(ulimit -c 0; hypr --verify-config --config "$CONFIG/hypr/hyprland.lua" 2>&1) && rc=0 || rc=$?
+        out=$(printf '%s\n' "$raw" | grep -viE '^\s*$|welcome|hyprland ver|config ok|verifying|built from' || true)
+        if (( rc >= 128 )); then
+            bad "Hyprland crashed while checking its config (signal $((rc - 128)))" "Run Software Update; if it stays, report it (Settings → Report a Bug)"
+        elif echo "$out" | grep -qiE 'error|cannot|failed|traceback|unknown'; then
             bad "The Hyprland config has errors" "$(echo "$out" | grep -iE 'error|cannot|failed|unknown' | head -2 | tr '\n' ' ')"
         else
             ok "Hyprland config checks out"
