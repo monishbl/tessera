@@ -183,3 +183,71 @@ mod tests {
         assert!(!from_objects(&HashMap::new()).present);
     }
 }
+
+/// `bluetoothctl <args>`'s output, given up after `secs`
+fn ctl(args: &[&str], secs: u64) -> String {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    let Ok(mut child) = Command::new("bluetoothctl").args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else {
+        return String::new();
+    };
+    let end = std::time::Instant::now() + Duration::from_secs(secs);
+    while std::time::Instant::now() < end {
+        if let Ok(Some(_)) = child.try_wait() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    let mut out = String::new();
+    if let Some(mut o) = child.stdout.take() {
+        let _ = o.read_to_string(&mut out);
+    }
+    out
+}
+
+/// Whether `bluetoothctl show` says the adapter is pairable
+pub fn pairable_in(show: &str) -> bool {
+    show.lines().any(|l| l.trim() == "Pairable: yes")
+}
+
+/// Whether a `bluetoothctl pair` run paired (or it already was)
+pub fn paired_in(out: &str) -> bool {
+    out.contains("Pairing successful") || out.contains("AlreadyExists")
+}
+
+/// Pair a device so it stays paired, then trust and connect it (blocking:
+/// call on a thread). While the adapter isn't Pairable, BlueZ pairs without
+/// a bond: the keys aren't kept, the link drops at once and the device shows
+/// unpaired again (22 Nov: earbuds "paired" and fell off every time). So the
+/// adapter is pairable for the pairing, and set back after
+pub fn pair(addr: &str) -> bool {
+    let was = pairable_in(&ctl(&["show"], 5));
+    if !was {
+        ctl(&["pairable", "on"], 5);
+    }
+    let ok = paired_in(&ctl(&["--timeout", "30", "pair", addr], 35));
+    if ok {
+        ctl(&["trust", addr], 5);
+        ctl(&["--timeout", "15", "connect", addr], 18);
+    }
+    if !was {
+        ctl(&["pairable", "off"], 5);
+    }
+    ok
+}
+
+#[cfg(test)]
+mod pair_tests {
+    use super::*;
+
+    #[test]
+    fn reads_pairable_and_a_pairing() {
+        assert!(pairable_in("Controller 00:11 (public)\n\tPowered: yes\n\tPairable: yes\n"));
+        assert!(!pairable_in("\tPairable: no\n"));
+        assert!(paired_in("[CHG] Device X Paired: yes\nPairing successful\n"));
+        assert!(paired_in("Failed to pair: org.bluez.Error.AlreadyExists\n"));
+        assert!(!paired_in("Failed to pair: org.bluez.Error.AuthenticationFailed\n"));
+    }
+}

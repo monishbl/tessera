@@ -731,7 +731,11 @@ impl StatusMenus {
         self.bt_busy.insert(addr.clone());
         let to = st.shell.sender(NAME);
         std::thread::spawn(move || {
-            let _ = std::process::Command::new("bluetoothctl").args([verb, &addr]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+            if verb == "pair" {
+                tessera_core::services::bluez::pair(&addr);
+            } else {
+                let _ = std::process::Command::new("bluetoothctl").args([verb, &addr]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+            }
             to(Box::new(M::BtDone(addr)));
         });
         self.push_bt(st);

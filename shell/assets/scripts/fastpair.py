@@ -225,6 +225,30 @@ class Watcher:
         r = self.bus.call_sync("org.bluez", path, iface, method, params, None, self.Gio.DBusCallFlags.NONE, timeout, None)
         return r.unpack() if r is not None else ()
 
+    def pair(self, target):
+        """Pair TARGET so it stays paired: while the adapter isn't Pairable,
+        BlueZ pairs without a bond (no keys kept, the link drops, the device
+        shows unpaired again: 22 Nov). Pairable for the pairing, set back after."""
+        adapter = target.rsplit("/", 1)[0]
+        props = "org.freedesktop.DBus.Properties"
+        try:
+            was = bool(self.call(adapter, props, "Get", ("org.bluez.Adapter1", "Pairable"), "(ss)")[0])
+        except Exception:  # noqa: BLE001
+            was = True
+        if not was:
+            self.call(adapter, props, "Set", ("org.bluez.Adapter1", "Pairable", self.GLib.Variant("b", True)), "(ssv)")
+        try:
+            self.call(target, "org.bluez.Device1", "Pair", timeout=60000)
+        except Exception as e:  # noqa: BLE001
+            if "AlreadyExists" not in str(e):
+                raise
+        finally:
+            if not was:
+                try:
+                    self.call(adapter, props, "Set", ("org.bluez.Adapter1", "Pairable", self.GLib.Variant("b", False)), "(ssv)")
+                except Exception:  # noqa: BLE001
+                    pass
+
     def objects(self):
         return self.call("/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects")[0]
 
@@ -482,11 +506,7 @@ class Watcher:
             if not target:
                 raise RuntimeError("Couldn't find the earbuds. Hold the button on the case until the light flashes, then try again." if path
                                    else "The earbuds went out of range. Open the case near the computer and try again.")
-            try:
-                self.call(target, dev, "Pair", timeout=60000)
-            except Exception as e:  # noqa: BLE001
-                if "AlreadyExists" not in str(e):
-                    raise
+            self.pair(target)
             self.call(target, "org.freedesktop.DBus.Properties", "Set", (dev, "Trusted", self.GLib.Variant("b", True)), "(ssv)")
             self.call(target, dev, "Connect", timeout=30000)
             return {"ok": True, "error": "", "address": self.address_of(target)}
@@ -546,11 +566,7 @@ class Watcher:
         if not target:
             return {"ok": False, "error": "Couldn't find the earbuds. Hold the button on the case until the light flashes, then pair them in Bluetooth settings."}
         try:
-            try:
-                self.call(target, dev, "Pair", timeout=60000)
-            except Exception as e:  # noqa: BLE001
-                if "AlreadyExists" not in str(e):
-                    raise
+            self.pair(target)
             self.call(target, "org.freedesktop.DBus.Properties", "Set", (dev, "Trusted", self.GLib.Variant("b", True)), "(ssv)")
             self.call(target, dev, "Connect", timeout=30000)
             return {"ok": True, "error": "", "address": self.address_of(target)}

@@ -80,16 +80,25 @@ fn scan_stop() {
 
 fn bluetoothctl(args: Vec<String>) {
     std::thread::spawn(move || {
-        let c: Vec<&str> = std::iter::once("bluetoothctl").chain(args.iter().map(String::as_str)).collect();
-        let _ = crate::util::capture(&c, Duration::from_secs(60));
+        if args.first().map(String::as_str) == Some("pair") {
+            // (pairable for the pairing, so it's kept: services::bluez::pair)
+            tessera_core::services::bluez::pair(args.get(1).map_or("", String::as_str));
+        } else {
+            let c: Vec<&str> = std::iter::once("bluetoothctl").chain(args.iter().map(String::as_str)).collect();
+            let _ = crate::util::capture(&c, Duration::from_secs(60));
+        }
     });
 }
 
 /// bluetoothctl, then `M::BtDone(address)` (the device's busy/pairing mark comes off)
 fn bluetoothctl_then(args: Vec<String>, addr: String, send: impl Fn(Box<dyn Any + Send>) + Send + 'static) {
     std::thread::spawn(move || {
-        let c: Vec<&str> = std::iter::once("bluetoothctl").chain(args.iter().map(String::as_str)).collect();
-        let _ = crate::util::capture(&c, Duration::from_secs(60));
+        if args.first().map(String::as_str) == Some("pair") {
+            tessera_core::services::bluez::pair(&addr);
+        } else {
+            let c: Vec<&str> = std::iter::once("bluetoothctl").chain(args.iter().map(String::as_str)).collect();
+            let _ = crate::util::capture(&c, Duration::from_secs(60));
+        }
         send(Box::new(M::BtDone(addr)));
     });
 }

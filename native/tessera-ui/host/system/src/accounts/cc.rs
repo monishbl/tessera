@@ -1033,7 +1033,11 @@ impl ControlCenter {
                 let tx = self.tx();
                 let a2 = addr.clone();
                 std::thread::spawn(move || {
-                    let _ = run_full(&strs(&["bluetoothctl", verb, &a2]), None);
+                    if verb == "pair" {
+                        tessera_core::services::bluez::pair(&a2);
+                    } else {
+                        let _ = run_full(&strs(&["bluetoothctl", verb, &a2]), None);
+                    }
                     tx.send(M::Done(a2));
                 });
             }
