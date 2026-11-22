@@ -108,6 +108,10 @@ hl.config({
     },
     dwindle = { preserve_split = true },
     misc = {
+        -- No paste on a middle click (a three-finger click on a trackpad) of
+        -- the last text selected anywhere, as on macOS: it pasted text the
+        -- user never meant to copy (22 Nov). Settings → Mouse turns it on.
+        middle_click_paste = false,
         disable_hyprland_logo = true,
         disable_splash_rendering = true,
         force_default_wallpaper = 0,

@@ -86,7 +86,11 @@ pub fn mouse(cx: &mut Ctx, p: &mut Page) {
 
         let mid = cx.b("mouse.middleEmulation");
         let mt = cx.toggle("mouse.middleEmulation");
-        p.group("Buttons").row(Row::new("Middle click with both buttons").detail("Press left and right together, for mice without a wheel button").switch(mid, mt));
+        let paste = cx.b("mouse.middlePaste");
+        let pt = cx.toggle("mouse.middlePaste");
+        p.group("Buttons")
+            .row(Row::new("Middle click with both buttons").detail("Press left and right together, for mice without a wheel button").switch(mid, mt))
+            .row(Row::new("Paste with middle click").detail("A middle click pastes the last text you selected anywhere (Linux's selection clipboard). Off: only Ctrl+V pastes").switch(paste, pt));
 
         let available = feed(cx)["boundaryAvailable"].as_bool().unwrap_or(false);
         let mode = cx.s("mouse.boundaryMode");
@@ -174,11 +178,14 @@ pub fn trackpad(cx: &mut Ctx, p: &mut Page) {
         let lt = cx.toggle("trackpad.dragLock");
         let mid = cx.b("trackpad.middleClick");
         let mt = cx.toggle("trackpad.middleClick");
+        let paste = cx.b("mouse.middlePaste");
+        let pt = cx.toggle("mouse.middlePaste");
         let typing = cx.b("trackpad.disableWhileTyping");
         let tt = cx.toggle("trackpad.disableWhileTyping");
         p.group("Point and click")
             .row(Row::new("Drag lock").detail("A tap-drag keeps holding when you lift your finger, until you tap again").switch(lock, lt).enabled(tap && drag).faded(!(tap && drag)))
             .row(Row::new("Middle click").detail(if right == "corner" { "Click both bottom corners together" } else { "Click or tap with three fingers" }).switch(mid, mt))
+            .row(Row::new("Paste with middle click").detail("A three-finger click pastes the last text you selected anywhere. Off: only Ctrl+V pastes").switch(paste, pt))
             .row(Row::new("Ignore the trackpad while typing").detail("Stops a resting palm from moving the pointer").switch(typing, tt));
     }
     p.end_more();

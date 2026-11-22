@@ -570,6 +570,7 @@ Singleton {
                 property real scrollSpeed: 1 // 0.2 .. 3
                 property bool leftHanded: false
                 property bool middleEmulation: false // left + right together = middle click
+                property bool middlePaste: false // middle click (a three-finger click) pastes the selected text, as on Linux; off as on macOS
                 property string boundaryMode: "corners" // off | corners | resistance | capture
                 property int cornerSize: 24 // logical pixels at each end of a monitor edge
                 property string focus: "hover" // window focus: hover (follows the pointer; Hyprland's default) | click

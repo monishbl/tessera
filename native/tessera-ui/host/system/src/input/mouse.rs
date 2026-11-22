@@ -133,6 +133,12 @@ pub fn touchpad_spec(tp: &Value) -> String {
     )
 }
 
+/// Whether a middle click (a three-finger click on a trackpad) pastes the
+/// last selected text: off unless Settings turns it on, as on macOS
+pub fn paste_spec(m: &Value) -> String {
+    format!("hl.config({{ misc = {{ middle_click_paste = {} }} }})", tf(flag(m, "middlePaste", false)))
+}
+
 pub fn touchpad_device(name: &str, tp: &Value) -> String {
     format!("hl.device({{ name = \"{}\", sensitivity = {:.2} }})", name.replace('\\', "\\\\").replace('"', "\\\""), num(tp, "speed", 0.0).clamp(-1.0, 1.0))
 }
@@ -143,7 +149,7 @@ fn signature(cfg: &Value) -> String {
     let t = &cfg["trackpad"];
     let g = |v: &Value, k: &str| v[k].to_string();
     [
-        g(m, "accelProfile"), g(m, "speed"), g(m, "naturalScroll"), g(m, "scrollSpeed"), g(m, "leftHanded"), g(m, "middleEmulation"), g(m, "focus"),
+        g(m, "accelProfile"), g(m, "speed"), g(m, "naturalScroll"), g(m, "scrollSpeed"), g(m, "leftHanded"), g(m, "middleEmulation"), g(m, "middlePaste"), g(m, "focus"),
         g(t, "speed"), g(t, "tapToClick"), g(t, "tapAndDrag"), g(t, "dragLock"), g(t, "naturalScroll"), g(t, "scrollSpeed"), g(t, "disableWhileTyping"), g(t, "rightClick"), g(t, "middleClick"),
     ]
     .join("|")
@@ -230,6 +236,8 @@ impl Mouse {
             lua.push('\n');
         }
         lua += &touchpad_spec(tp);
+        lua.push('\n');
+        lua += &paste_spec(m);
         lua.push('\n');
         for t in &self.touchpads {
             lua += &touchpad_device(t, tp);
@@ -573,6 +581,8 @@ mod tests {
         let s = device_spec("m\"x", &json!({"speed": 3, "accelProfile": "flat", "scrollSpeed": 9}));
         assert_eq!(s, "hl.device({ name = \"m\\\"x\", accel_profile = \"flat\", sensitivity = 1.00, natural_scroll = false, scroll_factor = 3.00, left_handed = false, middle_button_emulation = false })");
         assert!(touchpad_spec(&json!({"rightClick": "corner"})).contains("clickfinger_behavior = false"));
+        assert_eq!(paste_spec(&json!({})), "hl.config({ misc = { middle_click_paste = false } })");
+        assert_eq!(paste_spec(&json!({"middlePaste": true})), "hl.config({ misc = { middle_click_paste = true } })");
         assert!(touchpad_spec(&json!({})).contains("tap_to_click = true, tap_and_drag = true, drag_lock = 0, natural_scroll = true, scroll_factor = 0.70"));
     }
 }
