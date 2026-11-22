@@ -988,6 +988,9 @@ class SysUpdate(unittest.TestCase):
                                   "pacman -U --config /etc/pacman.conf --noconfirm -- /tmp/apple_cursor.pkg.tar.zst",
                                   "pacman -D --asdeps apple_cursor"])
         self.assertFalse((self.run_dir / "tessera-sysupdate/sudo.sock").exists())
+        # (Settings → Health: the update's end, in the shell's record format)
+        rec = [json.loads(l) for l in (Path(self.env["XDG_STATE_HOME"]) / "tessera/health.jsonl").read_text().splitlines()]
+        self.assertEqual([(r["ev"], r["what"], r["ok"]) for r in rec], [("update", "system", True)])
         # setup installed the helper: the next update runs the installed copy
         self.assertEqual(self.sysupdate("helper-status").returncode, 0)
         self.assertTrue(os.access(self.sysroot / "usr/lib/tessera/tessera-root", os.X_OK))

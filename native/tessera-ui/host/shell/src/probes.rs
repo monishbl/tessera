@@ -36,6 +36,8 @@ enum Msg {
     Sent(Option<Value>),
     Captured(bool),
     Tick(&'static str),
+    /// the health record looked at: its alerts due, and the file's change time then
+    HealthAlerts(Vec<Value>, u64),
 }
 
 // ── Backends.qml ────────────────────────────────────────────────────────────
@@ -340,6 +342,11 @@ pub struct Probes {
     bug: serde_json::Map<String, Value>,
     bug_report: Value,
     link_timer: Option<slint::Timer>,
+    // the health record's alerts (Settings → Health): its watch, and the
+    // record's change time when it was last looked at (ms)
+    health_timer: Option<slint::Timer>,
+    health_mtime: u64,
+    health_looking: bool,
 }
 
 fn py(sub: &[&str], input: Option<String>, then: impl FnOnce(Option<Value>) + Send + 'static) {
@@ -386,6 +393,28 @@ impl Probes {
         run_then(vec!["bash".into(), script], move |_, out| send(Box::new(Msg::Stack(out))));
     }
 
+    /// The health record's alerts (core health::check_alerts: crashed twice
+    /// in a day, fell back to the QML shell, an update failed twice in a
+    /// row), each once per incident; only the whole shell, which keeps the
+    /// record (health::on), and only when the file changed since the last
+    /// look. Nothing is sent anywhere: an island alert opening Health
+    fn look_at_health(&mut self, h: &mut Host) {
+        if self.health_looking || !tessera_core::health::on() {
+            return;
+        }
+        let was = self.health_mtime;
+        let mtime = std::fs::metadata(tessera_core::health::path()).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as u64);
+        if mtime == 0 || mtime == was {
+            return;
+        }
+        self.health_looking = true;
+        let send = h.sender("Probes");
+        std::thread::spawn(move || {
+            let alerts = tessera_core::health::check_alerts(tessera_core::util::now_ms() / 1000);
+            send(Box::new(Msg::HealthAlerts(alerts, mtime)));
+        });
+    }
+
     fn check_conflicts(&mut self, h: &mut Host) {
         if !on_path("python3") {
             return;
@@ -417,7 +446,7 @@ impl Probes {
         let ids: Vec<Value> = list.iter().map(|c| c["id"].clone()).collect();
         let sub = if list.len() == 1 { list[0]["short"].as_str().unwrap_or("").to_string() } else if !running.is_empty() { "Also running, doing what Tessera does".into() } else { "Start with your session, doing what Tessera does".into() };
         h.ask("island.post", json!([{"kind": "custom", "icon": "warning", "title": title, "subtitle": sub, "color": "#FF9F0A", "action": "Review",
-            "onAction": {"call": "panels.openSettings", "args": ["about/health"]},
+            "onAction": {"call": "panels.openSettings", "args": ["health"]},
             "more": [{"text": "Don't show again", "act": {"call": "conflicts.mute", "args": [ids]}}]}, 12000]));
     }
 
@@ -509,6 +538,15 @@ impl Service for Probes {
         let t = slint::Timer::default();
         t.start(slint::TimerMode::Repeated, std::time::Duration::from_secs(20), move || send(Box::new(Msg::Tick("link"))));
         self.link_timer = Some(t);
+        // The health record's alerts: a look 20 s after the start (a crash
+        // or a fallback before it), then each minute, reading the file only
+        // when it changed (an update failing, written by a script)
+        let send = h.sender("Probes");
+        slint::Timer::single_shot(std::time::Duration::from_secs(20), move || send(Box::new(Msg::Tick("health"))));
+        let send = h.sender("Probes");
+        let t = slint::Timer::default();
+        t.start(slint::TimerMode::Repeated, std::time::Duration::from_secs(60), move || send(Box::new(Msg::Tick("health"))));
+        self.health_timer = Some(t);
         h.set_state("hyprland.linked", json!(true));
         self.bug_set("state", json!("idle"));
         self.publish_priority(h);
@@ -603,6 +641,14 @@ impl Service for Probes {
                     h.set_state("keybinds", json!({"groups": bind_groups(&v)}));
                 }
             }
+            Msg::HealthAlerts(alerts, mtime) => {
+                self.health_looking = false;
+                self.health_mtime = mtime;
+                // (one live entry each, by its key: island.rs and live.rs)
+                for a in alerts {
+                    h.ask("island.post", json!([a, 12000]));
+                }
+            }
             Msg::Link(id) => {
                 self.link_asking = false;
                 let ours = h.st.shell.get::<tessera_core::services::hypr::Snapshot>().and_then(|s| s.active.get(&s.focused).copied()).map(i64::from);
@@ -656,6 +702,7 @@ impl Service for Probes {
             }
             Msg::Tick(what) => match what {
                 "conflicts" => self.check_conflicts(h),
+                "health" => self.look_at_health(h),
                 "recheck" => self.recheck(h),
                 "link" => {
                     // (only after a quiet spell: events came meanwhile, nothing to check)

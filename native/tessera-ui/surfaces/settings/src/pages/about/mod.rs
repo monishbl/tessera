@@ -1,7 +1,8 @@
 //! The "about" page group: Software Update (update.qml; its sub-pages
 //! Options and Go back are Rust only), About (about.qml)
-//! and its subpages System health (about-health.qml), Report a Bug
-//! (about-bugreport.qml) and Login Items (about-loginitems.qml); and two
+//! and its subpages Back up and restore (Rust only: backup.rs), Report a Bug
+//! (about-bugreport.qml) and Login Items (about-loginitems.qml) (System health
+//! is part of System → Health now: health.rs builds its services part); and two
 //! parts other groups' pages show: a cloud drive's folder (DriveGroup.qml:
 //! `drive::group`, for Google and Microsoft 365) and shortcut and gesture
 //! import and export (ImportExport.qml: `importexport::group`, for Keyboard
@@ -11,6 +12,7 @@
 //! pacman, the health checks, the bug report service, rclone, Keymap.
 
 pub mod about;
+pub mod backup;
 pub mod bugreport;
 pub mod drive;
 pub mod health;
@@ -30,7 +32,7 @@ pub fn build(page: &str, cx: &mut Ctx, p: &mut Page) -> bool {
         "update/options" => update::options(cx, p),
         "update/back" => update::back(cx, p),
         "about" => about::page(cx, p),
-        "about/health" => health::page(cx, p),
+        "about/backup" => backup::page(cx, p),
         "about/bugreport" => bugreport::page(cx, p),
         "about/loginitems" => loginitems::page(cx, p),
         _ => return false,

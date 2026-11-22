@@ -18,15 +18,19 @@
 //!   3 crashes), `lock` (the screen locked again after a restart),
 //!   `gpu-slow`; and from the scripts: `watchdog` (tty-shell.sh: it
 //!   restarted a shell that stopped answering), `fallback`
-//!   (launch-shell.sh: the QML shell started instead).
+//!   (launch-shell.sh: the QML shell started instead), `update`
+//!   (shell/assets/scripts/health_event.py: sysupdate.py, tessera-update.py,
+//!   native-install.py and update-run.sh, `{"what": system|tessera|native,
+//!   "ok": bool, "why", "step"}`; appended with one O_APPEND write).
 //!
 //! Cheap by design: the loop turns are timed with two clock reads (the
 //! poll's return, a calloop source with no file of its own: `Woke`, and the
 //! turn's end), no timer of its own (a bucket is closed by the first turn
 //! after its end, whatever woke the loop), the memory read and the write go
 //! to the work pool. The file is a ring: past `CAP_BYTES` it keeps its
-//! newest `KEEP_BYTES` (a week of samples is ~110 KB) and nothing older
-//! than `KEEP_DAYS`.
+//! newest `KEEP_BYTES` (a week of samples is ~110 KB): samples no older
+//! than `KEEP_DAYS`, events (rare, short) no older than `EVENT_DAYS`, so
+//! the stability summary can count a month.
 
 use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
@@ -40,8 +44,12 @@ pub const BUCKET_SECS: i64 = 300;
 pub const CAP_BYTES: u64 = 200 * 1024;
 /// …and what's kept when it grows past it
 pub const KEEP_BYTES: usize = 150 * 1024;
-/// Nothing older is kept (days)
+/// No sample older is kept (days)
 pub const KEEP_DAYS: i64 = 8;
+/// No event older is kept (days): the stability summary counts 30
+pub const EVENT_DAYS: i64 = 31;
+/// What the events may take of `KEEP_BYTES`
+pub const EVENT_BYTES: usize = 32 * 1024;
 /// A loop turn longer than this is a stall (ms): a 60 Hz frame
 pub const STALL_MS: f64 = 16.0;
 /// …and this, a long one: two frames
@@ -280,10 +288,11 @@ pub fn append(path: &Path, line: &str) {
     }
 }
 
-/// Cut to the newest `KEEP_BYTES` of whole lines, none older than `KEEP_DAYS`
+/// Cut to the newest `KEEP_BYTES` of whole lines: samples none older than
+/// `KEEP_DAYS`, events none older than `EVENT_DAYS`
 fn trim(path: &Path, now_secs: i64) {
     let Ok(text) = std::fs::read_to_string(path) else { return };
-    let kept = ring(&text, KEEP_BYTES, now_secs - KEEP_DAYS * 86400);
+    let kept = ring_events(&text, KEEP_BYTES, now_secs - KEEP_DAYS * 86400, now_secs - EVENT_DAYS * 86400);
     let tmp = path.with_extension("jsonl.tmp");
     if std::fs::write(&tmp, kept).is_ok() {
         let _ = std::fs::rename(&tmp, path);
@@ -292,10 +301,31 @@ fn trim(path: &Path, now_secs: i64) {
 
 /// The newest whole lines of `text` within `keep` bytes, none older than `since`
 pub fn ring(text: &str, keep: usize, since: i64) -> String {
-    let mut out: Vec<&str> = Vec::new();
+    ring_events(text, keep, since, since)
+}
+
+/// The same, with the events kept longer: the newest of them, none older
+/// than `events_since`, within `EVENT_BYTES` (or `keep`, if smaller), then
+/// the newest samples, none older than `since`, in what's left. In the
+/// file's order
+pub fn ring_events(text: &str, keep: usize, since: i64, events_since: i64) -> String {
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let is_event = |l: &str| l.contains("\"ev\":");
+    let mut kept = vec![false; lines.len()];
     let mut size = 0;
-    for l in text.lines().rev() {
-        if l.trim().is_empty() {
+    let budget = EVENT_BYTES.min(keep);
+    for (i, l) in lines.iter().enumerate().rev() {
+        if !is_event(l) || line_time(l).is_some_and(|t| t < events_since) {
+            continue;
+        }
+        if size + l.len() + 1 > budget {
+            break;
+        }
+        size += l.len() + 1;
+        kept[i] = true;
+    }
+    for (i, l) in lines.iter().enumerate().rev() {
+        if is_event(l) {
             continue;
         }
         if size + l.len() + 1 > keep {
@@ -306,10 +336,9 @@ pub fn ring(text: &str, keep: usize, since: i64) -> String {
             break;
         }
         size += l.len() + 1;
-        out.push(l);
+        kept[i] = true;
     }
-    out.reverse();
-    let mut s = out.join("\n");
+    let mut s = lines.iter().zip(&kept).filter(|(_, k)| **k).map(|(l, _)| *l).collect::<Vec<_>>().join("\n");
     if !s.is_empty() {
         s.push('\n');
     }
@@ -456,6 +485,148 @@ pub fn live() -> Option<Sample> {
         crashes: c.crashes as u64,
         ..Default::default()
     })
+}
+
+// ── Stability and alerts (Settings → Health, the shell's watch) ─────────
+
+/// A start that wasn't asked for: the shell before it ended badly (an
+/// error, killed, out of memory, or it stopped answering)
+pub fn is_restart(e: &Value) -> bool {
+    e["ev"] == "start" && matches!(e["why"].as_str(), Some("crash" | "stopped" | "watchdog"))
+}
+
+/// The Rust shell's record over the last month, for deciding when the QML
+/// fallback can go
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Stability {
+    /// the last crash (a restart that wasn't asked for), if the record has one
+    pub last_crash: Option<i64>,
+    pub crashes_7: usize,
+    pub crashes_30: usize,
+    pub fallbacks_7: usize,
+    pub fallbacks_30: usize,
+    /// the record's first event (it counts from there)
+    pub since: Option<i64>,
+}
+
+impl Stability {
+    /// Whole days since the last crash (None: none in the record)
+    pub fn days_since_crash(&self, now: i64) -> Option<i64> {
+        self.last_crash.map(|t| (now - t).max(0) / 86400)
+    }
+    /// Whole days the record covers
+    pub fn days_recorded(&self, now: i64) -> i64 {
+        self.since.map_or(0, |t| (now - t).max(0) / 86400)
+    }
+}
+
+pub fn stability(events: &[Value], now: i64) -> Stability {
+    let t = |e: &Value| e["t"].as_i64().unwrap_or(0);
+    let within = |e: &Value, days: i64| t(e) <= now && now - t(e) < days * 86400;
+    let crashes: Vec<&Value> = events.iter().filter(|e| is_restart(e)).collect();
+    let fallbacks: Vec<&Value> = events.iter().filter(|e| e["ev"] == "fallback").collect();
+    Stability {
+        last_crash: crashes.iter().map(|e| t(e)).max(),
+        crashes_7: crashes.iter().filter(|e| within(e, 7)).count(),
+        crashes_30: crashes.iter().filter(|e| within(e, 30)).count(),
+        fallbacks_7: fallbacks.iter().filter(|e| within(e, 7)).count(),
+        fallbacks_30: fallbacks.iter().filter(|e| within(e, 30)).count(),
+        since: events.iter().map(t).filter(|t| *t > 0).min(),
+    }
+}
+
+/// The updates of one kind (system, tessera, native) that failed one after
+/// another, up to the last: their times, oldest first (empty: the last one
+/// worked, or there's none)
+pub fn failing_run(events: &[Value], what: &str) -> Vec<i64> {
+    let mut run = Vec::new();
+    for e in events.iter().rev().filter(|e| e["ev"] == "update" && e["what"].as_str() == Some(what)) {
+        if e["ok"] == true {
+            break;
+        }
+        run.push(e["t"].as_i64().unwrap_or(0));
+    }
+    run.reverse();
+    run
+}
+
+/// The update kinds, as the scripts write them, and their names
+pub const UPDATE_KINDS: &[(&str, &str)] = &[("system", "System updates"), ("tessera", "Tessera's updates"), ("native", "Installing Tessera's programs")];
+
+/// What each alert kind was last raised for (the incident's time), so the
+/// same incident never alerts twice
+pub fn alerts_path() -> PathBuf {
+    crate::util::xdg("XDG_STATE_HOME", ".local/state").join("tessera/health-alerts.json")
+}
+
+/// The alerts due now: Tessera crashed 2+ times in 24 hours, it fell back
+/// to the QML shell, an update failed twice in a row. Each is one live
+/// entry (its key `health:<kind>`), raised once per incident: `seen` holds
+/// the incident each kind last alerted for, and is updated. An incident:
+/// two crashes newer than the last one alerted, within 24 hours; a
+/// fallback newer than the last one alerted, within 24 hours; a run of
+/// failed updates of one kind that started after the last one alerted, its
+/// latest within 24 hours. Island events (`island.post`); their button
+/// opens Health
+pub fn due_alerts(events: &[Value], now: i64, seen: &mut Value) -> Vec<Value> {
+    if !seen.is_object() {
+        *seen = json!({});
+    }
+    let day_ago = now - 86400;
+    let t = |e: &Value| e["t"].as_i64().unwrap_or(0);
+    let mut out = Vec::new();
+    let post = |kind: &str, title: String, subtitle: String| {
+        json!({"kind": "custom", "key": format!("health:{kind}"), "icon": "warning-circle", "title": title, "subtitle": subtitle,
+               "color": "#FF453A", "severity": 2, "failure": true, "action": "Open Health",
+               "onAction": {"call": "panels.openSettings", "args": ["health"]}})
+    };
+    // Crashes
+    let last = seen["crashes"].as_i64().unwrap_or(0);
+    let fresh: Vec<i64> = events.iter().filter(|e| is_restart(e)).map(t).filter(|x| *x > day_ago.max(last) && *x <= now).collect();
+    if fresh.len() >= 2 {
+        let all = events.iter().filter(|e| is_restart(e)).map(t).filter(|x| *x > day_ago && *x <= now).count();
+        out.push(post("crashes", format!("Tessera stopped {all} times today"), "It was started again each time. Health says when and why.".into()));
+        seen["crashes"] = json!(fresh.iter().max().copied().unwrap_or(now));
+    }
+    // A fallback to the basic (QML) shell
+    let last = seen["fallback"].as_i64().unwrap_or(0);
+    if let Some(f) = events.iter().filter(|e| e["ev"] == "fallback" && t(e) > day_ago.max(last) && t(e) <= now).last() {
+        let why = f["why"].as_str().unwrap_or("").trim().to_string();
+        out.push(post("fallback", "Tessera switched to the basic shell".into(), if why.is_empty() { "It stopped twice in a row. Health has what happened.".to_string() } else { why.chars().take(120).collect() }));
+        seen["fallback"] = json!(t(f));
+    }
+    // Updates that failed twice in a row
+    for (what, name) in UPDATE_KINDS {
+        let run = failing_run(events, what);
+        let key = format!("update:{what}");
+        let last = seen[&key].as_i64().unwrap_or(0);
+        if run.len() >= 2 && run[0] > last && run.last().is_some_and(|x| *x > day_ago) {
+            let why = events.iter().rev().find(|e| e["ev"] == "update" && e["what"].as_str() == Some(what)).and_then(|e| e["why"].as_str()).unwrap_or("").trim().to_string();
+            out.push(post(&format!("update-{what}"), format!("{name} failed twice in a row"), if why.is_empty() { "Health lists each try.".to_string() } else { why.chars().take(120).collect() }));
+            seen[&key] = json!(run[0]);
+        }
+    }
+    out
+}
+
+/// due_alerts over the record on disk, the seen file read and written back
+/// (blocking: call it on a thread)
+pub fn check_alerts(now: i64) -> Vec<Value> {
+    let (_, events) = read_all();
+    let p = alerts_path();
+    let mut seen: Value = std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(json!({}));
+    let before = seen.clone();
+    let out = due_alerts(&events, now, &mut seen);
+    if seen != before {
+        if let Some(d) = p.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let tmp = p.with_extension("json.tmp");
+        if std::fs::write(&tmp, seen.to_string()).is_ok() {
+            let _ = std::fs::rename(&tmp, &p);
+        }
+    }
+    out
 }
 
 /// One slot of a chart
@@ -650,6 +821,112 @@ mod tests {
         assert_eq!(start_reason(&l("{\"t\":1,\"ev\":\"start\",\"s\":\"a\"}\n{\"t\":2,\"ev\":\"watchdog\"}\n{\"t\":3,\"ev\":\"start\",\"s\":\"a\"}\n{\"t\":4,\"ev\":\"stop\"}"), "a").0, "normal");
         // (a broken line is skipped)
         assert_eq!(parse_lines("{\"t\":1}\nnot json\n{\"t\":\n[1]\n").len(), 1);
+    }
+
+
+    #[test]
+    fn events_are_kept_a_month_samples_a_week() {
+        let now: i64 = 100 * 86400;
+        let mut text = String::new();
+        // (an event 20 days ago, one 40 days ago, then 10 days of samples)
+        text.push_str(&format!("{{\"t\":{},\"ev\":\"start\",\"why\":\"crash\"}}\n", now - 40 * 86400));
+        text.push_str(&format!("{{\"t\":{},\"ev\":\"fallback\",\"why\":\"x\"}}\n", now - 20 * 86400));
+        for i in 0..(10 * 288) {
+            text.push_str(&format!("{{\"t\":{},\"d\":300,\"rss\":1,\"pss\":1,\"cpu\":1}}\n", now - 10 * 86400 + i * 300));
+        }
+        let kept = ring_events(&text, KEEP_BYTES, now - KEEP_DAYS * 86400, now - EVENT_DAYS * 86400);
+        let lines = parse_lines(&kept);
+        assert!(lines.iter().any(|l| l["ev"] == "fallback"), "the 20-day-old event stays");
+        assert!(!lines.iter().any(|l| l["why"] == "crash"), "the 40-day-old one goes");
+        let samples: Vec<i64> = lines.iter().filter(|l| l["ev"].is_null()).map(|l| l["t"].as_i64().unwrap()).collect();
+        assert!(samples.iter().all(|t| *t >= now - KEEP_DAYS * 86400) && !samples.is_empty());
+        assert!(kept.len() <= KEEP_BYTES);
+        // (in the file's order: the event first)
+        assert_eq!(lines[0]["ev"], "fallback");
+    }
+
+    fn evs(list: &[(i64, &str)]) -> Vec<Value> {
+        list.iter()
+            .map(|(t, k)| match *k {
+                "crash" => json!({"t": t, "ev": "start", "why": "crash"}),
+                "watchdog" => json!({"t": t, "ev": "start", "why": "watchdog"}),
+                "normal" => json!({"t": t, "ev": "start", "why": "normal"}),
+                "fallback" => json!({"t": t, "ev": "fallback", "why": "The Rust shell crashed twice"}),
+                "sys-ok" => json!({"t": t, "ev": "update", "what": "system", "ok": true}),
+                "sys-fail" => json!({"t": t, "ev": "update", "what": "system", "ok": false, "why": "pacman failed"}),
+                "tes-fail" => json!({"t": t, "ev": "update", "what": "tessera", "ok": false}),
+                _ => json!({"t": t, "ev": k}),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn stability_counts_a_week_and_a_month() {
+        let now: i64 = 1_000 * 86400;
+        let e = evs(&[(now - 25 * 86400, "crash"), (now - 6 * 86400, "watchdog"), (now - 3 * 86400, "normal"), (now - 2 * 86400, "fallback"), (now - 40 * 86400, "fallback")]);
+        let s = stability(&e, now);
+        assert_eq!((s.crashes_7, s.crashes_30, s.fallbacks_7, s.fallbacks_30), (1, 2, 1, 1));
+        assert_eq!(s.days_since_crash(now), Some(6));
+        assert_eq!(s.days_recorded(now), 40);
+        // (an ordinary start or a part's crash isn't the shell crashing)
+        let quiet = stability(&evs(&[(now - 86400, "normal"), (now - 100, "crash-part")]), now);
+        assert_eq!((quiet.last_crash, quiet.crashes_30), (None, 0));
+        assert_eq!(quiet.days_since_crash(now), None);
+    }
+
+    #[test]
+    fn alerts_come_once_per_incident() {
+        let now: i64 = 1_000 * 86400;
+        let mut seen = json!({});
+        // (one crash: nothing; a second within 24 hours: one alert)
+        assert!(due_alerts(&evs(&[(now - 3600, "crash")]), now, &mut seen).is_empty());
+        let two = evs(&[(now - 3600, "crash"), (now - 60, "watchdog")]);
+        let a = due_alerts(&two, now, &mut seen);
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0]["key"], "health:crashes");
+        assert_eq!(a[0]["onAction"]["args"][0], "health");
+        assert!(a[0]["title"].as_str().unwrap().contains("2 times"));
+        // (the same incident again: nothing)
+        assert!(due_alerts(&two, now + 30, &mut seen).is_empty());
+        // (a third crash alone: still the same incident; two more: a new one)
+        let mut three = two.clone();
+        three.extend(evs(&[(now + 100, "crash")]));
+        assert!(due_alerts(&three, now + 200, &mut seen).is_empty());
+        three.extend(evs(&[(now + 300, "crash")]));
+        assert_eq!(due_alerts(&three, now + 400, &mut seen).len(), 1);
+        // (two crashes a day apart: no alert)
+        let mut fresh = json!({});
+        assert!(due_alerts(&evs(&[(now - 90_000, "crash"), (now - 60, "crash")]), now, &mut fresh).is_empty());
+    }
+
+    #[test]
+    fn fallbacks_and_failed_updates_alert_once() {
+        let now: i64 = 1_000 * 86400;
+        let mut seen = json!({});
+        let e = evs(&[(now - 50, "fallback")]);
+        let a = due_alerts(&e, now, &mut seen);
+        assert_eq!((a.len(), a[0]["key"].as_str()), (1, Some("health:fallback")));
+        assert!(due_alerts(&e, now, &mut seen).is_empty());
+        // (an old fallback, from before the last day: no alert)
+        assert!(due_alerts(&evs(&[(now - 2 * 86400, "fallback")]), now, &mut json!({})).is_empty());
+        // Updates: one failure, nothing; a success between, nothing; twice in a row, once
+        let mut seen = json!({});
+        assert!(due_alerts(&evs(&[(now - 500, "sys-fail")]), now, &mut seen).is_empty());
+        assert!(due_alerts(&evs(&[(now - 500, "sys-fail"), (now - 400, "sys-ok"), (now - 300, "sys-fail")]), now, &mut seen).is_empty());
+        let twice = evs(&[(now - 500, "sys-fail"), (now - 400, "sys-ok"), (now - 300, "sys-fail"), (now - 200, "sys-fail")]);
+        let a = due_alerts(&twice, now, &mut seen);
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0]["key"], "health:update-system");
+        assert_eq!(a[0]["subtitle"], "pacman failed");
+        assert_eq!(failing_run(&twice, "system"), vec![now - 300, now - 200]);
+        // (a third failure in the same run: the same incident)
+        let mut more = twice.clone();
+        more.extend(evs(&[(now - 100, "sys-fail")]));
+        assert!(due_alerts(&more, now, &mut seen).is_empty());
+        // (another kind's failures are their own run, interleaved or not)
+        assert!(due_alerts(&evs(&[(now - 90, "tes-fail"), (now - 80, "sys-ok")]), now, &mut seen).is_empty());
+        let t2 = evs(&[(now - 90, "tes-fail"), (now - 80, "sys-ok"), (now - 70, "tes-fail")]);
+        assert_eq!(due_alerts(&t2, now, &mut seen)[0]["key"], "health:update-tessera");
     }
 
     #[test]

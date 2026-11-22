@@ -292,6 +292,25 @@ impl<'a> Ctx<'a> {
             let _ = tx.send(crate::Msg::Part(super::NAME, Box::new(super::M::Local(key, v))));
         });
     }
+    /// `spawn`, telling how it goes: each value `f` passes to its `say` lands
+    /// in `local[progress]` (the page is built again), its result in `local[key]`
+    pub fn spawn_progress(&mut self, key: &str, progress: &str, f: impl FnOnce(&dyn Fn(Value)) -> Value + Send + 'static) {
+        let busy = format!("{key}.busy");
+        if self.local_b(&busy) {
+            return;
+        }
+        self.local_set(&busy, true);
+        let tx = self.tx.clone();
+        let (key, progress) = (key.to_string(), progress.to_string());
+        std::thread::spawn(move || {
+            let t = tx.clone();
+            let say = move |v: Value| {
+                let _ = t.send(crate::Msg::Part(super::NAME, Box::new(super::M::Local(progress.clone(), v))));
+            };
+            let v = f(&say);
+            let _ = tx.send(crate::Msg::Part(super::NAME, Box::new(super::M::Local(key, v))));
+        });
+    }
     /// Read once while Settings is open: `local[key]`, spawning `f` the first time
     pub fn once(&mut self, key: &str, f: impl FnOnce() -> Value + Send + 'static) -> Value {
         if let Some(v) = self.local.get(key) {

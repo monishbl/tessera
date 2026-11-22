@@ -1,18 +1,20 @@
 //! About (pages/about.qml): this build (version.rs: Version, with Copy), this computer, the subpages (System health,
-//! Login Items, Report a Bug), the welcome screen again, and Back up and
-//! restore (assets/scripts/settings-backup.py, run here as the QML page runs
-//! it: the settings, shortcuts, Focus modes and wallpaper in one file,
-//! without keys, passwords, accounts or this computer's displays; Restore
-//! shows what's in the file first, then Undo puts back what was there).
+//! now a part of System → Health; Login Items, Report a Bug; Back up and
+//! restore, backup.rs), the welcome screen again. The helpers here run
+//! assets/scripts/settings-backup.py as the QML page runs it (a settings
+//! file, .tessera: the settings, shortcuts, Focus modes and wallpaper,
+//! without keys, passwords, accounts or this computer's displays): Back up
+//! and restore still restores one (shows what's in the file first, then
+//! Undo puts back what was there).
 
-use super::super::super::model::{btn, Action, Ctx, Page, Row};
-use super::{feed, s, sysinfo, tilde};
+use super::super::super::model::{Action, Ctx, Page, Row};
+use super::{feed, s, sysinfo};
 use serde_json::{json, Value};
 
-fn script() -> String {
+pub fn script() -> String {
     crate::util::asset("shell/assets/scripts/settings-backup.py").map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()
 }
-fn config_dir() -> String {
+pub fn config_dir() -> String {
     crate::theme::config_path().parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
@@ -64,7 +66,7 @@ pub fn describe(i: &Value) -> String {
 }
 
 /// The look restored: switched to, as Settings → Appearance does
-fn follow(cx: &Ctx, look: &str) {
+pub fn follow(cx: &Ctx, look: &str) {
     let now = if cx.material { "material" } else { "glass" };
     if !look.is_empty() && look != now {
         if let Some(sw) = crate::util::asset("shell/assets/scripts/switch-look.sh") {
@@ -74,7 +76,7 @@ fn follow(cx: &Ctx, look: &str) {
 }
 
 /// The helper's answers that came in since the page was last built
-fn answers(cx: &mut Ctx) {
+pub fn answers(cx: &mut Ctx) {
     if let Some(out) = cx.local.remove("about.backup.export") {
         let ok = out["ok"] == true;
         cx.local_set("about.backup.status", if ok { String::new() } else { s(&out["error"]) });
@@ -144,11 +146,11 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
 
     let checks = f["healthChecks"].as_i64().unwrap_or(0);
     let attention = f["healthAttention"].as_i64().unwrap_or(0);
-    let health = cx.link("about/health", "");
+    let health = cx.link("health", "");
     let login = cx.link("about/loginitems", "");
     let bug = cx.link("about/bugreport", "");
     p.group("")
-        .row(Row::link("System health", "about/health")
+        .row(Row::link("System health", "health")
             .icon("heartbeat")
             .detail("Whether the services Tessera uses are working, and how to fix them")
             .value(if checks == 0 { String::new() } else if attention == 0 { "All good".into() } else { format!("{attention} to check") })
@@ -161,59 +163,14 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
         .footer("Settings live in ~/.config/tessera/config.json and apply as you change them.")
         .row(Row::new("Welcome screen").detail("Pick the look, light or dark, and a wallpaper again").button("Show", welcome));
 
-    // ── Back up and restore: your setup in one file ──
-    answers(cx);
-    let status = cx.local_s("about.backup.status");
-    let saved = cx.local_s("about.backup.savedTo");
-    let pending = cx.local.get("about.backup.pending").cloned().unwrap_or(Value::Null);
-    let busy = ["about.backup.export.busy", "about.backup.inspect.busy", "about.backup.restore.busy", "about.backup.undo.busy"].iter().any(|k| cx.local_b(k));
-    let back_up = cx.on(|cx, a| {
-        if a.i == 1 {
-            let dir = a.s.clone();
-            cx.local_set("about.backup.status", "Saving…");
-            cx.local_set("about.backup.savedTo", "");
-            cx.spawn("about.backup.export", move || helper(vec!["export".into(), dir, "--config".into(), config_dir()]));
-        } else {
-            cx.choose_file(&a.id, true, "Choose where to save your settings", "~/Documents", "");
-        }
-    });
-    let show = {
-        let folder = saved.rsplit_once('/').map_or("/".to_string(), |x| if x.0.is_empty() { "/".to_string() } else { x.0.to_string() });
-        cx.on(move |cx, _| cx.ask("about", "openFile", json!([folder])))
-    };
-    let restore = cx.on(|cx, a| {
-        if a.i == 1 {
-            let file = a.s.clone();
-            cx.local_set("about.backup.status", "Reading…");
-            cx.local_set("about.backup.pending", Value::Null);
-            cx.local_set("about.backup.choosing", file.clone());
-            cx.spawn("about.backup.inspect", move || helper(vec!["inspect".into(), file]));
-        } else {
-            cx.choose_file(&a.id, false, "Choose a Tessera settings file", "~/Documents", &format!("Tessera settings|*.tessera *.{}", tessera_core::old_names::BACKUP_EXT));
-        }
-    });
-    let decide = {
-        let file = s(&pending["file"]);
-        cx.on(move |cx, a| {
-            cx.local_set("about.backup.pending", Value::Null);
-            if a.i == 1 {
-                let file = file.clone();
-                cx.local_set("about.backup.status", "Restoring…");
-                cx.spawn("about.backup.restore", move || helper(vec!["restore".into(), file, "--config".into(), config_dir()]));
-            }
-        })
-    };
-    p.group("Back up and restore")
-        .footer(if !status.is_empty() { status } else { "One file with your settings, shortcuts, Focus modes and wallpaper, without passwords or accounts. Restore it here or on another computer.".into() })
-        .row(Row::new("Back up")
-            .detail(format!("Saves “Tessera settings {}.tessera” in a folder you choose", crate::util::now("%Y-%m-%d")))
-            .buttons(vec![btn("Back Up Settings…").off(busy)], back_up))
-        .row(Row::new("Saved").visible(!saved.is_empty()).detail(tilde(&saved)).button("Show in Files", show))
-        .row(Row::new("Restore").detail("Your keys, accounts and displays here stay as they are").buttons(vec![btn("Restore…").off(busy)], restore))
-        .row(Row::new("Restore these settings?")
-            .visible(!pending.is_null())
-            .detail(if pending.is_null() { String::new() } else { describe(&pending["info"]) })
-            .buttons(vec![btn("Cancel"), btn("Restore Settings").primary().off(busy)], decide));
+    // ── Back up and restore: its own page (backup.rs) ──
+    let backup = cx.link("about/backup", "");
+    p.group("").row(
+        Row::link("Back up and restore", "about/backup")
+            .icon("archive")
+            .detail("Your settings, Hyprland edits, wallpapers and the apps you installed, in one file; nothing secret")
+            .id(backup),
+    );
 
     // ── More options ──
     p.more(cx);

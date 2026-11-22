@@ -27,7 +27,7 @@ Scope {
         if (page === "update") {
             SoftwareUpdate.checkUndo();
             BootSnapshots.refresh();
-        } else if (page === "about/health") {
+        } else if (page === "about/health" || page === "health") { // (the Rust Settings shows one Health page)
             Health.check();
         } else if (page === "about/bugreport") {
             if (BugReport.log === "" && !BugReport.gathering)

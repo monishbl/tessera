@@ -5,6 +5,15 @@
 //! moments, and the recent events in plain words, each with the one thing
 //! worth doing about it (save its crash report, use the faster GPU).
 //! Read off the UI thread when the page opens; nothing is sent anywhere.
+//!
+//! The one Health page (22 Nov): About → System health's service checks
+//! and their fixes are a part of it (about/health.rs: `services`; the id
+//! about/health comes here, map::RUST_ALIASES), and so is the Rust shell's
+//! stability over a week and a month (days since the last crash, crashes,
+//! fallbacks to the QML shell), for deciding when that fallback can go.
+//! Failed updates are events too (health_event.py writes them); the
+//! shell's alerts for them, for crashes and for fallbacks are host-shell's
+//! (probes.rs, core health::due_alerts).
 
 use super::super::super::model::{btn, Ctx, Opt, Page, Row};
 use serde_json::{json, Value};
@@ -102,9 +111,25 @@ fn cap(t: &str) -> String {
     c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
 }
 
-/// A start that wasn't asked for (the shell before ended badly)
-fn is_restart(e: &Value) -> bool {
-    e["ev"] == "start" && matches!(e["why"].as_str(), Some("crash" | "stopped" | "watchdog"))
+use tessera_core::health::is_restart;
+
+/// An update kind's name in a sentence ("The system update")
+fn update_name(what: &str) -> &'static str {
+    match what {
+        "system" => "The system update",
+        "tessera" => "Tessera's update",
+        _ => "Installing Tessera's programs",
+    }
+}
+
+/// The update kinds whose last try failed today
+fn failed_updates_today(events: &[Value], now: i64) -> Vec<&'static str> {
+    let day = tessera_core::util::local_day;
+    tessera_core::health::UPDATE_KINDS
+        .iter()
+        .filter(|(what, _)| tessera_core::health::failing_run(events, what).last().is_some_and(|t| day(*t) == day(now)))
+        .map(|(what, _)| *what)
+        .collect()
 }
 
 /// The line at the top: (what, more, all well)
@@ -135,6 +160,9 @@ pub fn status(events: &[Value], samples: &[Sample], now: i64) -> (String, String
     }
     if parts > 0 {
         return (format!("{} recovered today", count(parts, "part", "parts")), "A part of Tessera stopped after an error and was started again. Everything else kept working.".into(), false);
+    }
+    if let Some(what) = failed_updates_today(events, now).first() {
+        return (format!("{} didn't finish today", update_name(what)), "The events below say why. Try it again from Software Update.".into(), false);
     }
     let day_ago = now - 86400;
     let long: u64 = samples.iter().filter(|s| s.t >= day_ago).map(|s| s.s33).sum();
@@ -176,6 +204,16 @@ pub fn explain(e: &Value) -> Option<(String, String, Offer)> {
             let share = e["share"].as_f64().unwrap_or(0.0) * 100.0;
             let on = e["on"].as_str().unwrap_or("low-power");
             (format!("Animations were slow on the {on} graphics"), format!("{}% of animation frames were missed. The other GPU is faster but uses more power.", share.round()), Offer::OtherGpu)
+        }
+        // (an update's end: only a failure is listed)
+        "update" if e["ok"] != true => {
+            let why = e["why"].as_str().unwrap_or("").trim();
+            let step = match e["step"].as_str().unwrap_or("") {
+                "stage" => " while it was being made ready",
+                "finish" | "restart" => " while it was being installed",
+                _ => "",
+            };
+            (format!("{} didn't finish", update_name(e["what"].as_str().unwrap_or(""))), if why.is_empty() { format!("It stopped{step}. Try again from Software Update.") } else { format!("It stopped{step}: {why}") }, Offer::None)
         }
         "gpu-fallback" => {
             let (from, to) = (e["from"].as_str().unwrap_or("chosen"), e["to"].as_str().unwrap_or("desktop's"));
@@ -274,13 +312,43 @@ fn bar(frac: f64, says: String, style: i32) -> Opt {
     Opt::new("").num(frac.clamp(0.0, 1.0) as f32).detail(says).style(style)
 }
 
+/// "N in 7 days · M in 30 days"
+fn week_month(w: usize, m: usize) -> String {
+    format!("{w} in 7 days · {m} in 30 days")
+}
+
+/// The Rust shell's stability, for deciding when the basic (QML) shell can
+/// go: (label, value, detail) rows, and the group's footer
+pub fn stability_rows(s: &health::Stability, now: i64) -> (Vec<(String, String, String)>, String) {
+    let mut rows = Vec::new();
+    let start = s.since.map(|t| since(t, now)).unwrap_or_default();
+    rows.push(match (s.days_since_crash(now), s.last_crash) {
+        (Some(d), Some(t)) => ("Days since the last crash".to_string(), d.to_string(), format!("The last one: {}", when(t, now))),
+        _ => ("Days since the last crash".to_string(), "No crash recorded".to_string(), if start.is_empty() { String::new() } else { format!("Nothing since the record starts, {start}") }),
+    });
+    rows.push(("Crashes".into(), week_month(s.crashes_7, s.crashes_30), "Restarts that weren't asked for: an error, the computer out of memory, or Tessera not answering".into()));
+    rows.push(("Switched to the basic shell".into(), week_month(s.fallbacks_7, s.fallbacks_30), "Tessera stopped twice in a row, so the basic (QML) shell stood in".into()));
+    let days = s.days_recorded(now);
+    let covers = if s.since.is_none() {
+        " There's no record yet.".to_string()
+    } else if days < 30 {
+        format!(" The record covers {} so far.", count(days.max(1) as usize, "day", "days"))
+    } else {
+        String::new()
+    };
+    (rows, format!("How the Rust shell has held up, to decide when the basic shell that stands in for it can go.{covers}"))
+}
+
 pub fn page(cx: &mut Ctx, p: &mut Page) {
     p.title = String::new();
     let live = health::live();
     let v = cx.once("health.data", move || load(live));
-    let footer = "Kept on this computer only, for up to a week (about 200 KB). Nothing is sent.";
+    let footer = "Kept on this computer only: a week of measurements and a month of events (about 200 KB). Nothing is sent.";
+    // (the services Tessera uses: About → System health once, now here)
+    let services = super::super::about::health::services;
     if v.is_null() {
         p.group("").row(Row::new("Reading Tessera's record…").spinner());
+        services(cx, p);
         return;
     }
     let now = v["now"].as_i64().unwrap_or(0);
@@ -294,6 +362,7 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
         };
         p.group("").footer(footer).row(Row::new(label).detail(detail).icon("heartbeat"));
         setup_steps(cx, p);
+        services(cx, p);
         return;
     }
 
@@ -306,6 +375,17 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
     };
     p.group("").row(Row::new(label).detail(detail).icon(if ok { "check-circle" } else { "warning-circle" }));
     setup_steps(cx, p);
+
+    // ── The services ──
+    services(cx, p);
+
+    // ── Rust shell stability ──
+    let (rows, stab_footer) = stability_rows(&health::stability(&events, now), now);
+    let g = p.group("Rust shell stability");
+    g.footer(stab_footer);
+    for (label, value, detail) in rows {
+        g.row(Row::new(label).detail(detail).shows(value));
+    }
 
     // ── Memory and processor ──
     let week = cx.local_s("health.range") == "week";
@@ -451,6 +531,52 @@ mod tests {
         assert_eq!(t, "Animations were slow on the Intel graphics");
         assert!(d.starts_with("18% of animation frames"));
         assert!(matches!(o, Offer::OtherGpu));
+    }
+
+    #[test]
+    fn failed_updates_are_listed_and_said_at_the_top() {
+        let now = tessera_core::util::now_ms() / 1000;
+        let e = ev(&format!("{{\"t\":{},\"ev\":\"update\",\"what\":\"system\",\"ok\":false,\"why\":\"pacman: a conflict\",\"step\":\"system\"}}\n{{\"t\":{now},\"ev\":\"update\",\"what\":\"tessera\",\"ok\":true}}", now - 60));
+        let (t, d, _) = explain(&e[0]).unwrap();
+        assert_eq!(t, "The system update didn't finish");
+        assert_eq!(d, "It stopped: pacman: a conflict");
+        // (one that worked isn't listed)
+        assert!(explain(&e[1]).is_none());
+        let (l, _, ok) = status(&e, &[], now);
+        assert_eq!((l.as_str(), ok), ("The system update didn't finish today", false));
+        // (tried again and it worked: all well)
+        let mut again = e.clone();
+        again.push(json!({"t": now, "ev": "update", "what": "system", "ok": true}));
+        assert!(status(&again, &[], now).2);
+        let staged = ev(&format!("{{\"t\":{now},\"ev\":\"update\",\"what\":\"tessera\",\"ok\":false,\"step\":\"stage\"}}"));
+        assert_eq!(explain(&staged[0]).unwrap().1, "It stopped while it was being made ready. Try again from Software Update.");
+    }
+
+    #[test]
+    fn the_stability_summary() {
+        let now = tessera_core::util::now_ms() / 1000;
+        let e = ev(&format!(
+            "{{\"t\":{},\"ev\":\"start\",\"why\":\"crash\"}}\n{{\"t\":{},\"ev\":\"start\",\"why\":\"stopped\"}}\n{{\"t\":{},\"ev\":\"fallback\",\"why\":\"x\"}}\n{{\"t\":{},\"ev\":\"start\",\"why\":\"normal\"}}",
+            now - 20 * 86400,
+            now - 3 * 86400,
+            now - 3 * 86400 + 60,
+            now - 100
+        ));
+        let s = health::stability(&e, now);
+        let (rows, footer) = stability_rows(&s, now);
+        assert_eq!(rows[0].0, "Days since the last crash");
+        assert_eq!(rows[0].1, "3");
+        assert!(rows[0].2.starts_with("The last one: "));
+        assert_eq!(rows[1].1, "1 in 7 days · 2 in 30 days");
+        assert_eq!(rows[2].1, "1 in 7 days · 1 in 30 days");
+        assert!(footer.contains("The record covers 20 days so far."), "{footer}");
+        // (no crash, a record a month long)
+        let quiet = ev(&format!("{{\"t\":{},\"ev\":\"start\",\"why\":\"normal\"}}", now - 35 * 86400));
+        let (rows, footer) = stability_rows(&health::stability(&quiet, now), now);
+        assert_eq!((rows[0].1.as_str(), rows[1].1.as_str()), ("No crash recorded", "0 in 7 days · 0 in 30 days"));
+        assert!(!footer.contains("covers"), "{footer}");
+        let (_, footer) = stability_rows(&health::stability(&[], now), now);
+        assert!(footer.ends_with("There's no record yet."));
     }
 
     #[test]

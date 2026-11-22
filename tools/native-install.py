@@ -1656,7 +1656,24 @@ def main(argv=None):
         return 0 if r["ok"] else 1
     r = install(a.mode, ui=a.ui, offline=a.offline, only_prev=a.only_prev, say=say)
     emit(r, r.get("message") or r.get("why"))
+    health_record(r)
     return 0 if r["ok"] else 1
+
+
+def health_record(r):
+    """Settings → Health: an install of the programs that changed them, or
+    failed (failed twice in a row is an alert). Not when the updater ran
+    this: its own end says it (TESSERA_HEALTH_PARENT)."""
+    if os.environ.get("TESSERA_HEALTH_PARENT") or (r.get("ok") and not r.get("changed")):
+        return
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("health_event", os.path.join(REPO, "shell", "assets", "scripts", "health_event.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.update("native", bool(r.get("ok")), "" if r.get("ok") else str(r.get("why") or r.get("message") or ""), "install")
+    except Exception:  # (never the install's failure)
+        pass
 
 
 if __name__ == "__main__":

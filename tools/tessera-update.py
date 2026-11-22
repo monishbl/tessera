@@ -2759,6 +2759,9 @@ def main():
     ap.add_argument("--rebuild", default="", help="apply: also rebuild these (comma-separated: plugin,native,shaders)")
     a = ap.parse_args()
     LOCK_WHAT["what"] = a.command
+    # (native-install.py under this job: its failure is this update's,
+    # recorded once, here)
+    os.environ["TESSERA_HEALTH_PARENT"] = "tessera-update"
     if a.command == "cli":
         return cli_update(a.config, a.channel, a.how)
     try:
@@ -2805,8 +2808,33 @@ def main():
         out = {"error": str(e)}
     except Exception as e:  # anything unexpected still answers in JSON
         out = {"error": "The updater stopped: " + (str(e) or e.__class__.__name__)}
+    health_record(a.command, out)
     print(json.dumps(out, indent=1))
     return 1 if out.get("error") else 0
+
+
+def health_record(command, out):
+    """Settings → Health: a Tessera update's end. A failed apply, stage or
+    finish is a failure; an update that went in (apply, finish) a success;
+    a stage that worked waits for its finish. Failed twice in a row is an
+    alert (shell/assets/scripts/health_event.py writes the line)."""
+    # (another update running isn't this one failing)
+    if command not in ("apply", "stage", "finish") or out.get("busy"):
+        return
+    if out.get("error"):
+        ok, why = False, str(out["error"])
+    elif command in ("apply", "finish") and out.get("applied"):
+        ok, why = True, ""
+    else:
+        return
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("health_event", os.path.join(REPO, "shell", "assets", "scripts", "health_event.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.update("tessera", ok, why, command)
+    except Exception:  # (never the update's failure)
+        pass
 
 
 if __name__ == "__main__":
