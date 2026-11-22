@@ -184,27 +184,46 @@ mod tests {
     }
 }
 
-/// `bluetoothctl <args>`'s output, given up after `secs`
-fn ctl(args: &[&str], secs: u64) -> String {
+/// `bluetoothctl <args>`: its exit code (None: it couldn't start, or was
+/// given up after `secs`) and what it printed. Never with bluetoothctl's own
+/// `--timeout`: with it, bluetoothctl waits out the whole time and exits 0
+/// whatever happened (BlueZ 5.88: `--timeout 3 info <absent>` prints "not
+/// available", waits 3 s, exits 0), so every pairing took 30 s and a failed
+/// one looked like any other. Without it, it ends on BlueZ's answer, 1 on a failure
+fn ctl_full(args: &[&str], secs: u64) -> (Option<i32>, String) {
     use std::io::Read;
     use std::process::{Command, Stdio};
-    let Ok(mut child) = Command::new("bluetoothctl").args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else {
-        return String::new();
+    let Ok(mut child) = Command::new("bluetoothctl").args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() else {
+        return (None, String::new());
     };
     let end = std::time::Instant::now() + Duration::from_secs(secs);
+    let mut code = None;
+    let mut ended = false;
     while std::time::Instant::now() < end {
-        if let Ok(Some(_)) = child.try_wait() {
+        if let Ok(Some(st)) = child.try_wait() {
+            code = st.code();
+            ended = true;
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    let _ = child.kill();
+    if !ended {
+        let _ = child.kill();
+    }
     let _ = child.wait();
     let mut out = String::new();
     if let Some(mut o) = child.stdout.take() {
         let _ = o.read_to_string(&mut out);
     }
-    out
+    if let Some(mut e) = child.stderr.take() {
+        let _ = e.read_to_string(&mut out);
+    }
+    (code, out)
+}
+
+/// `bluetoothctl <args>`'s output, given up after `secs`
+fn ctl(args: &[&str], secs: u64) -> String {
+    ctl_full(args, secs).1
 }
 
 /// Whether `bluetoothctl show` says the adapter is pairable
@@ -217,25 +236,117 @@ pub fn paired_in(out: &str) -> bool {
     out.contains("Pairing successful") || out.contains("AlreadyExists")
 }
 
+/// Whether `bluetoothctl info <device>` says the pairing was kept: Bonded
+/// (newer BlueZ), or Paired where BlueZ is older and has no Bonded
+pub fn kept_in(info: &str) -> bool {
+    let has = |l: &str| info.lines().any(|x| x.trim() == l);
+    if info.lines().any(|x| x.trim().starts_with("Bonded:")) {
+        has("Bonded: yes")
+    } else {
+        has("Paired: yes")
+    }
+}
+
+/// What a `bluetoothctl <verb> <device>` run came to (`code`: its exit code,
+/// None when it was given up on): Ok, or why not, in words that say what to do
+pub fn outcome(verb: &str, code: Option<i32>, out: &str) -> Result<(), String> {
+    let low = out.to_lowercase();
+    let already = (verb == "pair" && out.contains("AlreadyExists")) || (verb == "connect" && out.contains("AlreadyConnected")) || (verb == "disconnect" && out.contains("NotConnected"));
+    let failed = low.contains("failed") || low.contains("not available") || low.contains("org.bluez.error");
+    if already || (code == Some(0) && !failed) {
+        return Ok(());
+    }
+    let doing = match verb {
+        "pair" => "pair with it",
+        "connect" => "connect to it",
+        "disconnect" => "disconnect it",
+        "remove" => "forget it",
+        "trust" | "untrust" => "change whether it connects by itself",
+        "cancel-pairing" => "stop the pairing",
+        _ => "do that",
+    };
+    Err(if low.contains("not available") {
+        "It isn't in range, or it's turned off. Turn it on (to pair: put it in pairing mode), then try again.".to_string()
+    } else if low.contains("authentication") {
+        "The device turned the pairing down. Put it in pairing mode (or forget this computer on it), then try again.".to_string()
+    } else if low.contains("profile-unavailable") {
+        "It has nothing this computer can connect to. For headphones and speakers, check that PipeWire's Bluetooth support is installed.".to_string()
+    } else if low.contains("blocked") || low.contains("notready") || low.contains("not ready") {
+        "Bluetooth is off or blocked. Turn it on, then try again.".to_string()
+    } else if low.contains("inprogress") || low.contains("in progress") || low.contains("busy") {
+        "It's still busy with the last try. Wait a moment, then try again.".to_string()
+    } else if code.is_none() || low.contains("timeout") || low.contains("noreply") || low.contains("attemptfailed") {
+        format!("It didn't answer. Check that it's on and close by, then try to {doing} again.")
+    } else {
+        format!("Couldn't {doing}. Try again.")
+    })
+}
+
+/// `bluetoothctl <verb> <device>` (connect, disconnect, remove, trust,
+/// untrust, cancel-pairing; "pair" is `pair`), its answer read: blocking,
+/// call on a thread
+pub fn act(verb: &str, addr: &str) -> Result<(), String> {
+    if verb == "pair" {
+        return pair(addr);
+    }
+    let (code, out) = ctl_full(&[verb, addr], if verb == "connect" { 30 } else { 15 });
+    outcome(verb, code, &out)
+}
+
 /// Pair a device so it stays paired, then trust and connect it (blocking:
 /// call on a thread). While the adapter isn't Pairable, BlueZ pairs without
 /// a bond: the keys aren't kept, the link drops at once and the device shows
 /// unpaired again (22 Nov: earbuds "paired" and fell off every time). So the
-/// adapter is pairable for the pairing, and set back after
-pub fn pair(addr: &str) -> bool {
+/// adapter is pairable for the pairing, and set back after; and the bond is
+/// read back from BlueZ, not taken from "Pairing successful"
+pub fn pair(addr: &str) -> Result<(), String> {
     let was = pairable_in(&ctl(&["show"], 5));
     if !was {
         ctl(&["pairable", "on"], 5);
     }
-    let ok = paired_in(&ctl(&["--timeout", "30", "pair", addr], 35));
-    if ok {
+    let (code, out) = ctl_full(&["pair", addr], 40);
+    let mut result = outcome("pair", code, &out);
+    if result.is_ok() && !kept_in(&ctl(&["info", addr], 5)) {
+        result = Err("It paired, but the pairing wasn't kept. Turn Bluetooth off and on, then pair again.".to_string());
+    }
+    if result.is_ok() {
         ctl(&["trust", addr], 5);
-        ctl(&["--timeout", "15", "connect", addr], 18);
+        let (code, out) = ctl_full(&["connect", addr], 30);
+        result = outcome("connect", code, &out).map_err(|e| format!("Paired. {e}"));
     }
     if !was {
         ctl(&["pairable", "off"], 5);
     }
-    ok
+    result
+}
+
+/// Why the last action on each device failed: shown on its row in place of
+/// its status until the next action on it, or until it connects or
+/// disconnects by itself
+#[derive(Clone, Debug, Default)]
+pub struct Failures(HashMap<String, (String, bool)>);
+
+impl Failures {
+    /// An action on it starts: its last failure goes
+    pub fn clear(&mut self, addr: &str) {
+        self.0.remove(addr);
+    }
+    /// An action on it ended (`bt`: the reading now)
+    pub fn note(&mut self, addr: &str, result: Result<(), String>, bt: Option<&Bluetooth>) {
+        match result {
+            Ok(()) => {
+                self.0.remove(addr);
+            }
+            Err(e) => {
+                let connected = bt.and_then(|b| b.devices.iter().find(|d| d.address == addr)).is_some_and(|d| d.connected);
+                self.0.insert(addr.to_string(), (e, connected));
+            }
+        }
+    }
+    /// The reason to show on its row, if any
+    pub fn of(&self, d: &Device) -> Option<&str> {
+        self.0.get(&d.address).filter(|(_, c)| *c == d.connected).map(|(e, _)| e.as_str())
+    }
 }
 
 #[cfg(test)]
@@ -249,5 +360,44 @@ mod pair_tests {
         assert!(paired_in("[CHG] Device X Paired: yes\nPairing successful\n"));
         assert!(paired_in("Failed to pair: org.bluez.Error.AlreadyExists\n"));
         assert!(!paired_in("Failed to pair: org.bluez.Error.AuthenticationFailed\n"));
+    }
+
+    #[test]
+    fn the_bond_is_read_back() {
+        // (bluetoothctl info, BlueZ 5.88)
+        assert!(kept_in("Device AA\n\tPaired: yes\n\tBonded: yes\n\tBREDR.Bonded: yes\n"));
+        assert!(!kept_in("Device AA\n\tPaired: yes\n\tBonded: no\n\tBREDR.Bonded: yes\n"));
+        assert!(!kept_in("Device AA\n\tPaired: no\n\tBonded: no\n"));
+        // (older BlueZ: no Bonded)
+        assert!(kept_in("Device AA\n\tPaired: yes\n"));
+        assert!(!kept_in("Device AA not available\n"));
+    }
+
+    #[test]
+    fn answers_are_read_not_assumed() {
+        assert_eq!(outcome("connect", Some(0), "Attempting to connect to AA\n[CHG] Device AA Connected: yes\nConnection successful\n"), Ok(()));
+        assert_eq!(outcome("disconnect", Some(0), "Attempting to disconnect from AA\nSuccessful disconnected\n"), Ok(()));
+        assert_eq!(outcome("remove", Some(0), "Device has been removed\n"), Ok(()));
+        assert_eq!(outcome("connect", Some(1), "Failed to connect: org.bluez.Error.AlreadyConnected\n"), Ok(()));
+        // (exit 0 with a failure printed is still a failure)
+        assert!(outcome("connect", Some(0), "Device AA not available\n").unwrap_err().contains("isn't in range"));
+        assert!(outcome("connect", Some(1), "Failed to connect: org.bluez.Error.Failed br-connection-profile-unavailable\n").unwrap_err().contains("PipeWire"));
+        assert!(outcome("connect", Some(1), "Failed to connect: org.bluez.Error.Failed br-connection-page-timeout\n").unwrap_err().contains("didn't answer"));
+        assert!(outcome("pair", Some(1), "Failed to pair: org.bluez.Error.AuthenticationRejected\n").unwrap_err().contains("turned the pairing down"));
+        assert!(outcome("connect", None, "").unwrap_err().contains("connect to it again"));
+        assert_eq!(outcome("remove", Some(1), "Failed to remove device: org.bluez.Error.Failed\n"), Err("Couldn't forget it. Try again.".to_string()));
+    }
+
+    #[test]
+    fn a_failure_shows_until_the_device_changes() {
+        let mut bt = Bluetooth { present: true, powered: true, devices: vec![Device { address: "AA".into(), paired: true, ..Default::default() }] };
+        let mut f = Failures::default();
+        f.note("AA", Err("It didn't answer.".to_string()), Some(&bt));
+        assert_eq!(f.of(&bt.devices[0]), Some("It didn't answer."));
+        bt.devices[0].connected = true;
+        assert_eq!(f.of(&bt.devices[0]), None);
+        f.note("AA", Ok(()), Some(&bt));
+        bt.devices[0].connected = false;
+        assert_eq!(f.of(&bt.devices[0]), None);
     }
 }

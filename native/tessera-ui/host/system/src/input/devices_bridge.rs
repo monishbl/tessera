@@ -82,7 +82,7 @@ fn bluetoothctl(args: Vec<String>) {
     std::thread::spawn(move || {
         if args.first().map(String::as_str) == Some("pair") {
             // (pairable for the pairing, so it's kept: services::bluez::pair)
-            tessera_core::services::bluez::pair(args.get(1).map_or("", String::as_str));
+            let _ = tessera_core::services::bluez::pair(args.get(1).map_or("", String::as_str));
         } else {
             let c: Vec<&str> = std::iter::once("bluetoothctl").chain(args.iter().map(String::as_str)).collect();
             let _ = crate::util::capture(&c, Duration::from_secs(60));
@@ -90,16 +90,12 @@ fn bluetoothctl(args: Vec<String>) {
     });
 }
 
-/// bluetoothctl, then `M::BtDone(address)` (the device's busy/pairing mark comes off)
-fn bluetoothctl_then(args: Vec<String>, addr: String, send: impl Fn(Box<dyn Any + Send>) + Send + 'static) {
+/// `bluetoothctl <verb> <address>`, its answer read, then `M::BtDone(address,
+/// result)` (the device's busy/pairing mark comes off; a failure shows on its row)
+fn bluetoothctl_then(verb: &'static str, addr: String, send: impl Fn(Box<dyn Any + Send>) + Send + 'static) {
     std::thread::spawn(move || {
-        if args.first().map(String::as_str) == Some("pair") {
-            tessera_core::services::bluez::pair(&addr);
-        } else {
-            let c: Vec<&str> = std::iter::once("bluetoothctl").chain(args.iter().map(String::as_str)).collect();
-            let _ = crate::util::capture(&c, Duration::from_secs(60));
-        }
-        send(Box::new(M::BtDone(addr)));
+        let r = tessera_core::services::bluez::act(verb, &addr);
+        send(Box::new(M::BtDone(addr, r)));
     });
 }
 
@@ -250,7 +246,7 @@ enum M {
     Recheck(u64),
     Scan(u64),
     BtInfo(String, BTreeSet<String>),
-    BtDone(String),
+    BtDone(String, Result<(), String>),
     Managers(Option<Value>, String),
     System(Value),
     Fix(Option<Value>),
@@ -278,6 +274,8 @@ pub struct DevicesBridge {
     bt_trusted: BTreeSet<String>,
     bt_pairing: BTreeSet<String>,
     bt_busy: BTreeSet<String>,
+    /// why each device's last action failed (its row says)
+    bt_failed: tessera_core::services::bluez::Failures,
     /// Needs.installAsked: 0 no, 1 asked, 2 Software Update is running it
     install_asked: u8,
 }
@@ -437,6 +435,7 @@ impl DevicesBridge {
                     devices.insert(
                         d.address.clone(),
                         json!({"trusted": self.bt_trusted.contains(&d.address), "pairing": pairing, "busy": pairing || self.bt_busy.contains(&d.address),
+                               "error": self.bt_failed.of(d).unwrap_or(""),
                                "picture": picture_for(&d.icon, &d.name), "name": d.name}),
                     );
                 }
@@ -608,11 +607,13 @@ impl DevicesBridge {
             "btFix" => h.ask("backends.fixBluetooth", json!([])),
             "btConnect" | "btDisconnect" => {
                 self.bt_busy.insert(s0.clone());
-                bluetoothctl_then(vec![if what == "btConnect" { "connect" } else { "disconnect" }.into(), s0.clone()], s0, h.sender("DevicesBridge"));
+                self.bt_failed.clear(&s0);
+                bluetoothctl_then(if what == "btConnect" { "connect" } else { "disconnect" }, s0, h.sender("DevicesBridge"));
             }
             "btPair" => {
                 self.bt_pairing.insert(s0.clone());
-                bluetoothctl_then(vec!["pair".into(), s0.clone()], s0, h.sender("DevicesBridge"));
+                self.bt_failed.clear(&s0);
+                bluetoothctl_then("pair", s0, h.sender("DevicesBridge"));
             }
             "btCancelPair" => {
                 self.bt_pairing.remove(&s0);
@@ -626,9 +627,13 @@ impl DevicesBridge {
                 } else {
                     self.bt_trusted.remove(&s0);
                 }
-                bluetoothctl_then(vec![if on { "trust" } else { "untrust" }.into(), s0.clone()], s0, h.sender("DevicesBridge"));
+                self.bt_failed.clear(&s0);
+                bluetoothctl_then(if on { "trust" } else { "untrust" }, s0, h.sender("DevicesBridge"));
             }
-            "btForget" => bluetoothctl_then(vec!["remove".into(), s0.clone()], s0, h.sender("DevicesBridge")),
+            "btForget" => {
+                self.bt_failed.clear(&s0);
+                bluetoothctl_then("remove", s0, h.sender("DevicesBridge"));
+            }
             // Sound
             "airplayInstall" => h.ask("airplay.install", json!([])),
             "avahiOn" => {
@@ -772,9 +777,10 @@ impl Service for DevicesBridge {
                 self.bt_trusted = trusted;
                 self.push(h, false);
             }
-            M::BtDone(addr) => {
+            M::BtDone(addr, r) => {
                 self.bt_pairing.remove(&addr);
                 self.bt_busy.remove(&addr);
+                self.bt_failed.note(&addr, r, h.st.shell.get::<Bluetooth>());
                 bt_read(h.sender("DevicesBridge"));
                 self.push(h, false);
             }

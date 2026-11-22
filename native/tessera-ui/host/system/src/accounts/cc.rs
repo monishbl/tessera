@@ -27,7 +27,8 @@ use tessera_core::services::{bluez::Bluetooth, mpris::Players, status::Wifi};
 
 enum M {
     Poll,
-    Done(String),
+    /// a Bluetooth action ended: the device, and why it failed
+    Done(String, Result<(), String>),
     Art(String, String),
     Position(f64),
 }
@@ -263,6 +264,8 @@ pub struct ControlCenter {
     sharing_look: bool,
     mirroring_look: bool,
     bt_busy: HashSet<String>,
+    /// why each device's last action failed (shown on its row)
+    bt_failed: tessera_core::services::bluez::Failures,
     art: HashMap<String, String>,
     position: f64,
     last_pos: i64,
@@ -313,6 +316,7 @@ impl Default for ControlCenter {
             sharing_look: false,
             mirroring_look: false,
             bt_busy: HashSet::new(),
+            bt_failed: Default::default(),
             art: HashMap::new(),
             position: 0.0,
             last_pos: 0,
@@ -795,6 +799,8 @@ impl ControlCenter {
                     "Pairing…".into()
                 } else if busy {
                     "Connecting…".into()
+                } else if let Some(why) = self.bt_failed.of(&d) {
+                    why.to_string()
                 } else if d.paired {
                     "Not connected".into()
                 } else {
@@ -1030,15 +1036,13 @@ impl ControlCenter {
             Do::Settings(page, target) => h.ask("panels.openSettings", json!([page, target])),
             Do::Bt(addr, verb) => {
                 self.bt_busy.insert(addr.clone());
+                self.bt_failed.clear(&addr);
                 let tx = self.tx();
                 let a2 = addr.clone();
                 std::thread::spawn(move || {
-                    if verb == "pair" {
-                        tessera_core::services::bluez::pair(&a2);
-                    } else {
-                        let _ = run_full(&strs(&["bluetoothctl", verb, &a2]), None);
-                    }
-                    tx.send(M::Done(a2));
+                    // (BlueZ's answer read, so a failure says why on the row)
+                    let r = tessera_core::services::bluez::act(verb, &a2);
+                    tx.send(M::Done(a2, r));
                 });
             }
             Do::WifiForm(n) => self.open_form(h, &n, n.is_empty()),
@@ -1801,8 +1805,9 @@ impl Service for ControlCenter {
         let Ok(m) = msg.downcast::<M>() else { return };
         match *m {
             M::Poll => self.tick(h),
-            M::Done(addr) => {
+            M::Done(addr, r) => {
                 self.bt_busy.remove(&addr);
+                self.bt_failed.note(&addr, r, h.st.shell.get::<Bluetooth>());
             }
             M::Art(url, file) => {
                 self.art.insert(url, file);

@@ -819,7 +819,11 @@ fn bt_list(cx: &mut Ctx, bt: &Bluetooth, which: &str, extras: &Value, empty: Str
         let picture = s(&x["picture"]);
         let size = if cx.material { 72 } else { 56 };
         let mut o = Opt::new(if d.name.is_empty() { d.address.clone() } else { d.name.clone() })
-            .detail(device_status(d, pairing))
+            // (why its last action failed, while nothing has changed since: BlueZ's answer, read)
+            .detail(match s(&x["error"]) {
+                e if !e.is_empty() && !pairing && !x["busy"].as_bool().unwrap_or(false) => e,
+                _ => device_status(d, pairing),
+            })
             .icon(device_icon(&d.icon))
             .on(d.connected)
             .style(if x["busy"].as_bool().unwrap_or(false) { 2 } else { 0 })

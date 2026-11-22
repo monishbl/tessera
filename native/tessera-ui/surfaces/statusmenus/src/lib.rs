@@ -108,8 +108,8 @@ enum M {
     Pick(i32),
     MenuPick(i32),
     MenuClose,
-    /// bluetoothctl finished with a device
-    BtDone(String),
+    /// a Bluetooth action ended: the device, and why it failed
+    BtDone(String, Result<(), String>),
     /// the playing track's position (seconds), read
     Position(String, f64),
     /// a picture for an art address
@@ -137,6 +137,8 @@ pub struct StatusMenus {
     /// a device's menu: its address and entries
     menu: Option<(String, Vec<Option<(&'static str, BtAct, bool)>>)>,
     bt_busy: HashSet<String>,
+    /// why each device's last action failed (its row says)
+    bt_failed: tessera_core::services::bluez::Failures,
     /// what the shell's feed said last (health, power, privacy, resources, profiles, btPictures)
     feed: Value,
     shown_bt: Page,
@@ -482,7 +484,13 @@ impl StatusMenus {
     fn push_bt(&mut self, st: &State) {
         let bt = st.shell.get::<Bluetooth>().cloned().unwrap_or_default();
         let state = st.shell.get::<ShellState>().cloned().unwrap_or_default();
-        let page = model::bt_page(&bt, state.get("backends"), &self.bt_busy, &self.feed["btPictures"]);
+        let mut page = model::bt_page(&bt, state.get("backends"), &self.bt_busy, &self.feed["btPictures"]);
+        // (why a device's last action failed, in place of its status)
+        for b in page.blocks.iter_mut().filter(|b| !b.busy) {
+            if let Some(why) = b.id.strip_prefix("d:").and_then(|a| bt.devices.iter().find(|d| d.address == a)).and_then(|d| self.bt_failed.of(d)) {
+                b.status = why.to_string();
+            }
+        }
         let fonts = self.fonts();
         let Some(w) = &self.win else { return };
         let m = Self::material(st);
@@ -729,14 +737,12 @@ impl StatusMenus {
 
     fn bt_ctl(&mut self, st: &mut State, verb: &'static str, addr: String) {
         self.bt_busy.insert(addr.clone());
+        self.bt_failed.clear(&addr);
         let to = st.shell.sender(NAME);
         std::thread::spawn(move || {
-            if verb == "pair" {
-                tessera_core::services::bluez::pair(&addr);
-            } else {
-                let _ = std::process::Command::new("bluetoothctl").args([verb, &addr]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
-            }
-            to(Box::new(M::BtDone(addr)));
+            // (BlueZ's answer read: a failure says why on the row)
+            let r = tessera_core::services::bluez::act(verb, &addr);
+            to(Box::new(M::BtDone(addr, r)));
         });
         self.push_bt(st);
     }
@@ -978,8 +984,9 @@ impl Part for StatusMenus {
             M::Pick(i) => self.pick(st, i),
             M::MenuPick(j) => self.menu_pick(st, j),
             M::MenuClose => self.close_menu(),
-            M::BtDone(addr) => {
+            M::BtDone(addr, r) => {
                 self.bt_busy.remove(&addr);
+                self.bt_failed.note(&addr, r, st.shell.get::<Bluetooth>());
                 if self.open && self.panel == "bluetoothMenu" {
                     self.push_bt(st);
                 }

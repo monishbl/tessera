@@ -53,6 +53,11 @@ elif a[:1] == ["set-card-profile"]:
 elif a[:3] == ["list", "short", "sinks"]:
     out = st["cards"][0]["active_profile"].split("+")[0].removeprefix("output:")
     print("56\\talsa_output.pci-0000_00_1f.3." + out + "\\tPipeWire\\ts32le 2ch 48000Hz\\tSUSPENDED")
+elif a[:1] == ["set-default-sink"] and not st.get("stuck"):
+    st["default"] = a[1]
+    json.dump(st, open({str(self.state)!r}, "w"))
+elif a[:1] == ["get-default-sink"]:
+    print(st.get("default", "alsa_output.pci-0000_00_1f.3.analog-stereo"))
 """)
         (self.root / "pactl").chmod(0o755)
         self.env = dict(os.environ, PATH=f"{self.root}:/usr/bin:/bin")
@@ -87,6 +92,13 @@ elif a[:3] == ["list", "short", "sinks"]:
         rows = self.run_script("list")[1]
         self.assertEqual([(x["name"], x["profile"]) for x in rows],
                          [("Built-in speakers", "output:analog-stereo+input:analog-stereo")])
+
+    def test_a_default_that_did_not_take_is_said(self):
+        # (the end state read back, not assumed: the sink never became the default)
+        self.state.write_text(json.dumps({"cards": [card("output:analog-stereo+input:analog-stereo")], "stuck": True}))
+        code, r = self.run_script("switch", "alsa_card.pci-0000_00_1f.3", "output:hdmi-stereo+input:analog-stereo")
+        self.assertEqual((code, r["ok"]), (1, False))
+        self.assertIn("couldn't be made the default", r["error"])
 
     def test_a_profile_not_offered_is_refused(self):
         self.set_cards(card("output:analog-stereo+input:analog-stereo"))
