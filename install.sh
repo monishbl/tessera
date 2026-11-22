@@ -970,6 +970,14 @@ install_packages() {
         build_quickshell || return 1
         qv=$(qs_version)
     fi
+    # Every other version this Tessera needs (tools/packages.sh's MINIMUM,
+    # compat.json; tools/tessera_deps.py, the check every update makes):
+    # after the pacman -Syu above, one still too old has no newer version
+    # in your repositories yet
+    if [[ -f "$ROOT/tools/tessera_deps.py" ]] && ! python3 -I "$ROOT/tools/tessera_deps.py" check --root "$ROOT"; then
+        say "  Run the installer again once your repositories have it (sudo pacman -Syu, then $ROOT/install.sh)."
+        return 1
+    fi
     note "Hyprland $hv, Quickshell $qv"
 }
 

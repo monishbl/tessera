@@ -62,3 +62,11 @@ ICON_THEMES_REPO=(papirus-icon-theme)
 # Packages Tessera used to need and no longer does. Software Update offers to
 # remove the ones still installed (pacman -Rns, in its root part); install.sh ignores them.
 DROPPED=(mactahoe-icon-theme-git mactahoe-gtk-theme apple_cursor apple_hyprcursor)  # (apps' own logos, Adwaita and Bibata since 3 Nov 2026)
+# The versions this Tessera needs, when an older one won't do: "name>=version"
+# (also <=, <, >), read as text (tools/tessera_deps.py). Every update checks
+# them before it's applied: a package installed below one is upgraded first
+# (pacman -S --needed, the repositories' version), and when the repositories
+# don't have a version that fits, the update stops and says so. Hyprland's
+# range and Quickshell's minimum are in compat.json (read the same way).
+MINIMUM=(
+)

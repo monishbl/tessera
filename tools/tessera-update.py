@@ -16,6 +16,13 @@ conflict you decide, and nothing is applied until all of them are decided.
     tessera-update.py stage … --how wait|build          -> no bundle for the new version yet: wait (the
                                                           default: nothing is done) or build it here now
 
+Dependencies (docs/releases.md, "Dependencies on update"): stage, finish and
+apply first make sure the new version's packages are there, at versions it
+supports (deps_needs, tools/tessera_deps.py): stage installs them (the
+password dialog; `cli` asks in the terminal first), finish and apply, with
+the shell stopped, only check, and install nothing of Tessera's when they
+aren't. A package no version in the repositories fits stops every one.
+
 Bundles (tools/tessera-bundle.py, docs/releases.md): a normal install (one
 that runs from a bundle, or setup.sh's checkout with nothing of its own)
 updates by bundle. `check` then says how big the download is ("bundle":
@@ -730,13 +737,18 @@ def held_written(names):
     return held == set(names)
 
 
-def packages_step(vdir, system, say=None):
+def packages_step(vdir, system, say=None, install=(), lock=True, remove=()):
     """The root part of a bundle's package lock: sysupdate.py run --lock
     from the version being installed (so its own root helper is the one
     that runs, set up first when the installed one is older), one password.
+    install, remove: the packages that version needs (deps_needs) and the
+    dropped ones you chose to remove, in the same run; lock=False: only
+    those (a git install's update: vdir is this checkout).
     Raises SystemExit with why when it didn't finish."""
     script = os.path.join(vdir, "shell", "assets", "scripts", "sysupdate.py")
-    cmd = [sys.executable, "-I", script, "run", "--lock", os.path.join(vdir, "bundle.json")] + (["--system"] if system else [])
+    cmd = [sys.executable, "-I", script, "run"] + (["--lock", os.path.join(vdir, "bundle.json")] if lock else []) + \
+        (["--system"] if system else []) + (["--install", ",".join(install)] if install else []) + \
+        (["--remove", ",".join(remove)] if remove else [])
     status = os.path.join(runtime_dir(), "tessera-sysupdate", "status.json")
     p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     last = ""
@@ -750,17 +762,140 @@ def packages_step(vdir, system, say=None):
     st = load_json(status, {}) or {}
     if not isinstance(st, dict) or st.get("state") != "done":
         state = st.get("state") if isinstance(st, dict) else ""
+        what = "The packages this Tessera was tested with" if lock else "The packages this Tessera needs"
         if state == "cancelled":
-            raise SystemExit("The packages this Tessera was tested with weren't installed (the password was cancelled). Nothing was changed.")
-        raise SystemExit("The packages this Tessera was tested with weren't installed: " +
+            raise SystemExit(what + " weren't installed (the password was cancelled). Nothing was changed.")
+        raise SystemExit(what + " weren't installed: " +
                          ((st.get("error") or st.get("text")) if isinstance(st, dict) else "") + ". Nothing of Tessera was changed.")
 
 
-def bundle_stage(config_dir, choices, extra, channel, how, mode_, report):
+# ── Dependencies on update (docs/releases.md) ────────────────────────────
+# Every way Tessera is updated goes through deps_needs before the new
+# version is staged or applied: Software Update's Update (stage, "auto":
+# the polkit dialog asks the one password), `tessera update` (cli, "ask":
+# asked in the terminal first), and the restart or login that installs a
+# staged update, or the older full update with the shell stopped (finish,
+# apply: "check", no password can be asked then: it stops, and Software
+# Update installs them). The decision is tools/tessera_deps.py's.
+
+class DepsUnmet(SystemExit):
+    """The new version's packages aren't all there: nothing was changed"""
+
+
+def _load_deps():
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tessera_deps.py")
+    if not os.path.isfile(path):
+        return None
+    spec = importlib.util.spec_from_file_location("tessera_deps", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def deps_status(rev):
+    """tools/tessera-packages.sh status for a version: a git ref, or
+    "dir:<folder>" (a bundle's)"""
+    script = os.path.join(REPO, "tools", "tessera-packages.sh")
+    if not os.path.isfile(script):
+        return {}
+    arg = rev[4:] if rev.startswith("dir:") else rev
+    try:
+        r = subprocess.run([script, "status", arg], capture_output=True, text=True, timeout=180, stdin=subprocess.DEVNULL)
+        out = json.loads(r.stdout or "{}")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return {"error": "the package check didn't answer"}
+    return out if isinstance(out, dict) else {}
+
+
+def deps_plan(rev, skip=()):
+    """What the version at REV needs on this computer (tessera_deps.assess),
+    or None when there's nothing to check (no package list in it, no pacman)"""
+    D = _load_deps()
+    text = show(rev, "tools/packages.sh")
+    if D is None or not text:
+        return None
+    status = deps_status(rev)
+    if status.get("error") and not status.get("missing"):
+        if "pacman" in str(status["error"]):
+            return None  # (not an Arch system: nothing pacman could do)
+        raise DepsUnmet("Tessera's packages couldn't be checked (" + str(status["error"]) + "). Nothing was changed. Try again in a moment.")
+    current = show("dir:" + REPO, "tools/packages.sh")
+    return D.assess(status, text, show(rev, "compat.json") or "", current, skip=skip)
+
+
+def deps_note(line):
+    print(line, file=sys.stderr, flush=True)
+    if JOB:
+        JOB.log(line)
+
+
+def deps_needs(rev, mode="auto", ask=None, latest="", skip=()):
+    """The shared step: what has to be installed (or upgraded) before the
+    version at REV runs, as names for sysupdate.py --install, and the dropped
+    ones you chose to remove (ask mode only). Raises DepsUnmet, saying which
+    package and what to do, when it can't run here (a package the
+    repositories don't have at a version that fits), when nothing may be
+    installed now (mode "check"), or when you said no (mode "ask")."""
+    plan = deps_plan(rev, skip)
+    if plan is None:
+        return [], []
+    D = _load_deps()
+    for line in D.notes_words(plan):
+        deps_note(line)
+    if plan["blocked"]:
+        raise DepsUnmet(D.blocked_words(plan, latest))
+    need, remove = list(plan["install"]), []
+    if not need:
+        return [], []
+    words = D.needs_words(plan)
+    name = f"Tessera {latest}" if latest else "This Tessera"
+    if mode == "check":
+        raise DepsUnmet(f"{name} needs packages that aren't installed yet: {words}. Open Settings → Software Update and "
+                        "choose Update Tessera: it installs them first, with your password. Nothing was changed.")
+    if mode == "ask":
+        if ask is None:
+            raise DepsUnmet(f"{name} needs packages that aren't installed yet: {words}. Run tessera update in a terminal, "
+                            "or use Settings → Software Update, to install them first. Nothing was changed.")
+        reasons = plan.get("reasons") or {}
+        print(f"{name} needs these packages first:")
+        for n in plan["missing"]:
+            print(f"  {n}" + (f"  ({reasons[n]})" if reasons.get(n) else ""))
+        for o in plan["outdated"]:
+            print(f"  {o['name']}  ({D.upstream(o['have']) or 'installed'} → {D.upstream(o['repo'])}; it needs {o['need']})")
+        if not ask("  Install them now (one password)? [Y/n] ", True):
+            raise DepsUnmet(f"Not updated: {name} needs {words}. Nothing was changed.")
+        if plan["dropped"]:
+            print("Tessera no longer uses: " + ", ".join(plan["dropped"]))
+            if ask("  Remove them too? [y/N] ", False):
+                remove = list(plan["dropped"])
+    return need, remove
+
+
+def terminal_ask(question, default):
+    """tessera update's questions, as its other ones"""
+    try:
+        reply = input(question).strip().lower()
+    except EOFError:
+        reply = ""
+    return default if not reply else reply.startswith("y")
+
+
+def deps_install(names, remove=(), say=None):
+    """A git install's packages (this checkout's sysupdate.py: --install,
+    --remove), one password; raises SystemExit when they didn't go in"""
+    if not names and not remove:
+        return
+    job_progress(4, "Installing the packages it needs", "packages", packages=list(names))
+    packages_step(REPO, False, say or (lambda t: job_progress(5, t, "packages")), install=list(names), lock=False, remove=list(remove))
+
+
+def bundle_stage(config_dir, choices, extra, channel, how, mode_, report, deps="auto", ask=None):
     """stage() for a bundle: the new version downloaded, checked and
     unpacked beside the current one, its held packages moved into place
-    (one password), and written down as staged. None: not a bundle's to do
-    (a git install building here: stage() goes on as before)."""
+    and the packages it needs installed (deps_needs; one password), and
+    written down as staged. None: not a bundle's to do (a git install
+    building here: stage() goes on as before)."""
     B = bundles()
     if mode_ == "git":
         report.update(bundle_report(report["target"], report.get("channel")))
@@ -770,7 +905,7 @@ def bundle_stage(config_dir, choices, extra, channel, how, mode_, report):
         if how == "build":
             if mode_ == "git":
                 return None  # (built here from git, as before)
-            return bundle_build_stage(config_dir, choices, report, ch)
+            return bundle_build_stage(config_dir, choices, report, ch, deps, ask)
         mins = (report["noBundle"] or {}).get("minutes") or 0
         return {"staged": False, "state": "waiting", "latest": report.get("latest", ""),
                 "message": f"Tessera {report.get('latest', '')} is still being published" +
@@ -793,11 +928,16 @@ def bundle_stage(config_dir, choices, extra, channel, how, mode_, report):
     vdir = B.version_dir(vid)
     lock = got["manifest"]["packages"]
     moves = B.package_moves(lock, B.installed_packages(list(lock["held"]) + list(lock["minimum"])), B.repo_versions(list(lock["held"])))
-    if moves["held"] or moves["system"] or not held_written(moves["hold"]):
-        words = B.moves_words(moves)
-        job_progress(70, "Putting the tested packages in place" + (": " + words if words else ""), "packages",
-                     held=moves["held"], minimum=moves["minimum"])
-        packages_step(vdir, moves["system"], lambda t: job_progress(75, t, "packages"))
+    # What it needs besides (its packages.sh and compat.json, from the files
+    # just checked): with the lock's run, one password. The held ones are
+    # the lock's to put in place
+    need, remove = deps_needs("dir:" + vdir, deps, ask, report.get("latest", ""), skip=list(lock["held"]))
+    lock_due = bool(moves["held"] or moves["system"] or not held_written(moves["hold"]))
+    if lock_due or need or remove:
+        words = B.moves_words(moves) if lock_due else ""
+        job_progress(70, ("Putting the tested packages in place" if lock_due else "Installing the packages it needs") +
+                     (": " + words if words else ""), "packages", held=moves["held"], minimum=moves["minimum"], packages=need)
+        packages_step(vdir, moves["system"], lambda t: job_progress(75, t, "packages"), install=need, lock=lock_due, remove=remove)
     into = staged_dir()
     os.makedirs(into, exist_ok=True)
     staged = {"format": 2, "kind": "bundle", "repo": os.path.realpath(REPO), "from": head_commit(), "to": target, "bundle": vid,
@@ -810,7 +950,7 @@ def bundle_stage(config_dir, choices, extra, channel, how, mode_, report):
     return {"staged": True, "state": "ready", "latest": staged["latest"], "parts": [], "failed": [], "ui": staged["ui"], "bundle": vid}
 
 
-def bundle_build_stage(config_dir, choices, report, ch):
+def bundle_build_stage(config_dir, choices, report, ch, deps="auto", ask=None):
     """Build now, for a copy that runs from a bundle: the new version's
     sources (a shallow clone from GitHub), built here gently into a bundle
     of its own (versions/<id>-local), staged like a downloaded one"""
@@ -827,6 +967,9 @@ def bundle_build_stage(config_dir, choices, report, ch):
     report["conflicts"] = []
     settings_conflicts(report, config_dir, "dir:" + REPO, "dir:" + src)
     choices = settled_choices(report, choices)
+    # (what it needs, before it's built against the system: this copy's root helper)
+    need, remove = deps_needs("dir:" + src, deps, ask, commit[:8])
+    deps_install(need, remove)
     try:
         vid = B.build_here(src, commit, "local", say=lambda t: job_progress(20, t, "build", how="build"))
     except B.Failed as e:
@@ -1487,7 +1630,8 @@ def apply(config_dir, choices, extra=(), channel=None, staged=None):
     shell's restart takes seconds)."""
     lock = repo_lock()  # noqa: F841 (held while this runs)
     if not staged and update_mode() == "bundle":
-        done = stage(config_dir, choices, extra, channel)
+        # (the shell is stopped: no password can be asked for its packages)
+        done = stage(config_dir, choices, extra, channel, deps="check")
         if not done.get("staged"):
             return {"applied": False, "message": done.get("message", "Already up to date.")}
         return bundle_finish(config_dir, read_staged())
@@ -1515,6 +1659,11 @@ def apply(config_dir, choices, extra=(), channel=None, staged=None):
     missing = [c["id"] for c in report["conflicts"] if choices.get(c["id"]) not in c["choices"]]
     if missing:
         raise SystemExit("Decide every conflict first: " + ", ".join(missing))
+    # The packages it needs (a staged one was checked by finish): the shell
+    # is stopped here, so they must be there already (Software Update
+    # installs them before it starts this)
+    if not staged:
+        deps_needs(report.get("target") or report["upstream"], "check", latest=report.get("latest", ""))
 
     progress(5, "Backing up your settings")
     # Back up settings and shortcuts
@@ -2368,13 +2517,16 @@ def settled_choices(report, choices):
     return out
 
 
-def stage(config_dir, choices, extra=(), channel=None, job=None, how=""):
+def stage(config_dir, choices, extra=(), channel=None, job=None, how="", deps="auto", ask=None):
     """Software Update's Update, in the background with the shell running:
     the new version made ready beside the installed one (its programs,
     patched or downloaded or built; its parts built from a staging
     checkout), the checkout itself untouched. The shell's restart (finish)
     then takes seconds. extra: parts to rebuild anyway; with no Tessera
-    update, only those, in place (they load at the next login)."""
+    update, only those, in place (they load at the next login).
+    deps: how the packages the new version needs are installed first
+    (deps_needs): "auto" (Software Update: the password dialog), "ask"
+    (the terminal, with ask), "check" (none may be: it stops)."""
     global JOB
     JOB = job
     lock = repo_lock()  # noqa: F841 (held while this runs)
@@ -2384,7 +2536,7 @@ def stage(config_dir, choices, extra=(), channel=None, job=None, how=""):
         raise SystemExit(report["error"])
     mode_ = update_mode()
     if mode_ in ("bundle", "git") and report["available"]:
-        done = bundle_stage(config_dir, choices, extra, channel, how, mode_, report)
+        done = bundle_stage(config_dir, choices, extra, channel, how, mode_, report, deps, ask)
         if done is not None:
             return done
         how = "build"  # (a git install, Build now: as before, built here)
@@ -2407,8 +2559,10 @@ def stage(config_dir, choices, extra=(), channel=None, job=None, how=""):
     if missing:
         raise SystemExit("Decide every conflict first: " + ", ".join(missing))
     target = report["target"]
+    need, remove = deps_needs(target, deps, ask, report.get("latest", ""))
     discard()
     job_progress(3, "Preparing", "prepare", latest=report.get("latest", ""), current=report.get("current", ""))
+    deps_install(need, remove)
     source = stage_source(target)
     ui = native_stage(target, source)
     if not ui.get("ok"):
@@ -2445,6 +2599,19 @@ def finish(config_dir, if_ready=False):
     try:
         if head_commit() != s.get("from"):
             raise SystemExit("Tessera changed since the update was prepared. Check for updates again.")
+        # Its packages, again (one may have gone since it was staged): with
+        # the shell stopped no password can be asked, so a version whose
+        # packages aren't all there isn't installed; Software Update offers
+        # it again and installs them first
+        if s.get("kind") == "bundle":
+            rev, skip = "dir:" + bundles().version_dir(s.get("bundle", "")), (s.get("moves") or {}).get("hold") or []
+        else:
+            rev, skip = s["to"], []
+        try:
+            deps_needs(rev, "check", latest=s.get("latest", ""), skip=skip)
+        except DepsUnmet as e:
+            deps_notice(str(e))
+            raise
         if s.get("kind") == "bundle":
             progress(20, "Installing the update")
             return bundle_finish(config_dir, s)
@@ -2452,6 +2619,19 @@ def finish(config_dir, if_ready=False):
         return apply(config_dir, {}, (), s.get("channel") if s.get("channel") in CHANNELS else None, staged=s)
     finally:
         discard()
+
+
+def deps_notice(why):
+    """Software Update's note that the update waits for its packages (the
+    background job's status, which it reads when it starts and every second
+    while it waits for a restart)"""
+    now = time.time()
+    try:
+        os.makedirs(job_dir(), exist_ok=True)
+        write_json(os.path.join(job_dir(), "status.json"), {"state": "error", "error": why, "text": "The update wasn't installed",
+                                                             "phase": "packages", "started": now, "finished": now})
+    except OSError:
+        pass
 
 
 def _remove_request(d):
@@ -2726,8 +2906,11 @@ def cli_update(config_dir, channel=None, how=""):
     b = report.get("bundle") or {}
     if b:
         print(f"Downloading {b.get('size', 0) / 1e6:.0f} MB" + (f"; moving {b['movesText']}" if b.get("movesText") else ""))
+    # (the packages it needs: asked here, before anything is installed;
+    # with nobody at the terminal it stops and says how)
+    tty = sys.stdin.isatty() and sys.stdout.isatty()
     try:
-        out = stage(config_dir, cli_choices(report), (), channel, how=how)
+        out = stage(config_dir, cli_choices(report), (), channel, how=how, deps="ask", ask=terminal_ask if tty else None)
     except SystemExit as e:
         print(str(e), file=sys.stderr)
         return 1
