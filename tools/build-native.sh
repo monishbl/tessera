@@ -101,6 +101,19 @@ if [[ "${1:-}" == --stage ]]; then
     P=$(profile_of "$CRATE") T=$(target_of "$CRATE")
     cargo_build tessera-events tessera-events tessera-events --profile "$P" --locked --manifest-path "$CRATE/Cargo.toml" --target-dir "$T"
     cp "$T/$P/tessera-events" "$STAGE/tessera-events"
+    # tessera-passkeys (the passkeys daemon): with the others when it
+    # builds; one that doesn't never stops the rest (native-install.py's
+    # OPTIONAL). --locked once its Cargo.lock is committed.
+    PK_CRATE="$ROOT/native/tessera-passkeys"
+    if [[ -f "$PK_CRATE/Cargo.toml" ]]; then
+        P=$(profile_of "$PK_CRATE") T=$(target_of "$PK_CRATE")
+        lock=(); [[ -f "$PK_CRATE/Cargo.lock" ]] && lock=(--locked)
+        if cargo_build tessera-passkeys tessera-passkeys tessera-passkeys --profile "$P" "${lock[@]}" --manifest-path "$PK_CRATE/Cargo.toml" --target-dir "$T"; then
+            cp "$T/$P/tessera-passkeys" "$STAGE/tessera-passkeys"
+        else
+            echo "tessera-passkeys didn't build (Passkeys stays as it was)"
+        fi
+    fi
     [[ $UI == 1 ]] || exit 0
     # tessera-ui: its first build takes several minutes (Slint, link-time
     # optimisation). A failed one still installs tessera-events

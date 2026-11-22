@@ -577,6 +577,80 @@ class Install(Fixture):
 # ── Modes, and the fallback ───────────────────────────────────────────────
 
 @unittest.skipUnless(HAS_CRYPTO, "python-cryptography isn't installed")
+class Optional(Fixture):
+    """tessera-passkeys: with the others when it comes, never a failure when it doesn't"""
+
+    def setUp(self):
+        super().setUp()
+        (self.repo / "native/tessera-passkeys").mkdir(parents=True)
+        (self.repo / "native/tessera-passkeys/Cargo.toml").write_text("[package]\nname = \"tessera-passkeys\"\n")
+        git(self.repo, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
+        git(self.repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "passkeys")
+        self.tree, self.commit, _ = ni.native_tree("HEAD", str(self.repo))
+
+    def builder(self, with_passkeys):
+        def build(stage, tuned, ui, say):
+            files = {}
+            for name in ("tessera-ui", "tessera-events") + (("tessera-passkeys",) if with_passkeys else ()):
+                fake_program(Path(stage) / name, f"{name} 0.1.0")
+                files[name] = str(Path(stage) / name)
+            return files
+        return build
+
+    def test_its_own_source_key(self):
+        keys = ni.part_keys("HEAD", str(self.repo))
+        self.assertTrue(keys["tessera-passkeys"])
+        self.assertNotEqual(keys["tessera-passkeys"], keys["tessera-events"])
+
+    def test_built_with_the_others_then_kept(self):
+        r, _ = self.install("build", builder=self.builder(True), ui=True)
+        self.assertTrue(r["ok"], r)
+        self.assertIn("tessera-passkeys", r["installed"])
+        self.assertTrue((self.dest / "tessera-passkeys").exists())
+        self.assertEqual(ni.read_info(str(self.dest), "tessera-passkeys")["part"], ni.part_keys("HEAD", str(self.repo))["tessera-passkeys"])
+        calls = []
+        r, _ = self.install("build", builder=lambda *a: calls.append(a) or {}, ui=True)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(calls, [])
+
+    def test_one_that_does_not_build_is_noted_and_not_tried_again(self):
+        r, _ = self.install("build", builder=self.builder(False), ui=True)
+        self.assertTrue(r["ok"], r)
+        self.assertFalse((self.dest / "tessera-passkeys").exists())
+        key = ni.part_keys("HEAD", str(self.repo))["tessera-passkeys"]
+        self.assertEqual((self.dest / "tessera-passkeys.unavailable").read_text().strip(), key)
+        calls = []
+        r, _ = self.install("build", builder=lambda *a: calls.append(a) or {}, ui=True)
+        self.assertEqual(calls, [])
+        self.assertFalse(r["changed"])
+        # (its sources change: tried again, and it comes this time)
+        (self.repo / "native/tessera-passkeys/Cargo.toml").write_text("[package]\nname = \"tessera-passkeys\"\nversion = \"0.2.0\"\n")
+        git(self.repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "pk")
+        r, _ = self.install("build", builder=self.builder(True), ui=True)
+        self.assertTrue(r["ok"], r)
+        self.assertIn("tessera-passkeys", r["installed"])
+        self.assertFalse((self.dest / "tessera-passkeys.unavailable").exists())
+
+    def test_without_its_crate_nothing_changes(self):
+        git(self.repo, "rm", "-rq", "native/tessera-passkeys")
+        git(self.repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "no passkeys")
+        r, _ = self.install("build", builder=self.builder(True), ui=True)
+        self.assertTrue(r["ok"], r)
+        self.assertNotIn("tessera-passkeys", r["installed"])
+        self.assertFalse((self.dest / "tessera-passkeys.unavailable").exists())
+
+    @unittest.skipUnless(HAS_CRYPTO, "python-cryptography isn't installed")
+    def test_a_release_without_it_still_installs(self):
+        self.publish()
+        r, calls = self.install()
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(calls, [("fetch", "x86-64-v3")])
+        self.assertFalse((self.dest / "tessera-passkeys").exists())
+        self.assertTrue((self.dest / "tessera-passkeys.unavailable").exists())
+        r, calls = self.install()
+        self.assertEqual(calls, [])
+
+
 class KeptForTheLoginScreen(Fixture):
     """What the root helper checks before it copies tessera-ui for the login
     screen (tessera-root.py login_ui_vouched, audit #71): a ready-made

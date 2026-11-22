@@ -97,6 +97,16 @@ if [[ -f "$GUARD" || -L "$GUARD" ]]; then
     quiet systemctl --user daemon-reload
     quiet systemctl --user reset-failed tessera-battery-guard.service
 fi
+# Passkeys' daemon (Settings → Privacy & Security → Passkeys): stopped and its
+# unit removed. The saved passkeys stay in ~/.local/share/tessera/passkeys,
+# sealed by this computer's TPM (docs/PASSKEYS.md: removing them)
+PK_UNIT="$HOME/.config/systemd/user/tessera-passkeys.service"
+if [[ -f "$PK_UNIT" || -L "$PK_UNIT" ]]; then
+    quiet systemctl --user disable --now tessera-passkeys.service
+    opt rm -f "$PK_UNIT"
+    quiet systemctl --user daemon-reload
+    quiet systemctl --user reset-failed tessera-passkeys.service
+fi
 # Tessera's desktop look: your app fonts, Qt style, prompt and terminal as they were
 # (desktop-look.py off; its state goes too, so an install sets it up again)
 LOOK_PY="$HERE/shell/assets/scripts/desktop-look.py"
@@ -169,6 +179,9 @@ if [[ -n $helper && -z $S ]]; then
     quiet sudo "$helper" phonecam off
     quiet sudo "$helper" quickshare-trust off
     quiet sudo "$helper" sharing-ports close
+    # (passkeys: pam_u2f's lines and key list, then the udev rule)
+    quiet sudo "$helper" passkeys-pam off
+    quiet sudo "$helper" passkeys off
 fi
 # The Tessera login screen: switch back to the login manager it replaced
 # (or none: then log in on a console and start your desktop yourself)
@@ -305,6 +318,8 @@ for d in "$DATA/tessera" "$DATA/$OLD_NAME"; do
     run rm -f "$d/tessera-glass.so" "$d/tessera-glass.so.new" "$d/tessera-glass.built-for"
     run rm -rf "$d/src"
     run rm -f "$d/bin/tessera-events" "$d/bin/tessera-events.new"
+    run rm -f "$d/bin/tessera-passkeys" "$d/bin/tessera-passkeys.new" "$d/bin/tessera-passkeys.prev" \
+        "$d/bin/tessera-passkeys.json" "$d/bin/tessera-passkeys.prev.json" "$d/bin/tessera-passkeys.unavailable"
     run rm -f "$d/source" "$d/previous-login-manager"
     # (the Hyprland files as last shipped, the base updates merge your edits against)
     run rm -rf "$d/hypr-base" "$d/hypr-base.old"

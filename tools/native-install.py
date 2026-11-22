@@ -16,6 +16,13 @@ native/tessera-events), in $XDG_DATA_HOME/tessera/bin, matching this checkout.
     native-install.py install --staged [--json]       the staged programs swapped in (HEAD must be REF)
     native-install.py cache   [--delete] [--json]     the build cache: its size, or delete it
 
+tessera-passkeys (native/tessera-passkeys, the passkeys daemon) comes along
+when it can (OPTIONAL): in a ready-made build that has it, or built here
+with the others; a build or release without it never fails an install, and
+an install that can't get it notes that (<name>.unavailable) so it isn't
+looked for again until its sources change. Its user service, when it's on,
+is restarted after a new one is installed.
+
 Each program has its own source key (part_keys): tessera-events its folder's
 git tree, tessera-ui its folder's tree and the few files outside it that it
 compiles in (UI_EXTRA). A program whose key is the installed one's is kept
@@ -81,6 +88,9 @@ import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROGRAMS = ("tessera-ui", "tessera-events")
+# (with them when there's one: never a reason for an install to fail)
+OPTIONAL = ("tessera-passkeys",)
+PASSKEYS_UNIT = "tessera-passkeys.service"
 VARIANTS = ("x86-64-v3", "generic")
 MODES = ("auto", "build", "buildTuned")
 SHORT = {"x86-64-v3": "v3", "generic": "generic"}
@@ -228,12 +238,14 @@ def part_keys(ref="HEAD", repo=None):
     """{program: its source key at REF}, None for one that isn't there (or
     outside a checkout). tessera-events: the git tree of native/tessera-events;
     tessera-ui: a hash of native/tessera-ui's tree and UI_EXTRA's blobs."""
-    out = {n: None for n in PROGRAMS}
+    out = {n: None for n in PROGRAMS + OPTIONAL}
     commit = git("rev-parse", "--verify", "--quiet", ref + "^{commit}", repo=repo)
     if not commit:
         return out
     ev = git("rev-parse", "--verify", "--quiet", commit + ":native/tessera-events", repo=repo)
     out["tessera-events"] = ev or None
+    pk = git("rev-parse", "--verify", "--quiet", commit + ":native/tessera-passkeys", repo=repo)
+    out["tessera-passkeys"] = pk or None
     ui = git("rev-parse", "--verify", "--quiet", commit + ":native/tessera-ui", repo=repo)
     if ui:
         extra = git("ls-tree", commit, "--", *UI_EXTRA, repo=repo) or ""
@@ -585,8 +597,9 @@ def _fetch_from(base, tree, commit, variant, work, tags, pubkey, repo, want=None
     entry = variants.get(variant)
     if not isinstance(entry, dict) or entry.get("file") != tarball_name(tree, variant):
         raise Failed("there's no ready-made build of this version for this processor", "missing")
-    want = [n for n in PROGRAMS if n in (want or PROGRAMS)]
     progs = entry.get("programs") or {}
+    # (an optional program only when this build has it)
+    want = [n for n in PROGRAMS + OPTIONAL if n in (want or PROGRAMS) and (n in PROGRAMS or n in progs)]
     rel = base.replace("{tag}", tag)
     how, got = "full", 0
     patched = _try_patches(rel, tree, variant, entry, want, have, work, pubkey, say)
@@ -597,10 +610,11 @@ def _fetch_from(base, tree, commit, variant, work, tags, pubkey, repo, want=None
         say("STEP Downloading " + mb(entry.get("size")))
         tpath = fetch_resumable(rel + "/" + entry["file"], work, entry["file"], entry.get("size", -1), entry.get("sha256"))
         got = os.path.getsize(tpath)
-        files = unpack(tpath, work, PROGRAMS)
+        files = unpack(tpath, work, PROGRAMS + OPTIONAL)
         for name in PROGRAMS:
             if name not in files:
                 raise Failed(f"the download has no {name}")
+        want = [n for n in want if n in files]
     for name in want:
         want_sha = (progs.get(name) or {}).get("sha256")
         if want_sha and sha256_of(files[name]) != want_sha:
@@ -970,7 +984,7 @@ def run_build(stage, tuned, ui, say, root=None):
                 sys.stderr.flush()
                 last = (last + [line])[-20:]
         code = p.wait()
-    files = {n: os.path.join(stage, n) for n in PROGRAMS if os.path.isfile(os.path.join(stage, n))}
+    files = {n: os.path.join(stage, n) for n in PROGRAMS + OPTIONAL if os.path.isfile(os.path.join(stage, n))}
     if code != 0 or "tessera-events" not in files:
         raise Failed("it didn't build (" + build_error(last, code) + ")", "build")
     if not os.environ.get("TESSERA_NATIVE_BUILDER"):
@@ -1291,6 +1305,39 @@ def _todo(mode, names, tree, keys, edited, dest):
     return [n for n in names if not is_current(mode, read_info(dest, n), os.path.join(dest, n), tree, keys.get(n), edited)]
 
 
+def optional_todo(mode, tree, keys, edited, dest):
+    """The optional programs that need another build: their sources are in
+    this checkout, the installed one isn't for them, and the last install
+    didn't find that it can't get one for exactly these sources"""
+    out = []
+    for n in OPTIONAL:
+        key = keys.get(n)
+        if not key or is_current(mode, read_info(dest, n), os.path.join(dest, n), tree, key, edited):
+            continue
+        if _read(os.path.join(dest, n + ".unavailable")).strip() == key:
+            continue
+        out.append(n)
+    return out
+
+
+def after_optional(dest, extra, files, keys):
+    """After a swap: an optional program that was wanted and didn't come
+    is noted (not looked for again for these sources); a new passkeys daemon
+    is restarted, when its service runs (never for a test's folder)"""
+    for n in extra:
+        mark = os.path.join(dest, n + ".unavailable")
+        if n in files:
+            _remove(mark)
+        elif keys.get(n):
+            with open(mark, "w") as f:
+                f.write(keys[n] + "\n")
+    if "tessera-passkeys" in files and dest == dest_dir() and not os.environ.get("TESSERA_NATIVE_BUILDER"):
+        try:
+            subprocess.run(["systemctl", "--user", "try-restart", PASSKEYS_UNIT], capture_output=True, timeout=30, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+
 def _have(dest, names):
     """The installed build, for patches: its tree, variant and programs"""
     info = read_info(dest, "tessera-ui") or read_info(dest, "tessera-events")
@@ -1352,16 +1399,17 @@ def _produce(mode, tree, commit, edited, build_ui, todo, offline, dest, repo, sa
 
 
 def _install(out, mode, tree, commit, edited, build_ui, names, offline, only_prev, dest, repo, say, builder, fetcher):
-    keys = part_keys("HEAD", repo) if tree and not edited else {n: None for n in PROGRAMS}
+    keys = part_keys("HEAD", repo) if tree and not edited else {n: None for n in PROGRAMS + OPTIONAL}
     todo = _todo(mode, names, tree, keys, edited, dest)
-    if tree and not edited and not todo:
+    extra = optional_todo(mode, tree, keys, edited, dest) if tree and not edited else []
+    if tree and not edited and not todo and not extra:
         keep_as_is(dest, names, tree, commit)
         info = read_info(dest, names[0])
         return dict(out, ok=True, source=info.get("source"), variant=info.get("variant"), label=label(info),
                     message="Already installed (" + label(info) + ")")
     # The code went back to the version of the .prev build: it comes back
     prev = {n: read_info(dest, n, prev=True) for n in names}
-    if tree and not edited and all(prev[n].get("tree") == tree and accepts(mode, prev[n]) and os.path.exists(os.path.join(dest, n + ".prev")) for n in names):
+    if todo and tree and not edited and all(prev[n].get("tree") == tree and accepts(mode, prev[n]) and os.path.exists(os.path.join(dest, n + ".prev")) for n in names):
         _restore(dest, names)
         info = read_info(dest, names[0])
         return dict(out, ok=True, changed=True, source=info.get("source"), variant=info.get("variant"), label=label(info),
@@ -1370,8 +1418,9 @@ def _install(out, mode, tree, commit, edited, build_ui, names, offline, only_pre
         raise Failed("the previous build isn't for this version", "missing")
     into = os.path.join(dest, ".built-" + secrets.token_hex(4))
     try:
-        files, info, fallback = _produce(mode, tree, commit, edited, build_ui, todo, offline, dest, repo, say, builder, fetcher, into)
+        files, info, fallback = _produce(mode, tree, commit, edited, build_ui, todo + extra, offline, dest, repo, say, builder, fetcher, into)
         swap_in(dest, files, info, parts=keys)
+        after_optional(dest, extra, files, keys)
         if tree and not edited:
             keep_as_is(dest, [n for n in names if n not in files], tree, commit)
         how = info.get("how")
@@ -1435,8 +1484,9 @@ def stage(ref, mode=None, ui=False, source=None, dest=None, repo=None, say=None,
         with Lock(dest):
             sdir = staged_dir(dest)
             shutil.rmtree(sdir, ignore_errors=True)
-            todo = _todo(mode, names, tree, keys, False, dest)
-            record = {"format": 1, "tree": tree, "commit": commit, "keys": keys, "names": names, "mode": mode,
+            extra = optional_todo(mode, tree, keys, False, dest)
+            todo = _todo(mode, names, tree, keys, False, dest) + extra
+            record = {"extra": extra, "format": 1, "tree": tree, "commit": commit, "keys": keys, "names": names, "mode": mode,
                       "files": {}, "keep": [n for n in names if n not in todo], "at": int(time.time())}
             prev = {n: read_info(dest, n, prev=True) for n in names}
             if todo and all(prev[n].get("tree") == tree and accepts(mode, prev[n]) and os.path.exists(os.path.join(dest, n + ".prev")) for n in names):
@@ -1490,6 +1540,7 @@ def install_staged(dest=None, repo=None):
                 if not os.path.isfile(p):
                     raise Failed(f"the staged {n} is missing", "missing")
             swap_in(dest, files, s.get("info") or {}, parts=s.get("keys") or {})
+            after_optional(dest, s.get("extra") or [], files, s.get("keys") or {})
             keep_as_is(dest, s.get("keep") or [], tree, commit)
             info = read_info(dest, names[0])
             return dict(out, ok=True, changed=bool(files), installed=sorted(files), kept=s.get("keep") or [], label=label(info),

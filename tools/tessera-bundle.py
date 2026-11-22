@@ -92,6 +92,8 @@ FORMAT = 1
 NAME = "tessera-bundle"
 VARIANTS = ("x86-64-v3", "generic")
 PROGRAMS = ("tessera-ui", "tessera-events")
+# (in a bundle when it built: the passkeys daemon; never a reason to refuse one)
+OPTIONAL = ("tessera-passkeys",)
 CHANNELS = ("stable", "beta", "release", "local")
 ROLLING = {"stable": ["tessera-ui-latest", "tessera-ui-beta"], "beta": ["tessera-ui-beta", "tessera-ui-latest"]}
 LATEST = "tessera-latest.bundle.json"  # the rolling release's newest bundle manifest (the pointer)
@@ -704,7 +706,7 @@ def install_version(manifest_bytes, sig_text, tarball, variant, data=None, signe
                 write_text(os.path.join(tmp, "bundle.json.minisig"), sig_text)
             write_json(os.path.join(tmp, "bundle-info.json"), {"id": vid, "commit": m["commit"], "channel": m["channel"],
                                                                "variant": variant, "signed": bool(signed), "at": int(time.time())})
-            for name in PROGRAMS:
+            for name in PROGRAMS + tuple(n for n in OPTIONAL if "bin/" + n in entry["files"]):
                 # (what each program is, for native-install.py status and the login screen's check)
                 rec = {"source": "bundle" if signed else "bundle-built", "variant": variant, "commit": m["commit"], "id": vid,
                        "tree": m.get("tree", ""), "sha256": entry["files"]["bin/" + name]["sha256"]}
@@ -944,8 +946,9 @@ def ensure_links(data=None, config=None):
     cur = current_link(data)
     if read_link(cur) is None:
         return changed
-    want = [(os.path.join(data, "bin", n), os.path.join("..", "current", "bin", n)) for n in PROGRAMS]
-    want += [(os.path.join(data, "bin", n + ".json"), os.path.join("..", "current", "bin", n + ".json")) for n in PROGRAMS]
+    names = PROGRAMS + tuple(n for n in OPTIONAL if os.path.exists(os.path.join(cur, "bin", n)))
+    want = [(os.path.join(data, "bin", n), os.path.join("..", "current", "bin", n)) for n in names]
+    want += [(os.path.join(data, "bin", n + ".json"), os.path.join("..", "current", "bin", n + ".json")) for n in names]
     want += [(os.path.join(data, "tessera-glass.so"), os.path.join("current", "plugin", "tessera-glass.so")),
              (os.path.join(data, "tessera-glass.built-for"), os.path.join("current", "plugin", "tessera-glass.built-for")),
              (os.path.join(config, "quickshell", "tessera"), os.path.join(cur, "shell"))]
@@ -1194,7 +1197,7 @@ def pack_variant(source, commit, variant, programs, plugin, out_dir, epoch=None)
         for rel in rels:
             add(rel, os.path.join(source, rel))
         versions = {}
-        for name in PROGRAMS:
+        for name in PROGRAMS + tuple(n for n in OPTIONAL if programs.get(n) and os.path.isfile(programs[n])):
             add("bin/" + name, programs[name])
             files["bin/" + name]["mode"] = 0o755
             os.chmod(os.path.join(stage, "bin", name), 0o755)
@@ -1214,7 +1217,7 @@ def pack_variant(source, commit, variant, programs, plugin, out_dir, epoch=None)
             raise Failed(f"packing {file} failed", "bad")
         os.replace(tmp, dest)
         return {"file": file, "size": os.path.getsize(dest), "sha256": sha256_of(dest), "files": files, "links": links,
-                "programs": {n: {"sha256": files["bin/" + n]["sha256"], "version": versions[n]} for n in PROGRAMS}}
+                "programs": {n: {"sha256": files["bin/" + n]["sha256"], "version": versions[n]} for n in versions}}
     finally:
         shutil.rmtree(stage, ignore_errors=True)
 
@@ -1395,7 +1398,7 @@ def main(argv=None):
         elif a.command == "pack":
             if not (a.source and COMMIT.match(a.commit) and a.variant and a.programs and a.out):
                 raise Failed("pack needs --source, --commit, --variant, --programs and --out", "bad")
-            e = pack_variant(a.source, a.commit, a.variant, {n: os.path.join(a.programs, n) for n in PROGRAMS}, a.plugin or None, a.out)
+            e = pack_variant(a.source, a.commit, a.variant, {n: os.path.join(a.programs, n) for n in PROGRAMS + OPTIONAL}, a.plugin or None, a.out)
             write_json(os.path.join(a.out, f"variant-{a.variant}.bundle.json"), e)
             emit({"file": e["file"], "size": e["size"], "sha256": e["sha256"]}, e["file"])
         elif a.command == "build-here":

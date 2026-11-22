@@ -37,7 +37,8 @@ use std::time::{Duration, Instant};
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
-        Some("--version") => println!("{}", env!("CARGO_PKG_VERSION")),
+        // ("<name> <version>": native-install.py checks a download by it)
+        Some("--version") => println!("tessera-passkeys {}", env!("CARGO_PKG_VERSION")),
         Some("--pam-helper") if args.len() == 4 => std::process::exit(pam::helper_main(&args[2], &args[3])),
         Some("--status") => println!("{}", ask("STATUS").unwrap_or_else(|| r#"{"running":false}"#.to_string())),
         Some("--list") => println!("{}", ask("LIST").unwrap_or_else(|| "[]".to_string())),

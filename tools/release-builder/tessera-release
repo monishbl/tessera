@@ -89,6 +89,7 @@ target, tree, commit, step, progress, started, finished, checked, error, ready
 (the sets waiting), and per target the last result. One run at a time (flock).
 """
 import argparse
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -415,6 +416,17 @@ def build(t, tree):
                   variant, flags, "tessera-ui", logf, build_env(t, variant))
             cargo(["build", *prof, "--locked", "--manifest-path", "native/tessera-events/Cargo.toml"],
                   variant, flags, "tessera-events", logf)
+            # (the passkeys daemon, when this version has it: one that
+            # doesn't build is left out of the archive, never the release)
+            if os.path.isfile(os.path.join(SRC, "native/tessera-passkeys/Cargo.toml")):
+                locked = ["--locked"] if os.path.isfile(os.path.join(SRC, "native/tessera-passkeys/Cargo.lock")) else []
+                try:
+                    cargo(["build", *prof, *locked, "--manifest-path", "native/tessera-passkeys/Cargo.toml"],
+                          variant, flags, "tessera-passkeys", logf)
+                except Stop as e:
+                    log(f"{t['name']}: tessera-passkeys didn't build for {variant} (left out): {e}")
+                    with contextlib.suppress(OSError):
+                        os.unlink(os.path.join(TARGETS, variant, profile, "tessera-passkeys"))
         status(step=f"{variant}: packing", progress=None)
         v = pack(outdir, tree, variant, epoch, profile)
         log(f"{t['name']}: built {variant} in {int(time.time() - t0)} s ({v['size']} bytes)")
@@ -450,7 +462,11 @@ def pack(outdir, tree, variant, epoch, profile="release"):
     shutil.rmtree(stage, ignore_errors=True)
     os.makedirs(stage)
     versions = {}
-    for name in ("tessera-ui", "tessera-events"):
+    names = ["tessera-ui", "tessera-events"]
+    # (optional: in the archive when it built; native-install.py takes it when it's there)
+    if os.path.isfile(os.path.join(rel, "tessera-passkeys")) and os.path.isfile(os.path.join(SRC, "native/tessera-passkeys/Cargo.toml")):
+        names.append("tessera-passkeys")
+    for name in names:
         shutil.copy2(os.path.join(rel, name), os.path.join(stage, name))
         # (--version only, and never with a display)
         versions[name] = run([os.path.join(stage, name), "--version"], env=no_display_env(), timeout=30).stdout.strip()
@@ -458,7 +474,7 @@ def pack(outdir, tree, variant, epoch, profile="release"):
     dest = os.path.join(outdir, file)
     tmp = dest + ".tmp"
     tar = subprocess.Popen(["tar", "--sort=name", "--owner=0", "--group=0", "--numeric-owner", f"--mtime=@{epoch}",
-                            "-C", stage, "-cf", "-", "tessera-ui", "tessera-events"], stdout=subprocess.PIPE)
+                            "-C", stage, "-cf", "-", *names], stdout=subprocess.PIPE)
     z = subprocess.run(["nice", "-n", "10", "zstd", "-q", "-19", "-T0", "-f", "-o", tmp], stdin=tar.stdout)
     tar.stdout.close()
     if tar.wait() != 0 or z.returncode != 0:
@@ -466,7 +482,7 @@ def pack(outdir, tree, variant, epoch, profile="release"):
     os.replace(tmp, dest)
     v = {"file": file, "sha256": sha256_of(dest), "size": os.path.getsize(dest), "profile": profile,
          "programs": {name: {"sha256": sha256_of(os.path.join(stage, name)), "version": versions[name]}
-                      for name in ("tessera-ui", "tessera-events")}}
+                      for name in names}}
     write_json(os.path.join(outdir, f"variant-{variant}.json"), v)
     shutil.rmtree(stage, ignore_errors=True)
     return v
