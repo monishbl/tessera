@@ -38,6 +38,16 @@ fn theme_paths(roots: &[PathBuf], name: &str) -> Vec<PathBuf> {
     roots.iter().map(|r| r.join(name)).filter(|p| p.join("index.theme").is_file()).collect()
 }
 
+/// Where a theme's icons are: once its index.theme is in any root, its
+/// folder in every root (~/.local/share/icons/hicolor has no index.theme of
+/// its own, and the icons there got the generic one; audit #124)
+fn theme_folders(roots: &[PathBuf], name: &str) -> Vec<PathBuf> {
+    if theme_paths(roots, name).is_empty() {
+        return vec![];
+    }
+    roots.iter().map(|r| r.join(name)).filter(|p| p.is_dir()).collect()
+}
+
 /// A usable theme: has an index.theme that lists folders (launch-shell.sh's installed())
 fn installed(roots: &[PathBuf], name: &str) -> bool {
     !name.is_empty() && theme_paths(roots, name).iter().any(|p| std::fs::read_to_string(p.join("index.theme")).is_ok_and(|t| t.lines().any(|l| l.starts_with("Directories="))))
@@ -164,7 +174,7 @@ fn walk(dir: &Path, seen: &mut std::collections::HashSet<(u64, u64)>, f: &mut dy
 pub fn build(roots: &[PathBuf], theme: &str) -> HashMap<String, PathBuf> {
     let mut best: HashMap<String, ((usize, i32), PathBuf)> = HashMap::new();
     for (rank, t) in chain(roots, theme).iter().enumerate() {
-        for base in theme_paths(roots, t) {
+        for base in theme_folders(roots, t) {
             let mut seen = std::collections::HashSet::new();
             walk(&base, &mut seen, &mut |p| {
                 let Some(f) = p.file_name().and_then(|f| f.to_str()) else { return };
@@ -221,7 +231,7 @@ fn fresh(roots: &[PathBuf], theme: &str, made: std::time::SystemTime) -> bool {
         }
     };
     for t in chain(roots, theme) {
-        for base in theme_paths(roots, &t) {
+        for base in theme_folders(roots, &t) {
             walk_dirs(&base, &mut std::collections::HashSet::new(), &mut check);
         }
     }

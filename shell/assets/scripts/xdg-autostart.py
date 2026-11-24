@@ -327,7 +327,12 @@ class Refused(Exception):
 
 
 def valid_file(name):
-    if not isinstance(name, str) or not FILE_RE.fullmatch(name) or ".." in name:
+    """Any plain file name the list shows: one folder level, no "/", no NUL
+    or control characters, not hidden, ending in .desktop ("YouTube
+    Music.desktop", "Some App (beta).desktop" were listed and always
+    refused; audit #125)"""
+    if not isinstance(name, str) or os.path.basename(name) != name or name in (".", "..") or name.startswith(".") \
+            or not name.endswith(".desktop") or len(name) > 255 or any(ord(c) < 32 or c == "\x7f" for c in name):
         raise Refused("Not a login item file name: " + repr(name)[:80])
     return name
 

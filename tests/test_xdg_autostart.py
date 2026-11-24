@@ -316,3 +316,18 @@ class Autostart(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LoginItemNames(unittest.TestCase):
+    """Every plain .desktop name the list shows can be changed (audit #125)"""
+
+    def test_ordinary_names_are_accepted_and_paths_are_not(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("xdg_autostart_names", SCRIPT)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        for ok in ("YouTube Music.desktop", "Some App (beta).desktop", "_foo.desktop"):
+            self.assertEqual(m.valid_file(ok), ok)
+        for bad in ("../x.desktop", "a/b.desktop", ".hidden.desktop", "x.txt", "a\nb.desktop", ""):
+            with self.assertRaises(m.Refused):
+                m.valid_file(bad)

@@ -35,6 +35,16 @@ def theme_paths(name):
     return [os.path.join(r, name) for r in ROOTS if os.path.isfile(os.path.join(r, name, "index.theme"))]
 
 
+def theme_folders(name):
+    """Where a theme's icons are: once its index.theme is in any root, its
+    folder in every root (~/.local/share/icons/hicolor has no index.theme
+    of its own, and Steam's, web apps' and AppImages' icons there got the
+    generic icon; audit #124)"""
+    if not theme_paths(name):
+        return []
+    return [os.path.join(r, name) for r in ROOTS if os.path.isdir(os.path.join(r, name))]
+
+
 def inherits(name):
     for p in theme_paths(name):
         try:
@@ -105,7 +115,7 @@ def fresh(cache, themes):
     # on each start. stat, not lstat: a folder reached through a link
     # (MacTahoe-dark/apps/scalable -> ../../MacTahoe/apps/scalable) changes
     # in its target, not in the link. Broken links are never walked into.
-    dirs = [d for t in themes for p in theme_paths(t) for d, _sub, _files in walk_theme(p)]
+    dirs = [d for t in themes for p in theme_folders(t) for d, _sub, _files in walk_theme(p)]
     dirs += [d for d, _sub, _files in walk_theme('/usr/share/pixmaps')] if os.path.isdir('/usr/share/pixmaps') else []
     for d in dirs:
         try:
@@ -123,7 +133,7 @@ def main():
         return
     best = {}  # name -> (theme rank, -score, path): the first theme in the chain wins, then the best file
     for rank, t in enumerate(chain(theme)):
-        for base in theme_paths(t):
+        for base in theme_folders(t):
             for dirpath, _dirs, files in walk_theme(base):
                 for f in files:
                     if not f.endswith((".svg", ".png")):

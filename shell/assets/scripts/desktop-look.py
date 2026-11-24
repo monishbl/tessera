@@ -98,7 +98,11 @@ class Paths:
         self.cfg = env_dir("XDG_CONFIG_HOME", ".config")
         self.state_dir = os.path.join(env_dir("XDG_STATE_HOME", ".local/state"), "tessera")
         self.state = os.path.join(self.state_dir, "desktop-look.json")
+        # (yours, which every shell's starship reads: Tessera's prompt never
+        # goes here any more, only into its own file below, used where
+        # Tessera starts starship; audit #121)
         self.starship = os.path.join(self.cfg, "starship.toml")
+        self.starship_ours = os.path.join(self.cfg, "tessera", "starship.toml")
         # (the same prompt without Nerd Font icons, for terminals that draw
         # them as boxes: editors' own terminals, fish_ours picks it)
         self.starship_plain = os.path.join(self.cfg, "tessera", "starship-plain.toml")
@@ -221,6 +225,13 @@ def without_comments(text):
     return "\n".join(l.split("#", 1)[0] for l in strip_block(text).splitlines())
 
 
+def target(path):
+    """Where PATH's text really is: a dotfile kept as a link (stow, chezmoi)
+    is written through, the link staying a link (os.replace over it made it
+    a plain file, and the repo's copy stopped being the one in use; audit #120)"""
+    return os.path.realpath(path) if os.path.islink(path) else path
+
+
 class Doer:
     """Changes files, or (a dry run) only says what it would change"""
 
@@ -229,6 +240,7 @@ class Doer:
         self.did = []
 
     def write(self, path, text, what):
+        path = target(path)
         if read(path) == text:
             return False
         self.did.append(what)
@@ -244,6 +256,7 @@ class Doer:
 
     def backup(self, path):
         """<file>.pre-tessera, once (the first copy is the one that's yours)"""
+        path = target(path)
         if os.path.exists(path) and not os.path.exists(path + BACKUP):
             self.did.append("kept " + home(path) + " as " + os.path.basename(path) + BACKUP)
             if not self.dry:
@@ -258,7 +271,7 @@ class Doer:
     def restore(self, path, what):
         self.did.append(what)
         if not self.dry:
-            os.replace(path + BACKUP, path)
+            os.replace(target(path) + BACKUP, target(path))
 
 
 def home(path):
@@ -430,7 +443,23 @@ def fish_prompt_owner(p):
 PLAIN_TERMINALS = ("vscode", "zed")
 
 
-def fish_ours(starship, plain_path=None):
+def give_back_starship(p, state, d):
+    """Your ~/.config/starship.toml as it was before an older Tessera wrote
+    its prompt there: the .pre-tessera copy back, or Tessera's removed.
+    One you changed since stays, and is said (audit #121, #122)"""
+    cur = read(p.starship)
+    if cur is None or not cur.startswith(HEADER):
+        return []
+    if state.get("starship") and sha(cur) != state.get("starship") and not os.path.exists(p.starship_ours):
+        return ["starship.toml: you changed Tessera's prompt there, so it's left as it is"]
+    if os.path.exists(p.starship + BACKUP):
+        d.restore(p.starship, "put back your starship.toml")
+    else:
+        d.remove(p.starship, "removed Tessera's prompt from your starship.toml")
+    return []
+
+
+def fish_ours(starship, plain_path=None, ours_path=None):
     lines = [HEADER + " (" + WHERE + "):",
              "# no greeting" + (", and the starship prompt" if starship else "") + ". Tessera writes this file; turning the look off removes it.",
              "if status is-interactive",
@@ -439,6 +468,8 @@ def fish_ours(starship, plain_path=None):
              "    end"]
     if starship:
         lines += ["    if test \"$TERM\" != linux; and command -q starship"]
+        if ours_path:
+            lines += ["        set -gx STARSHIP_CONFIG " + shlex.quote(ours_path)]
         if plain_path:
             lines += ["        if test \"$TESSERA_PROMPT\" = plain; or begin; test \"$TESSERA_PROMPT\" != nerd",
                       "                and begin; contains -- \"$TERM_PROGRAM\" " + " ".join(PLAIN_TERMINALS) + "; or test \"$TERMINAL_EMULATOR\" = JetBrains-JediTerm; end",
@@ -875,22 +906,23 @@ def apply(p, state, d):
     notes += apply_apps(p, state, d, mode)
     nerd = nerd_font()
 
-    # starship.toml
+    # starship.toml: Tessera's own (tessera/starship.toml), never yours
     text = starship_toml(mode, state.get("accent", ""), nerd)
-    cur = read(p.starship)
-    if cur is not None and cur.startswith(HEADER) and state.get("starship") and sha(cur) != state.get("starship"):
-        notes.append("starship.toml: your changes to it are kept")
+    # (an older Tessera's copy in your starship.toml: yours back, unless you
+    # changed it since)
+    notes += give_back_starship(p, state, d)
+    cur = read(p.starship_ours)
+    if cur is not None and state.get("starship") and sha(cur) != state.get("starship"):
+        notes.append("tessera/starship.toml: your changes to it are kept")
     else:
-        if cur is not None and not cur.startswith(HEADER):
-            d.backup(p.starship)
-        d.write(p.starship, text, "wrote " + home(p.starship))
+        d.write(p.starship_ours, text, "wrote " + home(p.starship_ours))
         state["starship"] = sha(text)
     write_plain(p, d, mode, state.get("accent", ""), nerd)
 
     # fish
     if which("fish") or os.path.isdir(p.fish) or shell == "fish":
         owner = fish_prompt_owner(p)
-        d.write(p.fish_ours, fish_ours(owner is None, p.starship_plain if nerd else None), "wrote " + home(p.fish_ours))
+        d.write(p.fish_ours, fish_ours(owner is None, p.starship_plain if nerd else None, p.starship_ours), "wrote " + home(p.fish_ours))
         conf = read(p.fish_conf)
         if conf is not None and fish_needs_quiet(conf):
             add_block(d, p.fish_conf, FISH_QUIET)
@@ -933,14 +965,14 @@ def restore(p, state, d):
     notes = []
     restore_apps(p, state, d)
     created = set(state.get("created", []))
-    cur = read(p.starship)
-    if cur is not None and cur.startswith(HEADER):
-        if os.path.exists(p.starship + BACKUP):
-            d.restore(p.starship, "put back your starship.toml")
-        else:
-            d.remove(p.starship, "removed Tessera's starship.toml")
+    notes += give_back_starship(p, state, d)
+    cur = read(p.starship_ours)
+    if cur is not None and state.get("starship") and sha(cur) != state.get("starship"):
+        # (you tuned Tessera's prompt: kept beside, never deleted; audit #122)
+        d.write(p.starship_ours + ".tessera-edited", cur, "kept your changed prompt as " + home(p.starship_ours) + ".tessera-edited")
+        d.remove(p.starship_ours, "removed Tessera's starship.toml")
     elif cur is not None:
-        notes.append("starship.toml isn't Tessera's any more: left as it is")
+        d.remove(p.starship_ours, "removed Tessera's starship.toml")
     d.remove(p.fish_ours, "removed " + home(p.fish_ours))
     if os.path.exists(p.starship_plain):
         d.remove(p.starship_plain, "removed " + home(p.starship_plain))
@@ -957,7 +989,7 @@ def restore(p, state, d):
 
 
 def status(p, state):
-    cur = read(p.starship)
+    cur = read(p.starship_ours)
     return {
         "on": state.get("on", True) is not False,
         "applied": bool(state.get("starship")) or os.path.exists(p.fish_ours) or os.path.exists(p.kitty_ours) or bool(state.get("kde")),
@@ -988,10 +1020,18 @@ def main(argv=None):
     if a.command == "status":
         out = status(p, state)
     elif a.command == "refresh":
-        cur = read(p.starship)
+        # (an install from before Tessera's prompt had its own file: moved
+        # once, at the first refresh after the update, so every install gets
+        # it; audit #121)
+        if state.get("on", True) is not False and read(p.starship_ours) is None and (read(p.starship) or "").startswith(HEADER):
+            try:
+                state["notes"] = apply(p, state, d)
+            except OSError:
+                pass
+        cur = read(p.starship_ours)
         if state.get("on", True) is not False and cur is not None and cur.startswith(HEADER) and state.get("starship") == sha(cur):
             text = starship_toml(current_mode(p, state), state.get("accent", ""), nerd_font())
-            d.write(p.starship, text, "wrote " + home(p.starship))
+            d.write(p.starship_ours, text, "wrote " + home(p.starship_ours))
             state["starship"] = sha(text)
         if state.get("on", True) is not False:
             write_plain(p, d, current_mode(p, state), state.get("accent", ""), nerd_font())
@@ -1004,21 +1044,36 @@ def main(argv=None):
         out = {"did": [], "notes": ["Tessera's desktop look is off (" + WHERE + ")" if state.get("on", True) is False else "Set up before"]}
         state["migrated"] = True
     elif a.command in ("install", "migrate", "on"):
-        notes = apply(p, state, d)
+        # (stopped part-way, a read-only folder or a full disk: what was
+        # changed so far is still saved, with what it was before, so off
+        # can put it back; it was lost; audit #123)
+        try:
+            notes = apply(p, state, d)
+            err = ""
+        except OSError as e:
+            notes, err = [], "Stopped part-way (" + str(e) + "): what was changed is recorded, and turning the look off puts it back"
         state["on"] = True
         state["migrated"] = True
         state["notes"] = notes
         out = {"did": d.did, "notes": notes}
+        if err:
+            out["error"] = err
     elif a.command == "off":
-        notes = restore(p, state, d)
+        try:
+            notes = restore(p, state, d)
+            err = ""
+        except OSError as e:
+            notes, err = [], "Stopped part-way (" + str(e) + "): turn the look off again once that's fixed"
         state["on"] = False
         state["notes"] = []
         out = {"did": d.did, "notes": notes}
+        if err:
+            out["error"] = err
     if not a.dry_run and a.command != "status":
         try:
             save_state(p, state)
         except OSError as e:
-            out["error"] = "Couldn't save " + p.state + ": " + str(e)
+            out["error"] = (out.get("error", "") + "; " if out.get("error") else "") + "Couldn't save " + p.state + ": " + str(e)
     out.setdefault("on", state.get("on", True) is not False)
     if a.text:
         for line in ([("would: " if a.dry_run else "") + x for x in out.get("did", [])] if a.dry_run else []) + out.get("notes", []):
