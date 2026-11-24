@@ -68,6 +68,9 @@ pub fn say(style: Style, m: &Model) -> (String, bool) {
     }
     let s = match style {
         Style::Text if m.busy => "logging in…".to_string(),
+        // (PAM's next question after the password, a new one or a code: the
+        // text style has no placeholder, so it's said here; audit #90)
+        Style::Text if !m.question.is_empty() => format!("{}, then Enter", m.question.trim_end_matches([':', ' '])),
         Style::Text if !m.message.is_empty() => m.message.clone(),
         Style::Text if m.mock => "preview: the password is tessera, Esc quits".into(),
         Style::Text => "Enter to log in".into(),
@@ -295,6 +298,7 @@ mod tests {
         m.question = "Verification code".into();
         assert_eq!(placeholder(Style::Glass, &m), "Verification code");
         assert_eq!(placeholder(Style::Text, &m), "");
+        assert_eq!(say(Style::Text, &m).0, "Verification code, then Enter"); // (audit #90)
         m.question.clear();
         m.busy = true;
         assert_eq!(placeholder(Style::Material, &m), "Logging in…");

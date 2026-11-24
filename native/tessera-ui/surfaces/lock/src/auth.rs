@@ -256,6 +256,9 @@ pub fn parse_result(rest: &str) -> Outcome {
         Ok(PAM_SUCCESS) => Outcome::Success,
         // (asking failed: PAM's own trouble, not a wrong answer)
         Ok(PAM_ABORT) | Ok(PAM_SYSTEM_ERR) | Ok(PAM_BUF_ERR) | Ok(PAM_CONV_ERR) | Ok(PAM_SERVICE_ERR) | Ok(PAM_AUTHINFO_UNAVAIL) => Outcome::Error(text.to_string()),
+        // (the account itself, not the password: PAM's own words, never
+        // "Incorrect password" for the right one; audit #91)
+        Ok(PAM_PERM_DENIED) | Ok(PAM_ACCT_EXPIRED) => Outcome::Error(text.to_string()),
         Ok(_) => Outcome::Failure(text.to_string()),
         Err(_) => Outcome::Error(rest.to_string()),
     }
@@ -268,6 +271,9 @@ const PAM_SERVICE_ERR: i32 = 3;
 const PAM_SYSTEM_ERR: i32 = 4;
 const PAM_BUF_ERR: i32 = 5;
 const PAM_AUTHINFO_UNAVAIL: i32 = 9;
+const PAM_PERM_DENIED: i32 = 6;
+const PAM_NEW_AUTHTOK_REQD: i32 = 12;
+const PAM_ACCT_EXPIRED: i32 = 13;
 const PAM_CONV_ERR: i32 = 19;
 const PAM_ABORT: i32 = 26;
 const PAM_PROMPT_ECHO_OFF: c_int = 1;
@@ -394,6 +400,13 @@ pub fn helper_main(args: &[String]) -> i32 {
     let mut r = unsafe { pam_authenticate(h, 0) };
     if r == PAM_SUCCESS {
         r = unsafe { pam_acct_mgmt(h, 0) };
+        // (an expired password is still the right one: the screen unlocks,
+        // and says to change it; it said "Incorrect password" for good;
+        // audit #91)
+        if r == PAM_NEW_AUTHTOK_REQD {
+            say("INFO", "Your password has expired: change it soon (passwd in a terminal)");
+            r = PAM_SUCCESS;
+        }
     }
     let text = unsafe {
         let p = pam_strerror(h, r);
@@ -417,6 +430,8 @@ mod tests {
         assert_eq!(parse_result("7 Authentication failure"), Outcome::Failure("Authentication failure".into()));
         assert_eq!(parse_result("9 Authentication service cannot retrieve authentication info"), Outcome::Error("Authentication service cannot retrieve authentication info".into()));
         assert!(matches!(parse_result("nonsense"), Outcome::Error(_)));
+        // (the account, not the password: never "Incorrect password"; audit #91)
+        assert_eq!(parse_result("13 User account has expired"), Outcome::Error("User account has expired".into()));
     }
 
     #[test]

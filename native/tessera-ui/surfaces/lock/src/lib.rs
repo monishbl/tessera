@@ -314,10 +314,17 @@ impl Default for Reader {
     }
 }
 
+/// Face misses allowed in one lock (the reader's is 6 too)
+const FACE_MAX_MISSES: u32 = 6;
+
 #[derive(Default)]
 struct FaceCam {
     text: String,
     tries: u32,
+    /// misses since this lock (or the last wake): past FACE_MAX_MISSES the
+    /// camera rests until the password, a wake or a new lock; moving the
+    /// pointer gave three more tries every 3 s for ever (audit #92)
+    misses: u32,
     broken: bool,
     armed: bool,
     stopped_at: i64,
@@ -1489,6 +1496,7 @@ impl Lock {
 
     fn face_wanted(&self, st: &State) -> bool {
         self.real && self.held && !self.leaving && !self.standby(st) && self.face_on && self.face.armed && !self.face.broken && self.face.tries < 3
+            && self.face.misses < FACE_MAX_MISSES
     }
 
     /// After anything changed: start or stop the reader, the camera, the
@@ -1574,12 +1582,13 @@ impl Lock {
         if !self.face.armed && now - self.held_at > 1000 {
             self.face.armed = true;
             self.face.tries = 0;
+            self.face.misses = 0;
         }
-        if self.face.tries >= 3 && now - self.face.stopped_at > 3000 {
+        if self.face.tries >= 3 && now - self.face.stopped_at > 3000 && self.face.misses < FACE_MAX_MISSES {
             self.face.tries = 0;
             self.face.broken = false;
         }
-        if back {
+        if back && self.face.misses < FACE_MAX_MISSES {
             // (the reader's misses last until the next wake or unlock)
             self.face.tries = 0;
         }
@@ -1774,12 +1783,14 @@ impl Lock {
                 match out {
                     Outcome::Success => {
                         self.face.tries = 0;
+                        self.face.misses = 0;
                         self.face.text.clear();
                         self.face.matched = true;
                         self.unlock_after_match(st);
                     }
                     Outcome::Failure(_) => {
                         self.face.tries += 1;
+                        self.face.misses += 1;
                         // (the island shows the miss 1.3 s, over the next try's start)
                         self.face.missed = true;
                         let to = Self::send(st);
@@ -2346,6 +2357,7 @@ impl Part for Lock {
                     if self.held {
                         self.face.armed = true;
                         self.face.tries = 0;
+                        self.face.misses = 0;
                         self.face.broken = false;
                     }
                 }

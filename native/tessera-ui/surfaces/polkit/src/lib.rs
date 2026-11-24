@@ -308,6 +308,14 @@ impl Polkit {
             }
         }
         let Some(w) = &self.win else { return };
+        // (whose password the helper asks for: the request's own user, which
+        // is root or another admin when you aren't one; the dialog named you
+        // every time; audit #93)
+        if let Some(r) = self.queue.first().filter(|_| !self.preview) {
+            if !r.user.is_empty() {
+                w.ui.set_user(r.user.clone().into());
+            }
+        }
         let fw = self.preview_finger || (!self.preview && finger_wait(&self.ask, self.waiting));
         let message = if self.preview { PREVIEW.to_string() } else { self.queue.first().map(|r| message_of(&r.message)).unwrap_or_default() };
         let hero = if fw { if self.finger_missed { "softBurst" } else { "clover8" } } else if !self.error.is_empty() { "softBurst" } else { "cookie9" };
