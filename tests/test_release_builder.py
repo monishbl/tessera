@@ -304,6 +304,14 @@ class Health(unittest.TestCase):
         self.assertEqual(self.pr.alert_health([s], {}, now_t=t0 + 3700), ["wait:tessera-ui-beta/" + "a" * 40])
         self.assertEqual(self.pr.STATE["health"]["waiting"][0]["set"], "tessera-ui-beta/" + "a" * 12)
 
+    def test_a_set_newer_than_this_publisher_is_refused_and_said(self):
+        # (audit #9: an older copy refused every set, quietly, for days)
+        with self.assertRaises(self.pr.TooNew) as e:
+            self.pr.fetch_and_check({"format": self.pr.SET_FORMAT + 1, "tag": "tessera-ui-beta"})
+        self.assertIn("install-publisher.sh", str(e.exception))
+        self.pr.check_format({"tag": "tessera-ui-beta"})  # (none: format 1)
+        self.pr.check_format({"format": self.pr.SET_FORMAT})
+
     def test_network_failures_are_tried_again(self):
         n = []
 
@@ -322,6 +330,38 @@ class Health(unittest.TestCase):
         t = (ROOT / "tools/release-builder/tessera-publish.timer").read_text()
         self.assertIn("OnUnitActiveSec=2min", t)
         self.assertIn("OnStartupSec=", t)
+
+
+class Stalled(unittest.TestCase):
+    """server1 says a set nobody publishes (audit #8: every alert was the
+    publisher's, so a publisher that wasn't running said nothing)"""
+
+    def test_a_set_ready_for_hours_is_said_once_through_the_hook(self):
+        import time as _t
+        with tempfile.TemporaryDirectory() as t:
+            rb = load("tessera_release_builder_stall", BUILDER)
+            root = Path(t, "tessera-release")
+            rb.ROOT, rb.OUT = str(root), str(root / "out")
+            rb.CACHE, rb.LOG, rb.STATUS = str(Path(t, "c")), str(Path(t, "c/r.log")), str(Path(t, "c/r.json"))
+            hook = Path(t, "alert")
+            hook.write_text("#!/bin/sh\n")
+            hook.chmod(0o755)
+            rb.ALERT_HOOK = str(hook)
+            tree = "b" * 40
+            d = root / "out/tessera-ui-beta" / tree
+            d.mkdir(parents=True)
+            (d / "READY").write_text(json.dumps({"format": rb.SET_FORMAT, "name": "beta", "tag": "tessera-ui-beta", "tree": tree,
+                                                 "ready": "2026-11-19T07:00:00+0530"}))
+            t0 = _t.mktime(_t.strptime("2026-11-19T07:00:00", "%Y-%m-%dT%H:%M:%S"))
+            calls = []
+            run = lambda cmd, **k: calls.append(cmd)
+            self.assertEqual(rb.alert_stalled(now_t=t0 + 3600, run=run), [])
+            self.assertEqual(rb.alert_stalled(now_t=t0 + 7 * 3600, run=run), [f"tessera-ui-beta/{tree}"])
+            self.assertEqual(calls[0][0], str(hook))
+            self.assertIn("install-publisher.sh", calls[0][2])
+            self.assertEqual(rb.alert_stalled(now_t=t0 + 8 * 3600, run=run), [])  # (once)
+            # (its READY written with the format the publisher checks)
+            self.assertIn('"format": SET_FORMAT', BUILDER.read_text())
 
 
 class Trigger(unittest.TestCase):

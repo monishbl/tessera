@@ -106,6 +106,16 @@ HOME = os.path.expanduser("~")
 ROOT = os.environ.get("TESSERA_RELEASE_ROOT") or os.path.join(HOME, "tessera-release")
 SRC = os.path.join(ROOT, "src")
 OUT = os.path.join(ROOT, "out")
+# What a set's READY can hold (its "format"): 1 archives and the manifest,
+# 2 patches and bundles too. The laptop's publisher refuses a set newer
+# than it knows and says to reinstall it (audit #9: an older copy refused
+# every set, one at a time, for days)
+SET_FORMAT = 2
+# Nothing else watches the publisher (audit #8): a set READY this long is
+# said once through ALERT_HOOK (any program: mail, ntfy… its arguments a
+# title and a body), and always in the log
+STALL_HOURS = 6
+ALERT_HOOK = os.environ.get("TESSERA_RELEASE_ALERT") or os.path.join(os.path.expanduser("~"), "bin", "tessera-release-alert")
 BUILT = os.path.join(ROOT, "built")
 TARGETS = os.path.join(ROOT, "target")
 LOGS = os.path.join(ROOT, "logs")
@@ -591,7 +601,7 @@ def make_set(t, tree, variants):
     write_json(os.path.join(dest, f"tessera-ui-{tree}.manifest.json"), manifest)
     files = {n: {"size": os.path.getsize(os.path.join(dest, n)), "sha256": sha256_of(os.path.join(dest, n))}
              for n in sorted(os.listdir(dest))}
-    ready = {"name": t["name"], "kind": t["kind"], "tag": tag, "channel": t["channel"], "tree": tree,
+    ready = {"format": SET_FORMAT, "name": t["name"], "kind": t["kind"], "tag": tag, "channel": t["channel"], "tree": tree,
              "commit": commit, "version": version, "ready": now(), "files": files, "patches": sorted(patches)}
     write_json(os.path.join(dest, "READY"), ready)
     log(f"{t['name']}: ready for the laptop to sign and publish: {dest}")
@@ -685,7 +695,7 @@ def make_bundle(t, tree, variants):
         shutil.rmtree(work, ignore_errors=True)
     files = {n: {"size": os.path.getsize(os.path.join(dest, n)), "sha256": sha256_of(os.path.join(dest, n))}
              for n in sorted(os.listdir(dest))}
-    ready = {"type": "bundle", "name": t["name"], "kind": t["kind"], "tag": tag, "channel": t["channel"], "tree": tree,
+    ready = {"format": SET_FORMAT, "type": "bundle", "name": t["name"], "kind": t["kind"], "tag": tag, "channel": t["channel"], "tree": tree,
              "commit": commit, "version": version, "ready": now(), "files": files, "patches": [],
              "latest": t["kind"] == "branch"}
     write_json(os.path.join(dest, "READY"), ready)
@@ -743,6 +753,44 @@ def sets(kind="READY"):
 
 def list_ready():
     return [dict(info, dir=path) for _, _, path, info in sorted(sets(), key=lambda s: s[3].get("ready", ""))]
+
+
+def alert_stalled(now_t=None, run=subprocess.run):
+    """Sets READY more than STALL_HOURS: said in the log, and once each
+    through ALERT_HOOK when there is one (it isn't the publisher's to say:
+    it may not be running at all). Returns the sets said."""
+    now_t = time.time() if now_t is None else now_t
+    seen_file = os.path.join(ROOT, "alerted.json")
+    try:
+        with open(seen_file) as f:
+            seen = json.load(f)
+    except (OSError, ValueError):
+        seen = {}
+    said, waiting = [], set()
+    for tag, tree, _, info in sets():
+        key = f"{tag}/{tree}"
+        waiting.add(key)
+        try:
+            # (now() is local time, as the publisher reads it too)
+            ready_t = time.mktime(time.strptime(str(info.get("ready", ""))[:19], "%Y-%m-%dT%H:%M:%S"))
+        except (ValueError, OverflowError):
+            continue
+        hours = (now_t - ready_t) / 3600
+        if hours < STALL_HOURS or key in seen:
+            continue
+        body = (f"{info.get('name', tag)} ({tree[:12]}) has waited {int(hours)} h to be signed and published. "
+                f"Is tessera-publish.timer running on the signing laptop (tools/release-builder/install-publisher.sh), with its signing key?")
+        log(f"stalled: {body}")
+        if os.access(ALERT_HOOK, os.X_OK):
+            try:
+                run([ALERT_HOOK, "A Tessera release is stuck", body], capture_output=True, timeout=60)
+            except (OSError, subprocess.SubprocessError) as e:
+                log(f"stalled: {ALERT_HOOK} failed: {e}")
+        seen[key] = now()
+        said.append(key)
+    seen = {k: v for k, v in seen.items() if k in waiting}
+    write_json(seen_file, seen)
+    return said
 
 
 def mark_published(tag, tree):
@@ -897,6 +945,7 @@ def main(argv=None):
             failed.append(msg)
             target_result(t["name"], result="failed", why=msg)
     prune()
+    alert_stalled()
     # (finished: when the last build ended; checked: every run)
     end = {"checked": now(), "step": None, "progress": None, "pid": None, "ready": [f"{t}/{tr}" for t, tr, _, _ in sets()]}
     if STATE.get("state") != "idle":
