@@ -527,8 +527,21 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
     let mut u2 = u.clone();
     u2["installing"] = feed(cx)["needsInstalling"].clone();
     let x = status(&u2);
-    let mut row = Row::new(x.title).icon(x.icon).detail(x.detail);
-    if let Some((label, act)) = x.button {
+    let mut row = Row::new(x.title.clone()).icon(x.icon).detail(x.detail.clone());
+    if x.button.as_ref().is_some_and(|(_, a)| a == "reboot") && cx.local_b("about.rebootAsk") {
+        // (asked once: one click on the page's usual button restarted the
+        // computer at once, with the open work; audit #113)
+        let id = cx.on(|cx, a| {
+            cx.local_set("about.rebootAsk", false);
+            if a.i == 0 {
+                run(cx, "reboot");
+            }
+        });
+        row = Row::new("Restart now?").icon(x.icon).detail("Open apps close, and work that isn't saved is lost.").buttons(vec![btn("Restart now").style(1), btn("Not now")], id);
+    } else if let Some((label, _)) = x.button.clone().filter(|(_, a)| a == "reboot") {
+        let id = cx.on(|cx, _| cx.local_set("about.rebootAsk", true));
+        row = row.button(label, id).primary().busy(x.busy).enabled(x.enabled && !x.busy);
+    } else if let Some((label, act)) = x.button {
         let id = cx.on(move |cx, _| run(cx, &act));
         row = row.button(label, id).primary().busy(x.busy).enabled(x.enabled && !x.busy);
     }

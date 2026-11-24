@@ -274,7 +274,11 @@ fn wifi_list_rows(cx: &mut Ctx, nets: &[Value], from: usize, to: usize, first: b
                 }
                 Some("share") => share(cx, &name),
                 Some("copy") => copy(&name),
-                Some("forget") => ask(cx, "wifiForget", json!([name])),
+                Some("forget") => {
+                    if cx.confirmed(&format!("wifiForget:{name}"), format!("Choose Forget network again to remove {name} and its saved password")) {
+                        ask(cx, "wifiForget", json!([name]))
+                    }
+                }
                 _ => {}
             }
         });
@@ -643,7 +647,11 @@ pub fn network(cx: &mut Ctx, p: &mut Page) {
         for k in &known {
             let (ssid, name) = (s(&k["ssid"]), s(&k["name"]));
             let ss = ssid.clone();
-            let id = cx.on(move |cx, _| ask(cx, "wifiForget", json!([ss])));
+            let id = cx.on(move |cx, _| {
+                if cx.confirmed(&format!("wifiForget:{ss}"), format!("Press Forget again to remove {ss} and its saved password")) {
+                    ask(cx, "wifiForget", json!([ss]))
+                }
+            });
             rows.push(Row::new(ssid.clone()).detail(if name != ssid { format!("Saved as {name}") } else { String::new() }).button("Forget", id).danger());
         }
         let fe = s(&wifi["forgetError"]);
@@ -737,7 +745,11 @@ pub fn network(cx: &mut Ctx, p: &mut Page) {
             .width(220.0));
 
         let history: Vec<Value> = stt["history"].as_array().cloned().unwrap_or_default();
-        let clear = cx.on(|cx, _| ask(cx, "speedClear", Value::Null));
+        let clear = cx.on(|cx, _| {
+            if cx.confirmed("speedClear", "Press Clear history again to remove every result") {
+                ask(cx, "speedClear", Value::Null)
+            }
+        });
         let g = p.group("History");
         g.footer(if history.is_empty() { "" } else { "The last 10 tests." });
         g.row(Row::new("No tests yet").visible(history.is_empty()).detail("Results appear here after you test your speed"));
@@ -810,7 +822,12 @@ fn bt_list(cx: &mut Ctx, bt: &Bluetooth, which: &str, extras: &Value, empty: Str
                 Some("trust") => return ask(cx, "btTrust", json!([addr, true])),
                 Some("untrust") => return ask(cx, "btTrust", json!([addr, false])),
                 Some("copy") => return copy(&addr),
-                Some("forget") => "btForget",
+                Some("forget") => {
+                    if !cx.confirmed(&format!("btForget:{addr}"), "Choose Forget device again to unpair it") {
+                        return;
+                    }
+                    "btForget"
+                }
                 _ => return,
             };
             ask(cx, what, json!([addr]));

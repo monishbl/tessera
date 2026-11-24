@@ -291,7 +291,12 @@ pub fn power(cx: &mut Ctx, p: &mut Page) {
                 let name = if kind == "proc" { None } else { entries.and_then(|e| e.entry_for(ident)).map(|e| e.name.clone()).filter(|n| !n.is_empty()) };
                 let quit = if kind != "proc" {
                     let ident = ident.to_string();
-                    Some(cx.on(move |cx, _| cx.ask("system", "quitApp", json!([ident.clone()]))))
+                    Some(cx.on(move |cx, _| {
+                        // (its unsaved work goes with it: asked first; audit #114)
+                        if cx.confirmed(&format!("quitApp:{ident}"), "Press Quit again: work that isn't saved in it is lost") {
+                            cx.ask("system", "quitApp", json!([ident.clone()]))
+                        }
+                    }))
                 } else {
                     None
                 };

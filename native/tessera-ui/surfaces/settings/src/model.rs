@@ -237,6 +237,21 @@ impl<'a> Ctx<'a> {
     pub fn go(&mut self, page: &str, target: &str) {
         self.out.go = Some((page.to_string(), target.to_string()));
     }
+    /// A button that loses something asks first: the first press says what
+    /// it will do ("Press Forget again to …"), a second within six seconds
+    /// does it. True on that second press (audit #114)
+    pub fn confirmed(&mut self, key: &str, ask: impl Into<String>) -> bool {
+        let k = format!("confirm.{key}");
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as f64).unwrap_or(0.0);
+        let at = self.local.get(&k).and_then(Value::as_f64).unwrap_or(0.0);
+        if at > 0.0 && now - at < 6000.0 {
+            self.local.remove(&k);
+            return true;
+        }
+        self.local.insert(k, Value::from(now));
+        self.toast(ask, None);
+        false
+    }
     pub fn toast(&mut self, text: impl Into<String>, undo: Option<Action>) {
         self.out.toast = Some((text.into(), undo));
     }
@@ -315,6 +330,12 @@ impl<'a> Ctx<'a> {
     pub fn once(&mut self, key: &str, f: impl FnOnce() -> Value + Send + 'static) -> Value {
         if let Some(v) = self.local.get(key) {
             return v.clone();
+        }
+        // (noted, so opening Settings again reads it afresh: it was kept for
+        // the whole shell session, a new wallpaper or icon theme never
+        // showed; audit #111)
+        if let Some(o) = self.local.entry(ONCE_KEYS.to_string()).or_insert_with(|| serde_json::json!({})).as_object_mut() {
+            o.insert(key.to_string(), Value::Bool(true));
         }
         self.spawn(key, f);
         Value::Null
@@ -1326,6 +1347,9 @@ pub struct Pages {
     recent: Vec<String>,
     shown: String,
 }
+
+/// `local`'s note of the keys `once` read, cleared when Settings opens again
+pub const ONCE_KEYS: &str = "once.keys";
 
 pub const KEPT: usize = 8;
 

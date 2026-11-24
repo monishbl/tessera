@@ -195,7 +195,9 @@ pub fn wallpaper(cx: &mut Ctx, p: &mut Page) {
         let thumbs: Vec<Opt> = list
             .iter()
             .map(|f| {
-                let o = Opt::new("").on(*f == path).id(f.clone());
+                // (the file's name, for a screen reader: every tile was "Wallpaper"; audit #117)
+                let name = std::path::Path::new(f).file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let o = Opt::new(name).on(*f == path).id(f.clone());
                 match cx.picture(f, 320, 180) {
                     Some(i) => o.image(i),
                     None => o,

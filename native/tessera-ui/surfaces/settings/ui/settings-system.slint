@@ -72,6 +72,15 @@ component FpSheet inherits Rectangle {
     animate progress { duration: closing ? 200ms : 300ms; easing: closing ? cubic-bezier(0.3333, 0, 0.6667, 0) : cubic-bezier(0.3333, 1, 0.6667, 1); }
     background: (Theme.dark ? #000000 : #000000).with-alpha((Theme.dark ? 0.5 : 0.3) * progress);
     TouchArea {}
+    // (a click cleared a control's focus: Esc is this sheet's again, after
+    // the window's keys took it; audit #196)
+    property <int> refocus-seq: SBus.refocus-seq;
+    changed refocus-seq => { refocus.running = true; }
+    refocus := Timer {
+        interval: 30ms;
+        running: false;
+        triggered => { self.running = false; keys.focus(); }
+    }
     // Esc: Cancel (or Done), the sheet's last button (FingerprintSheet.qml 118–122)
     keys := FocusScope {
         // (a click goes to what's under it: keys only; it covered link rows and choices, which then took two clicks or none)

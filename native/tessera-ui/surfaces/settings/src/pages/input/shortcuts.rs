@@ -150,9 +150,24 @@ fn form_action(cx: &Ctx, editing: &Value) -> Option<Value> {
     }
 }
 
+/// A shortcut with no modifier only on keys that type nothing: F1–F24, the
+/// media and XF86 keys, Print, Pause (a bare letter, Space, Return or Escape
+/// bound globally stopped typing everywhere; audit #115)
+fn lone_key_ok(p: &keymap::Parsed) -> bool {
+    if !p.mods.is_empty() {
+        return true;
+    }
+    let k = p.key.as_str();
+    let f = k.strip_prefix('F').or_else(|| k.strip_prefix('f')).is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+    f || k.starts_with("XF86") || ["Print", "Pause", "Scroll_Lock", "Menu", "Help", "Cancel"].contains(&k)
+}
+
 fn validate(cx: &Ctx, editing: &Value, custom: bool) -> String {
     if !rec_complete(cx) {
         return "Choose a key: click the box and press one, or use Edit as text.".into();
+    }
+    if !lone_key_ok(&parse_keys(&rec_result(cx))) {
+        return "Add Super, Ctrl, Alt or Shift: on its own this key would stop typing everywhere.".into();
     }
     if !custom {
         return String::new();
@@ -683,5 +698,20 @@ mod tests {
         assert_eq!(g.iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), ["Your shortcuts", "Apps", "Windows"]);
         assert_eq!(g[1].1.len(), 2);
         assert_eq!(groups(&[])[0].1.len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod lone_keys {
+    use super::{keymap::parse_keys, lone_key_ok};
+
+    #[test]
+    fn a_bare_typing_key_needs_a_modifier() {
+        for k in ["A", "space", "Return", "Escape", "Tab", "BackSpace"] {
+            assert!(!lone_key_ok(&parse_keys(k)), "{k}");
+        }
+        for k in ["F5", "XF86AudioMute", "Print", "SUPER+A", "CTRL+Return"] {
+            assert!(lone_key_ok(&parse_keys(k)), "{k}");
+        }
     }
 }

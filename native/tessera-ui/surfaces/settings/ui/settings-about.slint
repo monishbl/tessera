@@ -23,6 +23,15 @@ component SheetHead inherits VerticalLayout {
     padding-bottom: 8px;
     spacing: 0;
     init => { keys.focus(); }
+    // (a click cleared a control's focus: Esc is this sheet's again, after
+    // the window's keys took it; audit #196)
+    property <int> refocus-seq: SBus.refocus-seq;
+    changed refocus-seq => { refocus.running = true; }
+    refocus := Timer {
+        interval: 30ms;
+        running: false;
+        triggered => { self.running = false; keys.focus(); }
+    }
     keys := FocusScope {
         width: 0;
         height: 0;

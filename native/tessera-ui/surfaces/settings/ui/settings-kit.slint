@@ -134,6 +134,16 @@ export global SBus {
     in-out property <length> ensure-y;
     in-out property <length> ensure-h;
     in-out property <int> ensure-seq;
+    // a focus ring that Tab just showed: where it is (the page scrolls to it
+    // when it's on the page; Tab went below the fold; audit #197)
+    in-out property <length> focus-x;
+    in-out property <length> focus-y;
+    in-out property <length> focus-h;
+    in-out property <int> focus-seq;
+    // a click took focus off a control: the window's keys (or an open
+    // sheet's) get it back, so Esc, Alt+arrows, Ctrl+F and Ctrl+Z still
+    // work; nothing had focus, and they did nothing (audit #196)
+    in-out property <int> refocus-seq;
     // the window's width for the page (custom views size from it)
     in-out property <length> page-width: 600px;
     // the shown page's height (the kept pages sit on top of each other;
@@ -211,6 +221,14 @@ export component SFocusRing inherits Rectangle {
     in property <length> radius: 8px;
     background: transparent;
     property <length> out: Theme.material ? 5px : 4px;
+    changed shown => {
+        if root.shown {
+            SBus.focus-x = root.absolute-position.x;
+            SBus.focus-y = root.absolute-position.y - 12px;
+            SBus.focus-h = root.height + 24px;
+            SBus.focus-seq += 1;
+        }
+    }
     Rectangle {
         x: -root.out;
         y: -root.out;
@@ -299,6 +317,7 @@ export component SSwitch {
         clicked => {
             fs.focus();
             fs.clear-focus();
+            SBus.refocus-seq += 1;
             root.toggled();
         }
     }
@@ -579,6 +598,7 @@ export component SSegmented {
                 clicked => {
                     fs.focus();
                     fs.clear-focus();
+                    SBus.refocus-seq += 1;
                     root.selected(i);
                 }
             }
@@ -863,6 +883,7 @@ export component SButton {
         clicked => {
             fs.focus();
             fs.clear-focus();
+            SBus.refocus-seq += 1;
             root.clicked();
         }
     }
@@ -974,6 +995,16 @@ export component SChip {
         font-weight: 500;
         accessible-role: AccessibleRole.none;
     }
+    // Keyboard: a Tab stop; Space or Enter toggle it (audit #116)
+    fs := FocusScope {
+        enabled: root.enabled;
+        focus-on-click: false;
+        key-pressed(e) => {
+            if !e.repeat && (e.text == " " || e.text == Key.Return) { root.clicked(); return accept; }
+            reject
+        }
+    }
+    SFocusRing { shown: fs.has-focus; radius: Theme.material ? 8px : root.height / 2; }
     ta := TouchArea {
         enabled: root.enabled;
         mouse-cursor: pointer;
@@ -996,7 +1027,25 @@ export component SSwatch inherits Rectangle {
     accessible-checked: o.on;
     accessible-action-default => { clicked(); }
     if o.icon.p != "": SIcon { g: o.icon; fill: true; size: 11px; color: white; }
-    TouchArea {
+    // hover and pressed: a ring around it (it had none; audit #116)
+    Rectangle {
+        x: -3px;
+        y: -3px;
+        width: root.width + 6px;
+        height: root.height + 6px;
+        border-radius: self.height / 2;
+        border-width: sta.pressed || sta.has-hover ? 2px : 0;
+        border-color: root.o.color.with-alpha(sta.pressed ? 0.6 : 0.35);
+    }
+    fs := FocusScope {
+        focus-on-click: false;
+        key-pressed(e) => {
+            if !e.repeat && (e.text == " " || e.text == Key.Return) { root.clicked(); return accept; }
+            reject
+        }
+    }
+    SFocusRing { shown: fs.has-focus; radius: 11px; }
+    sta := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }

@@ -172,6 +172,15 @@ fn answers(cx: &mut Ctx) {
         let err = s(&out["error"]);
         let name = s(&about["name"]);
         let file = s(&about["file"]);
+        // (refused or failed: the change shown before the script ran is
+        // taken back, so the row shows what's really so; audit #112)
+        if !ok && !file.is_empty() {
+            if let Some(mut pm) = cx.local.get("about.login.patch").and_then(Value::as_object).cloned() {
+                if pm.remove(&file).is_some() {
+                    cx.local_set("about.login.patch", Value::Object(pm));
+                }
+            }
+        }
         match about["what"].as_str().unwrap_or("") {
             "set" => {
                 let on = b(&about["on"]);

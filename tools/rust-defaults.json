@@ -121,6 +121,8 @@
  "switcher.enabled": true,
  "today.name": "",
  "update.channel": "",
+ "update.includeAur": false,
+ "update.removeDropped": true,
  "wallpaper.livePauseOnBattery": false,
  "wallpaper.path": "",
  "weather.location": "",

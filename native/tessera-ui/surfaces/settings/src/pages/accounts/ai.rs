@@ -201,7 +201,7 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
         let act = cx.on(move |cx, a| {
             if a.i == 0 {
                 edit(cx, Some(&m2));
-            } else {
+            } else if cx.confirmed(&format!("aiRemove:{}", m2.key), format!("Press Remove again to remove {} and its key", m2.name)) {
                 cx.ask("accounts", "aiRemove", json!([m2.key]));
                 if cx.local_s("ai.editing") == m2.key {
                     edit(cx, None);

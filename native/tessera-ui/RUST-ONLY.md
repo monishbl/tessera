@@ -156,3 +156,12 @@ Fixes from a live sweep of a standalone install (the second laptop). Rust only; 
 ## Passkeys (22 Nov; removed 24 Nov)
 
 Removed: the passkeys daemon, its Settings group, its polkit-dialog requests and Health row. Its "Use for sudo and login" let any program running as the user approve its own sudo (2026-11-23 audit, high #11). The root helper's setup takes out the PAM lines, gate, key list and udev rule an older version wrote; native-install stops and removes the user service and its program. Saved passkeys stay in ~/.local/share/tessera/passkeys.
+
+## Settings audit fixes (24 Nov, 2026-11-23 audit, uncompiled)
+
+| What | When | Status | Commit |
+|---|---|---|---|
+| Software Update's "Include AUR updates" and "Remove packages Tessera no longer uses" kept in config.json (update.includeAur, update.removeDropped) (#108) | 24 Nov | done, unchecked | audit-fixes |
+| A file chooser's answer goes only to the row that asked, while its page is shown (#109); decoded pictures dropped on close, failed ones retried, at most ~600 kept (#110); what a page read once is read again when Settings opens (#111) | 24 Nov | done, unchecked | audit-fixes |
+| A failed login item change is taken back from the list (#112); "Restart computer" asks once (#113); forget, disconnect, sign out, remove local data, AI remove, display defaults, speed history, notification Clear all and Battery's Quit ask with a second press; Quick Settings' layout and Mouse defaults have Undo (#114); a shortcut on a bare typing key is refused (#115) | 24 Nov | done, unchecked (unit test: lone keys) | audit-fixes |
+| Keyboard: chips, swatches, wallpaper tiles and sets, Focus and window-rule rows, Ghost buttons and day chips are Tab stops with rings and hover looks; wallpaper tiles are named (#116-#118); after a click the window's (or the sheet's) keys get focus back (#196); Tab scrolls the page to the control (#197) | 24 Nov | done, unchecked (needs the laptop check) | audit-fixes |

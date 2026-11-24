@@ -186,7 +186,11 @@ pub fn notifications(cx: &mut Ctx, p: &mut Page) {
         .row(Row::new("Volume").visible(enabled).detail(format!("{}%", (volume * 100.0).round())).slider(volume, 0.0, 1.0, 0.0, vol).width(220.0));
 
     let count = feed(cx)["notificationCount"].as_i64().unwrap_or(0);
-    let clear = cx.on(|cx, _| cx.ask("notify", "clearAll", Value::Null));
+    let clear = cx.on(|cx, _| {
+        if cx.confirmed("notifyClearAll", "Press Clear all again to delete the whole history") {
+            cx.ask("notify", "clearAll", Value::Null)
+        }
+    });
     p.group("").row(Row::new("Notification history").detail(format!("{count} kept")).button("Clear all", clear).compact().enabled(count > 0));
 
     // ── More options ──

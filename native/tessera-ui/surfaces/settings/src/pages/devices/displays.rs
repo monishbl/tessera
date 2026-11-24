@@ -410,7 +410,11 @@ pub fn displays(cx: &mut Ctx, p: &mut Page) {
                 .width(200.0));
 
         let saved = cx.get("displays.monitors").as_array().map_or(0, Vec::len);
-        let reset = cx.on(|cx, _| ask(cx, "displaysReset", Value::Null));
+        let reset = cx.on(|cx, _| {
+            if cx.confirmed("displaysReset", "Press Restore Defaults again: every display's saved settings go") {
+                ask(cx, "displaysReset", Value::Null)
+            }
+        });
         p.group("")
             .footer("Settings are saved per display and come back when it's plugged in again.")
             .row(Row::new("Restore defaults").detail("Every display goes back to what Hyprland picks by itself").button("Restore Defaults", reset).enabled(saved > 0));

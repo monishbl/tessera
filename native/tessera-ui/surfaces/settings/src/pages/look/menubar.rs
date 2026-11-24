@@ -301,7 +301,12 @@ pub fn controlcenter(cx: &mut Ctx, p: &mut Page) {
     let bg = cx.b("controlCenter.background");
     let edit = cx.on(|cx, _| cx.ask("look", "editControls", Value::Null));
     let bt = cx.toggle("controlCenter.background");
-    let reset = cx.on(|cx, _| cx.set("controlCenter.layout", Value::Array(Vec::new())));
+    // (with Undo: one click lost your arrangement; audit #114)
+    let reset = cx.on(|cx, _| {
+        let old = cx.get("controlCenter.layout");
+        cx.set("controlCenter.layout", Value::Array(Vec::new()));
+        cx.toast("Quick Settings is back to the default layout", Some(super::super::about::action(move |cx, _| cx.set("controlCenter.layout", old.clone()))));
+    });
     p.group("Layout")
         .footer("Open Quick Settings and choose Edit Controls to add, remove, resize and move controls. Controls that need a missing tool stay hidden until it's installed. Game Mode turns off animations, blur, shadows and gaps; Anti-Flash softens very bright screens.")
         .row(Row::new("Edit Controls").detail(if n > 0 { format!("{n} controls, arranged by you") } else { "The default arrangement".into() }).button("Edit…", edit).primary())

@@ -381,6 +381,7 @@ component LookPreview {
         clicked => {
             fs.focus();
             fs.clear-focus();
+            SBus.refocus-seq += 1;
             root.chosen();
         }
     }
@@ -850,11 +851,23 @@ component Sets inherits Rectangle {
                 image-fit: cover;
             }
             Rectangle {
+                background: black.with-alpha(sta.pressed ? 0.22 : sta.has-hover ? 0.1 : 0);
+                animate background { duration: SM.hover; }
+            }
+            Rectangle {
                 border-radius: parent.border-radius;
                 border-width: s.on ? 3px : 0;
                 border-color: Theme.accent;
             }
-            TouchArea {
+            sfs := FocusScope {
+                focus-on-click: false;
+                key-pressed(e) => {
+                    if !e.repeat && (e.text == " " || e.text == Key.Return) { SBus.act(r.id, i, 0, ""); return accept; }
+                    reject
+                }
+            }
+            SFocusRing { x: 5px; y: 5px; width: parent.width - 10px; height: parent.height - 10px; shown: sfs.has-focus; radius: Theme.material ? 11px : 7px; }
+            sta := TouchArea {
                 mouse-cursor: pointer;
                 clicked => { SBus.act(r.id, i, 0, ""); }
             }
@@ -1023,8 +1036,8 @@ component Grid inherits Rectangle {
         border-radius: Theme.material ? 16px : 10px;
         background: Theme.fill;
         clip: true;
-        accessible-role: AccessibleRole.button;
-        accessible-label: "Wallpaper";
+        accessible-role: AccessibleRole.radio-button;
+        accessible-label: t.text != "" ? t.text : "Wallpaper";
         accessible-checked: t.on;
         accessible-action-default => { SBus.act(b.id, i, 0, ""); }
         Image {
@@ -1033,12 +1046,27 @@ component Grid inherits Rectangle {
             source: t.image;
             image-fit: cover;
         }
+        // hover and pressed: a veil (audit #117)
+        Rectangle {
+            background: black.with-alpha(gta.pressed ? 0.22 : gta.has-hover ? 0.1 : 0);
+            animate background { duration: SM.hover; }
+        }
         Rectangle {
             border-radius: parent.border-radius;
             border-width: t.on ? 3px : 0;
             border-color: Theme.accent;
         }
-        TouchArea {
+        // Keyboard: a Tab stop, Space or Enter choose it; the ring sits
+        // inside (the tile clips)
+        gfs := FocusScope {
+            focus-on-click: false;
+            key-pressed(e) => {
+                if !e.repeat && (e.text == " " || e.text == Key.Return) { SBus.act(b.id, i, 0, ""); return accept; }
+                reject
+            }
+        }
+        SFocusRing { x: 5px; y: 5px; width: parent.width - 10px; height: parent.height - 10px; shown: gfs.has-focus; radius: Theme.material ? 11px : 5px; }
+        gta := TouchArea {
             mouse-cursor: pointer;
             clicked => { SBus.act(b.id, i, 0, ""); }
         }

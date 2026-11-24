@@ -664,6 +664,9 @@ Singleton {
                 // follows (main: Stable). Both ask before installing anything
                 property string channel: ""
                 property bool autoCheck: true // look for a new Tessera every few hours and say so (a notice with Update / Later); nothing installs on its own
+                // (the Rust shell's only, kept here so this fallback doesn't drop them: Software Update → Options)
+                property bool includeAur: false
+                property bool removeDropped: true
             }
 
             // Tessera's interface in Rust (native/tessera-ui, docs/rust-ui-plan.md):

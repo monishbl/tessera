@@ -45,6 +45,15 @@ component Ghost inherits Rectangle {
     accessible-label: label;
     accessible-action-default => { clicked(); }
     SIcon { g: icon; fill: root.fill; size: root.size; color: ink; }
+    // Keyboard: a Tab stop; Space or Enter press it (audit #118)
+    fs := FocusScope {
+        focus-on-click: false;
+        key-pressed(e) => {
+            if !e.repeat && (e.text == " " || e.text == Key.Return) { root.clicked(); return accept; }
+            reject
+        }
+    }
+    SFocusRing { shown: fs.has-focus; radius: root.border-radius; }
     ta := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
@@ -77,6 +86,15 @@ component DayChip inherits Rectangle {
         font-weight: 500;
         accessible-role: AccessibleRole.none;
     }
+    // Keyboard: a Tab stop; Space or Enter press it (audit #118)
+    fs := FocusScope {
+        focus-on-click: false;
+        key-pressed(e) => {
+            if !e.repeat && (e.text == " " || e.text == Key.Return) { root.clicked(); return accept; }
+            reject
+        }
+    }
+    SFocusRing { shown: fs.has-focus; radius: root.border-radius; }
     ta := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
@@ -200,6 +218,15 @@ component ItemRow {
         background: ta.pressed ? Theme.fill-pressed : ta.has-hover ? Theme.fill : transparent;
         animate background { duration: SM.hover; }
     }
+    // Keyboard: a Tab stop; Space or Enter press it (audit #118)
+    fs := FocusScope {
+        focus-on-click: false;
+        key-pressed(e) => {
+            if !e.repeat && (e.text == " " || e.text == Key.Return) { SBus.act(r.id, 0, 0, ""); return accept; }
+            reject
+        }
+    }
+    SFocusRing { shown: fs.has-focus; radius: Theme.material ? 12px : 6px; }
     ta := TouchArea {
         mouse-cursor: pointer;
         clicked => { SBus.act(r.id, 0, 0, ""); }

@@ -40,6 +40,20 @@ fn buttons(cx: &mut Ctx, list: Vec<(Opt, &'static str, Value)>) -> (Vec<Opt>, St
     let calls: Vec<(&'static str, Value)> = list.into_iter().map(|b| (b.1, b.2)).collect();
     let id = cx.on(move |cx, a| {
         if let Some((what, args)) = calls.get(a.i.max(0) as usize) {
+            // (disconnect, sign out and "Remove local data" lose things:
+            // asked first; audit #114)
+            let cmd = args[0]["cmd"].as_str().or(args[0].as_str()).unwrap_or("");
+            let losing = *what == "cloudDisconnect" || ["disconnect", "forget"].contains(&cmd);
+            if losing {
+                let ask = if cmd == "forget" {
+                    "Press Remove local data again: changes not sent yet are deleted".to_string()
+                } else {
+                    "Press again to disconnect this account".to_string()
+                };
+                if !cx.confirmed(&format!("{what}:{args}"), ask) {
+                    return;
+                }
+            }
             cx.ask("accounts", what, args.clone());
         }
     });

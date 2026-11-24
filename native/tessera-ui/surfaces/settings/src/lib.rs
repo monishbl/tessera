@@ -69,7 +69,7 @@ const WIFI_TRANSIENT: &[&str] = &["wifi.form", "wifi.asking", "wifi.typed", "wif
 /// The account pages' typed state (forms, a typed password, a question
 /// asked): gone when you go to another page or Settings opens again, as
 /// the QML's pages made anew
-const PAGE_TRANSIENT: &[&str] = &["acct.", "ai.", "cal.", "wr.", "gest.", "focus.", "dict.refreshed", "look.bootRefreshed", "look.login."];
+const PAGE_TRANSIENT: &[&str] = &["acct.", "ai.", "cal.", "wr.", "gest.", "focus.", "dict.refreshed", "look.bootRefreshed", "look.login.", "about.rebootAsk"];
 /// Material's cookie steps this often (ms)
 const SPIN_MS: u64 = 80;
 /// The services' updates (every service's, every tick) wait this long and
@@ -154,6 +154,10 @@ pub struct Settings {
     open: bool,
     cfg: Cfg,
     page: String,
+    /// the file chooser waiting for its answer: the row's id, the page it was
+    /// on and that row's own action (a positional id alone ran whatever row
+    /// had that place when the answer came back; audit #109)
+    picking: Option<(String, String, model::Action)>,
     back: Vec<String>,
     forward: Vec<String>,
     /// a row or part to show on the page (a search hit, an older link)
@@ -589,6 +593,12 @@ impl Settings {
             // (opening again: the page's own state starts over, as the QML
             // window is made anew each time)
             self.local.retain(|k, _| !k.starts_with("more:") && !WIFI_TRANSIENT.iter().any(|w| k.starts_with(w)) && !PAGE_TRANSIENT.iter().any(|w| k.starts_with(w)));
+            // (what was read once is read again: audit #111)
+            if let Some(Value::Object(keys)) = self.local.remove(model::ONCE_KEYS) {
+                for k in keys.keys() {
+                    self.local.remove(k);
+                }
+            }
             self.query.clear();
             self.results.clear();
             if let Some(w) = &self.win {
@@ -632,6 +642,13 @@ impl Settings {
         }
         // (the window goes; the next open makes a fresh one, as the QML's)
         self.drop_window(st);
+        // (decoded pictures and icons go with it: kept for ever, every
+        // wallpaper folder visited stayed in memory, and a file replaced
+        // under the same name kept its old picture; audit #110)
+        self.pictures.clear();
+        self.decoding.clear();
+        self.waiting.clear();
+        self.picking = None;
         if say {
             shell::ask("settings", json!(["close"]));
         }
@@ -669,6 +686,12 @@ impl Settings {
             // (another page: More options close, and the Wi-Fi list's password
             // row, join form and share card go, as WifiList.qml's when hidden)
             self.local.retain(|k, _| !k.starts_with("more:") && !WIFI_TRANSIENT.iter().any(|w| k.starts_with(w)) && !PAGE_TRANSIENT.iter().any(|w| k.starts_with(w)));
+            // (a picture that couldn't be read is tried again on the next
+            // page, and a long browse never keeps more than a few hundred)
+            self.pictures.retain(|_, p| p.is_some());
+            if self.pictures.len() > 600 {
+                self.pictures.clear();
+            }
         }
         self.rebuild(st);
         self.sync_chrome(st);
@@ -853,6 +876,7 @@ impl Settings {
             self.show_toast(st, &text, undo);
         }
         if let Some((id, folder, title, start, filter)) = out.pick.take() {
+            self.picking = action_for(&self.actions, &id).map(|f| (id.clone(), self.page.clone(), f));
             shell::ask("settings", json!(["pick", id, folder, title, start, filter]));
         }
         if out.close {
@@ -974,8 +998,12 @@ impl Part for Settings {
                 }
                 if let Some(p) = v.get("picked") {
                     let (id, path) = (p["id"].as_str().unwrap_or(""), p["path"].as_str().unwrap_or(""));
-                    if !path.is_empty() {
-                        self.act(st, id, Arg { i: 1, f: 0.0, s: path.to_string(), id: id.to_string() });
+                    // (only to the row that asked, and only while its page is
+                    // still the one shown: else the answer is dropped)
+                    if let Some((want, page, f)) = self.picking.take() {
+                        if !path.is_empty() && want == id && page == self.page {
+                            self.run(st, f, Arg { i: 1, f: 0.0, s: path.to_string(), id: id.to_string() });
+                        }
                     }
                 }
                 return;

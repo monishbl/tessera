@@ -60,7 +60,15 @@ pub fn mouse(cx: &mut Ctx, p: &mut Page) {
         .segmented(&["Follows pointer", "On click"], idx(&fv, &focus), fc)
         .width(260.0));
 
+    // (with Undo: the old values are kept in it; audit #114)
     let restore = cx.on(|cx, _| {
+        let keys = ["mouse.speed", "mouse.accelProfile", "mouse.naturalScroll", "mouse.scrollSpeed", "mouse.leftHanded", "mouse.middleEmulation", "mouse.focus", "mouse.boundaryMode", "mouse.cornerSize"];
+        let old: Vec<(&str, serde_json::Value)> = keys.iter().map(|k| (*k, cx.get(k))).collect();
+        cx.toast("Mouse settings are back to their defaults", Some(super::super::about::action(move |cx, _| {
+            for (k, v) in &old {
+                cx.set(k, v.clone());
+            }
+        })));
         cx.set("mouse.speed", 0.0);
         cx.set("mouse.accelProfile", "adaptive");
         cx.set("mouse.naturalScroll", false);

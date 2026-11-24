@@ -722,8 +722,17 @@ impl About {
             "su.cancel" => self.up.cancel(),
             "su.goBack" => self.su.go_back(&tx, &self.tu, &mut self.up),
             "su.hold" => self.su.hold = if a0.as_f64() == Some(0.0) { 1 } else { 0 },
-            "su.includeAur" => self.su.include_aur = a0.as_bool().unwrap_or(false),
-            "su.removeDropped" => self.su.remove_dropped = a0.as_bool().unwrap_or(false),
+            // (kept in config.json: in memory only, they were back to their
+            // defaults after every shell restart, and the next update removed
+            // packages you said to keep; audit #108)
+            "su.includeAur" => {
+                self.su.include_aur = a0.as_bool().unwrap_or(false);
+                crate::util::config_set("update.includeAur", json!(self.su.include_aur));
+            }
+            "su.removeDropped" => {
+                self.su.remove_dropped = a0.as_bool().unwrap_or(false);
+                crate::util::config_set("update.removeDropped", json!(self.su.remove_dropped));
+            }
             "su.includeSkip" => self.su.include_skip(&a0s, a.get(1).and_then(Value::as_bool).unwrap_or(false)),
             "tu.choose" => self.tu.choose(&a0s, a.get(1).and_then(Value::as_str).unwrap_or("")),
             "tu.dismissResult" => {
@@ -843,6 +852,9 @@ impl Service for About {
     }
 
     fn start(&mut self, h: &mut Host) {
+        let u = &h.cfg()["update"];
+        self.su.include_aur = u["includeAur"].as_bool().unwrap_or(false);
+        self.su.remove_dropped = u["removeDropped"].as_bool().unwrap_or(true);
         let tx = helpers::tx(h, "About");
         self.tx = Some(tx.clone());
         self.t_feed = Some(Ticker::new("aboutFeed"));

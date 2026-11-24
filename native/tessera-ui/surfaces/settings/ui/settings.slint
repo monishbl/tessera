@@ -860,6 +860,25 @@ export component SettingsWindow inherits Window {
         }
     }
 
+    // A control Tab reached on the page: scrolled into view, the least it can
+    property <int> focus-seq: SBus.focus-seq;
+    changed focus-seq => {
+        if SBus.focus-x >= page-scroll.absolute-position.x && SBus.focus-x < page-scroll.absolute-position.x + page-scroll.width {
+            let top = SBus.focus-y - page-scroll.absolute-position.y - page-scroll.content-y;
+            let view = -page-scroll.content-y;
+            if top < view {
+                page-scroll.content-y = -max(0px, top);
+            } else if top + SBus.focus-h > view + page-scroll.height {
+                page-scroll.content-y = -max(0px, min(page-scroll.content-height - page-scroll.height, top + SBus.focus-h - page-scroll.height));
+            }
+        }
+    }
+
+    // (a click cleared a control's focus: the window's keys take it; an
+    // open sheet takes it back from them a moment later)
+    property <int> refocus-seq: SBus.refocus-seq;
+    changed refocus-seq => { keys.focus(); }
+
     forward-focus: side-keys;
     keys := FocusScope {
         key-pressed(e) => {
