@@ -33,6 +33,26 @@ FACTS = {
 
 
 @unittest.skipUnless(HAS_RICH, "python-rich isn't installed")
+class LongLists(unittest.TestCase):
+    """A list taller than the terminal is windowed around the cursor
+    (audit #186: rich cropped it, the hints went, items were ticked unseen)"""
+
+    def test_window_keeps_the_cursor_and_says_whats_hidden(self):
+        sys.path.insert(0, str(TUI.parent))
+        spec = importlib.util.spec_from_file_location("tessera_tui_win", TUI)
+        t = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(t)
+        from rich.text import Text
+        rows = [(i // 2, Text("line %d" % i)) for i in range(60)]
+        shown = [x.plain for x in t.window(rows, 20, 12)]
+        self.assertEqual(len(shown), 12)
+        self.assertIn("line 40", shown)
+        self.assertIn("line 41", shown)
+        self.assertTrue(shown[0].startswith("  … ") and shown[-1].startswith("  … "))
+        self.assertEqual(len(t.window(rows[:8], 3, 12)), 8)  # (fits: all of it)
+
+
+@unittest.skipUnless(HAS_RICH, "python-rich isn't installed")
 class Scripted(unittest.TestCase):
     def run_tui(self, keys, facts=None, *args, width=100):
         with tempfile.TemporaryDirectory() as d:

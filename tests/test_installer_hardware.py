@@ -153,6 +153,19 @@ class Plan(unittest.TestCase):
         self.assertEqual(got["gpu-nvidia-video"]["packages"], ["libva-nvidia-driver"])
         self.assertFalse(got["gpu-nvidia-video"]["ask"])
 
+    def test_nvidia_open_modules_only_for_cards_they_drive(self):
+        # (audit #76: a GTX 1050 (Pascal, 0x1c8d) isn't driven by the open modules)
+        pci = [dict(d, device="1c8d") if d["vendor"] == "10de" else d for d in self.pci]
+        self.assertNotIn("gpu-nvidia", self.items(pci=pci))
+        self.assertIn("runs on nouveau now", self.items(pci=self.pci)["gpu-nvidia"]["why"])
+
+    def test_broadcom_with_only_its_bus_driver_bound(self):
+        # (audit #185: bcma-pci-bridge bound is the usual BCM43xx case)
+        pci = [dict(d, driver="bcma-pci-bridge") if d["vendor"] == "14e4" else d for d in self.pci]
+        self.assertIn("broadcom-wl", self.items(pci=pci))
+        pci = [dict(d, driver="brcmfmac") if d["vendor"] == "14e4" else d for d in self.pci]
+        self.assertNotIn("broadcom-wl", self.items(pci=pci))
+
     def test_biometrics_are_features_now(self):
         # (the fingerprint reader and face unlock: the Features step, features.py)
         got = self.items(fingerprint={"id": "0a5c:5843", "name": "Broadcom ControlVault 3", "repo": [],

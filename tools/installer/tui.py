@@ -93,6 +93,34 @@ PASS = ("--dev", "--link", "--no-deps", "--no-snapshot", "--no-extras", "--no-gr
 
 
 # ── Choices ─────────────────────────────────────────────────────────────
+
+class _Tagged:
+    """A list of the body's lines, each tagged with the option being drawn
+    (out.append in the loops; the option is the loop's current one)"""
+
+    def __init__(self, rows):
+        self.rows, self.at = rows, -1
+
+    def append(self, r):
+        self.rows.append((self.at, r))
+
+
+def window(rows, cursor, room):
+    """ROWS' renderables, at most ROOM, around the CURSOR's option"""
+    if len(rows) <= room:
+        return [r for _, r in rows]
+    mine = [i for i, (o, _) in enumerate(rows) if o == cursor] or [0]
+    first, last = mine[0], mine[-1]
+    room -= 2  # (the "more" lines)
+    start = max(0, min(first - room // 3, len(rows) - room))
+    if last >= start + room:
+        start = last - room + 1
+    out = [Text("  … {} more above (↑)".format(start), style="dim")] if start else [Text("")]
+    out += [r for _, r in rows[start:start + room]]
+    below = len(rows) - start - room
+    out.append(Text("  … {} more below (↓)".format(below), style="dim") if below > 0 else Text(""))
+    return out
+
 class Radio:
     def __init__(self, options, value, disabled=None):
         self.options = options  # [(value, label, detail)]
@@ -399,13 +427,19 @@ class Installer:
                   "aur": ("AUR helper", "Some of Tessera's extras come from the AUR (Arch's community packages)."),
                   "advanced": ("Advanced: Tessera's Rust programs", "tessera-ui and tessera-events. Most people keep the first.")}
         title, sub = titles[n]
-        out = [Text(title, style="bold")]
+        head = [Text(title, style="bold")]
         if sub:
-            out.append(Text(sub, style="dim"))
-        out.append(Text(""))
+            head.append(Text(sub, style="dim"))
+        head.append(Text(""))
+        # (each line with the option it belongs to: the list is windowed
+        # around the cursor when it's taller than the terminal, so the hints
+        # stay and nothing is ticked unseen; audit #186)
+        rows = []
+        out = _Tagged(rows)
         w = self.widget()
         if isinstance(w, Radio):
             for i, (value, label, detail) in enumerate(w.options):
+                out.at = i
                 on = i == w.cursor
                 off = w.disabled.get(value)
                 out.append(Text.assemble(("› " if on else "  ", ACCENT + " bold"), ("● " if value == w.value else "○ ", ACCENT if value == w.value else "dim"),
@@ -419,6 +453,7 @@ class Installer:
             if not w.items:
                 out.append(Text("Nothing to add here: it's all set.", style="dim"))
             for i, it in enumerate(w.items):
+                out.at = i
                 if it.get("group") and it["group"] != group:
                     group = it["group"]
                     out.append(Text(("" if i == 0 else "\n") + group, style="bold dim"))
@@ -433,7 +468,8 @@ class Installer:
                     out.append(Padding(Text(it["detail"], style="dim"), (0, 0, 0, 8)))
                 if on and it.get("packages"):
                     out.append(Padding(Text("Packages: " + " ".join(it["packages"]), style="dim"), (0, 0, 0, 8)))
-        return Group(*out)
+        room = max(5, height - 8 - len(head))
+        return Group(*head, *window(rows, w.cursor, room))
 
     def welcome(self):
         f = self.facts

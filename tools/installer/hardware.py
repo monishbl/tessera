@@ -113,6 +113,15 @@ def suggest_scale(px_w, mm_w, internal):
     return min(SCALES, key=lambda s: abs(s - want)) if want > 1.12 else 1.0
 
 
+def nvidia_open_drives(d):
+    """NVIDIA's open kernel modules drive Turing (GTX 16xx, RTX 20xx) and
+    newer: PCI device ids from 0x1e00 on"""
+    try:
+        return int(d.get("device") or "0", 16) >= 0x1E00
+    except ValueError:
+        return False
+
+
 def kernel_headers(installed):
     """The headers of each installed kernel (what DKMS drivers build against)."""
     kernels = [p for p in installed if re.fullmatch(r"linux(-[a-z0-9]+)*", p)
@@ -148,8 +157,11 @@ def plan(f):
     headers = kernel_headers(have)
     wifi = [d for d in pci if d["cls"] == "0280"]
     for d in wifi:
-        if d["vendor"] == BROADCOM and not d["driver"] and not any(m in ("brcmfmac", "brcmsmac", "b43") for m in d["modules"]):
-            # (no driver of its own in the kernel, bcma being only its bus)
+        # (no driver of its own in the kernel, bcma being only its bus: the
+        # usual BCM43xx laptop shows bcma-pci-bridge bound and no Wi-Fi;
+        # audit #185)
+        if d["vendor"] == BROADCOM and d["driver"] in ("", "bcma-pci-bridge") \
+                and not any(m in ("brcmfmac", "brcmsmac", "b43", "wl") for m in d["modules"] + [d["driver"]]):
             out.append(item("broadcom-wl", G[0], "Broadcom Wi-Fi driver",
                             d["name"] + " has no driver loaded; Broadcom's own (wl) drives it",
                             miss(["broadcom-wl-dkms"] + headers)))
@@ -171,12 +183,15 @@ def plan(f):
             if miss(["libva-nvidia-driver"]):
                 out.append(item("gpu-nvidia-video", G[0], "NVIDIA: video decoding",
                                 "Video playback on the GPU through NVIDIA's driver (VA-API)", miss(["libva-nvidia-driver"])))
-        else:
+        elif nvidia_open_drives(nv[0]):
             # Never by default: a driver change is the one thing that can
             # leave a desktop without a picture
+            now = " runs on nouveau now" if nv[0]["driver"] == "nouveau" else " has no driver loaded now"
             out.append(item("gpu-nvidia", G[0], "NVIDIA driver (open kernel modules)",
-                            nv[0]["name"] + " runs on nouveau now; NVIDIA's driver is faster and needed for many games. Changes how the screen is driven: only if you want it",
+                            nv[0]["name"] + now + "; NVIDIA's driver is faster and needed for many games. Changes how the screen is driven: only if you want it",
                             miss(["nvidia-open-dkms", "nvidia-utils", "libva-nvidia-driver"] + headers), ticked=False, ask=True))
+        # (an older card: NVIDIA's open modules refuse it, and nvidia-utils
+        # turns nouveau off: no picture. Nothing offered; audit #76)
 
     # What the installer builds here (always, in its Building step)
     # (the glass plugin is one of the features: features.py)
