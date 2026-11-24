@@ -280,6 +280,17 @@ class Patches(tni.Fixture):
         self.assertFalse(r["ok"])
 
 
+    def test_a_tessera_ui_that_didnt_build_is_never_staged_as_ready(self):
+        # (audit #77: the restart then ran the old tessera-ui against the new version)
+        def builder(stage, tuned, ui, say):
+            fake_program(Path(stage) / "tessera-events", "tessera-events 0.2.0")
+            return {"tessera-events": str(Path(stage) / "tessera-events")}
+        r = ni.stage("HEAD", "build", ui=True, repo=str(self.repo), builder=builder, say=lambda s: None, config={})
+        self.assertFalse(r["ok"], r)
+        self.assertIn("tessera-ui didn't build", r["why"])
+        self.assertFalse((self.dest / ".staged").exists())
+
+
 class Cache(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

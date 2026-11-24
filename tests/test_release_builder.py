@@ -304,6 +304,22 @@ class Health(unittest.TestCase):
         self.assertEqual(self.pr.alert_health([s], {}, now_t=t0 + 3700), ["wait:tessera-ui-beta/" + "a" * 40])
         self.assertEqual(self.pr.STATE["health"]["waiting"][0]["set"], "tessera-ui-beta/" + "a" * 12)
 
+    def test_a_failure_after_a_recovery_is_said_again(self):
+        # (audit #78: said once for ever)
+        b = {"state": "failed", "error": "did not answer IPC within 30 s"}
+        self.assertEqual(self.pr.alert_health([], b), ["builder"])
+        self.pr.alert_health([], {"state": "idle"})
+        self.assertEqual(self.pr.alert_health([], b), ["builder"])
+
+    def test_a_builder_that_stopped_looking_is_said(self):
+        # (audit #79: its last "idle" looked fine for ever)
+        import time as _t
+        t0 = _t.mktime(_t.strptime("2026-11-19T07:00:00", "%Y-%m-%dT%H:%M:%S"))
+        b = {"state": "idle", "checked": "2026-11-19T07:00:00+0530"}
+        self.assertEqual(self.pr.alert_health([], b, now_t=t0 + 600), [])
+        self.assertEqual(self.pr.alert_health([], b, now_t=t0 + 3600), ["builder-stale"])
+        self.assertEqual(self.pr.alert_health([], b, now_t=t0 + 7200), [])  # (once a day)
+
     def test_a_set_newer_than_this_publisher_is_refused_and_said(self):
         # (audit #9: an older copy refused every set, quietly, for days)
         with self.assertRaises(self.pr.TooNew) as e:

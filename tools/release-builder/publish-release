@@ -109,7 +109,9 @@ HEX40 = re.compile(r"^[0-9a-f]{40}$")
 TAG_RE = re.compile(r"^v[0-9A-Za-z._-]+$")
 MANIFEST_RE = re.compile(r"^tessera-ui-([0-9a-f]{40})\.manifest\.json$")
 PATCH_RE = re.compile(r"^tessera-ui-([0-9a-f]{40})-(x86-64-v3|generic)\.(tessera-ui|tessera-events)\.from-([0-9a-f]{12})\.zst$")
-WAIT_ALERT = 3600  # a set waiting longer than this is said once
+WAIT_ALERT = 3600  # a set waiting longer than this is said (again each day while it waits)
+BUILDER_STALE = 30 * 60  # the builder's last look older than this: it isn't running
+SERVER_ALERT = 6 * 3600  # server1 out of reach this long is said
 # The newest set format this publisher knows (tessera-release's SET_FORMAT;
 # none in READY: 1). A newer set is left waiting, and said: this copy is
 # older than the builder (audit #9)
@@ -324,12 +326,16 @@ def health_of_builder():
     return sets, st if isinstance(st, dict) else {}
 
 
-def notify(key, title, body):
-    """A notification on this laptop, once per KEY and text"""
+def notify(key, title, body, again=None, now_t=None):
+    """A notification on this laptop, once per KEY and text; AGAIN seconds:
+    said again after that long while it still holds (audit #78)"""
+    now_t = time.time() if now_t is None else now_t
     seen = STATE.setdefault("alerted", {})
-    if seen.get(key) == body:
+    at = STATE.setdefault("alerted_at", {})
+    if seen.get(key) == body and (again is None or now_t - at.get(key, 0) < again):
         return False
     seen[key] = body
+    at[key] = now_t
     status()
     try:
         subprocess.run(["notify-send", "-a", "Tessera release", "-i", "dialog-warning", title, body], capture_output=True, timeout=10)
@@ -345,8 +351,24 @@ def alert_health(sets, builder, now_t=None):
     now_t = time.time() if now_t is None else now_t
     made = []
     if builder.get("state") == "failed" and builder.get("error"):
-        if notify("builder", "A Tessera release didn't build", str(builder["error"])[:300]):
+        if notify("builder", "A Tessera release didn't build", str(builder["error"])[:300], now_t=now_t):
             made.append("builder")
+    else:
+        # (recovered: the same failure later is said again; audit #78)
+        STATE.setdefault("alerted", {}).pop("builder", None)
+    # (a builder whose timer stopped keeps its last "idle": its last look,
+    # older than three of its 10-minute runs, says so; audit #79)
+    try:
+        seen_t = time.mktime(time.strptime(str(builder.get("checked") or builder.get("updated") or "")[:19], "%Y-%m-%dT%H:%M:%S"))
+    except (ValueError, OverflowError):
+        seen_t = None
+    if seen_t is not None and now_t - seen_t > BUILDER_STALE and builder.get("state") != "building":
+        if notify("builder-stale", "Tessera's release builder isn't running",
+                  "server1's builder last looked at " + str(builder.get("checked") or builder.get("updated"))[:16]
+                  + ". Check tessera-release.timer there (systemctl --user status tessera-release.timer).", again=86400, now_t=now_t):
+            made.append("builder-stale")
+    else:
+        STATE.setdefault("alerted", {}).pop("builder-stale", None)
     for s in sets:
         try:
             ready_t = time.mktime(time.strptime(s.get("ready", "")[:19], "%Y-%m-%dT%H:%M:%S"))
@@ -355,7 +377,7 @@ def alert_health(sets, builder, now_t=None):
         if now_t - ready_t > WAIT_ALERT:
             key = f"wait:{s.get('tag')}/{s.get('tree')}"
             if notify(key, "A Tessera release is waiting to be signed", f"{s.get('tag')} ({str(s.get('tree'))[:12]}) has waited over an hour. "
-                      f"Check ~/.cache/tessera-publish.log."):
+                      f"Check ~/.cache/tessera-publish.log.", again=86400, now_t=now_t):
                 made.append(key)
     STATE["health"] = {"builder": {k: builder.get(k) for k in ("state", "error", "step", "finished", "checked", "target")},
                        "waiting": [{"set": f"{s.get('tag')}/{str(s.get('tree'))[:12]}", "since": s.get("ready")} for s in sets],
@@ -694,18 +716,34 @@ def main(argv=None):
             sets, builder = health_of_builder()
         except Refused as e:
             # (server1 out of reach: away from home, asleep; quiet, nothing to do)
-            if any(w in str(e) for w in NETWORK + ("out of reach", "Permission denied")):
+            # (never heals by itself: said at once; audit #80)
+            if any(w in str(e) for w in ("Permission denied", "Host key verification failed")):
+                notify("reach", "The Tessera publisher can't log in to server1", str(e)[:300] +
+                       ". Check the ssh key (ssh " + HOST + ") and known_hosts.", again=86400)
                 status(state="idle", current=None, pid=None, checked=now(), reach=str(e)[:200])
                 return 0
+            if any(w in str(e) for w in NETWORK + ("out of reach",)):
+                # (away from home, asleep: quiet, unless it lasts; audit #80)
+                since = STATE.get("reach_since") or time.time()
+                if time.time() - since > SERVER_ALERT:
+                    notify("reach", "The Tessera publisher hasn't reached server1",
+                           "Not since " + time.strftime("%d %b %H:%M", time.localtime(since)) + ": " + str(e)[:200], again=86400)
+                status(state="idle", current=None, pid=None, checked=now(), reach=str(e)[:200], reach_since=since)
+                return 0
             raise
-        status(waiting=[f"{s.get('tag')}/{set_key(s)}" for s in sets], reach=None)
+        status(waiting=[f"{s.get('tag')}/{set_key(s)}" for s in sets], reach=None, reach_since=None)
+        STATE.setdefault("alerted", {}).pop("reach", None)
         alert_health(sets, builder)
         if sets:
             preflight(publish=not a.dry_run)
     except (Refused, ValueError) as e:
-        # (said once in the log, not every ten minutes; the sets stay waiting)
+        # (said once in the log, not every ten minutes; the sets stay waiting.
+        # A preflight failure (no key, no password, no gh login) is said on
+        # the desktop too; audit #78)
         if last_error != str(e):
             log(f"failed: {e}")
+        if sets:
+            notify("preflight", "The Tessera publisher can't publish", str(e)[:300], again=86400)
         status(state="failed", error=str(e), checked=now(), current=None, pid=None)
         return 1
     failed = []

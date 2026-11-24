@@ -14,4 +14,13 @@ install -Dm644 "$here/tessera-release.service" "$units/tessera-release.service"
 install -Dm644 "$here/tessera-release.timer" "$units/tessera-release.timer"
 systemctl --user daemon-reload
 systemctl --user enable --now tessera-release.timer
+# (a user timer runs only while the user's manager does: without lingering,
+# not after a reboot or once the last ssh session ends; audit #187)
+if [[ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" != yes ]]; then
+    if loginctl enable-linger "$USER" 2>/dev/null; then
+        echo "Lingering is on for $USER, so the timer runs without a login."
+    else
+        echo "Turn lingering on, or the timer stops when you log out: sudo loginctl enable-linger $USER" >&2
+    fi
+fi
 systemctl --user list-timers tessera-release.timer --no-pager

@@ -1521,6 +1521,11 @@ def stage(ref, mode=None, ui=False, source=None, dest=None, repo=None, say=None,
             elif todo:
                 files, info, _ = _produce(mode, tree, commit, False, build_ui, todo, False, dest, repo, say, builder, fetcher,
                                           os.path.join(sdir, "bin"), source=source)
+                # (tessera-ui asked for and not made: never staged as ready,
+                # or the restart ran the old tessera-ui against the new
+                # version's files, stamped as its build; audit #77)
+                if build_ui and "tessera-ui" in todo and "tessera-ui" not in files:
+                    raise Failed("tessera-ui didn't build", "build")
                 record["files"] = {n: os.path.relpath(p, sdir) for n, p in files.items()}
                 record["info"] = info
                 record["keep"] = [n for n in names if n not in files]
