@@ -90,6 +90,18 @@ class Offline(Failed):
     pass
 
 
+class Later(Failed):
+    """Can't be sent now, but nothing is wrong with the change itself: the
+    server is busy or down (5xx, 408, 429), the sign-in needs renewing (401),
+    Online Accounts or the keyring isn't ready. The outbox keeps it and tries
+    again (audit #2: these dropped every waiting change); only a change the
+    server turns away (400, 403, 404, 409, 412) is dropped."""
+
+
+# (statuses that say "not now", not "not this")
+LATER_STATUS = (401, 408, 425, 429)
+
+
 def state_dir():
     base = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
     d = os.path.join(app_dir(base), "cloud")
@@ -519,7 +531,9 @@ def _xml(text):
 
 def _check(status, what):
     if status == 401:
-        raise Failed("Your Apple ID or app-specific password was refused. Make a new app-specific password at account.apple.com and sign in again.")
+        raise Later("Your Apple ID or app-specific password was refused. Make a new app-specific password at account.apple.com and sign in again.")
+    if status in LATER_STATUS or status >= 500:
+        raise Later(f"iCloud couldn't take {what} now ({status}). It's sent again later.")
     if status >= 400:
         raise Failed(f"The server refused {what} ({status}).")
 
@@ -656,7 +670,7 @@ class OnlineAccounts:
             bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
             return bus.call_sync(self.name, path, interface, method, None, None, Gio.DBusCallFlags.NONE, 30000, None).unpack()
         except Exception:
-            raise Failed("Online Accounts can't give Tessera access now. Sign in to Microsoft 365 again in Settings.") from None
+            raise Later("Online Accounts can't give Tessera access now. Sign in to Microsoft 365 again in Settings.") from None
 
     def access(self, path):
         self.call(path, self.name + ".Account", "EnsureCredentials")
@@ -685,7 +699,9 @@ class Graph:
             h["If-Match"] = etag
         st, _, text = http(method, url, json.dumps(body) if body is not None else None, h, token=self.token)
         if st == 401:
-            raise Failed("Microsoft asked to sign in again. Sign in to Microsoft 365 in Settings.")
+            raise Later("Microsoft asked to sign in again. Sign in to Microsoft 365 in Settings.")
+        if st in LATER_STATUS or st >= 500:
+            raise Later(f"Microsoft couldn't take it now ({st}). It's sent again later.")
         if st == 403:
             raise Failed("Your Microsoft account doesn't allow this (a work or school account may need its admin's approval).")
         if st == 412:
@@ -727,6 +743,31 @@ def graph_event_body(fields):
     return b
 
 
+def graph_safe_fields(g, event_id, fields):
+    """FIELDS without what would lose more than it says: sync keeps only
+    Graph's bodyPreview (plain text, about 255 characters) as an event's
+    notes and its location's displayName, so notes or a location sent back
+    as they read would replace an HTML body (agenda, Teams link, dial-in)
+    or a room's address (audit #1). Unchanged ones are left out; new notes
+    over a formatted body are left out too, and said: (fields, what to say)."""
+    if "notes" not in fields and "location" not in fields:
+        return fields, ""
+    now = g.call("GET", f"/me/events/{urllib.parse.quote(event_id)}?$select=body,bodyPreview,location")
+    out = dict(fields)
+    if "location" in out and (out["location"] or "") == ((now.get("location") or {}).get("displayName") or ""):
+        del out["location"]
+    if "notes" in out:
+        body = now.get("body") or {}
+        notes = (out["notes"] or "").strip()
+        if notes == (now.get("bodyPreview") or "").strip():
+            del out["notes"]
+        elif (body.get("contentType") or "").lower() == "html" and (body.get("content") or "").strip():
+            del out["notes"]
+            return out, ("This event's notes have formatting or a meeting link that Tessera can't edit without losing it, "
+                         "so they weren't changed" + (" (the rest was saved)" if out else "") + ". Change the notes in Outlook.")
+    return out, ""
+
+
 def graph_when(x, all_day):
     v = (x or {}).get("dateTime", "")
     return {"date": v[:10]} if all_day else {"dateTime": v[:19] + "Z"}
@@ -759,7 +800,7 @@ class Hub:
             self.passwords[a["identity"]] = self.secrets.lookup(a["identity"])
         password = self.passwords[a["identity"]]
         if not password:
-            raise Failed("The app-specific password isn't in your keyring any more. Sign in to iCloud again.")
+            raise Later("The app-specific password isn't in your keyring (it may still be locked). Unlock it, or sign in to iCloud again.")
         return Dav(a.get("cardServer" if card else "server") or (ICLOUD_CARD if card else ICLOUD), a["identity"], password)
 
     def graph(self, a):
@@ -934,7 +975,14 @@ class Hub:
                 raise Failed("This event changed on your other devices. It shows as it is there now.")
             d.put(req["id"], patch_ics(text, f), etag=etag or req.get("etag"))
         else:
-            self.graph(a).call("PATCH", f"/me/events/{urllib.parse.quote(req['id'])}", graph_event_body(f), etag=req.get("etag"))
+            g = self.graph(a)
+            f, said = graph_safe_fields(g, req["id"], f)
+            if f:
+                g.call("PATCH", f"/me/events/{urllib.parse.quote(req['id'])}", graph_event_body(f), etag=req.get("etag"))
+            if said:
+                if refresh:
+                    self.refreshed(a)
+                raise Failed(said)
         if refresh:
             self.refreshed(a)
 
@@ -1076,10 +1124,11 @@ class Hub:
                 return
 
     def flush(self, refresh=True):
-        """Sends the outbox in order until the network goes again. A change
-        the server turns away is dropped and said ("dropped"). True when
-        the network went again with changes still waiting."""
-        ids, touched, offline = {}, set(), False
+        """Sends the outbox in order until the network goes again, or a
+        change can't be sent now (Later). A change the server turns away is
+        dropped and said ("dropped"). Returns what stopped it (Offline or
+        Later) with changes still waiting, else None."""
+        ids, touched, offline = {}, set(), None
         while self.outbox:
             r = dict(self.outbox[0])
             pid = str(r.get("id", ""))
@@ -1093,8 +1142,8 @@ class Hub:
                 if r.get("pending") and new:
                     ids[r["pending"]] = new
                 touched.add(r["account"])
-            except Offline:
-                offline = True
+            except (Offline, Later) as e:
+                offline = e
                 break
             except Failed as e:
                 what = "A change to " + ("an event" if r["cmd"].startswith("event") else "a task")
@@ -1138,7 +1187,10 @@ def main():
         if cmd == "sync":
             hub.sync()
         elif cmd == "flush":
-            if hub.flush():
+            why = hub.flush()
+            if isinstance(why, Later):
+                raise why
+            if why:
                 raise Offline("You're offline. Changes made here go to your accounts when you're back online.")
         elif cmd == "connectICloud":
             hub.connect_icloud(req)
@@ -1151,7 +1203,10 @@ def main():
         elif cmd in CHANGES and any(r.get("href", r.get("pending")) == req.get("id") for r in hub.outbox):
             # (a change to something made offline goes after it)
             hub.keep(req)
-            if hub.flush():
+            why = hub.flush()
+            if isinstance(why, Later):
+                raise Offline(f"{why} The change is saved on this computer and is sent then.")
+            if why:
                 raise Offline("You're offline. The change is saved on this computer and goes to your account when you're back online.")
         elif cmd in CHANGES:
             try:
@@ -1161,6 +1216,10 @@ def main():
                 where = "iCloud" if hub.account(req["account"])["provider"] == "icloud" else "Microsoft 365"
                 hub.keep(req)
                 raise Offline(f"You're offline. The change is saved on this computer and goes to {where} when you're back online.") from None
+            except Later as e:
+                # (the same: nothing is wrong with the change, it waits)
+                hub.keep(req)
+                raise Offline(f"{e} The change is saved on this computer and is sent then.") from None
     except Offline as e:
         out.update(error=str(e), offline=True)
     except Failed as e:

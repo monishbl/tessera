@@ -207,6 +207,7 @@ class FakeGraph(http.server.ThreadingHTTPServer):
                        "e2": {"id": "e2", "@odata.etag": 'W/"7"', "subject": "Holiday", "type": "singleInstance",
                               "start": {"dateTime": "2026-12-25T00:00:00.0000000", "timeZone": "UTC"},
                               "end": {"dateTime": "2026-12-26T00:00:00.0000000", "timeZone": "UTC"}, "isAllDay": True}}
+        self.busy = 0  # (answers 503 to this many calls first)
         self.tasks = {"t1": {"id": "t1", "title": "Buy milk", "status": "notStarted",
                              "dueDateTime": {"dateTime": "2026-11-03T00:00:00.0000000", "timeZone": "UTC"}}}
 
@@ -233,6 +234,9 @@ class GraphHandler(http.server.BaseHTTPRequestHandler):
         srv.calls.append((method, path.path, urllib.parse.parse_qs(path.query), body, self.headers.get("If-Match")))
         if self.headers.get("Authorization") != "Bearer test-token":
             return self.reply(401, {"error": {}})
+        if srv.busy > 0:
+            srv.busy -= 1
+            return self.reply(503, {"error": {}})
         p = path.path.replace("/v1.0", "")
         if p == "/me":
             return self.reply(200, {"userPrincipalName": "sam@outlook.com"})
@@ -248,6 +252,8 @@ class GraphHandler(http.server.BaseHTTPRequestHandler):
             if method == "DELETE":
                 srv.events.pop(eid, None)
                 return self.reply(204)
+            if method == "GET":
+                return self.reply(200, srv.events[eid])
             if self.headers.get("If-Match") != srv.events[eid].get("@odata.etag"):
                 return self.reply(412, {"error": {}})
             srv.events[eid].update(body)
@@ -637,6 +643,39 @@ class MicrosoftOffline(unittest.TestCase):
         self.assertEqual(post[3]["title"], "Call mum")
         self.assertEqual(patch[1], "/v1.0/me/todo/lists/l1/tasks/t2")  # (the server's id, not the pending one)
         self.assertEqual(patch[3], {"status": "completed"})
+
+    def test_a_busy_server_keeps_the_change_waiting(self):
+        # (audit #2: a 503 dropped every waiting change)
+        self.point(f"http://127.0.0.1:{free_port()}/v1.0")
+        s = run({"cmd": "eventPatch", "account": self.acc, "calendarId": "cal1", "id": "e2", "etag": 'W/"7"', "fields": {"title": "Christmas"}}, self.env)
+        self.assertEqual(s["outbox"], 1)
+        self.point(self.graph)
+        self.srv.busy = 1
+        s = run({"cmd": "flush"}, self.env)
+        self.assertEqual(s["outbox"], 1)
+        self.assertFalse(s.get("dropped"))
+        self.assertIn("(503)", s["error"])
+        s = run({"cmd": "flush"}, self.env)
+        self.assertEqual(s["outbox"], 0)
+        self.assertEqual(self.srv.events["e2"]["subject"], "Christmas")
+
+    def test_an_outlook_body_is_never_replaced_by_its_preview(self):
+        # (audit #1: renaming sent the 255-character preview back as the whole body)
+        self.srv.events["e2"].update(body={"contentType": "html", "content": "<p>Agenda</p><a href='https://teams'>Join</a>"},
+                                     bodyPreview="Agenda Join", location={"displayName": "Room 4", "address": {"street": "1 Main St"}})
+        s = run({"cmd": "eventPatch", "account": self.acc, "calendarId": "cal1", "id": "e2", "etag": 'W/"7"',
+                 "fields": {"title": "Christmas", "notes": "Agenda Join", "location": "Room 4"}}, self.env)
+        self.assertNotIn("error", s)
+        patch = [c for c in self.srv.calls if c[0] == "PATCH"][-1]
+        self.assertEqual(patch[3], {"subject": "Christmas"})
+        self.assertIn("teams", self.srv.events["e2"]["body"]["content"])
+        # (new notes over a formatted body: the rest saved, the notes not, and said)
+        self.srv.events["e2"]["@odata.etag"] = 'W/"7"'
+        s = run({"cmd": "eventPatch", "account": self.acc, "calendarId": "cal1", "id": "e2", "etag": 'W/"7"',
+                 "fields": {"title": "Xmas", "notes": "bring cake"}}, self.env)
+        self.assertIn("weren't changed (the rest was saved)", s["error"])
+        self.assertEqual(self.srv.events["e2"]["subject"], "Xmas")
+        self.assertIn("teams", self.srv.events["e2"]["body"]["content"])
 
     def test_a_change_turned_away_later_is_said(self):
         self.point(f"http://127.0.0.1:{free_port()}/v1.0")

@@ -177,6 +177,31 @@ fn ask_update(h: &mut Host, e: &AccEvent, fields: Value, every: bool) {
     }
 }
 
+/// iCloud's and Microsoft's patch: only what the editor changed (the times
+/// as one, start, end and all day). Microsoft's notes are only its
+/// 255-character plain preview, so sending them back unchanged replaced an
+/// Outlook event's whole body (agenda, Teams link) with that cut; its
+/// location a room or address with a bare name (audit #1). Google's path
+/// takes the whole set as before.
+fn changed_fields(e: &AccEvent, fields: &Value) -> Value {
+    if e.provider == "google" {
+        return fields.clone();
+    }
+    let mut out = serde_json::Map::new();
+    let (start, end, all_day) = times_of(e);
+    if fields["start"].as_i64() != Some(start) || fields["end"].as_i64() != Some(end) || fields["allDay"].as_bool() != Some(all_day) {
+        for k in ["start", "end", "allDay"] {
+            out.insert(k.into(), fields[k].clone());
+        }
+    }
+    for (k, now) in [("title", &e.title), ("location", &e.location), ("notes", &e.notes)] {
+        if fields[k].as_str().is_some_and(|v| v != now.as_str()) {
+            out.insert(k.into(), fields[k].clone());
+        }
+    }
+    Value::Object(out)
+}
+
 /// When an account's event is: (start, end, all day)
 fn times_of(e: &AccEvent) -> (i64, i64, bool) {
     match &e.times {
@@ -217,6 +242,10 @@ pub fn nc_save(h: &mut Host, e: &Value) -> Result<(), String> {
             let ev = data.event(key).ok_or("That event is gone. It may have been deleted on another device.")?;
             if !ev.writable {
                 return Err(read_only_text(ev));
+            }
+            let fields = changed_fields(ev, &fields);
+            if fields.as_object().is_some_and(|f| f.is_empty()) {
+                return Ok(());
             }
             ask_update(h, ev, fields, e["every"].as_bool().unwrap_or(false));
             return Ok(());
@@ -479,6 +508,33 @@ mod tests {
         assert_eq!(read_only_text(&e), "From Home (iCloud). Change repeating events on your phone or on the web.");
         assert!(read_only_text(&AccEvent { provider: "google".into(), ..e.clone() }).ends_with("You can view this calendar but not change it."));
         assert_eq!(times_of(&e), (5, 9, false));
+    }
+
+    #[test]
+    fn only_what_was_changed_is_sent() {
+        // (audit #1: renaming an Outlook event sent its 255-character preview back as the whole body)
+        let e = AccEvent {
+            key: "cloud:m:1".into(),
+            provider: "microsoft".into(),
+            account: "Microsoft 365".into(),
+            calendar: "Calendar".into(),
+            color: String::new(),
+            title: "Standup".into(),
+            location: "Room 4".into(),
+            notes: "Agenda: … (cut)".into(),
+            writable: true,
+            recurring: false,
+            series: String::new(),
+            times: Times::Fixed { start: 5, end: 9, all_day: false },
+            source: json!({}),
+        };
+        let all = |title: &str, start: i64| json!({"title": title, "start": start, "end": 9, "allDay": false, "location": "Room 4", "notes": "Agenda: … (cut)"});
+        assert_eq!(changed_fields(&e, &all("Daily standup", 5)), json!({"title": "Daily standup"}));
+        assert_eq!(changed_fields(&e, &all("Standup", 6)), json!({"start": 6, "end": 9, "allDay": false}));
+        assert_eq!(changed_fields(&e, &all("Standup", 5)), json!({}));
+        // (Google's path takes the whole set, as before)
+        let g = AccEvent { provider: "google".into(), ..e.clone() };
+        assert_eq!(changed_fields(&g, &all("Standup", 5)), all("Standup", 5));
     }
 
     #[test]
