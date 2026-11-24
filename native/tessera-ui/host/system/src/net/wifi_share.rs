@@ -134,7 +134,19 @@ impl Service for WifiShare {
             "copy" => {
                 let pw = str_arg(&a, 0);
                 if !pw.is_empty() {
-                    crate::util::run_async(&["wl-copy", "--", &pw]);
+                    // (through wl-copy's stdin: on its command line, which it
+                    // keeps while it serves the clipboard, every local user
+                    // could read the password with ps; audit #56)
+                    std::thread::spawn(move || {
+                        use std::io::Write;
+                        use std::process::{Command, Stdio};
+                        if let Ok(mut c) = Command::new("wl-copy").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+                            if let Some(mut i) = c.stdin.take() {
+                                let _ = i.write_all(pw.as_bytes());
+                            }
+                            let _ = c.wait();
+                        }
+                    });
                 }
             }
             _ => {}

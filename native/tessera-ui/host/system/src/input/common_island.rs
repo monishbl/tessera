@@ -13,10 +13,8 @@ pub fn enabled(h: &Host) -> bool {
 
 /// Island.wants(kind): kinds added after the setting existed count as on until touched
 pub fn wants(h: &Host, kind: &str) -> bool {
-    const NEW: [&str; 8] = ["usb", "displays", "audio", "temperature", "network", "transfers", "calls", "sysupdate"];
-    let cfg = &h.cfg()["island"];
-    let has = |k: &str, l: &str| cfg[l].as_array().is_some_and(|a| a.iter().any(|x| x == k));
-    has(kind, "events") || (NEW.contains(&kind) && !has(kind, "known"))
+    // (core's, the one copy: audit #51)
+    tessera_core::services::notify::model::island_wants(h.cfg(), kind)
 }
 
 pub fn post(h: &mut Host, event: Value, ms: u64) {

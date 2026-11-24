@@ -37,9 +37,8 @@ pub fn island_enabled(cfg: &Value) -> bool {
 /// Island.wants(kind): chosen, or a kind added after the setting existed and
 /// not touched yet (Island.qml newKinds)
 pub fn island_wants(cfg: &Value, kind: &str) -> bool {
-    const NEW_KINDS: [&str; 8] = ["usb", "displays", "audio", "temperature", "network", "transfers", "calls", "sysupdate"];
-    let has = |k: &str, v: &str| cfg["island"][k].as_array().is_some_and(|a| a.iter().any(|x| x == v));
-    has("events", kind) || (NEW_KINDS.contains(&kind) && !has("known", kind))
+    // (core's, the one copy: audit #51)
+    tessera_core::services::notify::model::island_wants(cfg, kind)
 }
 
 /// Tools.has(name): an executable on PATH
@@ -232,6 +231,8 @@ mod tests {
         assert!(island_wants(&cfg, "network") && island_wants(&cfg, "music") && !island_wants(&cfg, "charging"));
         let touched = json!({"island": {"events": [], "known": ["network"]}});
         assert!(!island_wants(&touched, "network"));
+        // (no list in the file: Config.qml's defaults, not all off; audit #51)
+        assert!(island_wants(&json!({}), "charging") && island_wants(&json!({}), "music") && !island_wants(&json!({}), "notifications"));
     }
 
     #[test]

@@ -362,6 +362,10 @@ pub struct Displays {
     restore_pending: bool,
     saved: Vec<String>,
     pending_revert: Option<Vec<Pending>>,
+    /// a risky change's saved state, written only when it's kept: saved at
+    /// once, a black screen and a forced power-off left it for the next
+    /// login too (audit #55)
+    pending_save: Option<Vec<(String, St)>>,
     confirm_left: i64,
     countdown_gen: u64,
     settle_gen: u64,
@@ -605,19 +609,28 @@ impl Displays {
             self.countdown_gen += 1;
             after(h.sender("Displays"), 1000, M::Countdown(self.countdown_gen));
         }
-        self.save(h, &saved);
+        if self.pending_revert.is_some() {
+            // (live only until Keep: what's on disk stays the last kept)
+            self.pending_save = Some(saved);
+        } else {
+            self.save(h, &saved);
+        }
         self.eval_all(h, &entries);
         self.publish();
     }
 
-    fn keep(&mut self) {
+    fn keep(&mut self, h: &mut Host) {
         self.countdown_gen += 1;
         self.pending_revert = None;
+        if let Some(saved) = self.pending_save.take() {
+            self.save(h, &saved);
+        }
         self.publish();
     }
 
     fn revert(&mut self, h: &mut Host) {
         self.countdown_gen += 1;
+        self.pending_save = None;
         let back = self.pending_revert.take().unwrap_or_default();
         let mut saved = saved_map(&self.saved);
         for b in &back {
@@ -933,7 +946,7 @@ impl Service for Displays {
                 let l = a(0).as_array().cloned().unwrap_or_default();
                 self.set_many(h, &l);
             }
-            "keep" => self.keep(),
+            "keep" => self.keep(h),
             "revert" => self.revert(h),
             "reset" | "resetAll" => self.reset_all(h),
             "identify" => self.identify(h),

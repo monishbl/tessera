@@ -938,6 +938,11 @@ impl Service for About {
                     }
                     self.up.refresh(&tx); // a fresh check
                     self.su.updates_finished(h, &tx, &mut self.tu, &self.up, &job);
+                    // (Face, Fingerprint, Cloud Drives and Boot Snapshots wait
+                    // for their install's end through AccountsBridge: nothing
+                    // told it, so their pages never refreshed and a failed
+                    // install said nothing; audit #57)
+                    h.ask("accounts.updatesFinished", json!([job.clone()]));
                     if std::mem::take(&mut self.feat_running) {
                         self.features_finished(&job);
                     } else if job["state"] == "done" && h.cfg()["features"]["offer"].as_str().unwrap_or("").is_empty() {

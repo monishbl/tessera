@@ -33,7 +33,6 @@ use tessera_core::services::notify::live;
 /// The alerts kinds that may be shown over a fullscreen app in "important" mode
 const IMPORTANT: &[&str] = &["ringing", "battery", "temperature", "timer"];
 /// Kinds added after the setting existed: on until the person has touched them
-const NEW_KINDS: &[&str] = &["usb", "displays", "audio", "temperature", "network", "transfers", "calls", "sysupdate"];
 /// Alerts that are not kept in the history
 const UNRECORDED: &[&str] = &["notification", "hud", "music", "ringing"];
 /// Alert uids host-desktop makes start here (desktop/src/today/common.rs UID_BASE): not this service's own
@@ -178,9 +177,9 @@ impl Island {
 
     /// Island.wants: an alert kind switched on (Settings → Notifications & Island)
     fn wants(&self, h: &Host, kind: &str) -> bool {
-        let c = h.cfg();
-        let listed = |path: &str, k: &str| at(c, path).as_array().is_some_and(|l| l.iter().any(|x| x == k));
-        listed("island.events", kind) || (NEW_KINDS.contains(&kind) && !listed("island.known", kind))
+        // (core's, the one copy: with the default list when island.events
+        // isn't in the file; four copies differed, three of them all off; audit #51)
+        tessera_core::services::notify::model::island_wants(h.cfg(), kind)
     }
 
     fn fs_mode<'a>(&self, h: &'a Host) -> &'a str {
@@ -214,7 +213,9 @@ impl Island {
         let mut c = serde_json::Map::new();
         if let Value::Object(m) = e {
             for (k, v) in m {
-                if ["onAction", "onAction2", "gate"].contains(&k.as_str()) {
+                // (the calls stay here: a shared Wi-Fi password among their
+                // arguments never goes on to the surface)
+                if ["onAction", "onAction2", "gate", "actionCall", "actionArgs", "action2Call", "action2Args"].contains(&k.as_str()) {
                     continue;
                 }
                 if k == "more" {
@@ -266,8 +267,13 @@ impl Island {
     }
 
     fn take_actions(e: &mut Value) -> (Option<Value>, Option<Value>, Vec<Option<Value>>) {
-        let a = e.get("onAction").filter(|x| x.is_object()).cloned();
-        let a2 = e.get("onAction2").filter(|x| x.is_object()).cloned();
+        // ({call, args} in onAction, or as the system services post it:
+        // actionCall + actionArgs; their buttons did nothing; audit #52)
+        let as_call = |call: &str, args: &str| {
+            e.get(call).and_then(Value::as_str).filter(|c| !c.is_empty()).map(|c| json!({"call": c, "args": e.get(args).cloned().unwrap_or(json!([]))}))
+        };
+        let a = e.get("onAction").filter(|x| x.is_object()).cloned().or_else(|| as_call("actionCall", "actionArgs"));
+        let a2 = e.get("onAction2").filter(|x| x.is_object()).cloned().or_else(|| as_call("action2Call", "action2Args"));
         let more = e["more"].as_array().map(|l| l.iter().map(|m| m.get("act").filter(|x| x.is_object()).or(m.get("call").map(|_| m)).cloned()).collect()).unwrap_or_default();
         (a, a2, more)
     }
@@ -527,31 +533,30 @@ impl Island {
         }
     }
 
+    /// The sweep, once, when the first alert's time is up (at most a minute
+    /// away; a second while the pointer holds them). A 250 ms poll woke
+    /// the whole host four times a second for as long as any alert was up,
+    /// for hours with a low battery's; audit #53
     fn start_sweep(&mut self, h: &mut Host) {
-        if self.sweep.as_ref().is_some_and(slint::Timer::running) {
+        let Some(first) = self.alerts.iter().map(|a| a.expires + 700).min() else {
+            self.sweep = None;
             return;
-        }
+        };
+        let wait = if self.held() { 1000 } else { (first - now_ms()).clamp(50, 60_000) };
         let send = h.sender("Island");
         let t = slint::Timer::default();
-        t.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(250), move || send(Box::new(Tick::Sweep)));
+        t.start(slint::TimerMode::SingleShot, std::time::Duration::from_millis(wait as u64), move || send(Box::new(Tick::Sweep)));
         self.sweep = Some(t);
     }
 
     /// Alerts whose time is up leave (the island plays their way out; they go here a moment later)
     fn sweep(&mut self, h: &mut Host) {
-        if self.alerts.is_empty() {
-            self.sweep = None;
-            return;
+        if !self.held() {
+            let now = now_ms();
+            self.alerts.retain(|a| a.expires + 700 > now);
         }
-        if self.held() {
-            return;
-        }
-        let now = now_ms();
-        let _ = h;
-        self.alerts.retain(|a| a.expires + 700 > now);
-        if self.alerts.is_empty() {
-            self.sweep = None;
-        }
+        // (the next one's time, or nothing more to wait for)
+        self.start_sweep(h);
     }
 
     // ── Live activities ─────────────────────────────────────────────────
@@ -763,7 +768,8 @@ impl Island {
     fn watch_battery(&mut self, h: &mut Host) {
         let Some(b) = h.st.shell.get::<tessera_core::services::status::Battery>().cloned() else { return };
         let level = if b.percent > 1.0 { b.percent / 100.0 } else { b.percent };
-        let charging = b.present && (b.state == 1 || b.state == 4 || b.charging);
+        // (on the charger: charging, full, or held at a charge limit (5); audit #182)
+        let charging = b.present && (b.state == 1 || b.state == 4 || b.state == 5 || b.charging);
         let now = (b.present, level, charging);
         let Some(prev) = self.battery.replace(now) else { return };
         if !b.present {

@@ -117,15 +117,8 @@ pub fn island_enabled(h: &Host) -> bool {
 /// Island.wants(kind): the kinds that pop it (config island.events; the
 /// default list when unset, newer kinds on until switched)
 pub fn island_wants(h: &Host, kind: &str) -> bool {
-    const DEFAULT: [&str; 11] = ["music", "charging", "battery", "timers", "recording", "focus", "bluetooth", "resources", "usb", "displays", "audio"];
-    const NEW_KINDS: [&str; 1] = ["sysupdate"];
-    let c = &h.cfg()["island"];
-    let events: Vec<&str> = match c["events"].as_array() {
-        Some(a) => a.iter().filter_map(Value::as_str).collect(),
-        None => DEFAULT.to_vec(),
-    };
-    let known: Vec<&str> = c["known"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-    events.contains(&kind) || (NEW_KINDS.contains(&kind) && !known.contains(&kind))
+    // (core's, the one copy: audit #51)
+    tessera_core::services::notify::model::island_wants(h.cfg(), kind)
 }
 
 /// notify-send's arguments (-a app, -i icon, -u urgency, title, body),

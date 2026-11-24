@@ -705,6 +705,11 @@ impl Power {
                 tessera_core::util::notify_live("Tessera", "", "low", &tessera_core::util::Live::resolved("battery", "remove"), "Battery", "Charging");
             }
         }
+        // (Cool-down's "on battery" rule hears it: nothing told it, so that
+        // setting did nothing; audit #50)
+        if self.prev_on_battery != on_battery {
+            h.ask("cooldown.battery", json!([on_battery]));
+        }
         self.prev_on_battery = on_battery;
         self.closed_lid_guard(h, on_battery);
         if percent != self.prev_percent {
@@ -835,8 +840,15 @@ impl Service for Power {
                 self.set_mode(next);
             }
             "ask" => {
-                let r = a.first().cloned().unwrap_or(Value::Null);
-                if let (Some(o), Some(m)) = (r["owner"].as_str(), r["mode"].as_str()) {
+                // ({owner, mode, why, until}, or the same as a list: the island's
+                // and Cool-down's callers sent [owner, mode, why] and were
+                // dropped; audit #54)
+                let r = match a.first() {
+                    Some(o) if o.is_object() => o.clone(),
+                    _ => json!({"owner": str_arg(&a, 0), "mode": str_arg(&a, 1), "why": str_arg(&a, 2),
+                                "until": a.get(3).and_then(Value::as_f64).unwrap_or(0.0)}),
+                };
+                if let (Some(o), Some(m)) = (r["owner"].as_str().filter(|o| !o.is_empty()), r["mode"].as_str().filter(|m| !m.is_empty())) {
                     self.ask_mode(o, m, r["why"].as_str().unwrap_or(""), r["until"].as_f64().unwrap_or(0.0));
                 }
             }

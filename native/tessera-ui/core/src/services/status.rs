@@ -131,7 +131,9 @@ fn battery(conn: &Connection) -> zbus::Result<Battery> {
     Ok(Battery {
         present: kind == 2 && p.get_property::<bool>("IsPresent")?,
         percent: p.get_property("Percentage")?,
-        charging: state == 1 || state == 4, // charging, fully charged
+        // charging, fully charged, or pending charge: on the charger at a
+        // charge limit (80%), which read as unplugged; audit #182
+        charging: state == 1 || state == 4 || state == 5,
         state,
         time_to_empty: p.get_property("TimeToEmpty").unwrap_or(0),
         time_to_full: p.get_property("TimeToFull").unwrap_or(0),

@@ -1268,6 +1268,23 @@ mod tests {
     }
 
     #[test]
+    fn locked_again_inside_the_lift_takes_a_password_again() {
+        // (audit #201: the lock part stayed "leaving" and ignored every password)
+        let (mut lk, mut r) = (Lockstate::default(), Rec::default());
+        let s = lk.set_locked(true, "zoom", false, true);
+        r.run(&lk, s);
+        let s = lk.unlocked(&json!({"unlocked": true}), "zoom", false, true);
+        r.run(&lk, s);
+        assert!(lk.leaving && lk.held);
+        let s = lk.set_locked(true, "zoom", false, true);
+        r.run(&lk, s);
+        assert!(lk.locked && lk.held && !lk.leaving);
+        assert_eq!(r.told.last(), Some(&(true, false)), "told it isn't leaving");
+        assert!(!r.veiled);
+        assert_eq!(r.fx.last(), Some(&"rest"));
+    }
+
+    #[test]
     fn a_lock_holds_marks_and_lets_go_only_after_the_lift() {
         let (mut lk, mut r) = (Lockstate::default(), Rec::default());
         // lock: held at once, by the Rust lock, the mark written
@@ -1440,8 +1457,17 @@ impl Lockstate {
             out.push(LockStep::FinishIntro);
         }
         if locked {
-            self.leaving = false;
+            let was_leaving = std::mem::replace(&mut self.leaving, false);
             if self.held {
+                // (locked again inside the 220 ms lift: the lock part hears it
+                // isn't leaving any more, or it ignored every password from
+                // then on; the veil and the effect go back to locked; audit #201)
+                if was_leaving {
+                    out.push(LockStep::TellLock);
+                    out.push(LockStep::Unveil);
+                    out.push(LockStep::Zoom(true));
+                    out.push(LockStep::Fx("rest", 0));
+                }
                 return out;
             }
             // Acquire the compositor lock immediately. Animation must never
