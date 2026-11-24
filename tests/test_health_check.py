@@ -186,20 +186,21 @@ class HealthCheck(unittest.TestCase):
         self.assertEqual(self.rows(FAKE_HYPR="v0.57.2")["hyprland"]["status"], "ok")
 
     def test_the_glass_plugin_agrees_with_doctor(self):
-        # a current build whose pointer hook couldn't be placed answers 2 with
-        # its feature words: loaded and current, as `tessera doctor` says
-        row = self.rows(FAKE_PLUGIN="2 shadow blur turned")["plugin"]
-        self.assertEqual(row["status"], "ok", row)
+        # a current build: loaded
         self.assertEqual(self.rows(FAKE_PLUGIN="6 shadow blur turned")["plugin"]["detail"], "Loaded (version 6)")
-        # an old build (3 or 4, no blur) is still a warning in the Glass look
+        # current, but this Hyprland has no pointer function to hook (system1's
+        # real answer, 24 Nov): loaded, pointer boundaries off, said as a warning
+        row = self.rows(FAKE_PLUGIN="6 shadow blur turned nohook:notfound")["plugin"]
+        self.assertEqual(row["status"], "warn", row)
+        self.assertIn("pointer boundaries are off", row["detail"])
+        # an old build is still a warning in the Glass look
         self.assertEqual(self.rows(FAKE_PLUGIN="3 shadow")["plugin"]["status"], "warn")
-        # the Material look doesn't use it: not loaded is off, an old build fine
+        # the Material look doesn't use it: not loaded is off, not a problem
         self.env["XDG_CONFIG_HOME"] = str(self.home / ".config")
         cfg = self.home / ".config/tessera"
         cfg.mkdir(parents=True)
         (cfg / "config.json").write_text(json.dumps({"appearance": {"look": "material"}}))
         self.assertEqual(self.rows(FAKE_DOWN="hyprctl:tessera-glass")["plugin"]["status"], "off")
-        self.assertEqual(self.rows(FAKE_PLUGIN="3")["plugin"]["status"], "ok")
         (cfg / "config.json").write_text(json.dumps({"appearance": {"look": "glass"}}))
         self.assertEqual(self.rows(FAKE_DOWN="hyprctl:tessera-glass")["plugin"]["status"], "fail")
 
