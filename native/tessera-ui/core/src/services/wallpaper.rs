@@ -84,7 +84,8 @@ pub fn grid_mean(grid: &[f32], n: usize, u0: f32, v0: f32, u1: f32, v1: f32) -> 
     };
     let (a, b) = span(u0, u1);
     let (c, d) = span(v0, v1);
-    let (mut sum, mut wsum) = (0.0f32, 0.0f32);
+    // (summed in f64: 4096 cells in f32 drift past a hundred-thousandth)
+    let (mut sum, mut wsum) = (0.0f64, 0.0f64);
     for j in (c.floor() as usize)..(d.ceil() as usize).min(n) {
         let wy = overlap(j, c, d);
         if wy <= 0.0 {
@@ -93,12 +94,12 @@ pub fn grid_mean(grid: &[f32], n: usize, u0: f32, v0: f32, u1: f32, v1: f32) -> 
         for i in (a.floor() as usize)..(b.ceil() as usize).min(n) {
             let w = overlap(i, a, b) * wy;
             if w > 0.0 {
-                sum += grid[j * n + i] * w;
-                wsum += w;
+                sum += grid[j * n + i] as f64 * w as f64;
+                wsum += w as f64;
             }
         }
     }
-    (wsum > 0.0).then(|| sum / wsum)
+    (wsum > 0.0).then(|| (sum / wsum) as f32)
 }
 
 /// A point of a screen (px) on a picture of `aspect` covering it (cropped
