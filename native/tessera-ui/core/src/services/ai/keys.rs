@@ -26,8 +26,6 @@ pub const SLOTS: &[&str] = &["anthropic", "gemini", "aistudio", "vertex", "verte
 #[derive(Clone, Default)]
 pub struct Keys {
     keys: HashMap<String, String>,
-    /// the fallback file's own contents: only these are written back to it
-    file: HashMap<String, String>,
     /// slots this process changed (a late keyring answer doesn't undo them)
     edited: std::collections::HashSet<String>,
 }
@@ -67,7 +65,6 @@ impl Keys {
             if let Ok(serde_json::Value::Object(o)) = serde_json::from_str(&text) {
                 for (s, v) in o {
                     if let Some(v) = v.as_str() {
-                        k.file.insert(s.clone(), v.to_string());
                         k.keys.insert(s, v.to_string());
                     }
                 }
@@ -94,7 +91,6 @@ impl Keys {
         self.keys.insert(slot.to_string(), key.clone());
         self.edited.insert(slot.to_string());
         let (slot, label) = (slot.to_string(), label.to_string());
-        let mut file = self.file.clone();
         std::thread::spawn(move || {
             let stored = Command::new("secret-tool")
                 .args(["store", &format!("--label=Tessera · {label}"), "application", "tessera", "provider", &slot])
@@ -108,6 +104,12 @@ impl Keys {
                 })
                 .is_ok_and(|s| s.success());
             if !stored {
+                // (read again under a lock and merged: each save wrote its
+                // own stale copy, so a second key in one session dropped
+                // the first; audit #26)
+                static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+                let _held = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+                let mut file: HashMap<String, String> = std::fs::read_to_string(file_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
                 file.insert(slot, key);
                 let _ = super::chats::write_private(&file_path(), &serde_json::to_string(&file).unwrap());
             }
@@ -121,7 +123,6 @@ impl Keys {
                 self.keys.insert(s, v);
             }
         }
-        self.file = other.file;
     }
 
     #[cfg(test)]

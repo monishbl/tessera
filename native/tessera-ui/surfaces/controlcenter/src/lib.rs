@@ -379,7 +379,12 @@ impl ControlCenter {
     fn usable(&self, id: &str, st: &State) -> bool {
         match id {
             // (the shell knows external displays too; until it says: the backlight)
-            "display" => self.said.modules.get(id).map_or_else(|| st.shell.get::<Backlight>().is_some_and(|b| b.present), |m| m.usable),
+            // (no backlight: only when there's an external display to set,
+            // else the slider did nothing; audit #28)
+            "display" => {
+                let backlight = st.shell.get::<Backlight>().is_some_and(|b| b.present);
+                backlight || (!external_displays(st).is_empty() && self.said.modules.get(id).is_none_or(|m| m.usable))
+            }
             "micLevel" => st.shell.get::<Sound>().map_or_else(|| self.said.usable(id), |s| !s.sources.is_empty()),
             _ => self.said.usable(id),
         }
@@ -629,7 +634,13 @@ impl ControlCenter {
                     status = if s.mic_muted() { "Muted" } else { "On" }.into();
                 }
             }
-            "display" => value = st.shell.get::<Backlight>().map_or(0.0, |b| b.value),
+            "display" => {
+                value = match st.shell.get::<Backlight>().filter(|b| b.present) {
+                    Some(b) => b.value,
+                    // (external displays only: the first one's level)
+                    None => external_displays(st).first().map_or(0.0, |d| d.1),
+                }
+            }
             "sound" => {
                 if let Some(s) = snd {
                     value = if s.muted() { 0.0 } else { s.volume() };
@@ -926,7 +937,14 @@ impl ControlCenter {
         match id {
             "display" => {
                 self.hush(st, "brightness");
-                brightness::set(v);
+                if st.shell.get::<Backlight>().is_some_and(|b| b.present) {
+                    brightness::set(v);
+                } else {
+                    // (DDC monitors: each one, as the island's level rows)
+                    for (d, _) in external_displays(st) {
+                        tessera_core::shell::ask("brightness.setFor", json!([d, v, true]));
+                    }
+                }
             }
             "sound" => {
                 self.hush(st, "sound");
@@ -1844,4 +1862,20 @@ pub fn cookie9(img: &slint::Image) -> Option<slint::Image> {
         }
     }
     Some(slint::Image::from_rgba8(out))
+}
+
+/// The displays the shell can set the brightness of (DDC monitors): id and
+/// level, from its displays list
+fn external_displays(st: &State) -> Vec<(String, f64)> {
+    let shell = st.shell.get::<tessera_core::services::bridge::ShellState>().cloned().unwrap_or_default();
+    shell
+        .get("displays")
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|d| !d["builtIn"].as_bool().unwrap_or(false))
+                .filter_map(|d| Some((d["id"].as_str().filter(|i| !i.is_empty())?.to_string(), d["value"].as_f64().unwrap_or(0.5))))
+                .collect()
+        })
+        .unwrap_or_default()
 }

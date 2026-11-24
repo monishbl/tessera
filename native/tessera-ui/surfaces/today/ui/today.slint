@@ -75,9 +75,11 @@ export global Day {
     callback set-chime(bool);
     callback options-done();
 
-    // Row n of the stagger: 40 ms apart, each fading in over 300 ms
+    // Row n of the stagger: 40 ms apart, each fading in over 300 ms; rows
+    // from the ninth on start together, 320 ms in, so every row is whole
+    // when the stagger ends (a busy day's lower to-dos rested at 33 %; audit #40)
     public pure function appear(order: int) -> float {
-        return clamp((rows * 620 - order * 40) / 300, 0, 1);
+        return clamp((rows * 620 - min(order, 8) * 40) / 300, 0, 1);
     }
 }
 

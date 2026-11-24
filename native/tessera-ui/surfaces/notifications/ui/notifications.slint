@@ -206,7 +206,11 @@ export component CloseBadge inherits Rectangle {
 export component GlassButton inherits Rectangle {
     in property <string> text;
     callback clicked();
-    width: label.preferred-width + 24px;
+    // (as wide as its label, shrinking (the label elided) when the row has
+    // less room: three actions or a long one ran past the card; audit #35)
+    preferred-width: label.preferred-width + 24px;
+    max-width: label.preferred-width + 24px;
+    min-width: 48px;
     height: 28px;
     border-radius: 14px;
     background: touch.pressed ? Theme.fill-pressed : touch.has-hover ? Theme.fill-hover : Theme.fill;
@@ -214,6 +218,9 @@ export component GlassButton inherits Rectangle {
     accessible-label: text;
     accessible-action-default => { clicked(); }
     label := Text {
+        x: 12px;
+        width: root.width - 24px;
+        overflow: elide;
         text: root.text;
         color: Theme.label;
         font-size: Theme.small;

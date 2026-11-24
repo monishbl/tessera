@@ -489,6 +489,9 @@ fn text_of(t: &[Tok]) -> String {
 /// italic and strikethrough)
 pub fn inline(text: &str) -> String {
     let mut slots: Vec<String> = Vec::new();
+    // a code span's own text, by its slot: a link's label made of one,
+    // [`name`](url), keeps its words (it came out empty; audit #37)
+    let mut code_text: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
     let mut t: Vec<Tok> = text.chars().map(Tok::C).collect();
 
     // Code spans first: nothing inside them is formatted
@@ -517,6 +520,7 @@ pub fn inline(text: &str) -> String {
             Some(j) if j > i + n => {
                 let code = text_of(&t[i + n..j]).trim().to_string();
                 slots.push(code_markup(&code));
+                code_text.insert(slots.len() - 1, code.clone());
                 t.splice(i..j + n, [Tok::Slot(slots.len() - 1)]);
                 i += 1;
             }
@@ -542,7 +546,14 @@ pub fn inline(text: &str) -> String {
             i += 1;
             continue;
         }
-        let label = text_of(&t[start + 1..close]);
+        let label: String = t[start + 1..close]
+            .iter()
+            .map(|x| match x {
+                Tok::C(c) => c.to_string(),
+                Tok::Slot(n) => code_text.get(n).cloned().unwrap_or_default(),
+                Tok::Mark(_) => String::new(),
+            })
+            .collect();
         // ([^)\s]+) then an optional "title"
         let mut k = close + 2;
         let url_start = k;
@@ -783,6 +794,13 @@ mod tests {
         // (a number in a bulleted list stays in it, as the shell's)
         assert_eq!(items[4].marker, "•");
         assert_eq!(blocks("3) three\n4) four")[0].items[1].marker, "4.");
+    }
+
+    #[test]
+    fn a_link_made_of_code_keeps_its_words() {
+        let out = inline("See [`README`](https://example.com/r) now");
+        assert!(out.contains("README"), "{out}");
+        assert!(!out.contains("[]("), "{out}");
     }
 
     #[test]

@@ -2236,7 +2236,9 @@ export component Sidebar inherits Window {
                         // last replies sat below the end of the scroll)
                         content-height: max(msgs.preferred-height, msgs.min-height);
                         changed content-height => {
-                            if stick || busy { self.content-y = min(0px, self.height - self.content-height); }
+                            // (only while following: busy pulled a reader scrolled up
+                            // back to the end on every chunk; sending sets stick; audit #38)
+                            if stick { self.content-y = min(0px, self.height - self.content-height); }
                         }
                         changed height => {
                             if stick { self.content-y = min(0px, self.height - self.content-height); }

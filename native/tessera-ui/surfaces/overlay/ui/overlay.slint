@@ -311,7 +311,7 @@ component Level inherits Rectangle {
             }
             scroll-event(e) => {
                 if e.delta-y == 0 { return reject; }
-                root.moved(clamp(s.value + (e.delta-y > 0 ? 0.05 : -0.05), 0, 1));
+                root.moved(clamp(s.value + max(-0.05, min(0.05, e.delta-y / 15px * 0.05)), 0, 1));
                 accept
             }
         }

@@ -869,6 +869,8 @@ export component Menu inherits Window {
     out property <length> panel-height: panel.height;
     out property <float> panel-scale: panel.transform-scale;
     property <length> pad: m3 ? 4px : 5px;
+    // a tray submenu: row 0 is "‹ back" (Left and Backspace take it)
+    in property <bool> can-back;
     callback activated(int);
     callback tile(int, int);
     callback step(int); // arrow keys: Rust picks the next row (menus.rs: step)
@@ -909,6 +911,7 @@ export component Menu inherits Window {
             if e.text == Key.UpArrow { step(-1); return accept; }
             if e.text == Key.DownArrow || e.text == Key.Tab { step(1); return accept; }
             if e.text == Key.Escape { dismissed(); return accept; }
+            if can-back && (e.text == Key.LeftArrow || e.text == Key.Backspace) { activated(0); return accept; }
             if e.text == Key.Return || e.text == " " { if current >= 0 { activated(current); } return accept; }
             reject
         }
@@ -917,7 +920,7 @@ export component Menu inherits Window {
             x: panel-left;
             y: 34px + (1 - openness) * -8px;
             width: menu-w + 2 * pad;
-            height: content.preferred-height + 2 * pad;
+            height: min(content.preferred-height + 2 * pad, root.height - 34px - 24px);
             transform-origin: { x: context ? self.width / 2 : 18px, y: 0px };
             transform-scale: context ? 0.94 + 0.06 * openness : 0.92 + 0.08 * openness;
             opacity: min(1, openness * 1.6);
@@ -938,112 +941,130 @@ export component Menu inherits Window {
             // (over the rows too: autoClose waits while it's pointed at)
             hover := TouchArea {
                 changed has-hover => { root.hovered(self.has-hover); }
-            content := VerticalLayout {
+            // (a long menu scrolls, at most the screen's height less the bar
+            // and a margin: rows past the bottom couldn't be reached; audit #32)
+            scroller := Flickable {
                 x: pad;
                 y: pad;
                 width: menu-w;
-                spacing: 0;
-                for r[i] in rows: Rectangle {
-                    property <bool> hot: current == i && r.enabled && !r.separator && !r.header && r.tiles.length == 0;
-                    height: r.separator ? (m3 ? 2px : 11px) : (r.header ? (m3 ? 32px : context ? 26px : 22px) : r.tiles.length > 0 ? 36px : (m3 ? 40px : context ? 28px : 26px)) + (m3 && r.first ? 4px : 0) + (m3 && r.last ? 4px : 0);
-                    // Material: the group's surface (corners 12 outside, 4 where groups meet)
-                    background: m3 && !r.separator ? Theme.m3-surface-container-low : transparent;
-                    border-top-left-radius: m3 ? (r.first ? (i == 0 ? 12px : 4px) : 0) : 0;
-                    border-top-right-radius: self.border-top-left-radius;
-                    border-bottom-left-radius: m3 ? (r.last ? (i == rows.length - 1 ? 12px : 4px) : 0) : 0;
-                    border-bottom-right-radius: self.border-bottom-left-radius;
-                    accessible-role: list-item;
-                    accessible-label: r.text;
-                    accessible-item-selectable: r.enabled && !r.header;
-                    accessible-item-selected: current == i;
-                    accessible-checkable: r.checkable;
-                    accessible-checked: r.checked;
-                    accessible-action-default => { activated(i); }
+                height: parent.height - 2 * pad;
+                viewport-width: menu-w;
+                viewport-height: content.preferred-height;
+                content := VerticalLayout {
+                    width: menu-w;
+                    spacing: 0;
+                    for r[i] in rows: Rectangle {
+                        property <bool> hot: current == i && r.enabled && !r.separator && !r.header && r.tiles.length == 0;
+                        // (arrow keys in a long menu: the row is scrolled into view)
+                        changed hot => {
+                            if self.hot {
+                                if self.y + scroller.viewport-y < 0 {
+                                    scroller.viewport-y = -self.y;
+                                } else if self.y + self.height + scroller.viewport-y > scroller.height {
+                                    scroller.viewport-y = scroller.height - self.y - self.height;
+                                }
+                            }
+                        }
+                        height: r.separator ? (m3 ? 2px : 11px) : (r.header ? (m3 ? 32px : context ? 26px : 22px) : r.tiles.length > 0 ? 36px : (m3 ? 40px : context ? 28px : 26px)) + (m3 && r.first ? 4px : 0) + (m3 && r.last ? 4px : 0);
+                        // Material: the group's surface (corners 12 outside, 4 where groups meet)
+                        background: m3 && !r.separator ? Theme.m3-surface-container-low : transparent;
+                        border-top-left-radius: m3 ? (r.first ? (i == 0 ? 12px : 4px) : 0) : 0;
+                        border-top-right-radius: self.border-top-left-radius;
+                        border-bottom-left-radius: m3 ? (r.last ? (i == rows.length - 1 ? 12px : 4px) : 0) : 0;
+                        border-bottom-right-radius: self.border-bottom-left-radius;
+                        accessible-role: list-item;
+                        accessible-label: r.text;
+                        accessible-item-selectable: r.enabled && !r.header;
+                        accessible-item-selected: current == i;
+                        accessible-checkable: r.checkable;
+                        accessible-checked: r.checked;
+                        accessible-action-default => { activated(i); }
 
-                    if r.separator && !m3: Rectangle {
-                        width: parent.width - 18px;
-                        height: 1px;
-                        background: Theme.separator;
-                    }
-                    if r.header: Text {
-                        x: m3 ? 12px : 10px;
-                        y: parent.height - self.height - (m3 ? 6px : 3px);
-                        text: r.text;
-                        color: m3 ? Theme.m3-on-surface-variant : Theme.tertiary;
-                        font-size: m3 ? 12px : Theme.caption;
-                        font-weight: m3 ? 500 : 600;
-                    }
-                    if r.tiles.length > 0: HorizontalLayout {
-                        x: m3 ? 4px : 6px;
-                        y: (parent.height - 32px) / 2;
-                        height: 32px;
-                        width: self.preferred-width;
-                        spacing: 4px;
-                        for t[j] in r.tiles: Rectangle {
-                            width: 44px;
-                            border-radius: m3 ? 8px : Theme.radius-item + 2px;
-                            background: tt.has-hover ? Theme.highlight : transparent;
-                            accessible-role: button;
-                            accessible-label: t.label;
-                            accessible-action-default => { root.tile(i, j); }
-                            TileGlyph {
-                                t: t;
-                                hot: tt.has-hover;
-                            }
-                            tt := TouchArea {
-                                clicked => { root.tile(i, j); }
-                            }
+                        if r.separator && !m3: Rectangle {
+                            width: parent.width - 18px;
+                            height: 1px;
+                            background: Theme.separator;
                         }
-                    }
-                    if !r.separator && !r.header && r.tiles.length == 0: Rectangle {
-                        x: m3 ? 4px : 0;
-                        y: m3 && r.first ? 4px : 0;
-                        width: parent.width - 2 * self.x;
-                        height: m3 ? 40px : context ? 28px : 26px;
-                        border-radius: m3 ? (r.checked ? self.height / 2 : 8px) : Theme.radius-item + 2px;
-                        background: m3
-                            ? (r.checked ? (hot ? Theme.m3-tertiary-container.mix(Theme.m3-on-tertiary-container, 0.92) : Theme.m3-tertiary-container) : hot ? Theme.m3-on-surface.with-alpha(0.08) : transparent)
-                            : (hot ? Theme.highlight : transparent);
-                        animate background { duration: 100ms; }
-                        if r.checked: SymIcon {
-                            x: m3 ? 12px : 6px;
-                            width: 16px;
-                            text: "\u{e182}"; // check
-                            bold: true;
-                            font-size: m3 ? 16px : 12px;
-                            color: m3 ? Theme.m3-on-tertiary-container : hot ? Theme.on-highlight : Theme.label;
-                        }
-                        Text {
-                            x: m3 ? (any-checks ? 40px : 12px) : 22px;
-                            width: parent.width - self.x - (r.shortcut != "" ? sc.preferred-width + 24px : 12px);
-                            height: parent.height;
+                        if r.header: Text {
+                            x: m3 ? 12px : 10px;
+                            y: parent.height - self.height - (m3 ? 6px : 3px);
                             text: r.text;
-                            color: m3
-                                ? (!r.enabled ? Theme.m3-on-surface.with-alpha(0.38) : r.checked ? Theme.m3-on-tertiary-container : Theme.m3-on-surface)
-                                : (hot ? Theme.on-highlight : r.enabled ? Theme.label : Theme.tertiary);
-                            font-size: m3 ? 14px : Theme.body;
-                            font-weight: m3 ? 500 : 400;
-                            overflow: elide;
-                            vertical-alignment: center;
-                            accessible-role: none;
+                            color: m3 ? Theme.m3-on-surface-variant : Theme.tertiary;
+                            font-size: m3 ? 12px : Theme.caption;
+                            font-weight: m3 ? 500 : 600;
                         }
-                        sc := Text {
-                            x: parent.width - self.width - (m3 ? 12px : 10px);
+                        if r.tiles.length > 0: HorizontalLayout {
+                            x: m3 ? 4px : 6px;
+                            y: (parent.height - 32px) / 2;
+                            height: 32px;
                             width: self.preferred-width;
-                            height: parent.height;
-                            text: r.shortcut;
-                            color: m3 ? (!r.enabled ? Theme.m3-on-surface.with-alpha(0.38) : Theme.m3-on-surface-variant) : hot ? Theme.on-highlight.with-alpha(0.8) : Theme.tertiary;
-                            font-size: m3 ? 13px : Theme.body;
-                            vertical-alignment: center;
-                            accessible-role: none;
-                        }
-                        TouchArea {
-                            enabled: r.enabled;
-                            moved => { if self.has-hover { current = i; } }
-                            changed has-hover => {
-                                if self.has-hover { current = i; } else if current == i { current = -1; }
+                            spacing: 4px;
+                            for t[j] in r.tiles: Rectangle {
+                                width: 44px;
+                                border-radius: m3 ? 8px : Theme.radius-item + 2px;
+                                background: tt.has-hover ? Theme.highlight : transparent;
+                                accessible-role: button;
+                                accessible-label: t.label;
+                                accessible-action-default => { root.tile(i, j); }
+                                TileGlyph {
+                                    t: t;
+                                    hot: tt.has-hover;
+                                }
+                                tt := TouchArea {
+                                    clicked => { root.tile(i, j); }
+                                }
                             }
-                            clicked => { activated(i); }
+                        }
+                        if !r.separator && !r.header && r.tiles.length == 0: Rectangle {
+                            x: m3 ? 4px : 0;
+                            y: m3 && r.first ? 4px : 0;
+                            width: parent.width - 2 * self.x;
+                            height: m3 ? 40px : context ? 28px : 26px;
+                            border-radius: m3 ? (r.checked ? self.height / 2 : 8px) : Theme.radius-item + 2px;
+                            background: m3
+                                ? (r.checked ? (hot ? Theme.m3-tertiary-container.mix(Theme.m3-on-tertiary-container, 0.92) : Theme.m3-tertiary-container) : hot ? Theme.m3-on-surface.with-alpha(0.08) : transparent)
+                                : (hot ? Theme.highlight : transparent);
+                            animate background { duration: 100ms; }
+                            if r.checked: SymIcon {
+                                x: m3 ? 12px : 6px;
+                                width: 16px;
+                                text: "\u{e182}"; // check
+                                bold: true;
+                                font-size: m3 ? 16px : 12px;
+                                color: m3 ? Theme.m3-on-tertiary-container : hot ? Theme.on-highlight : Theme.label;
+                            }
+                            Text {
+                                x: m3 ? (any-checks ? 40px : 12px) : 22px;
+                                width: parent.width - self.x - (r.shortcut != "" ? sc.preferred-width + 24px : 12px);
+                                height: parent.height;
+                                text: r.text;
+                                color: m3
+                                    ? (!r.enabled ? Theme.m3-on-surface.with-alpha(0.38) : r.checked ? Theme.m3-on-tertiary-container : Theme.m3-on-surface)
+                                    : (hot ? Theme.on-highlight : r.enabled ? Theme.label : Theme.tertiary);
+                                font-size: m3 ? 14px : Theme.body;
+                                font-weight: m3 ? 500 : 400;
+                                overflow: elide;
+                                vertical-alignment: center;
+                                accessible-role: none;
+                            }
+                            sc := Text {
+                                x: parent.width - self.width - (m3 ? 12px : 10px);
+                                width: self.preferred-width;
+                                height: parent.height;
+                                text: r.shortcut;
+                                color: m3 ? (!r.enabled ? Theme.m3-on-surface.with-alpha(0.38) : Theme.m3-on-surface-variant) : hot ? Theme.on-highlight.with-alpha(0.8) : Theme.tertiary;
+                                font-size: m3 ? 13px : Theme.body;
+                                vertical-alignment: center;
+                                accessible-role: none;
+                            }
+                            TouchArea {
+                                enabled: r.enabled;
+                                moved => { if self.has-hover { current = i; } }
+                                changed has-hover => {
+                                    if self.has-hover { current = i; } else if current == i { current = -1; }
+                                }
+                                clicked => { activated(i); }
+                            }
                         }
                     }
                 }

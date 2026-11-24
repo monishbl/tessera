@@ -20,6 +20,8 @@ pub enum Action {
     /// a tray menu's entry (dbusmenu id), or its submenu
     Tray(i32),
     TraySub(i32),
+    /// a tray submenu's "‹ parent" row: one level up (audit #30)
+    TrayBack,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -198,6 +200,18 @@ pub fn window(win: &Client, style: &str) -> Vec<Row> {
     ]
 }
 
+/// A tray submenu's rows: a "‹ <where you came from>" row first (Left or
+/// Backspace too), then its entries; there was no way back up (audit #30)
+pub fn tray_in(node: &MenuNode, back_to: Option<&str>) -> Vec<Row> {
+    let mut v = Vec::new();
+    if let Some(to) = back_to {
+        v.push(Row { text: format!("‹  {}", if to.is_empty() { "Back" } else { to }), keep_open: true, action: Action::TrayBack, ..Default::default() });
+        v.push(sep());
+    }
+    v.extend(tray(node));
+    v
+}
+
 /// A tray menu's entries (BarMenu.trayItems): hidden ones left out,
 /// submenus marked " ›" and opened in place
 pub fn tray(node: &MenuNode) -> Vec<Row> {
@@ -248,8 +262,13 @@ pub fn groups(rows: &[Row]) -> Vec<(bool, bool)> {
 }
 
 /// The menu's width (MenuPopover: at least 220, wide enough for its rows)
+/// The widest a menu gets: a 300-character label (a clipboard entry, a song
+/// title) made a 2300 px panel, mostly off the screen; the row elides
+/// (audit #32)
+pub const MAX_WIDTH: f32 = 420.0;
+
 pub fn width(rows: &[Row]) -> f32 {
-    rows.iter().map(|r| r.text.chars().count() as f32 * 7.5 + if r.shortcut.is_empty() { 0.0 } else { 60.0 } + 48.0).fold(220.0, f32::max)
+    rows.iter().map(|r| r.text.chars().count() as f32 * 7.5 + if r.shortcut.is_empty() { 0.0 } else { 60.0 } + 48.0).fold(220.0, f32::max).min(MAX_WIDTH)
 }
 
 /// Material's menu width (MaterialMenu.qml's contentWidth: at least 232,
@@ -264,6 +283,7 @@ pub fn material_width(rows: &[Row]) -> f32 {
                 + 40.0
         })
         .fold(232.0, f32::max)
+        .min(MAX_WIDTH)
 }
 
 /// Arrow keys: the next row that can be chosen, from `from` (-1: none yet)
@@ -383,5 +403,18 @@ mod tests {
         assert!(width(&v) >= 220.0);
         assert_eq!(space(5, "DP-1", &[("DP-1".into(), "Built-in".into())])[0].enabled, false);
         assert_eq!(space(5, "DP-1", &[("DP-1".into(), "Built-in".into()), ("HDMI-A-1".into(), "TV".into())])[0].text, "Move to TV (HDMI-A-1)");
+    }
+}
+
+#[cfg(test)]
+mod tray_back {
+    use super::*;
+
+    #[test]
+    fn a_submenu_starts_with_a_way_back() {
+        let node = MenuNode::default();
+        let v = tray_in(&node, Some(""));
+        assert_eq!((v[0].text.as_str(), v[0].action.clone(), v[0].keep_open), ("‹  Back", Action::TrayBack, true));
+        assert!(tray_in(&node, None).is_empty());
     }
 }

@@ -69,6 +69,22 @@ pub fn widget(state: &Value, id: &str) -> Widget {
     Widget { open: b("open", d.open), pinned: b("pinned", d.pinned), clickthrough: b("clickthrough", d.clickthrough), x: n("x", d.x), y: n("y", d.y), w: n("w", d.w), h: n("h", d.h) }
 }
 
+/// A widget as drawn on a screen of `screen` (logical px): no bigger than
+/// it and wholly on it. One pinned on a wide monitor, dragged past an edge,
+/// or at the defaults (the mixer at x 1100) on a 1366 px laptop was off the
+/// screen with no way back (audit #36). (0, 0): not known yet, as stored
+pub fn widget_on(state: &Value, id: &str, screen: (f64, f64)) -> Widget {
+    let mut w = widget(state, id);
+    let (sw, sh) = screen;
+    if sw > 0.0 && sh > 0.0 {
+        w.w = w.w.min((sw - 2.0 * M).max(40.0));
+        w.h = w.h.min((sh - 2.0 * M).max(40.0));
+        w.x = w.x.clamp(M, (sw - w.w - M).max(M));
+        w.y = w.y.clamp(M, (sh - w.h - M).max(M));
+    }
+    w
+}
+
 impl Widget {
     /// On screen: open, and the overlay is open or it's pinned (and allowed)
     pub fn shown(&self, id: &str, overlay_open: bool, gaming: bool) -> bool {
@@ -117,11 +133,11 @@ pub fn active(open: bool, widgets: &Value, gaming: bool, cross: &Crosshair) -> b
 
 /// Where the screen takes clicks: everywhere while open (None); closed,
 /// only the pinned widgets that aren't click-through
-pub fn input_rects(open: bool, widgets: &Value, gaming: bool) -> Option<Vec<(i32, i32, i32, i32)>> {
+pub fn input_rects(open: bool, widgets: &Value, gaming: bool, screen: (f64, f64)) -> Option<Vec<(i32, i32, i32, i32)>> {
     if open {
         return None;
     }
-    Some(ids(gaming).iter().map(|id| (id, widget(widgets, id))).filter(|(id, w)| w.shown(id, false, gaming) && !w.clickthrough).map(|(_, w)| w.item_rect()).collect())
+    Some(ids(gaming).iter().map(|id| (id, widget_on(widgets, id, screen))).filter(|(id, w)| w.shown(id, false, gaming) && !w.clickthrough).map(|(_, w)| w.item_rect()).collect())
 }
 
 /// A change to a widget, checked before it goes to the shell
@@ -224,8 +240,11 @@ mod tests {
     #[test]
     fn where_clicks_land() {
         let s = json!({"notes": {"open": true, "pinned": true}, "mixer": {"open": true, "pinned": true, "clickthrough": true}});
-        assert_eq!(input_rects(true, &s, false), None);
-        assert_eq!(input_rects(false, &s, false), Some(vec![widget(&s, "notes").item_rect()]));
+        assert_eq!(input_rects(true, &s, false, (0.0, 0.0)), None);
+        assert_eq!(input_rects(false, &s, false, (0.0, 0.0)), Some(vec![widget(&s, "notes").item_rect()]));
+        // (on a small screen: kept on it)
+        let w = widget_on(&json!({"mixer": {"open": true, "x": 1100.0, "y": 900.0}}), "mixer", (1366.0, 768.0));
+        assert!(w.x + w.w <= 1366.0 && w.y + w.h <= 768.0 && w.x >= 0.0 && w.y >= 0.0);
         let cross = crosshair(&json!({}));
         assert!(active(false, &s, false, &cross));
         assert!(!active(false, &json!({}), false, &cross));

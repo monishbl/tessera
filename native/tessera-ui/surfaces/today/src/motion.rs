@@ -226,7 +226,7 @@ pub fn exit(from: Frame, ms: f32, t: &Target) -> Timeline {
 /// 620 ms of `rows`, each fading in over 300 ms
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn appear(rows: f32, order: i32) -> f32 {
-    ((rows * 620.0 - order as f32 * 40.0) / 300.0).clamp(0.0, 1.0)
+    ((rows * 620.0 - order.min(8) as f32 * 40.0) / 300.0).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
@@ -298,9 +298,10 @@ mod tests {
         assert_eq!(appear(0.0, 0), 0.0);
         assert_eq!(appear(1.0, 0), 1.0);
         assert!(appear(0.25, 0) > appear(0.25, 2));
-        // (as the QML: rows ordered past 7 never quite arrive; Glass's
-        // buttons, order 10, rest at 73%)
+        // (every row whole at the end; QML's rows past 7 rested short, Glass's
+        // buttons, order 10, at 73%: audit #40)
         assert!(close(appear(1.0, 7), 1.0));
-        assert!(close(appear(1.0, 10), 0.7333));
+        assert!(close(appear(1.0, 10), 1.0));
+        assert!(close(appear(1.0, 14), 1.0));
     }
 }

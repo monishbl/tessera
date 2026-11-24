@@ -855,7 +855,8 @@ component AlertView inherits Rectangle {
                 }
                 moved => { if self.pressed { root.set-level(self.mouse-x / self.width); } }
                 scroll-event(e) => {
-                    root.set-level(a.hud-value + (e.delta-y > 0 ? 0.05 : -0.05));
+                    if e.delta-y == 0 { return reject; } // (sideways: not a level change; audit #31)
+                    root.set-level(a.hud-value + max(-0.05, min(0.05, e.delta-y / 15px * 0.05)));
                     accept
                 }
             }
@@ -953,7 +954,8 @@ component AlertView inherits Rectangle {
                     }
                     moved => { if self.pressed { root.level-set(l.id, max(0, min(1, self.mouse-x / self.width))); } }
                     scroll-event(e) => {
-                        root.level-set(l.id, max(0, min(1, l.value + (e.delta-y > 0 ? 0.05 : -0.05))));
+                        if e.delta-y == 0 { return reject; } // (sideways: not a level change; audit #31)
+                        root.level-set(l.id, max(0, min(1, l.value + max(-0.05, min(0.05, e.delta-y / 15px * 0.05)))));
                         accept
                     }
                 }
@@ -2874,7 +2876,8 @@ export component Island inherits Rectangle {
                                 animate background { duration: Theme.hover; }
                                 volt := TouchArea {
                                     scroll-event(e) => {
-                                        root.set-volume(card.volume + (e.delta-y > 0 ? 0.05 : -0.05));
+                                        if e.delta-y == 0 { return reject; } // (sideways: not a level change; audit #31)
+                                        root.set-volume(card.volume + max(-0.05, min(0.05, e.delta-y / 15px * 0.05)));
                                         accept
                                     }
                                     IconButton {

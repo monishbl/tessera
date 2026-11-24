@@ -697,6 +697,12 @@ fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .http_status_as_error(false)
         .timeout_connect(Some(Duration::from_secs(20)))
+        // (a provider that stops sending without closing: the answer ends
+        // as cut off after two quiet minutes, and the thread with it; it
+        // stayed "streaming", and after Stop its thread stayed blocked for
+        // the shell's life; audit #27)
+        .timeout_recv_response(Some(Duration::from_secs(120)))
+        .timeout_per_read(Some(Duration::from_secs(120)))
         .tls_config(TlsConfig::builder().root_certs(RootCerts::PlatformVerifier).build())
         .build()
         .into()

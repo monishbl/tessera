@@ -277,7 +277,7 @@ component CapsuleSlider {
         }
         scroll-event(e) => {
             if e.delta-y != 0 {
-                moved(max(0, min(1, value + (e.delta-y > 0 ? 0.05 : -0.05))));
+                moved(max(0, min(1, value + max(-0.05, min(0.05, e.delta-y / 15px * 0.05)))));
                 return accept;
             }
             return reject;
@@ -795,7 +795,7 @@ export component QsSlider {
         }
         scroll-event(e) => {
             if e.delta-y != 0 {
-                moved(max(0, min(1, value + (e.delta-y > 0 ? 0.05 : -0.05))));
+                moved(max(0, min(1, value + max(-0.05, min(0.05, e.delta-y / 15px * 0.05)))));
                 return accept;
             }
             return reject;
@@ -1527,7 +1527,7 @@ export component Block inherits VerticalLayout {
             moved => { slide(max(0, min(1, self.mouse-x / self.width))); }
             scroll-event(e) => {
                 if e.delta-y != 0 {
-                    slide(max(0, min(1, b.value + (e.delta-y > 0 ? 0.05 : -0.05))));
+                    slide(max(0, min(1, b.value + max(-0.05, min(0.05, e.delta-y / 15px * 0.05)))));
                     return accept;
                 }
                 return reject;

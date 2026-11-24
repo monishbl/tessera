@@ -493,6 +493,11 @@ impl Network {
     }
 
     fn key(&mut self, st: &mut State, text: &str, shift: bool) {
+        // (someone using the keys is using the menu: its 5 s start again;
+        // it closed mid-way under them; audit #33)
+        if self.timer.running() {
+            self.timer.restart();
+        }
         let is = |k: Key| text == SharedString::from(k).as_str();
         if is(Key::Escape) {
             if self.menu.is_some() {

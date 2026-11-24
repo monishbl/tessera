@@ -85,6 +85,8 @@ struct Win {
 
 #[derive(Default)]
 pub struct Overlay {
+    /// the window's logical size (widgets are kept on it), (0, 0) until shown
+    screen: (f64, f64),
     win: Option<Win>,
     open: bool,
     output: Option<String>,
@@ -237,13 +239,18 @@ impl Overlay {
         let res_shown = self.widget("resources").shown("resources", open, g);
         let Some(win) = self.win.as_ref() else { return };
         let ui = &win.ui;
+        let screen = {
+            let sz = ui.window().size().to_logical(ui.window().scale_factor());
+            (sz.width as f64, sz.height as f64)
+        };
+        self.screen = screen;
         ui.set_open(open);
         ui.set_gaming(g);
         ui.set_on_glass(st.shell.plugin && !st.shell.look.material);
         ui.global::<ui::OvG>().set_open(open);
         ui.global::<ui::OvG>().set_on_glass(st.shell.plugin && !st.shell.look.material);
         let w = |id: &str| {
-            let x = model::widget(&self.widgets, id);
+            let x = model::widget_on(&self.widgets, id, screen);
             ov(&x, x.shown(id, open, g))
         };
         ui.set_notes(w("notes"));
@@ -266,7 +273,7 @@ impl Overlay {
         let sliders = self.sliders(st);
         win.sliders.set(sliders);
         // input and keyboard
-        let rects = model::input_rects(open, &self.widgets, g);
+        let rects = model::input_rects(open, &self.widgets, g, self.screen);
         let win = self.win.as_mut().unwrap();
         if rects != win.region {
             win.region = rects.clone();
@@ -575,6 +582,7 @@ impl Part for Overlay {
         let g = gaming(st);
         let open = self.open;
         let widgets = self.widgets.clone();
+        let screen = self.screen;
         let Some(w) = self.win.as_mut() else { return };
         crate::picture::second_frame(&w.surface, &mut w.settled);
         let focused = kbd.as_ref().is_some_and(|k| Rc::ptr_eq(k, &w.surface));
@@ -591,7 +599,7 @@ impl Part for Overlay {
             shapes.push(theme::shadow_margin(theme::glass_shape(look, x, y, ww, hh, 26.0, 1.0, 1.0), 20.0));
         }
         for id in model::ids(g) {
-            let x = model::widget(&widgets, id);
+            let x = model::widget_on(&widgets, id, screen);
             if x.shown(id, open, g) {
                 let o = if !open && x.clickthrough { 0.55 } else { 1.0 };
                 shapes.push(theme::shadow_margin(theme::glass_shape(look, x.x as f32, x.y as f32, x.w as f32, x.h as f32, 20.0, o, 1.0), 18.0));

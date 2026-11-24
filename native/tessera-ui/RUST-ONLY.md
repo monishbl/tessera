@@ -165,3 +165,12 @@ Removed: the passkeys daemon, its Settings group, its polkit-dialog requests and
 | A file chooser's answer goes only to the row that asked, while its page is shown (#109); decoded pictures dropped on close, failed ones retried, at most ~600 kept (#110); what a page read once is read again when Settings opens (#111) | 24 Nov | done, unchecked | audit-fixes |
 | A failed login item change is taken back from the list (#112); "Restart computer" asks once (#113); forget, disconnect, sign out, remove local data, AI remove, display defaults, speed history, notification Clear all and Battery's Quit ask with a second press; Quick Settings' layout and Mouse defaults have Undo (#114); a shortcut on a bare typing key is refused (#115) | 24 Nov | done, unchecked (unit test: lone keys) | audit-fixes |
 | Keyboard: chips, swatches, wallpaper tiles and sets, Focus and window-rule rows, Ghost buttons and day chips are Tab stops with rings and hover looks; wallpaper tiles are named (#116-#118); after a click the window's (or the sheet's) keys get focus back (#196); Tab scrolls the page to the control (#197) | 24 Nov | done, unchecked (needs the laptop check) | audit-fixes |
+
+## Bar, panels and notifications audit fixes (24 Nov, 2026-11-23 audit, uncompiled)
+
+| What | When | Status | Commit |
+|---|---|---|---|
+| AI: keys saved to the fallback file merge under a lock (#26); a stalled answer ends after 2 quiet minutes (#27); a link made of inline code keeps its words (#37); the chat follows only while at the bottom (#38) | 24 Nov | done, unchecked (unit test: code links) | audit-fixes |
+| Control Center's Display slider drives DDC monitors when there's no backlight, hidden when there's nothing to set (#28); every slider steps by how far it scrolled (#29); the island ignores sideways scrolls (#31) | 24 Nov | done, unchecked | audit-fixes |
+| Tray submenus have a "‹ Back" row, Left/Backspace too (#30); bar menus at most 420 px wide and the screen's height, scrolling, arrows keep the row in view (#32); the Wi-Fi menu's 5 s restart on keys (#33); "Sound settings…" works (#39) | 24 Nov | done, unchecked (unit test: back row) | audit-fixes |
+| Notification Center no taller than the screen, the rest scrolls (#34); action buttons shrink and elide, three at most (#35; the island's alert buttons not yet); overlay widgets kept on the screen (#36); Today's rows all reach full opacity (#40) | 24 Nov | done, unchecked | audit-fixes |

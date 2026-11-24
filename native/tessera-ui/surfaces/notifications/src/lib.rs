@@ -56,6 +56,10 @@ tessera_core::theme_global!(ui);
 #[allow(unused_imports)]
 use tessera_core::*;
 
+/// The app's own buttons a card shows (with Reply, four fit the card;
+/// mail apps send more; audit #35)
+const MAX_BUTTONS: usize = 3;
+
 pub mod center;
 pub mod stack;
 /// (in tessera-core: the notification server, services::notify, keeps them)
@@ -737,7 +741,7 @@ impl Notifications {
             has_icon: icon.is_some(),
             icon: icon.unwrap_or_default(),
             picture,
-            buttons: self.buttons.get(&n.id.to_string(), n.buttons().iter().map(|a| ui::NoteButton { key: a.id.clone().into(), text: a.text.clone().into() }).collect::<Vec<_>>()),
+            buttons: self.buttons.get(&n.id.to_string(), n.buttons().iter().take(MAX_BUTTONS).map(|a| ui::NoteButton { key: a.id.clone().into(), text: a.text.clone().into() }).collect::<Vec<_>>()),
             can_reply: n.has_inline_reply,
             placeholder: n.inline_reply_placeholder.clone().into(),
             replying: s.is_some_and(|s| s.replying),

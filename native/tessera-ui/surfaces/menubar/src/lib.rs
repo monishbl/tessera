@@ -204,6 +204,8 @@ struct MenuEntry {
     region_sent: String,
     /// the pointer is over the panel (autoClose waits)
     hovered: bool,
+    /// a tray menu's open submenus: (dbusmenu id, its label), deepest last
+    trail: Vec<(i32, String)>,
 }
 
 #[derive(Default)]
@@ -1401,7 +1403,7 @@ impl Menubar {
         ui.set_rows(ui_rows.model());
         ui.show().expect("show menu");
         let a11y = crate::a11y::A11y::new(&surface, st.tx.clone());
-        self.menu = Some(MenuEntry { output: output.to_string(), surface, ui, a11y, open: false, glass_sent: String::new(), kind: MenuKind::System, rows: Vec::new(), ui_rows, region_sent: String::new(), hovered: false });
+        self.menu = Some(MenuEntry { output: output.to_string(), surface, ui, a11y, open: false, glass_sent: String::new(), kind: MenuKind::System, rows: Vec::new(), ui_rows, region_sent: String::new(), hovered: false, trail: Vec::new() });
         true
     }
 
@@ -1429,8 +1431,12 @@ impl Menubar {
         };
         m.ui.set_panel_left(px);
         m.ui.set_context(matches!(kind, MenuKind::Space(_)));
+        m.ui.set_can_back(false);
         if let MenuKind::Tray(key, path) = &kind {
             self.tray_menu = key.clone();
+            if let Some(m) = self.menu.as_mut() {
+                m.trail.clear();
+            }
             tray::menu(key, path, st.shell.sender(NAME));
         }
         let m = self.menu.as_mut().unwrap();
@@ -1532,7 +1538,23 @@ impl Menubar {
             }
             Action::TraySub(id) => {
                 if let Some(MenuKind::Tray(key, path)) = self.menu.as_ref().map(|m| m.kind.clone()) {
+                    if let Some(m) = self.menu.as_mut() {
+                        let label = m.rows.iter().find(|r| r.action == Action::TraySub(id)).map(|r| r.text.trim_end_matches(" ›").trim_end().to_string()).unwrap_or_default();
+                        m.trail.push((id, label));
+                    }
                     tray::submenu(&key, &path, id, st.shell.sender(NAME));
+                }
+            }
+            Action::TrayBack => {
+                if let Some(MenuKind::Tray(key, path)) = self.menu.as_ref().map(|m| m.kind.clone()) {
+                    let up = self.menu.as_mut().and_then(|m| {
+                        m.trail.pop();
+                        m.trail.last().map(|t| t.0)
+                    });
+                    match up {
+                        Some(id) => tray::submenu(&key, &path, id, st.shell.sender(NAME)),
+                        None => tray::menu(&key, &path, st.shell.sender(NAME)),
+                    }
                 }
             }
         }
@@ -2947,7 +2969,11 @@ impl Part for Menubar {
                 // a tray item's menu (or one of its submenus) came back
                 let material = st.shell.look.material;
                 if let Some(m) = self.menu.as_mut().filter(|m| m.open && matches!(&m.kind, MenuKind::Tray(k, _) if *k == t.key)) {
-                    Self::show_rows(m, menus::tray(&t.root), material);
+                    // (in a submenu: "‹ <the level above>" first)
+                    let back_to = (!m.trail.is_empty()).then(|| if m.trail.len() >= 2 { m.trail[m.trail.len() - 2].1.clone() } else { String::new() });
+                    let rows = menus::tray_in(&t.root, back_to.as_deref());
+                    m.ui.set_can_back(back_to.is_some());
+                    Self::show_rows(m, rows, material);
                 }
                 return;
             }

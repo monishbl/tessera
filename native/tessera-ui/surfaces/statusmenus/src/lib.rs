@@ -823,6 +823,12 @@ impl StatusMenus {
     fn sound_block(&mut self, st: &mut State, i: i32, what: &str) {
         let Some(b) = self.shown_sound.blocks.get(i.max(0) as usize).cloned() else { return };
         let snd = st.shell.get::<Sound>().cloned().unwrap_or_default();
+        // ("Sound settings…": it did nothing here; audit #39)
+        if b.id == "settings" {
+            shell::ask("panels.openSettings", json!(["sound", ""]));
+            self.close(st, true);
+            return;
+        }
         if let Some(n) = b.id.strip_prefix("prof:") {
             shell::ask("statusmenus", json!(["profile", n.parse::<i64>().unwrap_or(-1)]));
         } else if let Some(name) = b.id.strip_prefix("out:") {

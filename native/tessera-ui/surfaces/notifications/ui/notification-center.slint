@@ -300,12 +300,12 @@ export component Center inherits Window {
     out property <float> body-opacity: body.opacity;
     out property <length> radius: Theme.material ? 24px + pad : 36px + pad;
     // (the list as scrolled, for the chips' glass)
-    out property <length> list-top: body.y + pad + list-at.y;
+    out property <length> list-top: body.y + pad + outer.viewport-y + list-at.y;
     out property <length> list-scroll: -flick.content-y;
     out property <length> list-height: flick.height;
     out property <float> openness: shown ? 1 : 0;
     // the widgets' card, in the panel (Glass without the panel: its glass)
-    out property <length> widgets-y: pad + widgets.y;
+    out property <length> widgets-y: pad + outer.viewport-y + widgets.y;
     out property <length> widgets-h: widgets.height;
 
     callback dismissed(); // a click outside, Esc
@@ -388,7 +388,7 @@ export component Center inherits Window {
 
     body := Rectangle {
         width: content-w + 2 * pad;
-        height: col.preferred-height + 2 * pad;
+        height: min(col.preferred-height + 2 * pad, root.height - 34px - m);
         x: parent.width - self.width - m;
         y: 34px + (1 - openness) * -8px;
         opacity: min(1, openness);
@@ -409,570 +409,579 @@ export component Center inherits Window {
         // (clicks inside stay inside)
         TouchArea { }
 
-        col := VerticalLayout {
+        // (no taller than the screen below the bar: on 1366x768, or 1080p
+        // scaled, the calendar, to-dos and editor ran off the bottom; the
+        // rest scrolls; audit #34)
+        outer := Flickable {
             x: pad;
             y: pad;
             width: content-w;
-            height: self.preferred-height;
-            spacing: Theme.material ? 16px : 10px;
+            height: body.height - 2 * pad;
+            viewport-width: content-w;
+            viewport-height: col.preferred-height;
+            col := VerticalLayout {
+                width: content-w;
+                height: self.preferred-height;
+                spacing: Theme.material ? 16px : 10px;
 
-            // Material: the time and date, large
-            if Theme.material: VerticalLayout {
-                Text {
-                    x: 12px;
-                    text: clock;
-                    color: Theme.m3-on-surface;
-                    font-size: 40px;
-                    font-weight: 500;
-                    letter-spacing: -0.4px;
-                }
-                Text {
-                    x: 12px;
-                    text: date;
-                    color: Theme.m3-on-surface-variant;
-                    font-size: 14px;
-                    font-weight: 500;
-                }
-            }
-            // Glass: the title and Clear all
-            if !Theme.material: HorizontalLayout {
-                height: 28px;
-                padding-left: 4px;
-                Text {
-                    text: "Notifications";
-                    color: bare ? #ffffff : Theme.label;
-                    font-size: Theme.title;
-                    font-weight: 600;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    stroke: bare ? #00000033 : transparent;
-                    stroke-width: bare ? 0.6px : 0;
-                }
-                if anything: Rectangle {
-                    y: 1px;
-                    width: clear-l.preferred-width + 20px;
-                    height: 26px;
-                    border-radius: 13px;
-                    background: clear-t.has-hover ? Theme.fill-hover : Theme.fill;
-                    accessible-role: button;
-                    accessible-label: "Clear all notifications";
-                    accessible-action-default => { clear-all(); }
-                    clear-l := Text {
-                        text: "Clear all";
-                        color: Theme.label;
-                        font-size: Theme.small;
+                // Material: the time and date, large
+                if Theme.material: VerticalLayout {
+                    Text {
+                        x: 12px;
+                        text: clock;
+                        color: Theme.m3-on-surface;
+                        font-size: 40px;
                         font-weight: 500;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
+                        letter-spacing: -0.4px;
                     }
-                    clear-t := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { clear-all(); }
+                    Text {
+                        x: 12px;
+                        text: date;
+                        color: Theme.m3-on-surface-variant;
+                        font-size: 14px;
+                        font-weight: 500;
                     }
                 }
-            }
+                // Glass: the title and Clear all
+                if !Theme.material: HorizontalLayout {
+                    height: 28px;
+                    padding-left: 4px;
+                    Text {
+                        text: "Notifications";
+                        color: bare ? #ffffff : Theme.label;
+                        font-size: Theme.title;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        stroke: bare ? #00000033 : transparent;
+                        stroke-width: bare ? 0.6px : 0;
+                    }
+                    if anything: Rectangle {
+                        y: 1px;
+                        width: clear-l.preferred-width + 20px;
+                        height: 26px;
+                        border-radius: 13px;
+                        background: clear-t.has-hover ? Theme.fill-hover : Theme.fill;
+                        accessible-role: button;
+                        accessible-label: "Clear all notifications";
+                        accessible-action-default => { clear-all(); }
+                        clear-l := Text {
+                            text: "Clear all";
+                            color: Theme.label;
+                            font-size: Theme.small;
+                            font-weight: 500;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        clear-t := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { clear-all(); }
+                        }
+                    }
+                }
 
-            // The notifications, grouped by app
-            list-at := Rectangle {
-                height: anything ? min(list.preferred-height, Theme.material ? 440px : 420px) + (Theme.material ? 0 : 8px) : Theme.material ? mempty.preferred-height : 84px;
-                // Nothing here (in the list's place: no room of its own)
-                if !anything && !Theme.material: Platter {
-                    chip: bare;
-                    plugin: glass-plugin;
-                    height: 84px;
-                    VerticalLayout {
-                        alignment: center;
-                        spacing: 6px;
-                        Icon {
-                            text: "\u{e0d0}"; // bell-simple
-                            font-size: 22px;
-                            color: Theme.tertiary;
+                // The notifications, grouped by app
+                list-at := Rectangle {
+                    height: anything ? min(list.preferred-height, Theme.material ? 440px : 420px) + (Theme.material ? 0 : 8px) : Theme.material ? mempty.preferred-height : 84px;
+                    // Nothing here (in the list's place: no room of its own)
+                    if !anything && !Theme.material: Platter {
+                        chip: bare;
+                        plugin: glass-plugin;
+                        height: 84px;
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 6px;
+                            Icon {
+                                text: "\u{e0d0}"; // bell-simple
+                                font-size: 22px;
+                                color: Theme.tertiary;
+                            }
+                            Text {
+                                text: focus-text != "" ? focus-text : "No notifications";
+                                color: Theme.secondary;
+                                font-size: Theme.small;
+                                horizontal-alignment: center;
+                            }
+                        }
+                    }
+                    mempty := VerticalLayout {
+                        visible: !anything && Theme.material;
+                        height: self.preferred-height;
+                        padding-top: 8px;
+                        padding-bottom: 8px;
+                        spacing: 12px;
+                        HorizontalLayout {
+                            alignment: center;
+                            StateShape {
+                                width: 80px;
+                                height: 80px;
+                                outline: outline;
+                                icon: "\u{e0d0}";
+                                icon-size: 32px;
+                                shape-color: Theme.m3-surface-container-high;
+                                icon-color: Theme.m3-on-surface-variant;
+                            }
                         }
                         Text {
-                            text: focus-text != "" ? focus-text : "No notifications";
-                            color: Theme.secondary;
-                            font-size: Theme.small;
+                            text: "No notifications";
+                            color: Theme.m3-on-surface;
+                            font-size: Theme.title;
+                            font-weight: 500;
+                            horizontal-alignment: center;
+                        }
+                        if focus-text != "": Text {
+                            text: focus-text;
+                            color: Theme.m3-on-surface-variant;
+                            font-size: 14px;
                             horizontal-alignment: center;
                         }
                     }
-                }
-                mempty := VerticalLayout {
-                    visible: !anything && Theme.material;
-                    height: self.preferred-height;
-                    padding-top: 8px;
-                    padding-bottom: 8px;
-                    spacing: 12px;
-                    HorizontalLayout {
-                        alignment: center;
-                        StateShape {
-                            width: 80px;
-                            height: 80px;
-                            outline: outline;
-                            icon: "\u{e0d0}";
-                            icon-size: 32px;
-                            shape-color: Theme.m3-surface-container-high;
-                            icon-color: Theme.m3-on-surface-variant;
-                        }
-                    }
-                    Text {
-                        text: "No notifications";
-                        color: Theme.m3-on-surface;
-                        font-size: Theme.title;
-                        font-weight: 500;
-                        horizontal-alignment: center;
-                    }
-                    if focus-text != "": Text {
-                        text: focus-text;
-                        color: Theme.m3-on-surface-variant;
-                        font-size: 14px;
-                        horizontal-alignment: center;
-                    }
-                }
-                flick := Flickable {
-                    visible: anything;
-                    // (Glass: 8 px more on the left and top, for the close badges)
-                    x: Theme.material ? 0 : -8px;
-                    width: parent.width + (Theme.material ? 0 : 8px);
-                    height: parent.height;
-                    content-height: list.preferred-height + (Theme.material ? 0 : 8px);
-                    list := VerticalLayout {
-                        x: Theme.material ? 0 : 8px;
-                        y: Theme.material ? 0 : 8px;
-                        width: content-w;
-                        height: self.preferred-height;
-                        for r[i] in rows: Rectangle {
-                            // its card's own height (a header: its bar)
-                            property <length> card-h: r.kind == 2 ? (Theme.material ? 52px : 24px) : Theme.material ? mcard.height : gcard.height;
-                            // Fanning out of the stack (its group just opened):
-                            // from where it sat in the stack, one after another,
-                            // on the shell's spring; folding back (Show less) on
-                            // the exit curve. Reduce motion: it snaps (stack.rs)
-                            property <bool> born: r.fan <= 0;
-                            property <float> grow: born && !r.fold ? 1 : 0;
-                            animate grow {
-                                duration: Theme.still ? 0ms : r.fold ? 220ms : 460ms;
-                                delay: Theme.still ? 0ms : r.delay * 1ms;
-                                easing: r.fold ? cubic-bezier(0.4, 0, 1, 1) : Theme.material ? spring(0.5) : spring(0.32);
-                            }
-                            property <float> g: r.fan > 0 ? grow : 1;
-                            property <float> sc: 1 - (1 - r.shrink) * (1 - min(1, g));
-                            property <float> op: 1 - (1 - r.dim) * (1 - min(1, g));
-                            height: max(0px, r.gap * g + r.from + (card-h - r.from) * g) + r.peek;
-                            // (while it grows, nothing of it shows above its row:
-                            // it comes out from under the card above)
-                            clip: g < 0.999;
-                            // the card's top: at the row's foot, over its stack's peek
-                            property <length> top: self.height - r.peek - card-h;
-                            property <string> geo: (self.y + top) / 1px + " " + card-h / 1px + " " + self.width / 1px + " " + r.peek / 1px + " " + sc + " " + op;
-                            changed geo => { root.card(i, self.y + top, card-h, self.width, r.peek, sc, op); }
-                            init => {
-                                born = true;
-                                root.card(i, self.y + top, card-h, self.width, r.peek, sc, op);
-                            }
+                    flick := Flickable {
+                        visible: anything;
+                        // (Glass: 8 px more on the left and top, for the close badges)
+                        x: Theme.material ? 0 : -8px;
+                        width: parent.width + (Theme.material ? 0 : 8px);
+                        height: parent.height;
+                        content-height: list.preferred-height + (Theme.material ? 0 : 8px);
+                        list := VerticalLayout {
+                            x: Theme.material ? 0 : 8px;
+                            y: Theme.material ? 0 : 8px;
+                            width: content-w;
+                            height: self.preferred-height;
+                            for r[i] in rows: Rectangle {
+                                // its card's own height (a header: its bar)
+                                property <length> card-h: r.kind == 2 ? (Theme.material ? 52px : 24px) : Theme.material ? mcard.height : gcard.height;
+                                // Fanning out of the stack (its group just opened):
+                                // from where it sat in the stack, one after another,
+                                // on the shell's spring; folding back (Show less) on
+                                // the exit curve. Reduce motion: it snaps (stack.rs)
+                                property <bool> born: r.fan <= 0;
+                                property <float> grow: born && !r.fold ? 1 : 0;
+                                animate grow {
+                                    duration: Theme.still ? 0ms : r.fold ? 220ms : 460ms;
+                                    delay: Theme.still ? 0ms : r.delay * 1ms;
+                                    easing: r.fold ? cubic-bezier(0.4, 0, 1, 1) : Theme.material ? spring(0.5) : spring(0.32);
+                                }
+                                property <float> g: r.fan > 0 ? grow : 1;
+                                property <float> sc: 1 - (1 - r.shrink) * (1 - min(1, g));
+                                property <float> op: 1 - (1 - r.dim) * (1 - min(1, g));
+                                height: max(0px, r.gap * g + r.from + (card-h - r.from) * g) + r.peek;
+                                // (while it grows, nothing of it shows above its row:
+                                // it comes out from under the card above)
+                                clip: g < 0.999;
+                                // the card's top: at the row's foot, over its stack's peek
+                                property <length> top: self.height - r.peek - card-h;
+                                property <string> geo: (self.y + top) / 1px + " " + card-h / 1px + " " + self.width / 1px + " " + r.peek / 1px + " " + sc + " " + op;
+                                changed geo => { root.card(i, self.y + top, card-h, self.width, r.peek, sc, op); }
+                                init => {
+                                    born = true;
+                                    root.card(i, self.y + top, card-h, self.width, r.peek, sc, op);
+                                }
 
-                            // ── Glass ──
-                            if !Theme.material && r.kind == 2: Rectangle {
-                                y: top;
-                                height: 24px;
-                                opacity: op;
-                                HorizontalLayout {
-                                    padding-left: 4px;
-                                    spacing: 6px;
-                                    Text {
-                                        text: r.group;
-                                        color: Theme.label;
-                                        font-size: Theme.body;
-                                        font-weight: 600;
-                                        vertical-alignment: center;
-                                        horizontal-stretch: 1;
-                                        overflow: elide;
-                                    }
-                                    Rectangle {
-                                        y: 1px;
-                                        width: less-l.preferred-width + 18px;
-                                        height: 22px;
-                                        border-radius: 11px;
-                                        background: less-t.has-hover ? Theme.fill-hover : Theme.fill;
-                                        accessible-role: button;
-                                        accessible-label: "Show less";
-                                        accessible-action-default => { toggle-group(r.gkey); }
-                                        less-l := Text {
-                                            text: "Show less";
-                                            color: Theme.label;
-                                            font-size: Theme.caption;
-                                            font-weight: 500;
-                                            horizontal-alignment: center;
-                                            vertical-alignment: center;
-                                        }
-                                        less-t := TouchArea {
-                                            mouse-cursor: pointer;
-                                            clicked => { toggle-group(r.gkey); }
-                                        }
-                                    }
-                                    IconButton {
-                                        y: 1px;
-                                        width: 22px;
-                                        height: 22px;
-                                        icon: "\u{e4f6}";
-                                        icon-size: 11px;
-                                        label: r.kind == 1 || r.b.alert ? "Clear Tessera alerts" : "Clear " + r.group;
-                                        clicked => { clear-group(r.gkey); }
-                                    }
-                                }
-                            }
-                            // a card, and (a folded stack) the cards peeking out under it
-                            Rectangle {
-                                visible: !Theme.material && r.kind != 2;
-                                y: top;
-                                height: card-h + r.peek;
-                                for d in r.edges: Sliver {
-                                    width: parent.width;
-                                    height: parent.height;
-                                    front-w: parent.width;
-                                    front-h: card-h;
-                                    radius: 18px;
-                                    depth: d + 1;
-                                    circular: false;
-                                    // (as the card's platter: its glass's veil and
-                                    // hairline, the frost without the plugin, or the
-                                    // panel's platter)
-                                    fill: bare && !glass-plugin ? Frost.tint : bare ? (Theme.dark ? #ffffff12 : #ffffff47) : Theme.platter;
-                                    veil: Theme.dark ? #ffffff12 : #ffffff47;
-                                    veiled: bare && !glass-plugin;
-                                    line: Theme.dark ? #ffffff0f : #ffffff4d;
-                                    line-width: bare ? 1px : 0;
-                                    opacity: d == 0 ? 0.8 : 0.6;
-                                }
-                                // (what peeks out fans it out too)
-                                if r.peek > 0: TouchArea {
-                                    y: card-h;
-                                    height: r.peek;
-                                    mouse-cursor: pointer;
-                                    clicked => { toggle-group(r.gkey); }
-                                }
-                                Rectangle {
-                                    y: 0;
-                                    height: card-h;
-                                    transform-origin: { x: self.width / 2, y: self.height };
-                                    transform-scale: sc;
+                                // ── Glass ──
+                                if !Theme.material && r.kind == 2: Rectangle {
+                                    y: top;
+                                    height: 24px;
                                     opacity: op;
-                                    Platter {
-                                        chip: bare;
-                                        plugin: glass-plugin;
-                                        y: 0;
-                                        height: card-h;
-                                        border-radius: 18px;
-                                    }
-                                    gtouch := TouchArea {
-                                        y: 0;
-                                        height: card-h;
-                                        // (its text shows only once it's out of the stack)
-                                        opacity: r.fan > 0 ? max(0, min(1, (g - 0.3) / 0.7)) : 1;
-                                        gcard := GlassCard {
-                                            width: content-w;
-                                            b: r.b;
-                                            hovered: gtouch.has-hover;
-                                            // a folded stack: "2 more"; a click fans it
-                                            // out, close clears the group
-                                            more: r.count > 1 && !r.open ? r.count - 1 : 0;
-                                            tap-expands: r.count > 1 && !r.open;
-                                            close-label: r.count > 1 && !r.open ? "Clear " + r.count + " notifications from " + r.group : "";
-                                            group-toggled => { toggle-group(r.gkey); }
-                                            activated => { root.row-activated(r.b.id); }
-                                            close => {
-                                                if r.count > 1 && !r.open { root.clear-group(r.gkey); } else if r.b.alert { root.alert-close(r.b.id); } else { root.row-close(r.b.id); }
+                                    HorizontalLayout {
+                                        padding-left: 4px;
+                                        spacing: 6px;
+                                        Text {
+                                            text: r.group;
+                                            color: Theme.label;
+                                            font-size: Theme.body;
+                                            font-weight: 600;
+                                            vertical-alignment: center;
+                                            horizontal-stretch: 1;
+                                            overflow: elide;
+                                        }
+                                        Rectangle {
+                                            y: 1px;
+                                            width: less-l.preferred-width + 18px;
+                                            height: 22px;
+                                            border-radius: 11px;
+                                            background: less-t.has-hover ? Theme.fill-hover : Theme.fill;
+                                            accessible-role: button;
+                                            accessible-label: "Show less";
+                                            accessible-action-default => { toggle-group(r.gkey); }
+                                            less-l := Text {
+                                                text: "Show less";
+                                                color: Theme.label;
+                                                font-size: Theme.caption;
+                                                font-weight: 500;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
                                             }
-                                            action(k) => { root.action(r.b.id, k); }
-                                            reply-open => { root.reply-open(r.b.id); }
-                                            reply-cancel => { root.reply-cancel(r.b.id); }
-                                            reply-send(t) => { root.reply-send(r.b.id, t); }
-                                            draft(t) => { root.draft(r.b.id, t); }
-                                            link(u) => { root.link(u); }
+                                            less-t := TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => { toggle-group(r.gkey); }
+                                            }
+                                        }
+                                        IconButton {
+                                            y: 1px;
+                                            width: 22px;
+                                            height: 22px;
+                                            icon: "\u{e4f6}";
+                                            icon-size: 11px;
+                                            label: r.kind == 1 || r.b.alert ? "Clear Tessera alerts" : "Clear " + r.group;
+                                            clicked => { clear-group(r.gkey); }
                                         }
                                     }
                                 }
-                            }
-
-                            // ── Material: one segmented list ──
-                            seg := Rectangle {
-                                visible: Theme.material;
-                                property <length> live: swipe.current-position.x - swipe.pressed-position.x;
-                                in-out property <length> off: 0;
-                                property <length> dx: swipe.swiping ? live : off;
-                                // (back on the default spring; off in 150 ms, InCubic)
-                                animate dx { duration: swipe.swiping ? 0ms : off != 0 ? 150ms : 322ms; easing: off != 0 ? cubic-bezier(0.3333, 0, 0.6667, 0) : spring(0.5); }
-                                // the pointer's speed (px per ms), for a fling
-                                property <length> last-x;
-                                property <duration> last-t;
-                                property <float> vel;
-                                // (a row now showing another card: back in place)
-                                property <int> rid: r.b.id;
-                                changed rid => { self.off = 0; }
-                                property <bool> loose: swipe.swiping || dx != 0;
-                                y: top;
-                                x: dx;
-                                // (fanning out: from its place in the stack)
-                                transform-origin: { x: self.width / 2, y: self.height };
-                                transform-scale: sc;
-                                width: content-w;
-                                height: r.kind == 2 ? 52px : mcard.height;
-                                background: Theme.m3-surface-container-high.with-alpha(Theme.blur ? 1 - 0.4 * (1 - Theme.panel-alpha) / 0.55 : 1);
-                                opacity: op * (1 - 0.6 * min(1, abs(dx) / max(1px, self.width)));
-                                border-top-left-radius: loose || r.first ? 24px : 6px;
-                                border-top-right-radius: self.border-top-left-radius;
-                                border-bottom-left-radius: loose || r.last ? 24px : 6px;
-                                border-bottom-right-radius: self.border-bottom-left-radius;
-                                animate border-top-left-radius, border-bottom-left-radius { duration: 150ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
-                                // a folded stack: the cards peeking out under it
-                                // (its own block: round all round, as they are)
-                                for d in r.edges: Sliver {
-                                    y: 0;
-                                    width: parent.width;
-                                    height: parent.height + r.peek;
-                                    front-w: parent.width;
-                                    front-h: parent.height;
-                                    radius: 24px;
-                                    depth: d + 1;
-                                    circular: true;
-                                    fill: parent.background;
-                                    opacity: d == 0 ? 0.8 : 0.6;
-                                }
-                                if r.peek > 0: TouchArea {
-                                    y: parent.height;
-                                    height: r.peek;
-                                    mouse-cursor: pointer;
-                                    clicked => { toggle-group(r.gkey); }
-                                }
-                                fly := Timer {
-                                    interval: 150ms;
-                                    running: false;
-                                    triggered => {
-                                        self.running = false;
-                                        // (a folded stack goes whole; one card of an open group, just it)
-                                        if r.count > 1 && !r.open { clear-group(r.gkey); } else if r.b.alert { alert-close(r.b.id); } else { row-close(r.b.id); }
+                                // a card, and (a folded stack) the cards peeking out under it
+                                Rectangle {
+                                    visible: !Theme.material && r.kind != 2;
+                                    y: top;
+                                    height: card-h + r.peek;
+                                    for d in r.edges: Sliver {
+                                        width: parent.width;
+                                        height: parent.height;
+                                        front-w: parent.width;
+                                        front-h: card-h;
+                                        radius: 18px;
+                                        depth: d + 1;
+                                        circular: false;
+                                        // (as the card's platter: its glass's veil and
+                                        // hairline, the frost without the plugin, or the
+                                        // panel's platter)
+                                        fill: bare && !glass-plugin ? Frost.tint : bare ? (Theme.dark ? #ffffff12 : #ffffff47) : Theme.platter;
+                                        veil: Theme.dark ? #ffffff12 : #ffffff47;
+                                        veiled: bare && !glass-plugin;
+                                        line: Theme.dark ? #ffffff0f : #ffffff4d;
+                                        line-width: bare ? 1px : 0;
+                                        opacity: d == 0 ? 0.8 : 0.6;
                                     }
-                                }
-                                // Swipe sideways to dismiss: past a third of the way it
-                                // slides off, otherwise it springs back
-                                swipe := SwipeGestureHandler {
-                                    enabled: Theme.material && r.kind != 2;
-                                    handle-swipe-left: true;
-                                    handle-swipe-right: true;
-                                    moved => {
-                                        let dt = max(1, (animation-tick() - seg.last-t) / 1ms);
-                                        seg.vel = (seg.live - seg.last-x) / 1px / dt;
-                                        seg.last-x = seg.live;
-                                        seg.last-t = animation-tick();
-                                    }
-                                    // (past a third, or flung over 900 px/s its way)
-                                    swiped => {
-                                        if abs(live) > seg.width / 3 || (abs(seg.vel) > 0.9 && seg.vel * live / 1px > 0) {
-                                            seg.off = (live > 0 ? 1 : -1) * (seg.width + 24px);
-                                            fly.running = true;
-                                        } else {
-                                            seg.off = 0;
-                                        }
-                                    }
-                                    cancelled => { seg.off = 0; }
-                                    mtouch := TouchArea {
-                                        opacity: r.fan > 0 ? max(0, min(1, (g - 0.3) / 0.7)) : 1;
-                                        mcard := MaterialCard {
-                                            visible: r.kind != 2;
-                                            width: content-w;
-                                            b: r.b;
-                                            hovered: mtouch.has-hover;
-                                            group-count: r.count;
-                                            group-open: r.open;
-                                            tap-expands: r.count > 1;
-                                            // (as Glass: X on a folded stack clears the group, as a swipe does)
-                                            close-label: r.count > 1 && !r.open ? "Clear " + r.count + " notifications from " + r.group : "";
-                                            group-toggled => { toggle-group(r.gkey); }
-                                            activated => { root.row-activated(r.b.id); }
-                                            close => { if r.count > 1 && !r.open { root.clear-group(r.gkey); } else if r.b.alert { root.alert-close(r.b.id); } else { root.row-close(r.b.id); } }
-                                            action(k) => { root.action(r.b.id, k); }
-                                            reply-open => { root.reply-open(r.b.id); }
-                                            reply-cancel => { root.reply-cancel(r.b.id); }
-                                            reply-send(t) => { root.reply-send(r.b.id, t); }
-                                            draft(t) => { root.draft(r.b.id, t); }
-                                            link(u) => { root.link(u); }
-                                        }
-                                    }
-                                }
-                                // An open group's header: its name, Clear, and the chevron
-                                if r.kind == 2: Rectangle {
-                                    TouchArea {
+                                    // (what peeks out fans it out too)
+                                    if r.peek > 0: TouchArea {
+                                        y: card-h;
+                                        height: r.peek;
                                         mouse-cursor: pointer;
                                         clicked => { toggle-group(r.gkey); }
                                     }
-                                    Text {
-                                        x: 16px;
-                                        width: parent.width - 16px - 8px - 12px - 32px - 4px - 34px;
-                                        text: r.group;
-                                        color: Theme.m3-on-surface;
-                                        font-size: Theme.title;
-                                        font-weight: 600;
-                                        vertical-alignment: center;
-                                        overflow: elide;
+                                    Rectangle {
+                                        y: 0;
+                                        height: card-h;
+                                        transform-origin: { x: self.width / 2, y: self.height };
+                                        transform-scale: sc;
+                                        opacity: op;
+                                        Platter {
+                                            chip: bare;
+                                            plugin: glass-plugin;
+                                            y: 0;
+                                            height: card-h;
+                                            border-radius: 18px;
+                                        }
+                                        gtouch := TouchArea {
+                                            y: 0;
+                                            height: card-h;
+                                            // (its text shows only once it's out of the stack)
+                                            opacity: r.fan > 0 ? max(0, min(1, (g - 0.3) / 0.7)) : 1;
+                                            gcard := GlassCard {
+                                                width: content-w;
+                                                b: r.b;
+                                                hovered: gtouch.has-hover;
+                                                // a folded stack: "2 more"; a click fans it
+                                                // out, close clears the group
+                                                more: r.count > 1 && !r.open ? r.count - 1 : 0;
+                                                tap-expands: r.count > 1 && !r.open;
+                                                close-label: r.count > 1 && !r.open ? "Clear " + r.count + " notifications from " + r.group : "";
+                                                group-toggled => { toggle-group(r.gkey); }
+                                                activated => { root.row-activated(r.b.id); }
+                                                close => {
+                                                    if r.count > 1 && !r.open { root.clear-group(r.gkey); } else if r.b.alert { root.alert-close(r.b.id); } else { root.row-close(r.b.id); }
+                                                }
+                                                action(k) => { root.action(r.b.id, k); }
+                                                reply-open => { root.reply-open(r.b.id); }
+                                                reply-cancel => { root.reply-cancel(r.b.id); }
+                                                reply-send(t) => { root.reply-send(r.b.id, t); }
+                                                draft(t) => { root.draft(r.b.id, t); }
+                                                link(u) => { root.link(u); }
+                                            }
+                                        }
                                     }
-                                    IconButton {
-                                        x: parent.width - 12px - 34px - 4px - 32px;
-                                        y: (parent.height - self.height) / 2;
-                                        width: 32px;
-                                        height: 32px;
-                                        icon: "\u{e4f6}";
-                                        icon-size: 18px;
-                                        icon-color: Theme.m3-on-surface-variant;
-                                        label: r.b.alert ? "Clear Tessera alerts" : "Clear " + r.group;
-                                        clicked => { clear-group(r.gkey); }
+                                }
+
+                                // ── Material: one segmented list ──
+                                seg := Rectangle {
+                                    visible: Theme.material;
+                                    property <length> live: swipe.current-position.x - swipe.pressed-position.x;
+                                    in-out property <length> off: 0;
+                                    property <length> dx: swipe.swiping ? live : off;
+                                    // (back on the default spring; off in 150 ms, InCubic)
+                                    animate dx { duration: swipe.swiping ? 0ms : off != 0 ? 150ms : 322ms; easing: off != 0 ? cubic-bezier(0.3333, 0, 0.6667, 0) : spring(0.5); }
+                                    // the pointer's speed (px per ms), for a fling
+                                    property <length> last-x;
+                                    property <duration> last-t;
+                                    property <float> vel;
+                                    // (a row now showing another card: back in place)
+                                    property <int> rid: r.b.id;
+                                    changed rid => { self.off = 0; }
+                                    property <bool> loose: swipe.swiping || dx != 0;
+                                    y: top;
+                                    x: dx;
+                                    // (fanning out: from its place in the stack)
+                                    transform-origin: { x: self.width / 2, y: self.height };
+                                    transform-scale: sc;
+                                    width: content-w;
+                                    height: r.kind == 2 ? 52px : mcard.height;
+                                    background: Theme.m3-surface-container-high.with-alpha(Theme.blur ? 1 - 0.4 * (1 - Theme.panel-alpha) / 0.55 : 1);
+                                    opacity: op * (1 - 0.6 * min(1, abs(dx) / max(1px, self.width)));
+                                    border-top-left-radius: loose || r.first ? 24px : 6px;
+                                    border-top-right-radius: self.border-top-left-radius;
+                                    border-bottom-left-radius: loose || r.last ? 24px : 6px;
+                                    border-bottom-right-radius: self.border-bottom-left-radius;
+                                    animate border-top-left-radius, border-bottom-left-radius { duration: 150ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+                                    // a folded stack: the cards peeking out under it
+                                    // (its own block: round all round, as they are)
+                                    for d in r.edges: Sliver {
+                                        y: 0;
+                                        width: parent.width;
+                                        height: parent.height + r.peek;
+                                        front-w: parent.width;
+                                        front-h: parent.height;
+                                        radius: 24px;
+                                        depth: d + 1;
+                                        circular: true;
+                                        fill: parent.background;
+                                        opacity: d == 0 ? 0.8 : 0.6;
                                     }
-                                    Expander {
-                                        x: parent.width - 12px - self.width;
-                                        y: (parent.height - self.height) / 2;
-                                        count: r.count;
-                                        open: true;
+                                    if r.peek > 0: TouchArea {
+                                        y: parent.height;
+                                        height: r.peek;
+                                        mouse-cursor: pointer;
                                         clicked => { toggle-group(r.gkey); }
+                                    }
+                                    fly := Timer {
+                                        interval: 150ms;
+                                        running: false;
+                                        triggered => {
+                                            self.running = false;
+                                            // (a folded stack goes whole; one card of an open group, just it)
+                                            if r.count > 1 && !r.open { clear-group(r.gkey); } else if r.b.alert { alert-close(r.b.id); } else { row-close(r.b.id); }
+                                        }
+                                    }
+                                    // Swipe sideways to dismiss: past a third of the way it
+                                    // slides off, otherwise it springs back
+                                    swipe := SwipeGestureHandler {
+                                        enabled: Theme.material && r.kind != 2;
+                                        handle-swipe-left: true;
+                                        handle-swipe-right: true;
+                                        moved => {
+                                            let dt = max(1, (animation-tick() - seg.last-t) / 1ms);
+                                            seg.vel = (seg.live - seg.last-x) / 1px / dt;
+                                            seg.last-x = seg.live;
+                                            seg.last-t = animation-tick();
+                                        }
+                                        // (past a third, or flung over 900 px/s its way)
+                                        swiped => {
+                                            if abs(live) > seg.width / 3 || (abs(seg.vel) > 0.9 && seg.vel * live / 1px > 0) {
+                                                seg.off = (live > 0 ? 1 : -1) * (seg.width + 24px);
+                                                fly.running = true;
+                                            } else {
+                                                seg.off = 0;
+                                            }
+                                        }
+                                        cancelled => { seg.off = 0; }
+                                        mtouch := TouchArea {
+                                            opacity: r.fan > 0 ? max(0, min(1, (g - 0.3) / 0.7)) : 1;
+                                            mcard := MaterialCard {
+                                                visible: r.kind != 2;
+                                                width: content-w;
+                                                b: r.b;
+                                                hovered: mtouch.has-hover;
+                                                group-count: r.count;
+                                                group-open: r.open;
+                                                tap-expands: r.count > 1;
+                                                // (as Glass: X on a folded stack clears the group, as a swipe does)
+                                                close-label: r.count > 1 && !r.open ? "Clear " + r.count + " notifications from " + r.group : "";
+                                                group-toggled => { toggle-group(r.gkey); }
+                                                activated => { root.row-activated(r.b.id); }
+                                                close => { if r.count > 1 && !r.open { root.clear-group(r.gkey); } else if r.b.alert { root.alert-close(r.b.id); } else { root.row-close(r.b.id); } }
+                                                action(k) => { root.action(r.b.id, k); }
+                                                reply-open => { root.reply-open(r.b.id); }
+                                                reply-cancel => { root.reply-cancel(r.b.id); }
+                                                reply-send(t) => { root.reply-send(r.b.id, t); }
+                                                draft(t) => { root.draft(r.b.id, t); }
+                                                link(u) => { root.link(u); }
+                                            }
+                                        }
+                                    }
+                                    // An open group's header: its name, Clear, and the chevron
+                                    if r.kind == 2: Rectangle {
+                                        TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { toggle-group(r.gkey); }
+                                        }
+                                        Text {
+                                            x: 16px;
+                                            width: parent.width - 16px - 8px - 12px - 32px - 4px - 34px;
+                                            text: r.group;
+                                            color: Theme.m3-on-surface;
+                                            font-size: Theme.title;
+                                            font-weight: 600;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                        IconButton {
+                                            x: parent.width - 12px - 34px - 4px - 32px;
+                                            y: (parent.height - self.height) / 2;
+                                            width: 32px;
+                                            height: 32px;
+                                            icon: "\u{e4f6}";
+                                            icon-size: 18px;
+                                            icon-color: Theme.m3-on-surface-variant;
+                                            label: r.b.alert ? "Clear Tessera alerts" : "Clear " + r.group;
+                                            clicked => { clear-group(r.gkey); }
+                                        }
+                                        Expander {
+                                            x: parent.width - 12px - self.width;
+                                            y: (parent.height - self.height) / 2;
+                                            count: r.count;
+                                            open: true;
+                                            clicked => { toggle-group(r.gkey); }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            // Material: Manage and Clear all
-            if Theme.material: Rectangle {
-                height: 40px;
-                manage-btn := Rectangle {
-                    x: 0;
-                    width: manage-l.preferred-width + 24px;
+                // Material: Manage and Clear all
+                if Theme.material: Rectangle {
                     height: 40px;
-                    border-radius: manage-t.pressed ? 12px : 20px;
-                    animate border-radius { duration: 100ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
-                    background: manage-t.pressed ? Theme.m3-primary.with-alpha(0.1) : manage-t.has-hover ? Theme.m3-primary.with-alpha(0.08) : transparent;
-                    animate background { duration: 150ms; }
-                    transform-scale: manage-t.pressed ? 0.97 : 1;
-                    animate transform-scale { duration: 100ms; }
-                    accessible-role: button;
-                    accessible-label: "Manage notifications";
-                    accessible-action-default => { manage(); }
-                    manage-l := Text {
-                        text: "Manage";
-                        color: Theme.m3-primary;
-                        font-size: 14px;
-                        font-weight: 500;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
+                    manage-btn := Rectangle {
+                        x: 0;
+                        width: manage-l.preferred-width + 24px;
+                        height: 40px;
+                        border-radius: manage-t.pressed ? 12px : 20px;
+                        animate border-radius { duration: 100ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+                        background: manage-t.pressed ? Theme.m3-primary.with-alpha(0.1) : manage-t.has-hover ? Theme.m3-primary.with-alpha(0.08) : transparent;
+                        animate background { duration: 150ms; }
+                        transform-scale: manage-t.pressed ? 0.97 : 1;
+                        animate transform-scale { duration: 100ms; }
+                        accessible-role: button;
+                        accessible-label: "Manage notifications";
+                        accessible-action-default => { manage(); }
+                        manage-l := Text {
+                            text: "Manage";
+                            color: Theme.m3-primary;
+                            font-size: 14px;
+                            font-weight: 500;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        manage-t := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { manage(); }
+                        }
                     }
-                    manage-t := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { manage(); }
+                    if anything: Rectangle {
+                        x: parent.width - self.width;
+                        width: mclear-l.preferred-width + 40px;
+                        height: 40px;
+                        border-radius: mclear-t.pressed ? 12px : 20px;
+                        animate border-radius { duration: 100ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+                        background: Theme.m3-secondary-container.mix(Theme.m3-on-secondary-container, mclear-t.pressed ? 0.9 : mclear-t.has-hover ? 0.92 : 1);
+                        animate background { duration: 150ms; }
+                        transform-scale: mclear-t.pressed ? 0.97 : 1;
+                        animate transform-scale { duration: 100ms; }
+                        accessible-role: button;
+                        accessible-label: "Clear all notifications";
+                        accessible-action-default => { clear-all(); }
+                        mclear-l := Text {
+                            text: "Clear all";
+                            color: Theme.m3-on-secondary-container;
+                            font-size: 14px;
+                            font-weight: 500;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        mclear-t := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { clear-all(); }
+                        }
                     }
                 }
-                if anything: Rectangle {
-                    x: parent.width - self.width;
-                    width: mclear-l.preferred-width + 40px;
-                    height: 40px;
-                    border-radius: mclear-t.pressed ? 12px : 20px;
-                    animate border-radius { duration: 100ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
-                    background: Theme.m3-secondary-container.mix(Theme.m3-on-secondary-container, mclear-t.pressed ? 0.9 : mclear-t.has-hover ? 0.92 : 1);
-                    animate background { duration: 150ms; }
-                    transform-scale: mclear-t.pressed ? 0.97 : 1;
-                    animate transform-scale { duration: 100ms; }
-                    accessible-role: button;
-                    accessible-label: "Clear all notifications";
-                    accessible-action-default => { clear-all(); }
-                    mclear-l := Text {
-                        text: "Clear all";
-                        color: Theme.m3-on-secondary-container;
-                        font-size: 14px;
-                        font-weight: 500;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                    mclear-t := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { clear-all(); }
-                    }
-                }
-            }
 
-            // Calendar, To-do and Focus: one card, the tabs its first row
-            widgets := Platter {
-                chip: bare;
-                plugin: glass-plugin;
-                border-radius: Theme.material ? 24px : 36px;
-                height: tabs.height + 12px + (Theme.material ? 4px : 0) + (tab == 0 ? cal.height : tab == 1 ? todo.height : focus.height);
-                tabs := Segmented {
-                    x: 12px;
-                    y: 12px;
-                    width: parent.width - 24px;
-                    height: Theme.material ? 36px : 28px;
-                    options: ["Calendar", "To-do", "Focus"];
-                    current: tab;
-                    label: "Widgets";
-                    selected(i) => { set-tab(i); }
-                }
-                cal := CalendarTab {
-                    outline: outline;
-                    y: tabs.y + tabs.height + (Theme.material ? 4px : 0);
-                    width: parent.width;
-                    visible: tab == 0;
-                    title: cal-title;
-                    week: cal-week;
-                    days: days;
-                    day-title: day-title;
-                    items: day-items;
-                    every-day: every-day;
-                    day-key: day-key;
-                    day-short: day-short;
-                    targets: cal-targets;
-                    target: cal-target;
-                    target-label: cal-target-label;
-                    default-alert: cal-default-alert;
-                    h24: cal-h24;
-                    undo: cal-undo;
-                    ink: accent-ink;
-                    radius: Theme.material ? 24px : 36px;
-                    error <=> cal-error;
-                    save(d, every) => { cal-save(d, every); }
-                    remove(k, every) => { cal-remove(k, every); }
-                    move(k, day, every) => { cal-move(k, day, every); }
-                    restore => { cal-restore(); }
-                    step(n) => { cal-step(n); }
-                    set-week(w) => { cal-week-set(w); }
-                    pick(k) => { cal-pick(k); }
-                    todo-toggle(k) => { root.todo-toggle(k); }
-                }
-                todo := TodoTab {
-                    y: cal.y;
-                    width: parent.width;
-                    visible: tab == 1;
-                    todos: todos;
-                    undo: todo-undo;
-                    ink: accent-ink;
-                    add(t) => { todo-add(t); }
-                    toggle(k) => { todo-toggle(k); }
-                    remove(k) => { todo-remove(k); }
-                    restore => { todo-restore(); }
-                    rename(k, t) => { todo-rename(k, t); }
-                }
-                focus := FocusTab {
-                    ink: accent-ink;
-                    y: cal.y;
-                    width: parent.width;
-                    visible: tab == 2;
-                    mode: focus-mode;
-                    remaining: remaining;
-                    focus-phase: focus-phase;
-                    running: running;
-                    sessions: sessions;
-                    track: ring-track;
-                    progress: ring-progress;
-                    sw: sw;
-                    sw-running: sw-running;
-                    laps: laps;
-                    set-mode(i) => { focus-mode-set(i); }
-                    act(a) => { root.act(a); }
+                // Calendar, To-do and Focus: one card, the tabs its first row
+                widgets := Platter {
+                    chip: bare;
+                    plugin: glass-plugin;
+                    border-radius: Theme.material ? 24px : 36px;
+                    height: tabs.height + 12px + (Theme.material ? 4px : 0) + (tab == 0 ? cal.height : tab == 1 ? todo.height : focus.height);
+                    tabs := Segmented {
+                        x: 12px;
+                        y: 12px;
+                        width: parent.width - 24px;
+                        height: Theme.material ? 36px : 28px;
+                        options: ["Calendar", "To-do", "Focus"];
+                        current: tab;
+                        label: "Widgets";
+                        selected(i) => { set-tab(i); }
+                    }
+                    cal := CalendarTab {
+                        outline: outline;
+                        y: tabs.y + tabs.height + (Theme.material ? 4px : 0);
+                        width: parent.width;
+                        visible: tab == 0;
+                        title: cal-title;
+                        week: cal-week;
+                        days: days;
+                        day-title: day-title;
+                        items: day-items;
+                        every-day: every-day;
+                        day-key: day-key;
+                        day-short: day-short;
+                        targets: cal-targets;
+                        target: cal-target;
+                        target-label: cal-target-label;
+                        default-alert: cal-default-alert;
+                        h24: cal-h24;
+                        undo: cal-undo;
+                        ink: accent-ink;
+                        radius: Theme.material ? 24px : 36px;
+                        error <=> cal-error;
+                        save(d, every) => { cal-save(d, every); }
+                        remove(k, every) => { cal-remove(k, every); }
+                        move(k, day, every) => { cal-move(k, day, every); }
+                        restore => { cal-restore(); }
+                        step(n) => { cal-step(n); }
+                        set-week(w) => { cal-week-set(w); }
+                        pick(k) => { cal-pick(k); }
+                        todo-toggle(k) => { root.todo-toggle(k); }
+                    }
+                    todo := TodoTab {
+                        y: cal.y;
+                        width: parent.width;
+                        visible: tab == 1;
+                        todos: todos;
+                        undo: todo-undo;
+                        ink: accent-ink;
+                        add(t) => { todo-add(t); }
+                        toggle(k) => { todo-toggle(k); }
+                        remove(k) => { todo-remove(k); }
+                        restore => { todo-restore(); }
+                        rename(k, t) => { todo-rename(k, t); }
+                    }
+                    focus := FocusTab {
+                        ink: accent-ink;
+                        y: cal.y;
+                        width: parent.width;
+                        visible: tab == 2;
+                        mode: focus-mode;
+                        remaining: remaining;
+                        focus-phase: focus-phase;
+                        running: running;
+                        sessions: sessions;
+                        track: ring-track;
+                        progress: ring-progress;
+                        sw: sw;
+                        sw-running: sw-running;
+                        laps: laps;
+                        set-mode(i) => { focus-mode-set(i); }
+                        act(a) => { root.act(a); }
+                    }
                 }
             }
         }
