@@ -235,11 +235,13 @@ component Control {
 // primary tint, as Android marks the setting a search opened)
 component Flash inherits Rectangle {
     in property <bool> on;
+    in property <length> margin: 80px;
     property <float> shown: on ? 1 : 0;
     animate shown { duration: on ? 150ms : 400ms; easing: on ? ease-out : ease-in; }
     function tell() {
         SBus.reveal-y = self.absolute-position.y;
         SBus.reveal-h = self.height;
+        SBus.reveal-margin = self.margin;
         SBus.reveal-seq += 1;
         my-seq = SBus.reveal-seq;
     }
@@ -654,7 +656,9 @@ component BlockView inherits VerticalLayout {
                 font-weight: Theme.material ? 400 : 600;
             }
         }
-        Flash { on: b.flash; }
+        // (a part opens with its heading at the top: what's left of the
+        // part before showed above it, a clipped toggle, half a line)
+        Flash { on: b.flash; margin: 0px; }
     }
     if b.kind == "more": MoreButton { b: b; }
     if b.kind == "text": HorizontalLayout {
@@ -788,6 +792,19 @@ export component SettingsWindow inherits Window {
     // the search result the arrow keys are on (-1: none)
     property <int> res-cur: -1;
     property <bool> pill-placed;
+    // The open page's row: the pill there, and the list scrolled so it shows
+    // (audit #119, #158, #175: a page opened by keys, a link or a search hit
+    // left its row below the fold, and nothing looked selected). Y and H are
+    // the row's place in the list, from the layout (audit #176: read from
+    // absolute-position before the list was laid out, the pill sat a row high)
+    function show-row(y: length, h: length) {
+        root.pill-y = y;
+        if y + h + 8px > -side-scroll.content-y + side-scroll.height {
+            side-scroll.content-y = -max(0px, min(y + h + 8px - side-scroll.height, side-scroll.content-height - side-scroll.height));
+        } else if y < -side-scroll.content-y {
+            side-scroll.content-y = -max(0px, y - 8px);
+        }
+    }
     callback go(string);
     callback query(string);
     callback query-commit();
@@ -827,7 +844,7 @@ export component SettingsWindow inherits Window {
     property <int> reveal-seq: SBus.reveal-seq;
     changed reveal-seq => {
         let top = SBus.reveal-y - page-scroll.absolute-position.y - page-scroll.content-y;
-        page-scroll.content-y = -max(0px, min(page-scroll.content-height - page-scroll.height, top - 80px));
+        page-scroll.content-y = -max(0px, min(page-scroll.content-height - page-scroll.height, top - SBus.reveal-margin));
     }
 
     // A row that opened wants to be seen (WifiList.revealAsking): scrolled
@@ -877,7 +894,8 @@ export component SettingsWindow inherits Window {
             y: 0;
             width: Theme.material ? 300px : 230px;
             height: parent.height;
-            background: Theme.material ? Theme.m3-surface-container : Theme.dark ? #1f1f24c7 : #f0f0f5cc;
+            property <color> bg: Theme.material ? Theme.m3-surface-container : Theme.dark ? #1f1f24c7 : #f0f0f5cc;
+            background: self.bg;
 
             // Glass: scrolled down and idle, the search folds into a magnifier
             property <bool> folded: !Theme.material && side-scroll.content-y < -4px && !search-input.has-focus && !searching && !fold-hover.has-hover;
@@ -1068,16 +1086,25 @@ export component SettingsWindow inherits Window {
                                     background: Theme.material ? transparent
                                         : s.current ? Theme.accent : ita.has-hover ? Theme.fill : transparent;
                                     property <bool> cur: s.current;
+                                    // (its place in the list: the section's in the list, then its own in the section)
+                                    property <length> row-y: parent.y + self.y;
                                     changed cur => {
                                         if cur {
                                             root.pill-placed = true;
-                                            root.pill-y = self.absolute-position.y - side-holder.absolute-position.y;
+                                            root.show-row(self.row-y, self.height);
+                                        }
+                                    }
+                                    // (laid out, or moved by a heading above: the pill follows, unanimated)
+                                    changed row-y => {
+                                        if cur {
+                                            root.pill-placed = false;
+                                            root.show-row(self.row-y, self.height);
                                         }
                                     }
                                     init => {
                                         if cur {
                                             root.pill-placed = false;
-                                            root.pill-y = self.absolute-position.y - side-holder.absolute-position.y;
+                                            root.show-row(self.row-y, self.height);
                                         }
                                     }
                                     accessible-role: AccessibleRole.tab;
@@ -1235,6 +1262,13 @@ export component SettingsWindow inherits Window {
                         }
                     }
                 }
+            }
+            // (more below: a fade at the bottom, not a row cut through its
+            // text; audit #157)
+            if -side-scroll.content-y + side-scroll.height < side-scroll.content-height - 1px: Rectangle {
+                y: parent.height - self.height;
+                height: 28px;
+                background: @linear-gradient(180deg, side.bg.with-alpha(0) 0%, side.bg 100%);
             }
             side-bar := ScrollBar {
                 x: parent.width - 12px - 2px;

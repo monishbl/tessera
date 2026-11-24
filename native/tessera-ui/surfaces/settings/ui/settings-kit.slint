@@ -120,6 +120,9 @@ export global SBus {
     // scrolls it into view)
     in-out property <length> reveal-y;
     in-out property <length> reveal-h;
+    // (how far below the top it lands: a row 80 px, with what's above it
+    // for context; a part's heading at the top, audit #153)
+    in-out property <length> reveal-margin: 80px;
     in-out property <int> reveal-seq;
     // (for a few seconds after: the page scrolls back to it as it grows)
     in-out property <bool> reveal-hold;
