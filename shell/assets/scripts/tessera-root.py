@@ -1814,6 +1814,24 @@ def boot_images(prefix):
     return sorted(p for p in found if os.path.isfile(p) and not os.path.islink(p))
 
 
+def restore_file(src, dest):
+    """dest put back from src: copy_file, or, when there's no room for its
+    temporary copy beside dest (a full /boot), in place: the broken dest
+    removed first, then src written straight to it and synced."""
+    try:
+        copy_file(src, dest)
+        return
+    except OSError:
+        pass
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(dest)
+    with open(dest, "wb") as out, open(src, "rb") as f:
+        shutil.copyfileobj(f, out, 1 << 20)
+        out.flush()
+        os.fsync(out.fileno())
+    shutil.copystat(src, dest)
+
+
 def copy_file(src, dest):
     """dest replaced whole by a copy of src (a temporary file, then a rename)."""
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dest), prefix=".tessera-")
@@ -1893,6 +1911,14 @@ def bootsplash(choice, prefix=None, run=subprocess.run, which=shutil.which):
         os.rmdir(backup)
         raise Refused(f"there isn't room to keep a copy of the boot images while they're rebuilt "
                       f"({need // (1024 * 1024) + 64} MB free in {os.path.dirname(INITRAMFS_BACKUP)}). Free some space, then try again")
+    # (and on the boot images' own filesystem: a full /boot is the commonest
+    # reason a rebuild fails. mkinitcpio rewrites each image in place, so
+    # only a margin is asked for: a new image a little larger than the old)
+    for where in sorted({os.path.dirname(p) for p in images}):
+        if shutil.disk_usage(where).free < 16 * 1024 * 1024:
+            os.rmdir(backup)
+            raise Refused(f"{where} is nearly full ({shutil.disk_usage(where).free // (1024 * 1024)} MB free), so the boot image "
+                          f"can't be rebuilt safely. Remove an old kernel or its fallback image there, then try again")
     conf = at(PLYMOUTH_CONF)
     try:
         with open(conf, "rb") as f:
@@ -1902,14 +1928,23 @@ def bootsplash(choice, prefix=None, run=subprocess.run, which=shutil.which):
     had_dir = os.path.isdir(theme_dir)
     kept = []
 
+    not_back = []
+
     def undo():
-        if conf_before is None:
-            with contextlib.suppress(FileNotFoundError):
-                os.unlink(conf)
-        else:
-            write_root(conf, conf_before, 0o644)
+        # (every step on its own: one that fails never stops the rest; audit #13)
+        try:
+            if conf_before is None:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(conf)
+            else:
+                write_root(conf, conf_before, 0o644)
+        except OSError as e:
+            print(f"tessera-root: {conf} couldn't be put back: {e}", file=sys.stderr)
         for p, copy in kept:
-            copy_file(copy, p)
+            try:
+                restore_file(copy, p)
+            except OSError as e:
+                not_back.append((p, copy, e))
         if files and not had_dir:
             shutil.rmtree(theme_dir, ignore_errors=True)
 
@@ -1930,11 +1965,17 @@ def bootsplash(choice, prefix=None, run=subprocess.run, which=shutil.which):
             out = (r.stdout or "") + (r.stderr or "")
             said = [l.strip() for l in out.splitlines() if "ERROR" in l] or out.strip().splitlines()
             raise Refused("rebuilding the boot image failed, so nothing changed: " + " / ".join(said[-3:])[-600:])
-    except BaseException:
+    except BaseException as e:
         undo()
+        if not_back:
+            # (the copies stay where they are: the only good images now)
+            lines = "; ".join(f"{p} (its copy: {c}; {err.strerror or err})" for p, c, err in not_back)
+            raise Refused("DON'T RESTART: the boot image rebuild failed and these boot images couldn't be put back: " + lines
+                          + ". Free space there, then copy each one back (sudo cp <copy> <image>)") from e
         raise
     finally:
-        shutil.rmtree(backup, ignore_errors=True)
+        if not not_back:
+            shutil.rmtree(backup, ignore_errors=True)
     done.append(f"theme {target}, boot image rebuilt")
 
     # Remembered: the system's own theme (for "system"), and what Tessera set

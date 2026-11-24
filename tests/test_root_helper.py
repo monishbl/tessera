@@ -1296,6 +1296,34 @@ class BootSplash(unittest.TestCase):
         self.assertIsNone(self.record())
         self.assertFalse((self.root / "var/lib/tessera/initramfs-backup").exists())
 
+    def test_a_full_boot_still_gets_its_images_back(self):
+        # (audit #13: copy_file's temporary copy beside the image hit ENOSPC,
+        # and the rest of the undo never ran)
+        self.fail = True
+        real = self.r.copy_file
+
+        def no_room(src, dest):
+            if "/boot/" in dest:
+                raise OSError(28, "No space left on device")
+            return real(src, dest)
+        self.r.copy_file = no_room
+        with self.assertRaises(self.r.Refused):
+            self.splash("orbit")
+        self.assertEqual((self.root / "boot/initramfs-linux.img").read_text(), "built with cachyos-bootanimation")
+        self.assertEqual((self.root / "boot/initramfs-linux-lts.img").read_text(), "built with cachyos-bootanimation (lts)")
+        self.assertFalse((self.root / "usr/share/plymouth/themes/tessera-orbit").exists())
+
+    def test_an_image_that_cant_come_back_is_said_and_its_copy_kept(self):
+        self.fail = True
+        self.r.restore_file = lambda src, dest: (_ for _ in ()).throw(OSError(28, "No space left on device"))
+        with self.assertRaises(self.r.Refused) as e:
+            self.splash("orbit")
+        self.assertIn("DON'T RESTART", str(e.exception))
+        self.assertIn("initramfs-linux-lts.img", str(e.exception))
+        self.assertEqual(len(list((self.root / "var/lib/tessera/initramfs-backup").iterdir())), 2)
+        # (the rest of the undo still ran)
+        self.assertFalse((self.root / "usr/share/plymouth/themes/tessera-orbit").exists())
+
     def test_a_failed_rebuild_keeps_the_design_before(self):
         self.splash("breathe")
         self.fail = True
