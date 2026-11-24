@@ -28,7 +28,7 @@ for _, plugin in ipairs(candidates) do
         if m then m:close() end
         if crashed then
             hl.on("hyprland.start", function()
-                hl.exec_cmd("notify-send -a Tessera -u critical 'Liquid Glass is off' " ..
+                hl.exec_cmd("notify-send -a Tessera -u critical 'The glass effect is off' " ..
                     "'Hyprland stopped the last time the glass plugin loaded, so it stays off: glass is Frosted. " ..
                     "Settings → Appearance rebuilds it for this Hyprland.'")
             end)

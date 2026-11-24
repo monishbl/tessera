@@ -1,6 +1,7 @@
 """Battery & Power helpers: the per-app energy grouping, the critical
 battery guard's decision, and the hypridle config start-idle.sh writes from
 the Settings timers."""
+import shutil
 import importlib.util
 import os
 import subprocess
@@ -140,6 +141,24 @@ class IdleConfig(unittest.TestCase):
         self.assertNotIn("ac lock x", conf)
         self.assertIn("before_sleep_cmd = QS=qs " + str(SCRIPTS / "shell-ipc.sh") + " call lock lock", conf)  # no grace: locked before sleeping
         self.assertEqual(grace, "0")
+
+    def test_no_shell_to_lock_still_locks(self):
+        # (audit #60: no shell answering meant sleeping unlocked)
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
+        (d / "bin").mkdir()
+        (d / "bin/hyprlock").write_text("#!/bin/sh\necho hyprlock \"$@\" >> %s/ran\n" % d)
+        (d / "bin/hyprlock").chmod(0o755)
+        (d / "bin/sleep").write_text("#!/bin/sh\nexit 0\n")  # (no real waits)
+        (d / "bin/sleep").chmod(0o755)
+        idle = d / "idle"
+        idle.mkdir()
+        (idle / "lock-command").write_text("exit 1\n")
+        env = dict(os.environ, PATH=f"{d}/bin:{os.environ['PATH']}", TESSERA_IDLE_DIR=str(idle),
+                   XDG_RUNTIME_DIR=str(d), HYPRLAND_INSTANCE_SIGNATURE="sig1")
+        subprocess.run(["bash", str(SCRIPTS / "idle-action.sh"), "any", "lock"], env=env, timeout=30)
+        self.assertTrue((d / "tessera-locked-sig1").exists(), "the mark a restarted shell locks with")
+        self.assertIn("hyprlock --immediate", (d / "ran").read_text())
 
     def test_a_grace_moves_the_lock_to_the_wake(self):
         conf, grace = self.run_idle("ac lock 300\ngrace 60\n")

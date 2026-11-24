@@ -62,5 +62,24 @@ class Licence(unittest.TestCase):
                 self.assertTrue((ROOT / p).exists(), f"{f}: {p}")
 
 
+
+class RustCrates(unittest.TestCase):
+    """tessera-ui's crates are named, and Slint's licence choice said (audit #202)"""
+
+    def test_notices_name_the_programs_crates_and_slint(self):
+        text = (ROOT / "THIRD_PARTY_NOTICES.md").read_text()
+        self.assertIn("native/tessera-ui", text)
+        self.assertIn("Slint", text)
+        self.assertIn("GPL-3.0-only", text)
+        self.assertIn("tools/rust-licences.py", text)
+
+    def test_the_report_reads_both_locks(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("rust_licences", ROOT / "tools/rust-licences.py")
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        names = {n for n, _ in m.locked(str(ROOT / "native/tessera-ui/Cargo.lock"))}
+        self.assertIn("slint", names)
+
 if __name__ == "__main__":
     unittest.main()

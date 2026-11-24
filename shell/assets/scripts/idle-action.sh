@@ -21,8 +21,30 @@ on_ac() {
     done
     [[ $seen == 0 ]]
 }
+# The lock, through the shell. No shell answering (crashed, restarting
+# after an update, hung) must never mean sleeping unlocked (audit #60):
+# the mark a shell started again while locked finds is set first (so
+# keep-shell starts one at once, and it starts locked), the shell is asked
+# again for up to 8 s, then hyprlock locks if it's installed.
 lock() {
-    [[ -n $dir && -r $dir/lock-command ]] && sh -c "$(cat "$dir/lock-command")"
+    [[ -n $dir && -r $dir/lock-command ]] || return 0
+    local cmd sig mark i
+    cmd=$(cat "$dir/lock-command")
+    sh -c "$cmd" 2>/dev/null && return 0
+    sig=${HYPRLAND_INSTANCE_SIGNATURE:-}
+    mark="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/tessera-locked-$sig"
+    [[ -n $sig ]] && : >"$mark" 2>/dev/null
+    for i in $(seq 16); do
+        sleep 0.5
+        sh -c "$cmd" 2>/dev/null && return 0
+    done
+    if command -v hyprlock >/dev/null && ! pgrep -x hyprlock >/dev/null; then
+        hyprlock --immediate >/dev/null 2>&1 &
+        sleep 1
+        return 0
+    fi
+    echo "idle-action.sh: no shell answered the lock, and hyprlock isn't installed" >&2
+    return 1
 }
 
 case "${1:-}" in
