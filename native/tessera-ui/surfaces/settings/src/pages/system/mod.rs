@@ -10,7 +10,6 @@
 pub mod access;
 pub mod art;
 pub mod health;
-pub mod passkeys;
 pub mod power;
 pub mod security;
 

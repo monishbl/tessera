@@ -1,5 +1,11 @@
 # Tessera changelog
 
+## Passkeys removed · 2026-11-24
+
+- **Settings → Privacy & Security → Passkeys is gone**, along with its background service. Its "Use for sudo and login" option let any program running as you approve its own `sudo`, without your password or finger.
+- **The next update cleans up after it:** the passkey lines in sudo's and the login screen's PAM files, the key list in `/etc/tessera`, the udev rule and the background service are all removed. Each PAM file is checked with the real Linux-PAM before it's written. Your password, fingerprint and keyring unlocking work as before.
+- **Passkeys you saved stay in `~/.local/share/tessera/passkeys`, but nothing can use them now.** Sign in to those sites another way (a password, your phone or another security key), and remove the Tessera key from each site's security settings.
+
 ## Tessera's name, all the way · 2026-11-18
 
 - **The folder Tessera runs from moves to `~/tessera`** by itself, at the shell's next start after this update (or during the update): the old folder name stays behind as a link for now, and settings that pointed into it (wallpapers, the battery guard, your apps' colours) point at the new place. The link goes by itself once nothing uses it, at the earliest two weeks later.

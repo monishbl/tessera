@@ -354,15 +354,6 @@ pub fn converse(id: u64, user: &str, cookie: &str, helper: Option<&str>, to: imp
     Ok(Session { id, writer: Arc::new(Mutex::new(Some(writer))), child, stream })
 }
 
-/// A conversation over a socket that speaks the helper's lines already
-/// (the passkeys daemon's CONVERSE: passkeys.rs); `stop` closes it
-pub fn converse_stream(id: u64, s: std::os::unix::net::UnixStream, to: impl Fn(Box<dyn Any + Send>) + Send + 'static) -> std::io::Result<Session> {
-    let r = s.try_clone()?;
-    let w: Box<dyn Write + Send> = Box::new(s.try_clone()?);
-    read_lines(id, Box::new(r), to);
-    Ok(Session { id, writer: Arc::new(Mutex::new(Some(w))), child: None, stream: Some(s) })
-}
-
 /// The helper's lines, to the part, until it's done (a Done(false) if it ends without one)
 fn read_lines(id: u64, reader: Box<dyn std::io::Read + Send>, to: impl Fn(Box<dyn Any + Send>) + Send + 'static) {
     std::thread::spawn(move || {

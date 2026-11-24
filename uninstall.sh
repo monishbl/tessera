@@ -97,9 +97,9 @@ if [[ -f "$GUARD" || -L "$GUARD" ]]; then
     quiet systemctl --user daemon-reload
     quiet systemctl --user reset-failed tessera-battery-guard.service
 fi
-# Passkeys' daemon (Settings → Privacy & Security → Passkeys): stopped and its
-# unit removed. The saved passkeys stay in ~/.local/share/tessera/passkeys,
-# sealed by this computer's TPM (docs/PASSKEYS.md: removing them)
+# Passkeys' daemon (removed in Nov 2026; an install from before may still
+# have it): stopped and its unit removed. The saved passkeys stay in
+# ~/.local/share/tessera/passkeys, sealed by this computer's TPM
 PK_UNIT="$HOME/.config/systemd/user/tessera-passkeys.service"
 if [[ -f "$PK_UNIT" || -L "$PK_UNIT" ]]; then
     quiet systemctl --user disable --now tessera-passkeys.service
@@ -179,9 +179,6 @@ if [[ -n $helper && -z $S ]]; then
     quiet sudo "$helper" phonecam off
     quiet sudo "$helper" quickshare-trust off
     quiet sudo "$helper" sharing-ports close
-    # (passkeys: pam_u2f's lines and key list, then the udev rule)
-    quiet sudo "$helper" passkeys-pam off
-    quiet sudo "$helper" passkeys off
 fi
 # The Tessera login screen: switch back to the login manager it replaced
 # (or none: then log in on a console and start your desktop yourself)
@@ -309,10 +306,12 @@ fi
 if [[ $BT_RESTART == 1 && -z $S ]]; then
     quiet sudo systemctl try-restart bluetooth.service
 fi
-# Tessera's root helper and its polkit actions and rules, its ananicy rule
-# and what it keeps in /etc and /var/lib (under the old name too)
+# Tessera's root helper and its polkit actions and rules, its ananicy rule,
+# what it keeps in /etc and /var/lib (under the old name too), and an older
+# install's Passkeys udev rule
 for p in /usr/lib/tessera /etc/polkit-1/rules.d/49-tessera.rules /etc/polkit-1/rules.d/49-tessera-quickshare.rules \
-    /usr/share/polkit-1/actions/org.tessera.root.policy /etc/ananicy.d/tessera.rules /etc/tessera /var/lib/tessera; do
+    /usr/share/polkit-1/actions/org.tessera.root.policy /etc/ananicy.d/tessera.rules /etc/tessera /var/lib/tessera \
+    /etc/udev/rules.d/70-tessera-passkeys.rules; do
     if [[ -e "$S$p" || -L "$S$p" ]]; then
         opt sudo rm -rf "$S$p"
         [[ $p == /etc/ananicy.d/tessera.rules && -z $S ]] && quiet sudo systemctl try-restart ananicy-cpp.service

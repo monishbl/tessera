@@ -62,23 +62,6 @@ With the password:
       `auth sufficient pam_howdy.so` first, the rest (a fingerprint, the
       password) as it was. polkit's own PAM file isn't changed; off removes
       the drop-in, and so does setting up a regular camera.
-  passkeys on|off
-      Tessera Passkeys, the virtual security key (Settings → Privacy &
-      Security → Passkeys): on installs tpm2-tools and pam-u2f when missing
-      and /etc/udev/rules.d/70-tessera-passkeys.rules (uaccess, for whoever
-      is at this computer, on /dev/uhid, the TPM's /dev/tpmrm0 and the
-      key's own hidraw node, 1209:7E55); off removes the rule, and the
-      caller's key for sudo and login below
-  passkeys-pam on <file> | off
-      the caller's passkey for sudo and the login screen: <file> is the one
-      line pamu2fcfg printed for pam://tessera (read as you, checked: your
-      name, one key), kept in /etc/tessera/passkeys-u2f; then two marked
-      lines first in sudo's and the login screens' PAM files: a gate
-      (/usr/lib/tessera/passkeys-gate: only while your tessera-passkeys
-      runs, never for a login from elsewhere) and `auth sufficient
-      pam_u2f.so` (no key or no approval: the password as before). off takes
-      your key out, and the lines with the last key. polkit's file is never
-      touched (its prompt is the one the key asks in).
   phonecam on|off
       a virtual camera for an Android phone's camera (Settings → Phone): the
       v4l2loopback module with one device, /dev/video42 "Phone camera",
@@ -1065,7 +1048,7 @@ def write_fp_gate(gate=FP_GATE):
 
 
 # Features that need hardware never touch the login without it: a reader
-# (fingerprint on), a TPM (passkeys on). Read from /sys and the files the
+# (fingerprint on). Read from /sys and the files the
 # drivers keep, never by asking the device (nothing is woken).
 FP_HWDB = "/usr/lib/udev/hwdb.d/60-autosuspend-fingerprint-reader.hwdb"
 FP_VENDORS = ("27c6", "06cb", "138a", "10a5", "1c7a", "2808", "147e", "08ff", "0a5c")  # (fingerprint.py's makers, and Broadcom's)
@@ -1085,11 +1068,6 @@ def fingerprint_reader(prefix="/"):
     if ids & known or any(v in FP_VENDORS for v, _ in ids):
         return True
     return any(files for _, _, files in os.walk(_at(prefix, FP_STORE)))
-
-
-def tpm_present(prefix="/"):
-    """A TPM 2.0 with its resource manager (/dev/tpmrm0): what Passkeys keep their key in"""
-    return bool(glob.glob(_at(prefix, "/sys/class/tpmrm/tpmrm*"))) or os.path.exists(_at(prefix, "/dev/tpmrm0"))
 
 
 def fingerprint(on, where, etc=PAM_ETC, vendor=PAM_VENDOR, module=PAM_FPRINTD, gate=FP_GATE, reader=None):
@@ -1128,217 +1106,44 @@ def fingerprint(on, where, etc=PAM_ETC, vendor=PAM_VENDOR, module=PAM_FPRINTD, g
     return changed
 
 
-# ── passkeys (Settings → Privacy & Security → Passkeys) ─────────────────
-# Tessera Passkeys (native/tessera-passkeys, docs/PASSKEYS.md) is a virtual
-# security key made through /dev/uhid by a user service. Root's part:
-#   passkeys on   tpm2-tools and pam-u2f (when missing), and PK_RULE: /dev/uhid
-#                 and the TPM's resource manager open to whoever is at this
-#                 computer (uaccess: not to anyone logged in from elsewhere),
-#                 and the key's hidraw node to their browsers (systemd's
-#                 60-fido-id.rules tags it a security token too)
-#   passkeys off  the rule gone, and the caller's pam_u2f key with it
-#   passkeys-pam on <file>  the caller's key for pam://tessera (one line
-#                 pamu2fcfg printed, read as them, checked) into PK_KEYS, and
-#                 the marked pam_u2f lines first in sudo's and the login
-#                 screens' PAM files, behind PK_GATE (as the login screen's
-#                 finger is behind FP_GATE): asked only while that person's
-#                 tessera-passkeys runs, never for a login from elsewhere
-#   passkeys-pam off  the caller's key out; the lines go with the last key
-# Not polkit's file: its prompt is Tessera's own dialog, which the key's
-# prompt shares (it would wait behind itself). "sufficient": no key, or no
-# approval, and the password is asked as before.
+# ── passkeys: removed (Nov 2026) ─────────────────────────────────────────
+# Tessera Passkeys (a virtual security key, native/tessera-passkeys) is gone:
+# its "sudo and login" lines let any program running as the user approve its
+# own sudo (the daemon's check read a PAM file in the user's runtime folder).
+# What an older Tessera wrote is taken out at every setup (passkeys_retire):
+# the marked pam_u2f lines and their gate in sudo's and the login screens'
+# PAM files (each file tried with the real Linux-PAM first), the key list,
+# the gate script and the udev rule. tpm2-tools and pam-u2f stay installed
+# (other things may use them). The user's sealed passkeys
+# (~/.local/share/tessera/passkeys) are never touched here.
 PK_RULE = "/etc/udev/rules.d/70-tessera-passkeys.rules"
-PK_ID = ("1209", "7E55")  # (pid.codes' open-source vendor id; native/tessera-passkeys/src/uhid.rs)
-PK_RULE_TEXT = ("""# Tessera Passkeys (tessera-root passkeys on; off removes it): the virtual
-# security key tessera-passkeys makes through /dev/uhid. uaccess: for whoever
-# is at this computer, not for anyone logged in from elsewhere.
-KERNEL=="uhid", SUBSYSTEM=="misc", TAG+="uaccess"
-KERNEL=="tpmrm[0-9]*", TAG+="uaccess"
-SUBSYSTEM=="hidraw", KERNELS=="0003:%s:%s.*", TAG+="uaccess"
-""" % PK_ID).encode()
-PK_PACKAGES = ("tpm2-tools", "pam-u2f")
-PK_TOOLS = ("/usr/bin/tpm2_createprimary", "/usr/bin/pamu2fcfg")
 PK_MARK = "# Tessera passkey"
 PK_KEYS = "/etc/tessera/passkeys-u2f"
-PK_ORIGIN = "pam://tessera"
 PK_GATE = "/usr/lib/tessera/passkeys-gate"
-PK_GATE_TEXT = b"""#!/bin/sh
-# Tessera (tessera-root passkeys-pam): may pam_u2f ask PAM_USER's passkey?
-# Only for someone at this computer whose tessera-passkeys is running.
-[ -z "$PAM_RHOST" ] || exit 1
-uid=$(/usr/bin/id -u -- "$PAM_USER" 2>/dev/null) || exit 1
-[ -S "/run/user/$uid/tessera/passkeys.sock" ]
-"""
-PK_LINES = [GATE_CONTROL + PK_GATE + "   " + PK_MARK,
-            "-auth      sufficient   pam_u2f.so authfile=" + PK_KEYS + " origin=" + PK_ORIGIN + " appid=" + PK_ORIGIN
-            + " cue nouserok userverification=1   " + PK_MARK]
 PK_FILES = ["sudo"] + FP_FILES["login"]
-PAM_U2F = ("/usr/lib/security/pam_u2f.so", "/lib/security/pam_u2f.so")
-# user:keyhandle,publickey,cosetype,options (pamu2fcfg's line; one key)
-PK_LINE = re.compile(r"^([a-z_][a-z0-9_.-]{0,31}\$?):([A-Za-z0-9+/=_-]{16,1024}),([A-Za-z0-9+/=_-]{16,1024}),(es256|eddsa),(\+[a-z]+)*$")
 
 
 def pam_without_passkey(text):
     return "".join(l for l in text.splitlines(keepends=True) if PK_MARK not in l)
 
 
-def pam_with_passkey(text):
-    """PK_LINES first among the rules (after the header comments), any
-    earlier ones of ours gone."""
-    lines = pam_without_passkey(text).splitlines(keepends=True)
-    at = 0
-    while at < len(lines) and (lines[at].strip() == "" or lines[at].lstrip().startswith("#")):
-        at += 1
-    if lines and not lines[-1].endswith("\n"):
-        lines[-1] += "\n"
-    return "".join(lines[:at] + [l + "\n" for l in PK_LINES] + lines[at:])
-
-
-def passkey_pam_files(on, etc=PAM_ETC, vendor=PAM_VENDOR):
-    """The marked lines in (or out of) sudo's and the login screens' files.
-    Returns the files changed."""
-    changed = []
+def passkeys_retire(prefix="/", run=subprocess.run):
+    """setup's part, at each update: everything an older Tessera wrote for
+    Passkeys taken out. Returns what it removed or rewrote."""
+    etc = _at(prefix, PAM_ETC)
+    done = []
     for name in PK_FILES:
-        dest = os.path.join(etc, name)
-        src = dest if os.path.exists(dest) else os.path.join(vendor, name)
-        if not os.path.exists(src):
-            continue
-        with open(src) as f:
-            text = f.read()
-        new = pam_with_passkey(text) if on else pam_without_passkey(text)
-        vsrc = os.path.join(vendor, name)
-        if not on and src == dest and os.path.exists(vsrc):
-            with open(vsrc) as f:
-                if f.read() == new:
-                    os.unlink(dest)
-                    changed.append(dest)
-                    continue
-        if new != text or (on and src != dest):
-            changed.append(write_pam(etc, name, new, vendor))
-    return changed
-
-
-def user_of(uid):
-    try:
-        return pwd.getpwuid(uid).pw_name
-    except KeyError:
-        raise Refused("no such user") from None
-
-
-def passkey_keys_without(text, user):
-    return "".join(l for l in text.splitlines(keepends=True) if l.split(":", 1)[0] != user)
-
-
-def passkeys_pam(on, uid, line_file=None, etc=PAM_ETC, vendor=PAM_VENDOR, module=PAM_U2F, keys=PK_KEYS, gate=PK_GATE):
-    """Returns the files changed."""
-    user = user_of(uid)
-    try:
-        with open(keys) as f:
-            have = f.read()
-    except FileNotFoundError:
-        have = ""
-    changed = []
-    if on:
-        if not tpm_present():
-            raise Refused("this computer has no TPM: Passkeys need one, so no PAM file is changed")
-        if not any(os.path.exists(m) for m in module):
-            raise Refused("pam_u2f isn't installed (pam-u2f): turn Passkeys off and on again to install it")
-        if not line_file:
-            raise Refused("passkeys-pam on needs the file pamu2fcfg wrote")
-        line = read_as(uid, line_file, 4096).decode("utf-8", "replace").strip()
-        m = PK_LINE.match(line)
-        if not m or m.group(1) != user:
-            raise Refused("that isn't one pamu2fcfg line for you")
-        new = passkey_keys_without(have, user)
-        if new and not new.endswith("\n"):
-            new += "\n"
-        new += line + "\n"
-        if new != have:
-            write_root(keys, new.encode(), 0o644)
-            changed.append(keys)
-        try:
-            with open(gate, "rb") as f:
-                same = f.read() == PK_GATE_TEXT
-        except OSError:
-            same = False
-        if not same:
-            write_root(gate, PK_GATE_TEXT, 0o755)
-            changed.append(gate)
-        return changed + passkey_pam_files(True, etc, vendor)
-    new = passkey_keys_without(have, user)
-    if new != have:
-        if new.strip():
-            write_root(keys, new.encode(), 0o644)
-        else:
-            os.unlink(keys)
-        changed.append(keys)
-    # (the lines go with the last key)
-    if not new.strip():
-        changed += passkey_pam_files(False, etc, vendor)
-    return changed
-
-
-def passkeys(on, uid, prefix="/", run=subprocess.run, exists=os.path.exists):
-    """The udev rule (and the packages, on); off also takes the caller's
-    pam_u2f key out. Returns what changed."""
-    rule = os.path.join(prefix, PK_RULE.lstrip("/"))
-    changed = []
-    if on and not tpm_present(prefix):
-        raise Refused("this computer has no TPM (or it's turned off in the firmware settings): Passkeys need one, so nothing was set up")
-    if on:
-        if not all(exists(os.path.join(prefix, t.lstrip("/"))) for t in PK_TOOLS):
-            p = run([PACMAN, "-S", "--needed", "--noconfirm", "--", *PK_PACKAGES], capture_output=True, text=True, timeout=900)
-            if p.returncode != 0:
-                raise Refused("couldn't install " + ", ".join(PK_PACKAGES) + ": " + ((p.stderr or "").strip().splitlines() or ["pacman failed"])[-1])
-            changed += list(PK_PACKAGES)
-        try:
-            with open(rule, "rb") as f:
-                same = f.read() == PK_RULE_TEXT
-        except OSError:
-            same = False
-        if not same:
-            write_root(rule, PK_RULE_TEXT, 0o644)
-            changed.append(PK_RULE)
-    else:
-        if prefix == "/":
-            changed += passkeys_pam(False, uid)
-        if os.path.exists(rule):
-            os.unlink(rule)
-            changed.append(PK_RULE)
-    if PK_RULE in changed and prefix == "/":
-        # (the rule now, for the devices there already: uhid and the TPM)
-        for cmd in (["udevadm", "control", "--reload"],
-                    ["udevadm", "trigger", "--action=change", "--subsystem-match=misc", "--sysname-match=uhid"],
-                    ["udevadm", "trigger", "--action=change", "--subsystem-match=tpmrm"],
-                    ["udevadm", "settle", "--timeout=5"]):
+        text = read_text(os.path.join(etc, name))
+        if text and PK_MARK in text and refresh_pam_file(etc, name, text, pam_without_passkey(text), _at(prefix, PAM_VENDOR)):
+            done.append(os.path.join(PAM_ETC, name))
+    for path in (PK_KEYS, PK_GATE, PK_RULE):
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(_at(prefix, path))
+            done.append(path)
+    if PK_RULE in done and prefix == "/":
+        for cmd in (["udevadm", "control", "--reload"], ["udevadm", "trigger", "--action=change", "--subsystem-match=misc", "--sysname-match=uhid"]):
             with contextlib.suppress(OSError, subprocess.SubprocessError):
                 run(cmd, capture_output=True, timeout=30)
-    return changed
-
-
-def passkeys_refresh(prefix="/"):
-    """setup's part, at each update: marked pam_u2f lines from an older
-    helper become today's, and the gate is today's, wherever they're on"""
-    def at(p):
-        return os.path.join(prefix, p.lstrip("/"))
-    done = []
-    on_somewhere = False
-    for name in PK_FILES:
-        p = os.path.join(at(PAM_ETC), name)
-        text = read_text(p)
-        if text and PK_MARK in text:
-            on_somewhere = True
-            if refresh_pam_file(at(PAM_ETC), name, text, pam_with_passkey(text), at(PAM_VENDOR)):
-                done.append(os.path.join(PAM_ETC, name))
-    if on_somewhere and (read_text(at(PK_GATE)) or "").encode() != PK_GATE_TEXT:
-        write_root(at(PK_GATE), PK_GATE_TEXT, 0o755)
-        done.append(PK_GATE)
-    rule = at(PK_RULE)
-    if os.path.exists(rule):
-        with open(rule, "rb") as f:
-            if f.read() != PK_RULE_TEXT:
-                write_root(rule, PK_RULE_TEXT, 0o644)
-                done.append(PK_RULE)
     return done
 
 
@@ -3581,8 +3386,8 @@ def setup(src, uid, prefix=None, run=subprocess.run):
     written += install_themes(src, uid, prefix)
     written += refresh_login(src, uid, prefix)
     written += migrate_old_names(prefix, run, src)
-    # (passkeys' pam_u2f lines, gate and udev rule, as this helper writes them)
-    written += [os.path.join(prefix, d.lstrip("/")) for d in passkeys_refresh(prefix)]
+    # (Passkeys are gone: an older Tessera's pam_u2f lines, gate, key list and udev rule out)
+    written += [os.path.join(prefix, d.lstrip("/")) for d in passkeys_retire(prefix, run)]
     # (the login rescue, wherever greetd is installed: tessera-login-rescue.service)
     written += [os.path.join(prefix, d.lstrip("/")) for d in rescue_units(prefix, run)]
     # ananicy-cpp reads its rules as it starts
@@ -4341,14 +4146,6 @@ def main(argv):
             return 0
         if cmd == "face" and args:
             return face(args, uid)
-        if cmd == "passkeys" and len(args) == 1 and args[0] in ("on", "off"):
-            for d in passkeys(args[0] == "on", uid):
-                print("changed", d)
-            return 0
-        if cmd == "passkeys-pam" and (args == ["off"] or (len(args) == 2 and args[0] == "on")):
-            for d in passkeys_pam(args[0] == "on", uid, args[1] if len(args) == 2 else None):
-                print("changed", d)
-            return 0
         if cmd == "phonecam" and len(args) == 1 and args[0] in ("on", "off"):
             for d in phonecam(args[0] == "on"):
                 print("changed", d)
@@ -4403,7 +4200,7 @@ def main(argv):
             for d in setup(args[0], uid):
                 print("installed", d)
             return 0
-        raise Refused("usage: tessera-root wallpaper <path> | login-look <json> | fix <id> | wifi-helper | fingerprint on|off <where> | passkeys on|off | passkeys-pam on <file>|off | phonecam on|off | face … | bootmenu on|off | "
+        raise Refused("usage: tessera-root wallpaper <path> | login-look <json> | fix <id> | wifi-helper | fingerprint on|off <where> | phonecam on|off | face … | bootmenu on|off | "
                       "bootsplash <id>|system|none | quickshare-trust on|off | priority on|off | sharing-ports open [<set>…]|close | "
                       "update … | boot-check [--repair] | rescue [undo|status] | features <ids> [--face-camera <camera>] [--fprintd-wait] [--login-look <json>] [--shell <folder>] | setup <folder> | login-switch on <shell folder> <look json> | login-switch off [<login manager>]")
     except Refused as e:

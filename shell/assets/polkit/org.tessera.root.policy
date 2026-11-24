@@ -90,30 +90,6 @@
     <annotate key="org.freedesktop.policykit.exec.argv1">fingerprint</annotate>
   </action>
 
-  <action id="org.tessera.root.passkeys">
-    <description>Use passkeys on this computer</description>
-    <message>Tessera wants to turn on passkeys: a security key on this computer that you approve with your fingerprint or password.</message>
-    <defaults>
-      <allow_any>auth_admin</allow_any>
-      <allow_inactive>auth_admin</allow_inactive>
-      <allow_active>auth_admin</allow_active>
-    </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/tessera/tessera-root</annotate>
-    <annotate key="org.freedesktop.policykit.exec.argv1">passkeys</annotate>
-  </action>
-
-  <action id="org.tessera.root.passkeys-pam">
-    <description>Use your passkey for sudo and login</description>
-    <message>Tessera wants to change whether your passkey is accepted for sudo and the login screen.</message>
-    <defaults>
-      <allow_any>auth_admin</allow_any>
-      <allow_inactive>auth_admin</allow_inactive>
-      <allow_active>auth_admin</allow_active>
-    </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/tessera/tessera-root</annotate>
-    <annotate key="org.freedesktop.policykit.exec.argv1">passkeys-pam</annotate>
-  </action>
-
   <action id="org.tessera.root.face">
     <description>Unlock the lock screen with your face</description>
     <message>Tessera wants to set up face unlock for your lock screen.</message>

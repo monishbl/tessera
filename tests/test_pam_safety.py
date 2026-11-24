@@ -36,6 +36,22 @@ MISSING = "pam_tessera_test_not_installed.so"
 PAM_AUTH_ERR, PAM_SUCCESS = 7, 0
 
 
+# The Passkeys lines an older Tessera wrote (removed Nov 2026; still on
+# machines until the next setup takes them out, so they must stay harmless)
+def legacy_passkey_lines():
+    return [R.GATE_CONTROL + R.PK_GATE + "   " + R.PK_MARK,
+            "-auth      sufficient   pam_u2f.so authfile=/etc/tessera/passkeys-u2f origin=pam://tessera appid=pam://tessera"
+            " cue nouserok userverification=1   " + R.PK_MARK]
+
+
+def with_legacy_passkey(text):
+    lines = R.pam_without_passkey(text).splitlines(keepends=True)
+    at = 0
+    while at < len(lines) and (lines[at].strip() == "" or lines[at].lstrip().startswith("#")):
+        at += 1
+    return "".join(lines[:at] + [l + "\n" for l in legacy_passkey_lines()] + lines[at:])
+
+
 def have_pam():
     try:
         ctypes.CDLL("libpam.so.0").pam_start_confdir
@@ -83,7 +99,7 @@ def helper_text(base, fingerprint, passkey, keyring, name="greetd"):
     if keyring:
         text = R.pam_with_keyring(text) or text
     if passkey:
-        text = R.pam_with_passkey(text)
+        text = with_legacy_passkey(text)
     if fingerprint:
         text = R.pam_login_fingerprint(text) if name in R.FP_FILES["login"] else R.pam_with_fingerprint(text, R.FP_LINES["sudo"])
     return text
@@ -94,7 +110,7 @@ class EveryLineIsDashed(unittest.TestCase):
     the miss harmless (sufficient, optional, a gate's skip)"""
 
     def test_every_added_line_starts_with_a_dash(self):
-        lines = list(R.FP_LINES.values()) + R.FP_LOGIN_HEAD + R.FP_LOGIN_TAIL + R.PK_LINES + [R.polkit_face_line()]
+        lines = list(R.FP_LINES.values()) + R.FP_LOGIN_HEAD + R.FP_LOGIN_TAIL + legacy_passkey_lines() + [R.polkit_face_line()]
         text = R.pam_with_keyring(BASE)
         lines += [l for l in text.splitlines() if "pam_gnome_keyring" in l]
         for line in lines:

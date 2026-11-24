@@ -26,6 +26,22 @@ def load(path, name):
 
 
 R = load(SCRIPTS / "tessera-root.py", "tessera_root_boot")
+
+
+# The Passkeys lines an older Tessera wrote (removed Nov 2026; still on
+# machines until the next setup takes them out, so they must stay harmless)
+def legacy_passkey_lines():
+    return [R.GATE_CONTROL + R.PK_GATE + "   " + R.PK_MARK,
+            "-auth      sufficient   pam_u2f.so authfile=/etc/tessera/passkeys-u2f origin=pam://tessera appid=pam://tessera"
+            " cue nouserok userverification=1   " + R.PK_MARK]
+
+
+def with_legacy_passkey(text):
+    lines = R.pam_without_passkey(text).splitlines(keepends=True)
+    at = 0
+    while at < len(lines) and (lines[at].strip() == "" or lines[at].lstrip().startswith("#")):
+        at += 1
+    return "".join(lines[:at] + [l + "\n" for l in legacy_passkey_lines()] + lines[at:])
 assert not R.PAM_STAND_INS
 
 SYSTEM_AUTH = ("auth       required                    pam_faillock.so      preauth\n"
@@ -118,8 +134,8 @@ class BootCheck(Machine):
         self.assertEqual([p["id"] for p in c["problems"]], ["pam:greetd"])
 
     def test_the_helpers_own_lines_are_fine(self):
-        (self.etc / "greetd").write_text(R.pam_login_fingerprint(R.pam_with_passkey(R.pam_with_keyring(GREETD_PAM))))
-        (self.etc / "sudo").write_text(R.pam_with_fingerprint(R.pam_with_passkey("auth include system-auth\n"), R.FP_LINES["sudo"]))
+        (self.etc / "greetd").write_text(R.pam_login_fingerprint(with_legacy_passkey(R.pam_with_keyring(GREETD_PAM))))
+        (self.etc / "sudo").write_text(R.pam_with_fingerprint(with_legacy_passkey("auth include system-auth\n"), R.FP_LINES["sudo"]))
         self.assertTrue(self.check()["ok"])
 
     def test_a_system_stack_that_never_gets_to_the_password_is_said_not_repaired(self):
@@ -562,22 +578,6 @@ class HardwareGates(unittest.TestCase):
         self.assertEqual((etc / "greetd").read_text(), GREETD_PAM)
         # (off still works without one)
         self.r.fingerprint(False, "login", etc=str(etc), vendor=str(Path(self.root, "vendor")), module=(), reader=False)
-
-    def test_no_tpm_no_passkeys(self):
-        self.assertFalse(self.r.tpm_present(self.root))
-        run = Recorder()
-        with self.assertRaises(self.r.Refused):
-            self.r.passkeys(True, os.getuid(), prefix=self.root, run=run)
-        self.assertEqual(run.calls, [])  # (nothing installed either)
-        self.assertFalse(Path(self.root, self.r.PK_RULE.lstrip("/")).exists())
-        Path(self.root, "sys/class/tpmrm/tpmrm0").mkdir(parents=True)
-        self.assertTrue(self.r.tpm_present(self.root))
-
-    def test_no_tpm_no_passkey_lines(self):
-        self.r.tpm_present = lambda prefix="/": False
-        with self.assertRaises(self.r.Refused) as e:
-            self.r.passkeys_pam(True, os.getuid(), "/nonexistent", etc=self.root, keys=os.path.join(self.root, "k"))
-        self.assertIn("TPM", str(e.exception))
 
     def test_face_never_touches_a_login(self):
         src = (SCRIPTS / "tessera-root.py").read_text()

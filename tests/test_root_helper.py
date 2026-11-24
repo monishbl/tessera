@@ -577,7 +577,6 @@ class FingerprintPam(unittest.TestCase):
         self.r.login_screen_starts = lambda *a, **k: True
         self.r.pam_problem = lambda *a, **k: ""
         self.r.fingerprint_reader = lambda prefix="/": True  # (hardware: HardwareGates' tests)
-        self.r.tpm_present = lambda prefix="/": True
 
     def tearDown(self):
         self.dir.cleanup()
@@ -685,20 +684,14 @@ class FingerprintPam(unittest.TestCase):
             self.run_fp(True, "shadow")
 
 
-class Passkeys(unittest.TestCase):
-    """tessera-root.py passkeys / passkeys-pam: the udev rule, pam_u2f's key
-    list and its marked lines behind the gate."""
+class PasskeysRetired(unittest.TestCase):
+    """Passkeys were removed (2026-11-23 audit #11: a program running as the
+    user could approve its own sudo). setup takes out what an older Tessera
+    wrote: the marked PAM lines, the key list, the gate and the udev rule."""
 
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
-        d = self.d = Path(self.dir.name)
-        self.etc, self.vendor = d / "etc", d / "vendor"
-        self.etc.mkdir()
-        self.vendor.mkdir()
-        self.module = d / "pam_u2f.so"
-        self.module.write_text("")
-        self.keys = d / "passkeys-u2f"
-        self.gate = d / "passkeys-gate"
+        self.prefix = Path(self.dir.name)
         self.r = load(SCRIPTS / "tessera-root.py", "tessera_root_pk")
 
         def write(dest, data, mode):
@@ -709,170 +702,52 @@ class Passkeys(unittest.TestCase):
         # (the real PAM check: tests/test_pam_safety.py)
         self.r.login_screen_starts = lambda *a, **k: True
         self.r.pam_problem = lambda *a, **k: ""
-        self.r.fingerprint_reader = lambda prefix="/": True  # (hardware: HardwareGates' tests)
-        self.r.tpm_present = lambda prefix="/": True
-        self.me = pwd.getpwuid(os.getuid()).pw_name
-        self.line = f"{self.me}:{'A' * 40},{'B+/=' * 10},es256,+presence+verification"
 
     def tearDown(self):
         self.dir.cleanup()
 
-    def pam(self, on, line=None):
-        f = None
-        if line is not None:
-            f = self.d / "line"
-            f.write_text(line + "\n")
-        return self.r.passkeys_pam(on, os.getuid(), str(f) if f else None, etc=str(self.etc), vendor=str(self.vendor),
-                                   module=(str(self.module),), keys=str(self.keys), gate=str(self.gate))
+    def at(self, path):
+        return self.prefix / path.lstrip("/")
 
-    def test_sudo_and_login_screens_on_and_off(self):
-        sudo = "#%PAM-1.0\nauth\t\tinclude\t\tsystem-auth\naccount\t\tinclude\t\tsystem-auth\n"
-        (self.etc / "sudo").write_text(sudo)
-        (self.vendor / "greetd").write_text("#%PAM-1.0\n\nauth include system-local-login\n")
-        (self.etc / "polkit-1").write_text("#%PAM-1.0\nauth include system-auth\n")
-        changed = self.pam(True, self.line)
-        self.assertIn(str(self.keys), changed)
-        self.assertIn(str(self.etc / "sudo"), changed)
-        self.assertIn(str(self.etc / "greetd"), changed)
-        lines = (self.etc / "sudo").read_text().splitlines()
-        # the gate first (no: skip the key), then pam_u2f, sufficient, asking for verification
-        self.assertIn("[success=ignore ignore=ignore default=1] pam_exec.so quiet type=auth " + self.r.PK_GATE, lines[1])
-        self.assertIn("pam_u2f.so", lines[2])
-        self.assertIn("sufficient", lines[2])
-        self.assertIn("userverification=1", lines[2])
-        self.assertIn("nouserok", lines[2])
-        self.assertIn("origin=pam://tessera", lines[2])
-        self.assertEqual(lines[3], "auth\t\tinclude\t\tsystem-auth")
-        # (polkit's prompt is the key's own: never there)
-        self.assertNotIn("pam_u2f", (self.etc / "polkit-1").read_text())
-        self.assertEqual(self.keys.read_text(), self.line + "\n")
-        self.assertEqual(stat.S_IMODE(self.keys.stat().st_mode), 0o644)
-        self.assertEqual(self.gate.read_bytes(), self.r.PK_GATE_TEXT)
-        self.assertEqual(stat.S_IMODE(self.gate.stat().st_mode), 0o755)
-        # again: no doubles, the key replaced
-        self.pam(True, self.line.replace("A" * 40, "C" * 40))
-        self.assertEqual((self.etc / "sudo").read_text().count("pam_u2f"), 1)
-        self.assertEqual(self.keys.read_text().count(self.me + ":"), 1)
-        self.assertIn("C" * 40, self.keys.read_text())
-        # off: the key and the lines go; the vendor's file is used again
-        self.pam(False)
-        self.assertEqual((self.etc / "sudo").read_text(), sudo)
-        self.assertFalse((self.etc / "greetd").exists())
-        self.assertFalse(self.keys.exists())
-
-    def test_someone_elses_key_keeps_the_lines(self):
-        (self.etc / "sudo").write_text("#%PAM-1.0\nauth include system-auth\n")
-        self.keys.write_text("other:" + "x" * 40 + "," + "y" * 40 + ",es256,+presence\n")
-        self.pam(True, self.line)
-        self.pam(False)
-        self.assertIn("pam_u2f", (self.etc / "sudo").read_text())
-        self.assertTrue(self.keys.read_text().startswith("other:"))
-        self.assertNotIn(self.me + ":", self.keys.read_text())
-
-    def test_only_a_pamu2fcfg_line_for_you(self):
-        (self.etc / "sudo").write_text("#%PAM-1.0\nauth include system-auth\n")
-        for bad in ("root:" + "A" * 40 + "," + "B" * 40 + ",es256,+presence",  # (someone else)
-                    self.line + "\nauth sufficient pam_permit.so",  # (more than one line)
-                    self.me + ":AAAA,BBBB,es256",  # (too short to be a key)
-                    self.me + ":" + "A" * 40 + "," + "B" * 40 + ",rsa,+presence",
-                    self.me + ":" + "A" * 40 + ";rm -rf /," + "B" * 40 + ",es256"):
-            with self.assertRaises(self.r.Refused, msg=bad):
-                self.pam(True, bad)
-        self.assertNotIn("pam_u2f", (self.etc / "sudo").read_text())
-        self.assertFalse(self.keys.exists())
-        self.module.unlink()
-        with self.assertRaises(self.r.Refused):
-            self.pam(True, self.line)
-
-    def test_the_gate(self):
-        d = self.d
-        run_dir = d / "run"
-        script = d / "gate.sh"
-        script.write_bytes(self.r.PK_GATE_TEXT.replace(b"/run/", str(run_dir).encode() + b"/"))
-        script.chmod(0o755)
-        env = {"PAM_USER": self.me, "PATH": "/usr/bin:/bin"}
-
-        def gate():
-            return subprocess.run(["/bin/sh", str(script)], env=env).returncode
-        self.assertNotEqual(gate(), 0)  # (its daemon isn't running)
-        sock_dir = run_dir / "user" / str(os.getuid()) / "tessera"
-        sock_dir.mkdir(parents=True)
-        sock = socket.socket(socket.AF_UNIX)
-        sock.bind(str(sock_dir / "passkeys.sock"))
-        self.addCleanup(sock.close)
-        self.assertEqual(gate(), 0)
-        env["PAM_RHOST"] = "elsewhere.example"
-        self.assertNotEqual(gate(), 0)  # (a login from elsewhere: never the key)
-        del env["PAM_RHOST"]
-        env["PAM_USER"] = "no-such-user-here"
-        self.assertNotEqual(gate(), 0)
-
-    def test_the_rule_on_and_off(self):
-        prefix = self.d / "root"
-        (prefix / "usr/bin").mkdir(parents=True)
-        calls = []
-
-        def run(cmd, **kw):
-            calls.append(cmd)
-            for t in self.r.PK_TOOLS:
-                Path(prefix, t.lstrip("/")).write_text("")
-            return subprocess.CompletedProcess(cmd, 0, "", "")
-        changed = self.r.passkeys(True, os.getuid(), prefix=str(prefix), run=run)
-        self.assertIn(self.r.PK_RULE, changed)
-        self.assertEqual(calls[0][:4], [self.r.PACMAN, "-S", "--needed", "--noconfirm"])
-        self.assertIn("tpm2-tools", calls[0])
-        rule = (prefix / self.r.PK_RULE.lstrip("/")).read_text()
-        self.assertIn('KERNEL=="uhid", SUBSYSTEM=="misc", TAG+="uaccess"', rule)
-        self.assertIn('KERNELS=="0003:1209:7E55.*"', rule)
-        # (the ids the daemon makes the key with)
-        uhid = (ROOT / "native/tessera-passkeys/src/uhid.rs").read_text()
-        self.assertIn("VENDOR: u32 = 0x1209", uhid)
-        self.assertIn("PRODUCT: u32 = 0x7e55", uhid)
-        # again: nothing to do, nothing installed
-        calls.clear()
-        self.assertEqual(self.r.passkeys(True, os.getuid(), prefix=str(prefix), run=run), [])
-        self.assertEqual(calls, [])
-        self.assertEqual(self.r.passkeys(False, os.getuid(), prefix=str(prefix), run=run), [self.r.PK_RULE])
-        self.assertFalse((prefix / self.r.PK_RULE.lstrip("/")).exists())
-        # a failed install says why, and writes nothing
-        def failing(cmd, **kw):
-            return subprocess.CompletedProcess(cmd, 1, "", "error: target not found: pam-u2f\n")
-        for t in self.r.PK_TOOLS:
-            Path(prefix, t.lstrip("/")).unlink()
-        with self.assertRaises(self.r.Refused) as e:
-            self.r.passkeys(True, os.getuid(), prefix=str(prefix), run=failing)
-        self.assertIn("target not found", str(e.exception))
-        self.assertFalse((prefix / self.r.PK_RULE.lstrip("/")).exists())
-
-    def test_an_update_brings_old_lines_up_to_date(self):
-        prefix = self.d / "root"
-        pam = prefix / "etc/pam.d"
+    def test_an_update_takes_everything_out(self):
+        pam = self.at("/etc/pam.d")
         pam.mkdir(parents=True)
-        old = "#%PAM-1.0\nauth sufficient pam_u2f.so cue   " + self.r.PK_MARK + "\nauth include system-auth\n"
-        (pam / "sudo").write_text(old)
+        gate = self.r.GATE_CONTROL + self.r.PK_GATE + "   " + self.r.PK_MARK + "\n"
+        key = "-auth      sufficient   pam_u2f.so authfile=/etc/tessera/passkeys-u2f cue   " + self.r.PK_MARK + "\n"
+        (pam / "sudo").write_text("#%PAM-1.0\n" + gate + key + "auth include system-auth\n")
+        (pam / "greetd").write_text("#%PAM-1.0\n" + gate + key + "auth include login\n")
         (pam / "ly").write_text("#%PAM-1.0\nauth include login\n")
-        done = self.r.passkeys_refresh(str(prefix))
-        self.assertIn("/etc/pam.d/sudo", done)
-        self.assertIn(self.r.PK_GATE, done)
-        text = (pam / "sudo").read_text()
-        self.assertEqual(text.count(self.r.PK_MARK), 2)
-        self.assertIn(self.r.PK_LINES[1], text)
-        # (a file it was never on stays as it is; a second update changes nothing)
-        self.assertNotIn("pam_u2f", (pam / "ly").read_text())
-        self.assertEqual(self.r.passkeys_refresh(str(prefix)), [])
+        for f in (self.r.PK_KEYS, self.r.PK_GATE, self.r.PK_RULE):
+            self.at(f).parent.mkdir(parents=True, exist_ok=True)
+            self.at(f).write_text("x\n")
+        calls = []
+        done = self.r.passkeys_retire(str(self.prefix), run=lambda cmd, **k: calls.append(cmd))
+        self.assertEqual(sorted(done), sorted(["/etc/pam.d/sudo", "/etc/pam.d/greetd", self.r.PK_KEYS, self.r.PK_GATE, self.r.PK_RULE]))
+        self.assertEqual((pam / "sudo").read_text(), "#%PAM-1.0\nauth include system-auth\n")
+        self.assertEqual((pam / "greetd").read_text(), "#%PAM-1.0\nauth include login\n")
+        self.assertEqual((pam / "ly").read_text(), "#%PAM-1.0\nauth include login\n")
+        for f in (self.r.PK_KEYS, self.r.PK_GATE, self.r.PK_RULE):
+            self.assertFalse(self.at(f).exists())
+        self.assertEqual(calls, [])  # (udev reloads only for the real system)
+        # (a second update changes nothing)
+        self.assertEqual(self.r.passkeys_retire(str(self.prefix)), [])
 
-    def test_the_commands_and_their_actions(self):
+    def test_a_file_pam_refuses_stays(self):
+        pam = self.at("/etc/pam.d")
+        pam.mkdir(parents=True)
+        text = "#%PAM-1.0\n-auth sufficient pam_u2f.so   " + self.r.PK_MARK + "\nauth include system-auth\n"
+        (pam / "sudo").write_text(text)
+        self.r.pam_problem = lambda *a, **k: "a stand-in refusal"
+        self.assertEqual(self.r.passkeys_retire(str(self.prefix)), [])
+        self.assertEqual((pam / "sudo").read_text(), text)
+
+    def test_no_commands_or_actions_left(self):
         policy = (ROOT / "shell/assets/polkit/org.tessera.root.policy").read_text()
-        for sub in ("passkeys", "passkeys-pam"):
-            self.assertIn(f'<action id="org.tessera.root.{sub}">', policy)
-            self.assertIn(f'org.freedesktop.policykit.exec.argv1">{sub}<', policy)
-        # (both need the password)
-        block = policy.split('<action id="org.tessera.root.passkeys-pam">')[1].split("</action>")[0]
-        self.assertIn("<allow_active>auth_admin</allow_active>", block)
-        # the daemon's own check never uses the system's files (pam_u2f there would ask itself)
-        pam_rs = (ROOT / "native/tessera-passkeys/src/pam.rs").read_text()
-        self.assertIn("pam_start_confdir", pam_rs)
-        self.assertNotIn("fn pam_start(", pam_rs)
+        self.assertNotIn("passkeys", policy)
+        src = (SCRIPTS / "tessera-root.py").read_text()
+        self.assertNotIn('cmd == "passkeys', src)
+        self.assertNotIn("pam_u2f.so", src)
+        self.assertFalse((ROOT / "native/tessera-passkeys").exists())
 
 
 class PhoneCam(unittest.TestCase):

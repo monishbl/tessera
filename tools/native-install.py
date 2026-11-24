@@ -16,12 +16,13 @@ native/tessera-events), in $XDG_DATA_HOME/tessera/bin, matching this checkout.
     native-install.py install --staged [--json]       the staged programs swapped in (HEAD must be REF)
     native-install.py cache   [--delete] [--json]     the build cache: its size, or delete it
 
-tessera-passkeys (native/tessera-passkeys, the passkeys daemon) comes along
-when it can (OPTIONAL): in a ready-made build that has it, or built here
-with the others; a build or release without it never fails an install, and
-an install that can't get it notes that (<name>.unavailable) so it isn't
-looked for again until its sources change. Its user service, when it's on,
-is restarted after a new one is installed.
+An OPTIONAL program comes along when it can: in a ready-made build that has
+it, or built here with the others; a build or release without it never
+fails an install, and an install that can't get it notes that
+(<name>.unavailable) so it isn't looked for again until its sources change.
+There are none now: the passkeys daemon (tessera-passkeys) was removed, and
+an install takes an older one out (retire_passkeys: its user service
+stopped and removed, its program gone; the saved passkeys stay).
 
 Each program has its own source key (part_keys): tessera-events its folder's
 git tree, tessera-ui its folder's tree and the few files outside it that it
@@ -89,8 +90,11 @@ import time
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROGRAMS = ("tessera-ui", "tessera-events")
 # (with them when there's one: never a reason for an install to fail)
-OPTIONAL = ("tessera-passkeys",)
+OPTIONAL = ()
+# (Passkeys, removed: what an older install left, taken out by retire_passkeys)
 PASSKEYS_UNIT = "tessera-passkeys.service"
+PASSKEYS_FILES = ("tessera-passkeys", "tessera-passkeys.new", "tessera-passkeys.prev", "tessera-passkeys.json",
+                  "tessera-passkeys.prev.json", "tessera-passkeys.unavailable")
 VARIANTS = ("x86-64-v3", "generic")
 MODES = ("auto", "build", "buildTuned")
 SHORT = {"x86-64-v3": "v3", "generic": "generic"}
@@ -109,7 +113,7 @@ PATCH_WINDOW = 28  # zstd --long: the patch window (2^28: room for a program up 
 # the list against the sources)
 UI_EXTRA = ("shell/assets/polkit/org.tessera.root.policy", "shell/common/Config.qml", "shell/common/material-symbols.js",
             "shell/common/phosphor.js", "shell/modules/cheatsheet/elements.js",
-            "shell/assets/scripts/health-check.py", "native/tessera-passkeys/tessera-passkeys.service")
+            "shell/assets/scripts/health-check.py")
 
 # x86-64-v3 (AVX2 and friends): every processor's flags in /proc/cpuinfo must
 # have these. LZCNT shows as "abm" on both Intel and AMD; XSAVE is the
@@ -244,8 +248,6 @@ def part_keys(ref="HEAD", repo=None):
         return out
     ev = git("rev-parse", "--verify", "--quiet", commit + ":native/tessera-events", repo=repo)
     out["tessera-events"] = ev or None
-    pk = git("rev-parse", "--verify", "--quiet", commit + ":native/tessera-passkeys", repo=repo)
-    out["tessera-passkeys"] = pk or None
     ui = git("rev-parse", "--verify", "--quiet", commit + ":native/tessera-ui", repo=repo)
     if ui:
         extra = git("ls-tree", commit, "--", *UI_EXTRA, repo=repo) or ""
@@ -1322,8 +1324,8 @@ def optional_todo(mode, tree, keys, edited, dest):
 
 def after_optional(dest, extra, files, keys):
     """After a swap: an optional program that was wanted and didn't come
-    is noted (not looked for again for these sources); a new passkeys daemon
-    is restarted, when its service runs (never for a test's folder)"""
+    is noted (not looked for again for these sources); an older install's
+    passkeys daemon is taken out (never for a test's folder)"""
     for n in extra:
         mark = os.path.join(dest, n + ".unavailable")
         if n in files:
@@ -1331,11 +1333,33 @@ def after_optional(dest, extra, files, keys):
         elif keys.get(n):
             with open(mark, "w") as f:
                 f.write(keys[n] + "\n")
-    if "tessera-passkeys" in files and dest == dest_dir() and not os.environ.get("TESSERA_NATIVE_BUILDER"):
-        try:
-            subprocess.run(["systemctl", "--user", "try-restart", PASSKEYS_UNIT], capture_output=True, timeout=30, stdin=subprocess.DEVNULL)
-        except (OSError, subprocess.SubprocessError):
-            pass
+    if dest == dest_dir() and not os.environ.get("TESSERA_NATIVE_BUILDER"):
+        retire_passkeys(dest)
+
+
+def retire_passkeys(dest, unit_dir=None, run=subprocess.run):
+    """Passkeys were removed: an older install's user service stopped,
+    disabled and deleted, and its program gone from DEST. The saved
+    passkeys (~/.local/share/tessera/passkeys) stay. Returns what it removed."""
+    unit = os.path.join(unit_dir or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "systemd", "user"), PASSKEYS_UNIT)
+    gone = []
+    if os.path.lexists(unit):
+        for cmd in (["systemctl", "--user", "disable", "--now", PASSKEYS_UNIT], None,
+                    ["systemctl", "--user", "daemon-reload"], ["systemctl", "--user", "reset-failed", PASSKEYS_UNIT]):
+            if cmd is None:
+                _remove(unit)
+                gone.append(unit)
+                continue
+            try:
+                run(cmd, capture_output=True, timeout=30, stdin=subprocess.DEVNULL)
+            except (OSError, subprocess.SubprocessError):
+                pass
+    for n in PASSKEYS_FILES:
+        p = os.path.join(dest, n)
+        if os.path.lexists(p):
+            _remove(p)
+            gone.append(p)
+    return gone
 
 
 def _have(dest, names):

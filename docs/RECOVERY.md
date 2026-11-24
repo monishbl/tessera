@@ -12,7 +12,7 @@ Tessera aims to never stop your computer from starting. At worst you can still l
    sudo /usr/lib/tessera/tessera-root rescue
    ```
 
-   This takes Tessera's lines out of the login screen's PAM files (your fingerprint, your passkey and keyring unlocking), keeping a copy of each file in `/var/lib/tessera/rescue/`. It switches greetd to its own text login (`agreety`) in place of Tessera's login screen, then starts greetd again.
+   This takes Tessera's lines out of the login screen's PAM files (your fingerprint and keyring unlocking; a passkey line an older Tessera wrote, too), keeping a copy of each file in `/var/lib/tessera/rescue/`. It switches greetd to its own text login (`agreety`) in place of Tessera's login screen, then starts greetd again.
 4. Press **Ctrl+Alt+F1**. Log in there, with your password, and your desktop starts as usual.
 5. Once you're in, Tessera shows what was taken out, with a **Restore** button. Restore puts things back only once they would no longer stop the login screen. From a terminal, the same is `pkexec /usr/lib/tessera/tessera-root rescue undo`. `sudo /usr/lib/tessera/tessera-root rescue status` shows the note.
 
@@ -33,7 +33,7 @@ To start your desktop from the console without any login screen, run `start-hypr
   - A login screen's file must still start a session with no password first. Tessera checks this by running the real Linux-PAM's `pam_setcred` on a copy. That's how greetd starts its greeter, and it's what broke on 22 November.
   - In every file, the password's own lines must still be reached in order whatever Tessera's lines answer. Tessera works this out by reading the stack, following its includes. It never runs it, so nothing asks for a finger or a password, and no failed attempt is counted.
 - The file from before each edit is kept in `/var/lib/tessera/pam-backup/`.
-- Without a fingerprint reader, no fingerprint line is written. Without a TPM, Passkeys stay off: no PAM lines and no udev rule. Face unlock never touches a login screen's PAM file.
+- Without a fingerprint reader, no fingerprint line is written. Passkeys were removed (Nov 2026): every update takes out the pam_u2f lines, gate, key list and udev rule an older Tessera wrote for them. Face unlock never touches a login screen's PAM file.
 
 **After every update, a boot check.** It runs as root at the end of the system update and of Tessera's own root step. It checks that:
 - the login screen's PAM files work;
@@ -69,7 +69,6 @@ If one of Tessera's own changes is the problem, it's undone straight away and ch
 | `/etc/default/grub` (`quiet`), `grub-mkconfig` | A boot menu that can't be written | Kept as `.pre-tessera`, put back when `grub-mkconfig` fails |
 | grub-btrfs (`bootmenu`) | — | Only its own submenu file; the main menu isn't touched |
 | `/etc/modprobe.d`, `/etc/modules-load.d/tessera-phonecam.conf` | A missing module at start | Only v4l2loopback's options; a missing module makes systemd-modules-load warn, and the start goes on |
-| `/etc/udev/rules.d/70-tessera-passkeys.rules` | — | Only `uaccess` tags; only with a TPM |
 | `/etc/NetworkManager/conf.d/wifi_backend.conf` (installer) | No Wi-Fi | Only when iwd already runs the Wi-Fi; never stops the start |
 | `/etc/pacman.d/tessera-hold.conf`, `/etc/pacman.conf` | Updates held | Written before the Include line; not on the boot's path |
 | `/etc/polkit-1/rules.d`, `/etc/ananicy.d`, `/etc/bluetooth/main.conf`, `/etc/howdy/config.ini` | — | Not on the login's path |
