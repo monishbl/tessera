@@ -261,6 +261,19 @@ class Verify(Fixture):
         self.assertIn("signed checksum", e.exception.why)
         self.assertFalse((self.data / "versions" / commit[:12]).exists())
 
+    def test_stable_never_takes_betas_pointer(self):
+        # (audit #83: Stable's pointer missing, Beta's was offered)
+        self.publish(tag="tessera-ui-beta")
+        with self.assertRaises(B.Failed) as e:
+            B.latest("stable", base_list=self.bases(), pubkey=self.key.pub)
+        self.assertEqual(e.exception.kind, "missing")
+        self.assertEqual(B.latest("beta", base_list=self.bases(), pubkey=self.key.pub)["channel"], "beta")
+        # (and a pointer that names another channel is refused)
+        self.publish(tag="tessera-ui-latest")
+        with self.assertRaises(B.Failed) as e:
+            B.latest("stable", base_list=self.bases(), pubkey=self.key.pub)
+        self.assertEqual(e.exception.kind, "refused")
+
     def test_no_bundle_yet_is_missing_not_refused(self):
         p = B.plan("a" * 40, "beta", base_list=self.bases(), pubkey=self.key.pub)
         self.assertEqual((p["available"], p["kind"]), (False, "missing"))

@@ -381,6 +381,25 @@ def load_update():
     return load("bg_tessera_update_" + os.urandom(3).hex(), ROOT / "tools/tessera-update.py")
 
 
+class PackagesStep(unittest.TestCase):
+    """tessera-update.py's package step: only this run's own answer counts
+    (audit #84: an earlier run's "done" let a failed one pass)"""
+
+    def test_a_stale_done_never_passes_for_a_failed_run(self):
+        with tempfile.TemporaryDirectory() as t:
+            t = Path(t)
+            scripts = t / "v/shell/assets/scripts"
+            scripts.mkdir(parents=True)
+            (scripts / "sysupdate.py").write_text("import sys\nsys.exit(1)\n")  # (exits early, writes nothing)
+            status = t / "run/tessera-sysupdate/status.json"
+            status.parent.mkdir(parents=True)
+            status.write_text(json.dumps({"state": "done", "pid": 1}))
+            with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(t / "run"), "XDG_STATE_HOME": str(t / "state")}):
+                u = load_update()
+                with self.assertRaises(SystemExit):
+                    u.packages_step(str(t / "v"), False, lock=False, install=["x"])
+
+
 class Flow(unittest.TestCase):
     """A real remote and clone: main at "two", beta two commits on"""
 

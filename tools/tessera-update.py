@@ -750,23 +750,46 @@ def packages_step(vdir, system, say=None, install=(), lock=True, remove=()):
         (["--system"] if system else []) + (["--install", ",".join(install)] if install else []) + \
         (["--remove", ",".join(remove)] if remove else [])
     status = os.path.join(runtime_dir(), "tessera-sysupdate", "status.json")
-    p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # (an earlier run's "done" never passes for this one's: the file goes
+    # first, and the answer must be this child's own, with its exit code;
+    # audit #84)
+    try:
+        os.remove(status)
+    except OSError:
+        pass
+    # (its own session: a Cancel of this job never kills it halfway through
+    # a pacman transaction; cancel_job asks it to stop instead; audit #86)
+    p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    marker = os.path.join(job_dir(), "packages")
+    try:
+        write_json(marker, {"pid": p.pid, "script": script})
+    except OSError:
+        pass
     last = ""
-    while p.poll() is None:
-        st = load_json(status, {}) or {}
-        t = st.get("text", "") if isinstance(st, dict) else ""
-        if t and t != last and say:
-            say(t)
-            last = t
-        time.sleep(0.5)
+    try:
+        while p.poll() is None:
+            st = load_json(status, {}) or {}
+            t = st.get("text", "") if isinstance(st, dict) and st.get("pid") == p.pid else ""
+            if t and t != last and say:
+                say(t)
+                last = t
+            time.sleep(0.5)
+    finally:
+        try:
+            os.remove(marker)
+        except OSError:
+            pass
     st = load_json(status, {}) or {}
-    if not isinstance(st, dict) or st.get("state") != "done":
+    if isinstance(st, dict) and st.get("pid") not in (None, p.pid):
+        st = {"state": "failed", "error": "another system update was running"}
+    if not isinstance(st, dict) or st.get("state") != "done" or p.returncode != 0:
         state = st.get("state") if isinstance(st, dict) else ""
         what = "The packages this Tessera was tested with" if lock else "The packages this Tessera needs"
         if state == "cancelled":
             raise SystemExit(what + " weren't installed (the password was cancelled). Nothing was changed.")
-        raise SystemExit(what + " weren't installed: " +
-                         ((st.get("error") or st.get("text")) if isinstance(st, dict) else "") + ". Nothing of Tessera was changed.")
+        why = ((st.get("error") or st.get("text")) if isinstance(st, dict) else "") or \
+            ("the system update stopped (exit %s)" % p.returncode)
+        raise SystemExit(what + " weren't installed: " + why + ". Nothing of Tessera was changed.")
 
 
 # ── Dependencies on update (docs/releases.md) ────────────────────────────
@@ -1020,6 +1043,13 @@ def bundle_finish(config_dir, s):
         swapped = True
     except BaseException as e:
         why = str(e) or e.__class__.__name__
+        # (swapped or not is what `current` says: activate() moves it, its
+        # commit point, before the links and the state that may still fail;
+        # audit #85: a failure after it was said to change nothing)
+        try:
+            swapped = swapped or B.read_link(B.current_link(B.data_dir())) == vid
+        except Exception:
+            pass
         try:
             if swapped:
                 B.undo()
@@ -2061,7 +2091,8 @@ def data_dir():
 
 
 def runtime_dir():
-    return os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+    # (the same as sysupdate.py's: /run/user/<uid> when XDG_RUNTIME_DIR isn't set)
+    return os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()
 
 
 def staged_dir():
@@ -2734,6 +2765,9 @@ def unblock_signals():
             pass
 
 
+CANCEL_WHY = [""]
+
+
 def cancel_job(grace=10.0, sleep=time.sleep, killpg=None, alive=None):
     """Stops the background job, its whole process group (cargo, rustc and
     all): SIGTERM, then SIGKILL after GRACE seconds if any of it is still
@@ -2747,6 +2781,21 @@ def cancel_job(grace=10.0, sleep=time.sleep, killpg=None, alive=None):
     if got is None:
         return False
     pid, start = got
+    # The package step runs as root under its own sysupdate.py: stopped only
+    # while it still waits for the password; past that, pacman is running
+    # and the update goes on (audit #86: "cancelled" while pacman kept on)
+    pk = load_json(os.path.join(job_dir(), "packages"), {})
+    if isinstance(pk, dict) and isinstance(pk.get("pid"), int) and os.path.isfile(str(pk.get("script", ""))):
+        try:
+            os.kill(pk["pid"], 0)
+            running = True
+        except OSError:
+            running = False
+        if running:
+            r = subprocess.run([sys.executable, "-I", pk["script"], "cancel"], capture_output=True, text=True, timeout=30)
+            if r.returncode != 0:
+                CANCEL_WHY[0] = "It can't be cancelled now: packages are being installed. It finishes by itself."
+                return False
     # (a pid file left by a job that died, its pid since given to another
     # program: that program's group is never signalled; the status still
     # ends cancelled below)
@@ -2983,6 +3032,8 @@ def main():
             out = staged_info()
         elif a.command == "cancel":
             out = {"cancelled": cancel_job()}
+            if not out["cancelled"] and CANCEL_WHY[0]:
+                out["why"] = CANCEL_WHY[0]
         elif a.command == "recover":
             out = recover()
         elif a.command == "resume":

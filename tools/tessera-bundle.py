@@ -764,8 +764,12 @@ def fetch_manifest(commit, channel, work, *, base_list=None, pubkey=None, downlo
     os.makedirs(work, exist_ok=True)
     mpath = os.path.join(work, "manifest.json")
     errors = []
+    # (the rolling pointer only from the channel's own release: Stable's
+    # missing for a moment, as every publish replaces it, gave Beta's;
+    # audit #83. A commit's manifest may sit in either)
+    tags = tags_for(channel) if commit else tags_for(channel)[:1]
     for b in (base_list if base_list is not None else bases()):
-        for tag in tags_for(channel):
+        for tag in tags:
             folder = b.replace("{tag}", tag)
             try:
                 download(folder + "/" + (manifest_name(commit) if commit else LATEST), mpath, MAX_MANIFEST, timeout=60, retries=1, connect=5)
@@ -913,6 +917,8 @@ def latest(channel, *, base_list=None, pubkey=None):
     """The channel's newest bundle manifest (the signed pointer), or raises"""
     with tempfile.TemporaryDirectory(prefix="tessera-bundle-latest-") as work:
         m, data, sig, folder = fetch_manifest("", channel, work, base_list=base_list, pubkey=pubkey)
+    if channel in ROLLING and m.get("channel") != channel:
+        raise Failed(f"the {channel} pointer names a {m.get('channel')!r} build", "refused")
     return m
 
 
