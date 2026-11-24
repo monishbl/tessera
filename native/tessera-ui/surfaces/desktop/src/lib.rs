@@ -209,6 +209,8 @@ struct Photo {
 #[derive(Default)]
 pub struct Desktop {
     win: Option<Win>,
+    /// the wallpaper showing now, measured for the icons' names over it
+    wall_ink: tessera_core::services::wallpaper::Follow,
     menu: Option<MenuWin>,
     feed: Feed,
     list: Vec<W>,
@@ -370,6 +372,12 @@ impl Cfg {
             h24: cfg["appearance"]["clock24"].as_bool().unwrap_or(false),
         }
     }
+}
+
+/// Where an icon's name sits on the screen (x, y, w, h px), from the
+/// icon's spot (IconCell: the name 54 px down, two lines at most)
+fn label_region(x: f32, y: f32) -> (f32, f32, f32, f32) {
+    (x, y + 54.0, grid::SPOT - 6.0, 34.0)
 }
 
 impl Desktop {
@@ -676,6 +684,9 @@ impl Desktop {
         }
         let items = self.items.clone();
         let px = (104.0 * self.scale() / 2.0).ceil() as u32 * 2;
+        // (each name's ink follows the wallpaper under it: dark on a light patch)
+        let wall = st.shell.get::<tessera_core::services::wallpaper::WallTop>().filter(|w| self.wall_ink.is(w)).cloned();
+        let screen = self.win.as_ref().map(|w| w.surface.logical_size()).map_or((1920.0, 1080.0), |(w, h)| (w as f32, h as f32));
         items
             .iter()
             .enumerate()
@@ -684,13 +695,15 @@ impl Desktop {
                 // on the top-left cell over each other; audit #45. The folder
                 // has them, and Use Stacks fits them)
                 let (c, r) = self.spots.get(&it.key).copied()?;
+                let (x, y) = (grid::ORIGIN.0 + c as f32 * grid::SPOT, grid::ORIGIN.1 + r as f32 * grid::SPOT);
                 let mut row = ui::DeskIcon {
                     index: i as i32,
                     key: it.key.as_str().into(),
                     // (ElideMiddle over two lines of about 13 characters)
                     name: elide_middle(&it.name, 26).into(),
-                    x: grid::ORIGIN.0 + c as f32 * grid::SPOT,
-                    y: grid::ORIGIN.1 + r as f32 * grid::SPOT,
+                    x,
+                    y,
+                    dark_ink: wall.as_ref().is_some_and(|w| w.dark_ink_under(screen, label_region(x, y)) == Some(true)),
                     selected: self.selected == it.key,
                     stack: it.is_stack(),
                     ..Default::default()
@@ -1807,6 +1820,7 @@ impl Part for Desktop {
         st.shell.want("icons");
         self.start_timers(st);
         self.minute = -1;
+        self.wall_ink.check(&st.shell.cfg, st.shell.look.material, &st.tx, true);
     }
 
     fn output_added(&mut self, st: &mut State, _output: &WlOutput, _name: &str) {
@@ -1840,6 +1854,7 @@ impl Part for Desktop {
             self.refresh_stocks(st);
         }
         self.refresh_zones(st);
+        self.wall_ink.check(&st.shell.cfg, st.shell.look.material, &st.tx, true);
         self.after_layout(st);
     }
 
@@ -1857,6 +1872,11 @@ impl Part for Desktop {
             // drawn again, which takes seconds when the index is rebuilt while
             // a panel opens and keeps the renderers busy)
             self.update(st);
+        } else if what == TypeId::of::<tessera_core::services::wallpaper::WallTop>() {
+            // (the wallpaper measured: the icons' names take their ink)
+            if self.win.is_some() && Self::cfg(st).icons {
+                self.update(st);
+            }
         }
     }
 
@@ -1940,6 +1960,8 @@ impl Part for Desktop {
                 }
             }
             M::Tick => {
+                // (a time-of-day wallpaper steps on: the names' ink follows; at most every 20 s)
+                self.wall_ink.check(&st.shell.cfg, st.shell.look.material, &st.tx, false);
                 let now = crate::util::now_ms();
                 let minute = now / 60_000;
                 if minute != self.minute {
@@ -2182,6 +2204,22 @@ impl Part for Desktop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn icon_names_take_the_ink_of_the_wallpaper_under_them() {
+        use tessera_core::services::wallpaper::{WallTop, GRID};
+        let screen = (1920.0, 1080.0);
+        // the left half light, the right half dark
+        let g: Vec<f32> = (0..GRID * GRID).map(|i| if i % GRID < GRID / 2 { 0.95 } else { 0.05 }).collect();
+        let w = WallTop::from_grid("/w.jpg", 16.0 / 9.0, g);
+        let (lx, ly) = (grid::ORIGIN.0, grid::ORIGIN.1);
+        assert_eq!(w.dark_ink_under(screen, label_region(lx, ly)), Some(true), "on the light side");
+        let rx = screen.0 - grid::SPOT - 32.0;
+        assert_eq!(w.dark_ink_under(screen, label_region(rx, ly)), Some(false), "on the dark side");
+        // the name sits under the icon
+        let (_, y, wdt, h) = label_region(lx, ly);
+        assert!(y > ly + 48.0 && wdt > 0.0 && h > 0.0);
+    }
 
     #[test]
     fn settings_default_as_config_qml() {

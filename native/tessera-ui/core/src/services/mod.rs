@@ -22,7 +22,7 @@
 //!   tray     the apps' tray items (tray::Tray, StatusNotifierItem), session bus
 //!   bluez    Bluetooth (bluez::Bluetooth), system bus
 //! Asked for directly, not started by name:
-//!   wallpaper::sample   is the wallpaper light under the bar (wallpaper::WallTop)
+//!   wallpaper::sample   how light the wallpaper is under any part of a screen (wallpaper::WallTop)
 //!   bridge   the QML shell's own state, from its lines on stdin (main.rs),
 //!            and calls back into it (shell-ipc.sh)
 //!   calendar your events and file subscriptions (calendar::Calendar)

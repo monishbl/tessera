@@ -325,34 +325,12 @@ pub fn came_back(idle: bool, now_ms: i64, last_touch_ms: i64) -> bool {
     idle || now_ms - last_touch_ms > 30_000
 }
 
-/// How light the wallpaper is behind the clock and date (0..1): the 60th
-/// percentile of the luma over the top of the screen's middle (both the
-/// centred and the split layout's clock), from the blurred copy's RGB
-pub fn clock_luma(rgb: &[[u8; 3]], w: usize, h: usize) -> f32 {
-    if w == 0 || h == 0 || rgb.len() < w * h {
-        return 0.0;
-    }
-    let mut l: Vec<u8> = Vec::new();
-    let (y0, y1) = (h * 6 / 100, (h * 44 / 100).max(h * 6 / 100 + 1).min(h));
-    let (x0, x1) = (w * 6 / 100, (w * 94 / 100).max(w * 6 / 100 + 1).min(w));
-    for y in y0..y1 {
-        for x in x0..x1 {
-            let p = rgb[y * w + x];
-            l.push((0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32) as u8);
-        }
-    }
-    if l.is_empty() {
-        return 0.0;
-    }
-    l.sort_unstable();
-    l[(l.len() - 1) * 60 / 100] as f32 / 255.0
-}
-
-/// The shade behind Material's clock and date (0..1) for that lightness:
-/// none on a dark wallpaper (the look unchanged), all of it on a light one
-/// (the pale clock inks read ~1.3:1 there, #164)
-pub fn clock_scrim(luma: f32) -> f32 {
-    ((luma - 0.45) / 0.25).clamp(0.0, 1.0)
+/// Where the clock and date sit on a screen of `screen` px, as (x, y, w,
+/// h): the top 6..44 % of its middle 88 %, both the centred and the split
+/// layout's clock. Their ink follows the wallpaper under it
+/// (services::wallpaper: dark ink on a light one)
+pub fn clock_region(screen: (f32, f32)) -> (f32, f32, f32, f32) {
+    (screen.0 * 0.06, screen.1 * 0.06, screen.0 * 0.88, screen.1 * 0.38)
 }
 
 /// Bedside Mode at night: the date line's ink. Still red, light enough to
@@ -377,22 +355,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_clock_reads_on_a_light_wallpaper() {
-        let (w, h) = (40, 30);
-        let bright = vec![[235u8, 240, 230]; w * h];
-        let dark = vec![[30u8, 40, 60]; w * h];
-        assert!(clock_luma(&bright, w, h) > 0.85);
-        assert!(clock_luma(&dark, w, h) < 0.2);
-        assert_eq!(clock_scrim(clock_luma(&dark, w, h)), 0.0, "a dark wallpaper looks as it did");
-        assert_eq!(clock_scrim(clock_luma(&bright, w, h)), 1.0);
-        assert!(clock_scrim(0.55) > 0.0 && clock_scrim(0.55) < 1.0);
-        // only the top: a light bottom half doesn't shade the clock
-        let mut half = dark.clone();
-        for p in half.iter_mut().skip(w * h / 2) {
-            *p = [250, 250, 250];
+    fn the_clock_ink_follows_the_wallpaper_behind_it() {
+        use crate::services::wallpaper::{WallTop, GRID};
+        let screen = (1920.0, 1080.0);
+        let (x, y, w, h) = clock_region(screen);
+        assert!(x > 0.0 && y > 0.0 && x + w < screen.0 && y + h < screen.1 * 0.5);
+        // a light top, a dark bottom: dark ink on the clock
+        let mut g = vec![0.1f32; GRID * GRID];
+        for v in g.iter_mut().take(GRID * GRID / 2) {
+            *v = 0.9;
         }
-        assert_eq!(clock_scrim(clock_luma(&half, w, h)), 0.0);
-        assert_eq!(clock_luma(&[], 0, 0), 0.0);
+        let light_top = WallTop::from_grid("/a.jpg", 16.0 / 9.0, g.clone());
+        assert_eq!(light_top.dark_ink_under(screen, clock_region(screen)), Some(true));
+        // the other way round: light ink (only what's behind the clock counts)
+        g.reverse();
+        let dark_top = WallTop::from_grid("/b.jpg", 16.0 / 9.0, g);
+        assert_eq!(dark_top.dark_ink_under(screen, clock_region(screen)), Some(false));
+        // a bright strip only under the bar doesn't turn the clock dark
+        let mut strip = vec![0.1f32; GRID * GRID];
+        for v in strip.iter_mut().take(GRID * 2) {
+            *v = 1.0;
+        }
+        let strip = WallTop::from_grid("/c.jpg", 16.0 / 9.0, strip);
+        assert!(strip.light);
+        assert_eq!(strip.dark_ink_under(screen, clock_region(screen)), Some(false));
     }
 
     #[test]

@@ -62,13 +62,24 @@ component SIcon {
     property <bool> sym: Theme.material && g.m != "";
     preferred-width: size;
     preferred-height: size;
+    // (its own size: the glyph's text, placed by x and y, doesn't size it)
+    min-width: size;
+    min-height: size;
+    // (Material Symbols draw a little larger: their glyphs sit in a padded square)
+    property <length> em: sym ? Math.round(size * 1.2 / 1px) * 1px : size;
+    // The glyph's box: at least its whole line (Material Symbols' is 1.2 em
+    // tall, an em wide), centred on the icon's. A line wider than its box
+    // isn't centred (Slint start-aligns an overflowing line) and is clipped
+    // at the box: Material's 1.2x glyph in a box the icon's size sat off
+    // centre with an edge cut (24 Nov)
     Text {
-        width: 100%;
-        height: 100%;
+        width: max(root.width, root.em * 1.3);
+        height: max(root.height, root.em * 1.3);
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2;
         text: sym ? g.m : g.p;
         color: root.color;
-        // (Material Symbols draw a little larger: their glyphs sit in a padded square)
-        font-size: sym ? Math.round(size * 1.2 / 1px) * 1px : size;
+        font-size: root.em;
         font-family: sym ? (fill ? "Tessera Symbols Fill" : "Tessera Symbols") : fill ? "Phosphor-Fill" : bold ? "Phosphor-Bold" : "Phosphor";
         horizontal-alignment: center;
         vertical-alignment: center;

@@ -67,6 +67,7 @@ export struct DeskIcon {
     key: string, // (the file's path, or the stack's kind: rows follow it)
     name: string,
     x: length, y: length,
+    dark-ink: bool, // a light wallpaper under its name: dark ink (services::wallpaper)
     selected: bool,
     stack: bool,
     pic: image, has-pic: bool, // an image file's thumbnail, else its icon
@@ -1461,7 +1462,8 @@ component IconCell inherits Rectangle {
         height: label.preferred-height + (Theme.material ? 4px : 2px);
         border-radius: Theme.material ? min(self.height / 2, 10px) : 4px;
         background: ic.selected ? (Theme.material ? Theme.m3-secondary-container : Theme.accent) : transparent;
-        // (Glass: a raised shadow under the name on the wallpaper)
+        // (a raised shadow under the name on the wallpaper: dark under light
+        // ink, a light one under dark ink on a light wallpaper)
         if !ic.selected: T {
             x: (parent.width - self.width) / 2 + 1px;
             y: (parent.height - self.height) / 2 + 1px;
@@ -1471,7 +1473,7 @@ component IconCell inherits Rectangle {
             overflow: elide;
             wrap: char-wrap;
             height: min(self.preferred-height, 2 * 16px);
-            color: #0000008c;
+            color: ic.dark-ink ? #ffffff66 : #0000008c;
             font-weight: 500;
         }
         label := T {
@@ -1481,7 +1483,7 @@ component IconCell inherits Rectangle {
             overflow: elide;
             wrap: char-wrap; // (WrapAnywhere, two lines at most)
             height: min(self.preferred-height, 2 * 16px);
-            color: Theme.material && ic.selected ? Theme.m3-on-secondary-container : ic.selected ? Theme.on-accent : white;
+            color: Theme.material && ic.selected ? Theme.m3-on-secondary-container : ic.selected ? Theme.on-accent : ic.dark-ink ? #1C1C1E : white;
             font-weight: 500;
         }
     }

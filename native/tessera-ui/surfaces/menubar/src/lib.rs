@@ -195,6 +195,9 @@ struct BarEntry {
     size_tick: tessera_core::pacing::FrameTimer,
     /// the island's art picture was made for: art, size, scale (island_art)
     art_key: String,
+    /// Material's pills over the wallpaper: the dark or light its Theme was
+    /// last filled for, following the wallpaper under it (None: the system's)
+    theme_dark: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -259,8 +262,8 @@ pub struct Menubar {
     play_shown: Option<(String, bool, std::time::Instant)>,
     /// the QML shell's activities (without music)
     live: Vec<Activity>,
-    /// the wallpaper last sampled for the text colour
-    wall: String,
+    /// the wallpaper showing now, measured for the ink over it
+    wall: wallpaper::Follow,
     /// the shown activity's controls and the island's alerts (with each
     /// alert's own lists, by uid), shared by every bar and changed in place
     ctl_rows: HashMap<String, Rows<ui::Ctl>>,
@@ -576,15 +579,11 @@ impl Menubar {
         });
     }
 
-    /// The wallpaper changed: is its top light? (the text colour)
-    fn follow_wallpaper(&mut self, st: &State) {
-        let path = st.shell.cfg["wallpaper"]["path"].as_str().unwrap_or("").to_string();
-        if path != self.wall {
-            self.wall = path.clone();
-            if !path.is_empty() {
-                wallpaper::sample(&path, st.tx.clone());
-            }
-        }
+    /// The wallpaper showing now (the still, the time-of-day step, a live
+    /// one's poster) changed: measure it (the ink over it). `force`: look
+    /// now, else at most every 20 s (the clock calls it)
+    fn follow_wallpaper(&mut self, st: &State, force: bool) {
+        self.wall.check(&st.shell.cfg, st.shell.look.material, &st.tx, force);
     }
 
     /// The controls' list for an activity in one place (the pill, the card,
@@ -844,7 +843,9 @@ impl Menubar {
         let players = st.shell.get::<Players>().cloned().unwrap_or_default();
         let tray_now = st.shell.get::<Tray>().cloned().unwrap_or_default();
         let shell = Self::shell_state(st);
-        let light = st.shell.get::<WallTop>().is_some_and(|w| w.light && w.path == self.wall);
+        // (the wallpaper's measurement, when it's the one showing)
+        let wall = st.shell.get::<WallTop>().filter(|w| self.wall.is(w)).cloned();
+        let high_contrast = st.shell.look.contrast > 0;
         let cfg = Self::cfg(st);
         let material = st.shell.look.material;
         let class = snapshot.class.clone();
@@ -906,9 +907,40 @@ impl Menubar {
         let mut bars = std::mem::take(&mut self.bars);
         let mut any_expanded = false;
         for b in &mut bars {
+            // light under this bar's strip (its screen's top 32 px, where the
+            // picture covers it): dark ink
+            let screen = crate::surfaces::kit::screen_named(st, &b.output).unwrap_or((1920.0, 1080.0));
+            let light = wall.as_ref().is_some_and(|w| w.dark_ink_under(screen, (0.0, 0.0, screen.0, 32.0)).unwrap_or(w.light));
+            // Material's pills (no background): pills and all in them take
+            // the wallpaper's light or dark (light pills, dark ink on a light
+            // one), the island's idle pill with them; an opaque bar is a
+            // surface and keeps the system's
+            let want = if pills { Some(!light) } else { None };
+            if want != b.theme_dark {
+                match want {
+                    Some(dark) => {
+                        let mut look = st.shell.look.clone();
+                        look.dark = dark;
+                        theme::apply(&b.ui.global::<ui::Theme>(), &look, st.shell.plugin);
+                    }
+                    None => st.shell.apply_theme(&b.ui.global::<ui::Theme>()),
+                }
+                b.theme_dark = want;
+                b.glass_sent.clear();
+                b.chips_key.clear();
+                b.live_key.clear();
+                b.alerts_key.clear();
+            }
             let theme = b.ui.global::<ui::Theme>();
             let label = theme.get_label();
-            let wall_ink = if opaque { label } else if light { slint::Color::from_argb_u8(217, 0, 0, 0) } else { slint::Color::from_argb_u8(245, 255, 255, 255) };
+            // (Glass, straight on the wallpaper; Increase contrast: full strength)
+            let wall_ink = if opaque {
+                label
+            } else if light {
+                slint::Color::from_argb_u8(if high_contrast { 255 } else { 217 }, 0, 0, 0)
+            } else {
+                slint::Color::from_argb_u8(if high_contrast { 255 } else { 245 }, 255, 255, 255)
+            };
             let ink = if pills { theme.get_m3_on_surface() } else { wall_ink };
             let ui = &b.ui;
             ui.set_ink(ink);
@@ -1268,6 +1300,8 @@ impl Menubar {
     /// Re-arm the clock: on the minute, or every second when it shows
     /// seconds or something counts (a recording, the island's activities)
     fn tick(&mut self, st: &mut State) {
+        // (a time-of-day wallpaper steps on: the ink follows; at most every 20 s)
+        self.follow_wallpaper(st, false);
         self.refresh(st);
         let every_second = st.shell.cfg["menubar"]["showSeconds"].as_bool().unwrap_or(false) || Self::shell_state(st).bool("recording.on");
         let secs = now("%S").parse::<u64>().unwrap_or(0);
@@ -1295,6 +1329,8 @@ impl Menubar {
     fn apply_theme(&mut self, st: &State) {
         for b in &mut self.bars {
             st.shell.apply_theme(&b.ui.global::<ui::Theme>());
+            // (the system's: refresh fills it for the wallpaper again)
+            b.theme_dark = None;
             // (the look's motion: its island spring is made again, at rest)
             b.size = None;
             b.size_tick.stop();
@@ -2628,7 +2664,7 @@ impl Part for Menubar {
         for s in ["hypr", "status", "bluez", "mpris", "tray", "audio", "brightness"] {
             st.shell.want(s);
         }
-        self.follow_wallpaper(st);
+        self.follow_wallpaper(st, true);
         self.tick(st);
     }
 
@@ -2802,6 +2838,7 @@ impl Part for Menubar {
             size: None,
             size_tick: Default::default(),
             art_key: String::new(),
+            theme_dark: None,
         });
         self.refresh(st);
     }
@@ -2819,7 +2856,7 @@ impl Part for Menubar {
 
     fn config_changed(&mut self, st: &mut State, look: bool) {
         self.screens_changed(st);
-        self.follow_wallpaper(st);
+        self.follow_wallpaper(st, true);
         self.tick(st); // (the clock's format, the menu icon, the background)
         if look {
             self.apply_theme(st);

@@ -368,6 +368,8 @@ pub struct Lock {
     material: bool,
     /// the wallpaper showing now (read with the settings)
     wall_path: String,
+    /// that wallpaper's measurement for the ink over it (services::wallpaper)
+    wall_ink: crate::services::wallpaper::Follow,
     real: bool,
     backend: Backend,
     held: bool,
@@ -454,6 +456,7 @@ impl Default for Lock {
             demo,
             material: false,
             wall_path: String::new(),
+            wall_ink: Default::default(),
             real,
             backend: auth::backend(real),
             held: false,
@@ -891,17 +894,23 @@ impl Lock {
             m => m,
         }
         .to_string();
-        let top_light = st.shell.get::<crate::services::wallpaper::WallTop>().is_some_and(|t| t.light);
-        let dark_ink = match s(&c, "text", "auto") {
-            "dark" => true,
-            "auto" => top_light,
-            _ => false,
-        };
+        // (the wallpaper's measurement, when it's the one showing)
+        let wall = st.shell.get::<crate::services::wallpaper::WallTop>().filter(|t| self.wall_ink.is(t)).cloned();
+        let text = s(&c, "text", "auto").to_string();
         let roles: std::collections::HashMap<String, String> = if look.material { crate::theme::look_roles(&look).into_iter().collect() } else { Default::default() };
         let r = |k: &str| roles.get(k).map(|v| hex(v)).unwrap_or(slint::Color::from_rgb_u8(255, 255, 255));
         let name = account_name();
         let h24 = b(&st.shell.cfg["appearance"], "clock24", false);
         for w in &self.wins {
+            // lock.text "auto": dark ink where the wallpaper is light behind
+            // the clock and date (this screen's top 6..44 %, both layouts'
+            // clocks), light ink on a dark one; "dark" / "light" as set
+            let screen = crate::surfaces::kit::screen_named(st, &w.output).unwrap_or((1920.0, 1080.0));
+            let dark_ink = match text.as_str() {
+                "dark" => true,
+                "auto" => wall.as_ref().is_some_and(|t| t.dark_ink_under(screen, logic::clock_region(screen)).unwrap_or(false)),
+                _ => false,
+            };
             st.shell.apply_theme(&w.ui.global::<ui::Theme>());
             let d = w.ui.global::<ui::LockData>();
             d.set_ios(s(&c, "layout", "ios") != "macos");
@@ -944,6 +953,13 @@ impl Lock {
             return;
         }
         self.minute = (t.h, t.mi);
+        // (a time-of-day wallpaper steps on: the picture, and the ink over
+        // it, follow; each screen decodes the new one in after_frame)
+        let path = crate::wallpaper::showing_now(&st.shell.cfg, st.shell.look.material);
+        if path != self.wall_path {
+            self.wall_path = path.clone();
+        }
+        self.wall_ink.follow(&path, &st.tx);
         let h24 = b(&st.shell.cfg["appearance"], "clock24", false);
         let (h, m) = (t.h as u32, t.mi as u32);
         let date = logic::date_long(t.wday as u32, t.d as u32, t.mo as u32);
@@ -1975,7 +1991,7 @@ impl Part for Lock {
             st.shell.want(s);
         }
         let path = crate::wallpaper::showing_now(&st.shell.cfg, st.shell.look.material);
-        crate::services::wallpaper::sample(&path, st.tx.clone());
+        self.wall_ink.follow(&path, &st.tx);
         self.wall_path = path;
         eprintln!(
             "tessera-ui: lock: {} (password: {})",
@@ -2039,8 +2055,9 @@ impl Part for Lock {
         let path = crate::wallpaper::showing_now(&st.shell.cfg, st.shell.look.material);
         if path != self.wall_path {
             self.wall_path = path.clone();
-            crate::services::wallpaper::sample(&path, st.tx.clone());
         }
+        // (measured again when it's another picture or the file changed)
+        self.wall_ink.follow(&path, &st.tx);
     }
 
     fn data(&mut self, st: &mut State, what: TypeId) {
@@ -2374,18 +2391,10 @@ impl Part for Lock {
             M::Wallpaper(path, size, px) => {
                 let Some((sharp, soft)) = px else {
                     // (no picture: the entrance over the plain colour)
-                    for w in &self.wins {
-                        w.ui.global::<ui::LockData>().set_clock_scrim(0.0);
-                    }
                     self.wins.iter_mut().for_each(reveal);
                     return;
                 };
                 let (lo, hi) = field_light(&soft);
-                // (a light wallpaper behind the clock: a soft shade under it, #164)
-                let scrim = {
-                    let rgb: Vec<[u8; 3]> = soft.as_slice().iter().map(|p| [p.r, p.g, p.b]).collect();
-                    logic::clock_scrim(logic::clock_luma(&rgb, soft.width() as usize, soft.height() as usize))
-                };
                 let (sharp, soft) = (Image::from_rgb8(sharp), Image::from_rgb8(soft));
                 for w in &mut self.wins {
                     if w.picture.0 == path && w.picture.1 == size {
@@ -2394,7 +2403,6 @@ impl Part for Lock {
                         d.set_soft(soft.clone());
                         d.set_field_lo(lo);
                         d.set_field_hi(hi);
-                        d.set_clock_scrim(scrim);
                         d.set_has_wallpaper(true);
                         w.sharp = Some(sharp.clone());
                     }

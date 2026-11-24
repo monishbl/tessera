@@ -86,9 +86,6 @@ export global LockData {
     // tinted just enough for its words to read
     in property <float> field-lo: 0.1;
     in property <float> field-hi: 0.1;
-    // How much shade Material's clock and date get from a light wallpaper
-    // behind them (0 dark: unchanged; logic.rs clock_scrim)
-    in property <float> clock-scrim: 0;
     // Time
     in property <string> date;
     in property <string> time;
@@ -1900,23 +1897,6 @@ component MaterialLock inherits Rectangle {
         // ── Clock, date and smartspace
         property <length> large-x: split ? round(W * 0.08 / 1px) * 1px : round((W - header.width) / 2 / 1px) * 1px;
         property <length> large-y: round(H * (split ? 0.14 : ios ? 0.09 : 0.11) / 1px) * 1px;
-        // A soft shade behind the clock and date on a light wallpaper: the
-        // pale inks read ~1.3:1 there (#164). A blurred shadow of a see-through
-        // rounded box, so no edge shows; none at all on a dark wallpaper or
-        // with dark ink
-        Rectangle {
-            property <float> k: dark-ink ? 0 : LockData.clock-scrim;
-            visible: k > 0.01;
-            x: header.x + 32px;
-            y: header.y + 24px;
-            width: max(0px, header.width - 64px);
-            height: max(0px, header.height - 48px);
-            border-radius: min(self.width, self.height) / 2;
-            background: transparent;
-            drop-shadow-blur: 96px;
-            drop-shadow-color: #000000.with-alpha(0.55 * k);
-            opacity: header.opacity * (1 - sb);
-        }
         header := Rectangle {
             x: large-x + (max(48px, round(W * 0.04 / 1px) * 1px) - large-x) * small-t;
             y: large-y + (72px - large-y) * small-t + rise - part;
