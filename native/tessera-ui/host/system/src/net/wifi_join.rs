@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use std::any::Any;
 use tessera_core::host::{Host, Service};
 
-const NAME: &str = "WifiJoin";
+pub(crate) const NAME: &str = "WifiJoin";
 
 enum M {
     Line(String),

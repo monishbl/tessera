@@ -29,7 +29,7 @@ use std::time::Duration;
 use tessera_core::host::{Host, Service};
 use tessera_core::sysstat::{self, Sampler};
 
-const NAME: &str = "Resources";
+pub(crate) const NAME: &str = "Resources";
 
 const FIND_GPU: &str = "nv=; if command -v nvidia-smi >/dev/null 2>&1 && [ -d /proc/driver/nvidia ]; then nv=present; for c in /sys/class/drm/card*; do case $c in *-*) continue;; esac; case \"$(readlink \"$c/device/driver\")\" in */nvidia) for s in \"$c\"-*/status; do [ \"$(cat \"$s\" 2>/dev/null)\" = connected ] && nv=display; done;; esac; done; fi; [ \"$nv\" = display ] && { echo 'nvidia nvidia-smi'; exit; }; for f in /sys/class/drm/card*/device/gpu_busy_percent; do [ -r \"$f\" ] && { echo \"busy $f\"; exit; }; done; for f in /sys/class/drm/card*/gt/gt0/rc6_residency_ms /sys/class/drm/card*/device/tile0/gt0/gtidle/idle_residency_ms; do [ -r \"$f\" ] && { echo \"idle $f\"; exit; }; done; [ -n \"$nv\" ] && echo 'nvidia nvidia-smi'; true";
 const NVIDIA: &str = "for d in /sys/bus/pci/drivers/nvidia/0000:*; do [ \"$(cat \"$d/power/runtime_status\" 2>/dev/null)\" = suspended ] && { echo asleep; exit 0; }; done; exec nvidia-smi --query-gpu=utilization.gpu,temperature.gpu --format=csv,noheader,nounits";

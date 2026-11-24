@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use std::any::Any;
 use tessera_core::host::{Host, Service};
 
-const NAME: &str = "WifiShare";
+pub(crate) const NAME: &str = "WifiShare";
 
 enum M {
     Shared(u32, String),

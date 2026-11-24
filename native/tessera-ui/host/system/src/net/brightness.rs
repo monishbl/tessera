@@ -31,7 +31,7 @@ use tessera_core::services::hypr::Snapshot;
 /// second; a monitor asleep, behind a KVM or an MST hub may never answer)
 const DDC_LIMIT: Duration = Duration::from_secs(10);
 
-const NAME: &str = "Brightness";
+pub(crate) const NAME: &str = "Brightness";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ddc {

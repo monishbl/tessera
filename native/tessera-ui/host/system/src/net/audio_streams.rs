@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use tessera_core::host::{Host, Service};
 use tessera_core::services::audio::{self, Sound, EVENT_PLAYERS};
 
-const NAME: &str = "AudioStreams";
+pub(crate) const NAME: &str = "AudioStreams";
 
 pub fn output_icon(label: &str) -> &'static str {
     if label.to_lowercase().contains("headphone") { "headphones" } else { "speaker-hifi" }

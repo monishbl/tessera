@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use tessera_core::host::{Host, Service};
 use tessera_core::services::audio::{self, Cmd, Sound};
 
-const NAME: &str = "Audio";
+pub(crate) const NAME: &str = "Audio";
 
 /// Audio.icon
 pub fn icon(muted: bool, volume: f64) -> &'static str {

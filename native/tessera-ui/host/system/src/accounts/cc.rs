@@ -129,9 +129,19 @@ const IDS: &[&str] = &[
     "timer", "tileWindows", "appLibrary", "display", "sound", "micLevel", "nowPlaying", "battery", "resources", "weather",
 ];
 
+/// This crate's bus: what its own services put, by their own names (exact:
+/// 23 Nov audit #6, "audio", "resources"… in lower case read nothing)
 fn g(name: &str) -> Value {
     crate::bus::get(name)
 }
+/// The shell's state: what host-shell and host-desktop keep (Host::set_state),
+/// never put on this crate's bus (audit #5: backends, focus, captions, the
+/// recorder, needs, health, weather all read Null from g)
+fn st(h: &Host, name: &str) -> Value {
+    h.state(name).clone()
+}
+use crate::net::{audio::NAME as AUDIO, audio_streams::NAME as AUDIO_STREAMS, brightness::NAME as BRIGHTNESS, resources::NAME as RESOURCES,
+                 wifi_join::NAME as WIFI_JOIN, wifi_share::NAME as WIFI_SHARE};
 /// host-sharing's state ("sharing", "quickshare", "localsend"): it's kept in
 /// the shell's state (Host::set_state), which this crate's bus never had.
 /// 17 Nov: the tile read Null, so it said "Everyone" (an empty level) and
@@ -352,10 +362,10 @@ impl ControlCenter {
         let look = &h.st.shell.look;
         let cfg = h.cfg();
         let sys = g("system");
-        let be = g("backends");
-        let audio = g("audio");
+        let be = st(h, "backends");
+        let audio = g(AUDIO);
         let pw = g("Power");
-        let focus = g("focus");
+        let focus = st(h, "focus");
         let sharing = hs(h, "sharing");
         let mirr = hs(h, "mirroring");
         let net = g("network");
@@ -410,7 +420,8 @@ impl ControlCenter {
                     d
                 }
                 "captions" => {
-                    let en = bs(&g("captions"), "enabled");
+                    // (on/off is the setting; host-desktop's "captions" state has only readiness)
+                    let en = cfg["captions"]["enabled"].as_bool().unwrap_or(false);
                     def("Live Captions", "closed-captioning", en, if en { "On" } else { "" })
                 }
                 "keepAwake" => def("Caffeine", "coffee", bs(&sys, "keepAwake"), ss(&sys, "keepAwakeStatus")),
@@ -441,9 +452,9 @@ impl ControlCenter {
                 "gameMode" => def("Game Mode", "game-controller", bs(&sys, "gameMode"), ""),
                 "antiFlashbang" => def("Anti-Flash", "sun-dim", bs(&sys, "antiFlashbang"), ""),
                 "record" => {
-                    let rec = bs(&g("screentools"), "recording") || bs(&g("recorder"), "recording");
+                    let rec = bs(&st(h, "screentools"), "recording") || bs(&st(h, "recorder"), "recording");
                     let mut d = def("Record", "record", rec, if rec { "Recording" } else { "" });
-                    d.available = g("recorder")["available"].as_bool().unwrap_or(true);
+                    d.available = st(h, "recorder")["available"].as_bool().unwrap_or(true);
                     d
                 }
                 "easyEffects" => {
@@ -475,7 +486,7 @@ impl ControlCenter {
                 "appLibrary" => def("App Drawer", "squares-four", false, ""),
                 "display" => {
                     let mut d = def("Display", "sun", false, "");
-                    d.available = g("brightness")["available"].as_bool().unwrap_or(true);
+                    d.available = g(BRIGHTNESS)["available"].as_bool().unwrap_or(true);
                     d.reason = "No adjustable display brightness".into();
                     d
                 }
@@ -483,7 +494,7 @@ impl ControlCenter {
                 "micLevel" => {
                     let muted = bs(&audio, "micMuted");
                     let mut d = def("Microphone level", if muted { "microphone-slash" } else { "microphone" }, false, "");
-                    let inputs = &g("audiostreams")["inputs"];
+                    let inputs = &g(AUDIO_STREAMS)["inputs"];
                     d.available = inputs.as_array().map_or_else(|| inputs.as_i64().unwrap_or(1) > 0, |a| !a.is_empty());
                     d.reason = "No microphone found".into();
                     d
@@ -528,13 +539,13 @@ impl ControlCenter {
         for (id, d) in self.defs(h) {
             let mut m = json!({"label": d.label, "icon": d.icon, "on": d.on, "status": d.status, "usable": Self::usable(&d), "why": Self::why_not(&d)});
             if id == "resources" {
-                let r = g("resources");
+                let r = g(RESOURCES);
                 m["title"] = json!(format!("CPU {}%", (r["cpu"].as_f64().unwrap_or(0.0) * 100.0).round()));
                 m["sub"] = json!(format!("Memory {}%", (r["memory"].as_f64().unwrap_or(0.0) * 100.0).round()));
             } else if id == "weather" {
                 let w = h.st.shell.get::<tessera_core::services::weather::Weather>();
                 m["title"] = json!(match w {
-                    Some(w) if w.ready => format!("{}{}", w.temp, g("weather")["unit"].as_str().unwrap_or("°")),
+                    Some(w) if w.ready => format!("{}{}", w.temp, st(h, "weather")["unit"].as_str().unwrap_or("°")),
                     _ => "—".into(),
                 });
                 m["sub"] = json!(w.map_or(String::new(), |w| if !w.condition.is_empty() { w.condition.clone() } else { w.place.clone() }));
@@ -640,7 +651,7 @@ impl ControlCenter {
         match self.wifi_view.clone() {
             WifiView::Form(ssid, hidden) => {
                 // (joined: back to the list)
-                let j = g("wifijoin");
+                let j = g(WIFI_JOIN);
                 if !self.form_ssid_sent.is_empty() && ss(&j, "ssid") == self.form_ssid_sent && ss(&j, "stage") == "connected" {
                     self.wifi_view = WifiView::List;
                     self.form.clear();
@@ -656,7 +667,7 @@ impl ControlCenter {
     }
 
     fn wifi_list_page(&self, h: &Host) -> Value {
-        let be = g("backends");
+        let be = st(h, "backends");
         let net = g("network");
         let wifi = h.st.shell.get::<Wifi>().cloned().unwrap_or_default();
         let on = net["wifiEnabled"].as_bool().unwrap_or(wifi.enabled);
@@ -672,7 +683,7 @@ impl ControlCenter {
             let app = ss(&be, "wifiApp");
             blocks.push(json!({"t": "notice", "icon": "wifi-slash", "title": ss(&be, "wifiTitle"), "status": ss(&be, "wifiReason"),
                 "act": if can_nm { "Start NetworkManager".to_string() } else if !app.is_empty() { format!("Open {}", ss(&be, "wifiAppName")) } else { String::new() },
-                "busy": ss(&g("health"), "fixing") == "networkmanager", "id": "fix"}));
+                "busy": ss(&st(h, "health"), "fixing") == "networkmanager", "id": "fix"}));
         } else {
             if !on || networks.is_empty() {
                 blocks.push(note(if !present { "No Wi-Fi adapter" } else if !on { "Wi-Fi is off" } else { "Looking for networks…" }, "secondary", true));
@@ -775,7 +786,7 @@ impl ControlCenter {
     }
 
     fn bt_page(&self, h: &Host) -> Value {
-        let be = g("backends");
+        let be = st(h, "backends");
         let bt = h.st.shell.get::<Bluetooth>().cloned().unwrap_or_default();
         let btstate = ss(&be, "btState");
         let devices = self.hold_order("bluetooth", Self::bt_devices(h), |d| d.address.clone());
@@ -815,7 +826,7 @@ impl ControlCenter {
     }
 
     fn focus_page(&self, h: &Host) -> Value {
-        let focus = g("focus");
+        let focus = st(h, "focus");
         let active = ss(&focus, "active").to_string();
         let mut blocks = vec![];
         for m in focus["modes"].as_array().cloned().unwrap_or_default() {
@@ -877,7 +888,7 @@ impl ControlCenter {
         let user = std::env::var("USER").unwrap_or_else(|_| "Tessera".into());
         blocks.push(json!({"t": "field", "id": "name", "title": cfg["sharing"]["name"].as_str().unwrap_or(""), "status": format!("{user}'s computer")}));
         blocks.push(json!({"t": "gap", "h": 6}));
-        blocks.push(row(json!({"id": "send", "icon": "paper-plane-tilt", "title": "Send files…", "status": "To a phone or computer nearby", "dis": !(ls["available"].as_bool().unwrap_or(true) && !bs(&g("filepicker"), "busy"))})));
+        blocks.push(row(json!({"id": "send", "icon": "paper-plane-tilt", "title": "Send files…", "status": "To a phone or computer nearby", "dis": !(ls["available"].as_bool().unwrap_or(true) && !h.state("picker.busy").as_bool().unwrap_or(false))})));
         blocks.push(head("Nearby", true));
         let devices = sh["devices"].as_array().cloned().unwrap_or_default();
         for d in &devices {
@@ -914,7 +925,7 @@ impl ControlCenter {
 
     fn mirroring_page(&self, h: &Host) -> Value {
         let m = hs(h, "mirroring");
-        let needs = g("needs");
+        let needs = st(h, "needs");
         let displays = m["displays"].as_array().cloned().unwrap_or_default();
         let mut blocks = vec![];
         for d in &displays {
@@ -953,8 +964,8 @@ impl ControlCenter {
 
     fn cast_page(&self, h: &Host) -> Value {
         let c = hs(h, "cast");
-        let needs = g("needs");
-        let health = g("health");
+        let needs = st(h, "needs");
+        let health = st(h, "health");
         let p = h.st.shell.get::<Players>().and_then(|ps| ps.chosen().cloned());
         let active = bs(&c, "active");
         let can_cast = bs(&c, "canCastPlaying");
@@ -999,7 +1010,7 @@ impl ControlCenter {
     }
 
     fn resources_page(&self) -> Value {
-        let r = g("resources");
+        let r = g(RESOURCES);
         let pct = |k: &str| format!("{}%", (r[k].as_f64().unwrap_or(0.0) * 100.0).round());
         // (ResourcesPage: one ResourceRow per reading, with its last minute)
         let mut blocks: Vec<Value> = r["stats"]
@@ -1132,7 +1143,7 @@ impl ControlCenter {
     }
 
     fn form_page(&mut self, ssid: &str, hidden: bool) -> Value {
-        let j = g("wifijoin");
+        let j = g(WIFI_JOIN);
         // (a saved enterprise network: its settings, once)
         let saved = &j["saved"];
         if !self.form_filled && saved["exists"] == true && saved["name"].as_str().is_none_or(|n| n == ssid) {
@@ -1200,7 +1211,7 @@ impl ControlCenter {
     }
 
     fn share_page(&self, ssid: &str) -> Value {
-        let w = g("wifishare");
+        let w = g(WIFI_SHARE);
         let stage = ss(&w, "stage");
         let mut blocks = vec![head(&format!("Share “{ssid}”"), false)];
         if stage == "error" {
@@ -1258,7 +1269,7 @@ impl ControlCenter {
                     ("s:password", _) => self.share_reveal = !self.share_reveal,
                     ("s:buttons", "Done") => self.close_wifi_view(h),
                     ("s:buttons", "Copy password") => {
-                        let pw = ss(&g("wifishare"), "password").to_string();
+                        let pw = ss(&g(WIFI_SHARE), "password").to_string();
                         h.ask("wifishare.copy", json!([pw]));
                         self.share_copied = now_ms();
                     }
@@ -1333,7 +1344,7 @@ impl ControlCenter {
         match id {
             "wifi" => ask(h, "network.wifi", json!([!on])),
             "bluetooth" => {
-                if ss(&g("backends"), "btFix") == "unblock" {
+                if ss(&st(h, "backends"), "btFix") == "unblock" {
                     ask(h, "backends.fixBluetooth", json!([]));
                 } else {
                     // (the answer read: blocked, it says why)
@@ -1358,8 +1369,8 @@ impl ControlCenter {
                 }
             }
             "captions" => {
-                let c = g("captions");
-                if bs(&c, "ready") || bs(&c, "enabled") {
+                let c = st(h, "captions");
+                if bs(&c, "ready") || h.cfg()["captions"]["enabled"].as_bool().unwrap_or(false) {
                     ask(h, "captions.toggle", json!([]))
                 } else {
                     ask(h, "panels.openSettings", json!(["accessibility", ""]))
@@ -1451,7 +1462,7 @@ impl ControlCenter {
                         self.focus_duration = [0, 3_600_000, -1].get(i).copied().unwrap_or(0);
                     }
                 } else if let Some(m) = id.strip_prefix("f:") {
-                    let focus = g("focus");
+                    let focus = st(h, "focus");
                     if ss(&focus, "active") == m {
                         h.ask("focus.deactivate", json!([]));
                     } else {
@@ -1495,7 +1506,7 @@ impl ControlCenter {
 
     fn wifi_block(&mut self, h: &mut Host, id: &str, what: &str, text: &str) {
         if id == "fix" {
-            let be = g("backends");
+            let be = st(h, "backends");
             h.ask(if bs(&be, "canStartNm") { "backends.startNm" } else { "backends.openWifiApp" }, json!([]));
             return;
         }
@@ -1660,7 +1671,7 @@ impl ControlCenter {
             h.ask("network.list", json!([]));
         }
         if self.page == "bluetooth" {
-            let be = g("backends");
+            let be = st(h, "backends");
             let state = ss(&be, "btState").to_string();
             let powered = h.st.shell.get::<Bluetooth>().is_some_and(|b| b.powered);
             // (discovery on while the list shows: bluetoothctl's scan, renewed;
@@ -1684,7 +1695,7 @@ impl ControlCenter {
         }
         // (WifiShareCard: shared again once qrencode is installed)
         if let WifiView::Share(ssid) = self.wifi_view.clone() {
-            if self.share_retry && ss(&g("wifishare"), "stage") == "error" && has_tool("qrencode") {
+            if self.share_retry && ss(&g(WIFI_SHARE), "stage") == "error" && has_tool("qrencode") {
                 self.share_retry = false;
                 h.ask("wifishare.share", json!([ssid]));
             }
@@ -1826,6 +1837,48 @@ impl Service for ControlCenter {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn its_own_services_are_read_by_their_names() {
+        // (audit #6: "resources" in lower case read Null, so the tile said CPU 0%)
+        crate::bus::put(super::RESOURCES, serde_json::json!({"cpu": 0.42, "memory": 0.5}));
+        let page = super::ControlCenter::default().resources_page();
+        assert_eq!(page["blocks"][0]["status"], "42%");
+        crate::bus::put(super::WIFI_SHARE, serde_json::json!({"stage": "ready", "qr": "/tmp/qr.png"}));
+        let page = super::ControlCenter::default().share_page("Home");
+        assert!(page["blocks"].as_array().unwrap().iter().any(|b| b["pic"] == "/tmp/qr.png"));
+    }
+
+    #[test]
+    fn every_bus_name_read_here_is_put_by_this_crate() {
+        // (audit #5, #6: names read from the bus that only host-shell or
+        // host-desktop keep, in the shell's state, or in the wrong case, read
+        // Null for ever; those go through st(h, …))
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut all = String::new();
+        let mut dirs = vec![src];
+        while let Some(d) = dirs.pop() {
+            for e in std::fs::read_dir(d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    dirs.push(p);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    all += &std::fs::read_to_string(&p).unwrap();
+                }
+            }
+        }
+        let me = include_str!("cc.rs");
+        // (put by nothing at all: the surface fills these from its own services, so Null is the fallback)
+        let unpublished = ["network", "devices"];
+        let reads = me.match_indices("g(\"").filter(|(i, _)| !me[..*i].ends_with(|c: char| c.is_alphanumeric() || c == '_'));
+        for name in reads.filter_map(|(i, _)| me[i + 3..].split('"').next()) {
+            if unpublished.contains(&name) {
+                continue;
+            }
+            let put = [format!("put(\"{name}\""), format!("NAME: &str = \"{name}\""), format!("(\"{name}\", \""), format!("\"{name}\",\n")];
+            assert!(put.iter().any(|p| all.contains(p.as_str())), "cc.rs reads {name:?} from the bus, and nothing in host-system puts it");
+        }
+    }
+
     #[test]
     fn wifi_rows_from_the_feeds_list() {
         let l = serde_json::json!({"networks": [

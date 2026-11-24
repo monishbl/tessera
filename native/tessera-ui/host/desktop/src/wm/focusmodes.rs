@@ -130,6 +130,11 @@ impl FocusModes {
         h.set_state("focus.icon", json!(m.as_ref().and_then(|m| m["icon"].as_str()).unwrap_or("moon")));
         h.set_state("focus.name", json!(m.as_ref().and_then(|m| m["name"].as_str()).unwrap_or("Focus")));
         h.set_state("focus.status", json!(self.status()));
+        // (Control Center's Focus page lists the modes from here; audit #5:
+        // nothing published them, so it showed none)
+        h.set_state("focus.modes", json!(self.modes));
+        h.set_state("focus.active", json!(self.active));
+        h.set_state("focus.statusText", json!(self.status()));
     }
 
     /// Settings → Focus's side (RustBridgeNotify.qml's `focus`)
