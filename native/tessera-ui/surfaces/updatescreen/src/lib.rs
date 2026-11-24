@@ -175,6 +175,9 @@ pub struct UpdateScreen {
     details: bool,
     log: String,
     polls: u32,
+    /// since when update-run.sh (../pid) has been gone with the status still
+    /// working: after a few seconds, the error screen with Close (audit #70)
+    gone_since: Option<Instant>,
 }
 
 /// The step line for a build: "Building the shell — compiling slint (212 of 431)"
@@ -222,6 +225,7 @@ impl UpdateScreen {
             details: false,
             log: String::new(),
             polls: 0,
+            gone_since: None,
         }
     }
 
@@ -251,7 +255,17 @@ impl UpdateScreen {
     fn reload(&mut self, st: &mut State) {
         self.reload_build();
         let Ok(text) = std::fs::read_to_string(self.dir.join("../status")) else { return };
-        let Some(s) = read_status(&text, &self.status, &self.home) else { return };
+        let Some(mut s) = read_status(&text, &self.status, &self.home) else { return };
+        // (its runner gone, killed or crashed, with the status still saying it works)
+        if s.phase != "done" && s.phase != "error" && !runner_alive(&self.dir.join("../pid")) {
+            let since = *self.gone_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= Duration::from_secs(8) {
+                s = Status { phase: "error".into(), percent: s.percent, step: "The update stopped unexpectedly".into(),
+                             detail: "Close this, then run Software Update again.".into(), backup: String::new() };
+            }
+        } else {
+            self.gone_since = None;
+        }
         let was_error = self.error();
         // (the first status it reads: a restart only, or a whole update)
         if !self.seen_status {
@@ -297,10 +311,12 @@ impl UpdateScreen {
     fn hit_region(st: &mut State, w: &mut Win) {
         let ui = &w.ui;
         let r = (ui.get_hit_x() as i32, ui.get_hit_y() as i32, ui.get_hit_w().ceil() as i32, ui.get_hit_h().ceil() as i32);
+        // (the rectangle is kept for the record only: the whole opaque screen
+        // takes the pointer, so a click never lands, unseen, in a window
+        // under it; audit #69)
         if r != w.hit {
             w.hit = r;
-            st.set_input_region(&w.surface, Some(&[r]));
-            w.surface.layer.commit();
+            let _ = st;
         }
     }
 
@@ -313,14 +329,24 @@ impl UpdateScreen {
     }
 
     fn input_of(st: &mut State, w: &Win, error: bool) {
-        let hit = [w.hit];
-        st.set_input_region(&w.surface, if error { None } else { Some(&hit) });
-        w.surface.layer.set_keyboard_interactivity(if error { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::None });
+        // (all of it takes the pointer; the keyboard: the error screen's
+        // own, else on demand: a click on the screen takes it from the app
+        // under it, and a password prompt still gets it; audit #69)
+        st.set_input_region(&w.surface, None);
+        w.surface.layer.set_keyboard_interactivity(if error { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::OnDemand });
         w.surface.layer.commit();
         if error {
             w.ui.invoke_focus_keys();
         }
     }
+}
+
+/// update-run.sh still running: its pid file names a live process (no pid
+/// file: an older runner, taken as alive)
+pub fn runner_alive(pid_file: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(pid_file) else { return true };
+    let Ok(pid) = text.trim().parse::<u32>() else { return true };
+    Path::new(&format!("/proc/{pid}")).exists()
 }
 
 /// The menu icon's picture (the distro's logo: SVG or a bitmap), 52 px at 2×
@@ -543,6 +569,19 @@ pub fn run(args: &[String], started: Instant) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_runner_that_is_gone_is_seen() {
+        let dir = std::env::temp_dir().join(format!("tessera-upd-pid-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("pid");
+        assert!(runner_alive(&f)); // (no pid file: an older runner)
+        std::fs::write(&f, format!("{}\n", std::process::id())).unwrap();
+        assert!(runner_alive(&f));
+        std::fs::write(&f, "4000000000\n").unwrap();
+        assert!(!runner_alive(&f));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn args(a: &[&str]) -> Vec<String> {
         std::iter::once("tessera-ui").chain(a.iter().copied()).map(String::from).collect()

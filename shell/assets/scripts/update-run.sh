@@ -64,6 +64,16 @@ fi
 status() { # state percent text [detail]
     printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "${4:-}" >"$T/status.new" && mv -f "$T/status.new" "$T/status"
 }
+# (killed or crashed halfway: the screen gets an error with Close, not a
+# black screen for 15 minutes; a SIGKILL can't run this, so the screen also
+# watches this pid; audit #70)
+echo "$$" >"$T/pid"
+stopped_early() {
+    local st
+    st=$(cut -f1 "$T/status" 2>/dev/null)
+    [[ $st == done || $st == error ]] || status error 100 "The update stopped unexpectedly" "See $T/log. Close this, then run Software Update again."
+}
+trap stopped_early EXIT
 
 env_of() { { tr '\0' '\n' <"/proc/$1/environ"; } 2>/dev/null; }
 var_of() { env_of "$1" | sed -n "s/^$2=//p" | head -1; }
