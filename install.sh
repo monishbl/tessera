@@ -110,7 +110,8 @@ with_rich() {
     printf '  Using the classic prompts instead.\n\n'
     return 1
 }
-if [[ $UI != cli && $VERIFY_ONLY == 0 && $PLAN_ONLY == 0 && -t 0 && -t 1 ]] && [[ $UI == tui || $YES == 0 ]]; then
+# (--only=login is one step: never the whole installer; audit #65)
+if [[ $UI != cli && $VERIFY_ONLY == 0 && $PLAN_ONLY == 0 && -z ${ONLY:-} && -t 0 && -t 1 ]] && [[ $UI == tui || $YES == 0 ]]; then
     if [[ $UI == ask ]]; then
         printf '\n\033[1mTessera setup\033[0m\n'
         printf '  1  Interactive: pick with the arrow keys and see the whole plan first (recommended)\n'
@@ -501,6 +502,14 @@ other_login_manager() {
     local dm
     dm=$(basename "$(readlink /etc/systemd/system/display-manager.service 2>/dev/null)" .service 2>/dev/null || true)
     [[ "$dm" == greetd ]] || printf '%s' "$dm"
+}
+
+# greetd is this computer's login screen (Tessera's, or another greeter):
+# then it has one, and nothing goes on tty1 or into /etc/pam.d/login (audit
+# #68: tessera update's --no-greeter on such a machine made tty1 start Hyprland)
+greetd_on() {
+    [[ "$(basename "$(readlink /etc/systemd/system/display-manager.service 2>/dev/null)" .service 2>/dev/null)" == greetd ]] \
+        || systemctl is-enabled --quiet greetd.service 2>/dev/null
 }
 
 decide() {
@@ -1435,20 +1444,28 @@ install_files() {
             [[ -n "$old" && "$old" == "$DATA/tessera/backups/installed-"* ]] && run rm -rf -- "$old"
         done < <(ls -1d "$DATA/tessera/backups/installed-"* 2>/dev/null | sort | head -n -5)
     fi
-    # The shell
+    # The shell: made beside, then swapped in (audit #66: removed first and
+    # copied after, a full disk or Ctrl-C between left no shell, and the
+    # step was still ticked)
     run mkdir -p "$CONFIG/quickshell" "$BIN"
-    if [[ -e "$CONFIG/quickshell/tessera" || -L "$CONFIG/quickshell/tessera" ]]; then
-        run rm -rf "$CONFIG/quickshell/tessera"
-    fi
+    local qs_new="$CONFIG/quickshell/.tessera.new-$$" qs_old="$CONFIG/quickshell/.tessera.old-$$"
+    run rm -rf "$qs_new" "$qs_old"
     if [[ $BUNDLE == 1 ]]; then
         # (a bundle's: the link through current, tessera-bundle.py ensure
         # below, so an update's one rename swaps the shell too)
-        run ln -s "$DATA/tessera/current/shell" "$CONFIG/quickshell/tessera"
+        run ln -s "$DATA/tessera/current/shell" "$qs_new" || return 1
     elif [[ $DEV == 1 ]]; then
-        run ln -s "$ROOT/shell" "$CONFIG/quickshell/tessera"
-    else
-        run cp -r "$ROOT/shell" "$CONFIG/quickshell/tessera"
+        run ln -s "$ROOT/shell" "$qs_new" || return 1
+    elif ! run cp -r "$ROOT/shell" "$qs_new"; then
+        run rm -rf "$qs_new"
+        warn "The shell couldn't be copied to $CONFIG/quickshell (is the disk full?): the one there stays"
+        return 1
     fi
+    if [[ -e "$CONFIG/quickshell/tessera" || -L "$CONFIG/quickshell/tessera" ]]; then
+        run mv -T "$CONFIG/quickshell/tessera" "$qs_old" || { run rm -rf "$qs_new"; return 1; }
+    fi
+    run mv -T "$qs_new" "$CONFIG/quickshell/tessera" || { run mv -T "$qs_old" "$CONFIG/quickshell/tessera"; return 1; }
+    run rm -rf "$qs_old"
     # (the copy installed under the old name goes)
     old_names_quickshell "$CONFIG" "$DRY"
     # Hyprland config: yours is backed up once, before Tessera first replaces it
@@ -1624,7 +1641,19 @@ keyring_at_login() { # pam file
         return 0
     fi
     [[ -e "$1.pre-tessera" ]] || sudo cp -a "$1" "$1.pre-tessera" || return 0
-    printf '%s\n' "$new" | sudo tee "$1" >/dev/null && note "Your keyring unlocks with your login password ($1)"
+    # (written beside, checked, then renamed into place: a tee straight
+    # into the file left it empty or half-written when cut off, and the
+    # console login is the last way in; audit #67. Only lines added: every
+    # line of the file as it was must still be there)
+    local tmp
+    tmp="$(dirname "$1")/.$(basename "$1").tessera-new"
+    if ! printf '%s\n' "$new" | sudo tee "$tmp" >/dev/null || [[ ! -s "$tmp" ]] || sudo diff "$1" "$tmp" | grep -q '^<'; then
+        sudo rm -f "$tmp"
+        warn "Keyring unlocking at login wasn't added to $1 (the new file didn't check out): $1 is as it was"
+        return 0
+    fi
+    sudo chmod --reference="$1" "$tmp" && sudo chown --reference="$1" "$tmp" && sudo sync "$tmp" && sudo mv -f "$tmp" "$1" \
+        && note "Your keyring unlocks with your login password ($1)" || sudo rm -f "$tmp"
 }
 
 # A quiet start, with the Tessera login screen: the boot splash's last frame
@@ -1700,7 +1729,7 @@ login() {
         fi
         quiet_boot
         GREETER_DONE=1
-    elif [[ -z "$OTHER_DM" ]]; then
+    elif [[ -z "$OTHER_DM" ]] && ! greetd_on; then
         # No login screen: start Hyprland when you log in on the first console,
         # from the file your login shell reads (bash, zsh, fish or sh)
         local profile

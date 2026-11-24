@@ -376,6 +376,23 @@ class RoundTrip(Base):
         self.assertFalse(Path(restored_pic).exists())
         self.assertEqual(json.loads((self.state_home / "tessera/state.json").read_text())["conflictsMuted"], [])
 
+    def test_a_restore_that_fails_halfway_puts_things_back(self):
+        # (audit #73: half restored, and the undo file never said)
+        self.setup_settings()
+        out, _ = self.run_bk("create", str(self.home))
+        (self.home / "Pictures/mine.jpg").unlink()
+        (self.hypr / "custom.lua").unlink()
+        before = (self.config / "config.json").read_text()
+        self.hypr.chmod(0o555)  # (a folder it can't write in)
+        try:
+            res, _ = self.run_bk("restore", out["file"], "--include", "settings,hypr,wallpapers", ok=False)
+        finally:
+            self.hypr.chmod(0o755)
+        self.assertIn("Nothing was changed", res["error"])
+        self.assertEqual((self.config / "config.json").read_text(), before)
+        restored = self.home / "Pictures/Wallpapers/Restored"
+        self.assertFalse(restored.exists() and any(restored.iterdir()), "the picture written first went again")
+
     def test_the_login_look_alone(self):
         self.setup_settings()
         out, _ = self.run_bk("create", str(self.home), "--include", "login")

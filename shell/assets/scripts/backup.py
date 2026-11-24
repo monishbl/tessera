@@ -141,7 +141,12 @@ def ok_name(rx, n):
 
 
 class Refused(Exception):
-    """A file or a request this won't act on; the message says how to fix it."""
+    """A file or a request this won't act on; the message says how to fix it.
+    `undo`: a restore's undo file, when one is left to offer."""
+
+    def __init__(self, msg="", undo=""):
+        super().__init__(msg)
+        self.undo = undo
 
 
 # ── Places ──────────────────────────────────────────────────────────────
@@ -1024,6 +1029,13 @@ def plan(path, include, ctx):
                 data = members[member]
                 name = member.split("/", 1)[1].split("-", 1)[-1]
                 target = same_or_new(ctx.pictures, name, data)
+                # (two pictures with one name: the second gets its own, not
+                # the first's place in this restore; audit #71)
+                base, ext = os.path.splitext(name)
+                n = 2
+                while target in writes and writes[target] != data:
+                    target = SB.unique(ctx.pictures, "%s %d%s" % (base, n, ext))
+                    n += 1
                 taken[member] = target
                 if not os.path.exists(target):
                     writes[target] = data
@@ -1108,6 +1120,11 @@ def plan(path, include, ctx):
 
     if "hypr" in include:
         files = []
+        # (Tessera's own files and the generated ones are never replaced from
+        # a backup: what it carries for them goes beside, to compare. Hyprland
+        # reloads its config by itself, so a restored file runs at once;
+        # audit #72)
+        ships = shipped(ctx)
         for name, data in sorted(members.items()):
             if name.startswith("hypr/"):
                 rel = name[len("hypr/"):]
@@ -1115,6 +1132,11 @@ def plan(path, include, ctx):
                 now = read_bytes(target)
                 if now == data:
                     files.append({"path": tilde(target, home), "action": "same"})
+                    continue
+                if rel in ships or rel in GENERATED or rel.endswith(HYPR_SKIP):
+                    if not rel.endswith(HYPR_SKIP):
+                        writes[target + BESIDE] = data
+                        files.append({"path": tilde(target + BESIDE, home), "action": "beside"})
                     continue
                 writes[target] = data
                 files.append({"path": tilde(target, home), "action": "replace" if now is not None else "add"})
@@ -1126,7 +1148,9 @@ def plan(path, include, ctx):
                     continue
                 writes[target + BESIDE] = data
                 files.append({"path": tilde(target + BESIDE, home), "action": "beside"})
-        report["hypr"] = {"files": files}
+        report["hypr"] = {"files": files, "runs": any(f["action"] in ("replace", "add") for f in files),
+                          "note": "Hyprland files run commands on this computer as soon as they're restored: "
+                                  "restore them only from a backup you made yourself."}
     # (what's the same as now isn't written, nor kept for Undo)
     writes = {k: v for k, v in writes.items() if read_bytes(k) != v}
     now_state = read_state()
@@ -1237,7 +1261,19 @@ def restore(path, include, ctx, undo=True):
     if not p["writes"] and not p["state"]:
         return {"restored": p["include"], "skipped": p["skipped"], "undo": "", "look": p["look"], "changed": 0}
     undo_file = write_undo(p, ctx) if undo else ""
-    apply_writes(p["writes"], ctx)
+    try:
+        apply_writes(p["writes"], ctx)
+    except OSError as err:
+        # (half restored: put back at once from what was kept; and if even
+        # that fails, say where it is, so Undo can still be offered; audit #73)
+        why = err.strerror or str(err)
+        if undo_file:
+            try:
+                globals()["undo"](undo_file, ctx)
+            except (OSError, Refused):
+                raise Refused("Couldn't restore it (%s), and putting things back failed too. What you had is kept in %s."
+                              % (why, tilde(undo_file, ctx.home)), undo=undo_file) from None
+        raise Refused("Couldn't restore it (%s). Nothing was changed." % why) from None
     merge_state(p["state"])
     return {"restored": p["include"], "skipped": p["skipped"], "undo": undo_file, "look": p["look"], "changed": len(p["writes"])}
 
@@ -1441,7 +1477,7 @@ def main(argv):
         say(dict(ok=True, **out))
         return 0
     except Refused as err:
-        say({"ok": False, "error": str(err)})
+        say(dict({"ok": False, "error": str(err)}, **({"undo": err.undo} if getattr(err, "undo", "") else {})))
     except OSError as err:
         say({"ok": False, "error": "Couldn't %s: %s. Check there's free space and the folder is yours, then try again." % (
             {"create": "save the backup", "restore": "restore it", "undo": "put things back"}.get(a.cmd, "read the backup"), err.strerror or err)})

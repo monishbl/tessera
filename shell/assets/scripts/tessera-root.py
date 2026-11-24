@@ -3820,6 +3820,30 @@ def check_package_file(v, dirs):
     return path
 
 
+def user_cache_packages_foreign(files, uid, run=subprocess.run):
+    """A package file from the user's own folders (yay's, paru's) only for a
+    package that is foreign (pacman -Qm: built from the AUR there). For one
+    from the repositories, a file the user (or a program of theirs) put in
+    those folders would be installed as root (audit #74): pacman's own
+    cache or Arch's archive only. Raises Refused."""
+    try:
+        home = pwd.getpwuid(uid).pw_dir.rstrip("/")
+    except KeyError:
+        home = ""
+    mine = [f for f in files if home and not ARCHIVE_URL.match(f) and f.startswith(home + "/")]
+    if not mine:
+        return
+    try:
+        r = run([PACMAN, "-Qmq"], capture_output=True, text=True, timeout=60, env=dict(os.environ, LANG="C", LC_ALL="C"))
+        foreign = set(r.stdout.split())
+    except (OSError, subprocess.SubprocessError):
+        foreign = set()
+    for f in mine:
+        name = os.path.basename(f).rsplit("-", 3)[0]
+        if name not in foreign:
+            raise Refused(f"{name} is from the repositories, so its earlier version is only taken from pacman's cache or Arch's archive, not {f}")
+
+
 def parse_update(args, dirs=None):
     """update's arguments, strictly: known flags only, package names checked."""
     p = {"snapshot": "", "system": False, "ignore": [], "install": [], "remove": [], "downgrade": [], "mirrors": [], "setup": "",
@@ -4027,6 +4051,7 @@ def update(args, uid, out=sys.stdout):
 
 def _update(args, uid, out=sys.stdout):
     p = parse_update(args, package_dirs(uid))
+    user_cache_packages_foreign(p["downgrade"], uid)
     # Nothing sysupdate.py does (exiting, closing its end) may stop a transaction
     for s in (signal.SIGPIPE, signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
         signal.signal(s, signal.SIG_IGN)

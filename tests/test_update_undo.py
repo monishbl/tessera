@@ -50,6 +50,18 @@ class History(unittest.TestCase):
         self.assertEqual(plan["files"], [files[("mesa", "1-1")]])
         self.assertEqual(plan["missing"], ["old 2-1"])
 
+    def test_a_repository_package_is_never_taken_from_your_own_folders(self):
+        # (audit #74: a file planted in ~/.cache/yay would have been installed as root)
+        self.update({"mesa": "1-1", "mytool": "1-1"}, {"mesa": "2-1", "mytool": "2-1"}, at=100)
+        home = os.path.expanduser("~")
+        files = {("mesa", "1-1"): home + "/.cache/yay/x/mesa-1-1-x86_64.pkg.tar.zst",
+                 ("mytool", "1-1"): home + "/.cache/yay/mytool/mytool-1-1-x86_64.pkg.tar.zst"}
+        url = "https://archive.archlinux.org/packages/m/mesa/mesa-1-1-x86_64.pkg.tar.zst"
+        self.su.foreign_packages = lambda: {"mytool"}
+        plan = self.su.undo_plan(installed={"mesa": "2-1", "mytool": "2-1"}, files=files,
+                                 archive=lambda n, v: url if n == "mesa" else "")
+        self.assertEqual(sorted(plan["files"]), sorted([url, files[("mytool", "1-1")]]))
+
     def test_archive_when_the_cache_lost_it(self):
         self.update({"mesa": "1-1"}, {"mesa": "2-1"})
         url = "https://archive.archlinux.org/packages/m/mesa/mesa-1-1-x86_64.pkg.tar.zst"

@@ -686,6 +686,15 @@ def cache_dirs():
     return (dirs or ["/var/cache/pacman/pkg/"]) + [os.path.join(home, ".cache/yay"), os.path.join(home, ".cache/paru/clone")]
 
 
+def foreign_packages():
+    """pacman -Qmq: the packages not from a repository (the AUR's)"""
+    try:
+        r = subprocess.run(["pacman", "-Qmq"], capture_output=True, text=True, timeout=30, env=dict(os.environ, LANG="C", LC_ALL="C"))
+        return set(r.stdout.split())
+    except (OSError, subprocess.SubprocessError):
+        return set()
+
+
 def package_files(dirs):
     """(name, version) -> path, for every package file in these folders
     (and one level down: yay's and paru's per-package folders)."""
@@ -734,12 +743,19 @@ def undo_plan(h=None, installed=None, files=None, archive=in_archive):
         return {}
     installed = installed if installed is not None else (query() or {})
     files = files if files is not None else package_files(cache_dirs())
+    # (a repository package's file never from your own folders: the root
+    # helper refuses it, audit #74; pacman's cache or Arch's archive instead)
+    home = os.path.expanduser("~").rstrip("/") + "/"
+    foreign = foreign_packages() if any(str(v).startswith(home) for v in files.values()) else set()
     out = {"at": u["at"], "packages": [], "files": [], "missing": []}
     for name, frm, to in u["changes"]:
         if frm is None or installed.get(name) == frm:
             continue  # (added by the update: stays; or already back)
         out["packages"].append({"name": name, "from": frm, "to": to})
-        path = files.get((name, frm)) or archive(name, frm)
+        path = files.get((name, frm))
+        if path and path.startswith(home) and name not in foreign:
+            path = None
+        path = path or archive(name, frm)
         if path:
             out["files"].append(path)
         else:

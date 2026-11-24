@@ -1397,6 +1397,19 @@ class BootSplash(unittest.TestCase):
             self.assertEqual(script.count("("), script.count(")"), id)
 
 
+class UndoFromYourCache(unittest.TestCase):
+    """update --downgrade: a file from your own folders only for a foreign
+    (AUR) package (audit #74)"""
+
+    def test_only_foreign_packages_from_your_folders(self):
+        home = pwd.getpwuid(os.getuid()).pw_dir
+        run = lambda cmd, **k: subprocess.CompletedProcess(cmd, 0, "mytool\n", "")
+        R.user_cache_packages_foreign([home + "/.cache/yay/mytool/mytool-1-1-x86_64.pkg.tar.zst",
+                                       "/var/cache/pacman/pkg/mesa-1-1-x86_64.pkg.tar.zst"], os.getuid(), run=run)
+        with self.assertRaises(R.Refused):
+            R.user_cache_packages_foreign([home + "/.cache/yay/x/mesa-1-1-x86_64.pkg.tar.zst"], os.getuid(), run=run)
+
+
 class NoPartialUpgrades(unittest.TestCase):
     """An update that installs Tessera's packages without a system update:
     one that's already installed (too old for the new version) is never
