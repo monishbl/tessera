@@ -12,13 +12,34 @@ elseif TESSERA_GLASS_PLUGIN then
     table.insert(candidates, TESSERA_GLASS_PLUGIN)
 end
 table.insert(candidates, data .. "/tessera/tessera-glass.so")
+-- A start that crashed with the plugin loaded (a Hyprland whose functions
+-- changed under the plugin's hooks) leaves the mark: the next start skips
+-- this same build and says so, so the login never loops into a crash;
+-- a rebuild (another size) is tried again, and tools/build-plugin.sh clears
+-- the mark (audit #183). Cleared 30 s after a load that held.
+local mark = data .. "/tessera/tessera-glass.loading"
 for _, plugin in ipairs(candidates) do
     local f = io.open(plugin, "r")
     if f then
+        local size = tostring(f:seek("end"))
         f:close()
-        hl.on("hyprland.start", function()
-            hl.exec_cmd("hyprctl plugin load '" .. plugin .. "'")
-        end)
+        local m = io.open(mark, "r")
+        local crashed = m and m:read("*l") == size
+        if m then m:close() end
+        if crashed then
+            hl.on("hyprland.start", function()
+                hl.exec_cmd("notify-send -a Tessera -u critical 'Liquid Glass is off' " ..
+                    "'Hyprland stopped the last time the glass plugin loaded, so it stays off: glass is Frosted. " ..
+                    "Settings → Appearance rebuilds it for this Hyprland.'")
+            end)
+        else
+            -- (the mark is written at the start only: this file runs again on
+            -- every config reload, where nothing is loaded)
+            hl.on("hyprland.start", function()
+                hl.exec_cmd("sh -c \"echo " .. size .. " > '" .. mark .. "'; hyprctl plugin load '" .. plugin ..
+                    "'; sleep 30; rm -f '" .. mark .. "'\"")
+            end)
+        end
         break
     end
 end

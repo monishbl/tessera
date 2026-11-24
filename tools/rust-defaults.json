@@ -32,6 +32,7 @@
  "captions.barX": -1,
  "captions.barY": -1,
  "captions.enabled": false,
+ "circle.glow": "",
  "controlCenter.background": false,
  "controlCenter.micInSound": true,
  "cooling.glass": "frosted",

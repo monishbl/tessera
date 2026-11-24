@@ -26,7 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SHELL = ROOT / "shell"
 SCRIPTS = SHELL / "assets/scripts"
-BUNDLE = Path.home() / ".local/share/tessera/quickshell"
+BUNDLE = Path(os.environ.get("TESSERA_TEST_QS") or Path.home() / ".local/share/tessera/quickshell")
 QS = BUNDLE / "bin/qs"
 
 

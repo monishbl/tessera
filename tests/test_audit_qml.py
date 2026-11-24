@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-BUNDLE = Path.home() / ".local/share/tessera/quickshell"
+BUNDLE = Path(os.environ.get("TESSERA_TEST_QS") or Path.home() / ".local/share/tessera/quickshell")
 QS = BUNDLE/'bin/qs'
 
 

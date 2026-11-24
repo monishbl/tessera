@@ -13,7 +13,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-QS = Path.home() / '.local/share/tessera/quickshell/bin/qs'
+QS = Path(os.environ.get('TESSERA_TEST_QS') or Path.home() / '.local/share/tessera/quickshell') / 'bin/qs'
 
 THEME = '''pragma Singleton
 import QtQuick

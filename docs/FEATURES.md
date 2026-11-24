@@ -67,11 +67,11 @@ Recent apps, minimized windows, a Downloads stack and Trash, right-click menus, 
 - **Decorations** (Settings → Appearance): none, window controls, or title bars via the hyprbars plugin. Window controls are a small pill at the top of each window that opens into close, minimize and zoom; with the glass plugin, Hyprland draws them so they move with the window.
 - **Corners:** adjustable radius with continuous (squircle) corners.
 - **Minimize:** windows park in the dock's Minimized section.
-- **Tiling:** halves, quarters, thirds, fill and centre from the Window menu, from the tile grid that opens when you rest on the green window button, or with Super+Ctrl+Arrows / F / C. **Drag a window to a screen edge or corner** and a glass preview shows where it will go (needs the glass plugin). Arrange two to four windows side by side; Return to Previous Size puts a window back.
-- **App Windows:** one app's windows from every space (three fingers down, or click the app in front in the dock).
+- **Tiling:** halves, quarters, thirds, fill and centre from the Window menu, from the tile grid that opens when you rest on the green window button, or with Super+Ctrl+Alt+Left / Right (halves), Super+Ctrl+Up / Down, and Super+Ctrl+F / C. **Drag a window to a screen edge or corner** and a glass preview shows where it will go (needs the glass plugin). Arrange two to four windows side by side; Return to Previous Size (Super+Ctrl+Backspace) puts a window back.
+- **App Windows:** one app's windows from every space (click the app in front in the dock).
 - **All Windows:** live window previews and Spaces.
-- **Picture in Picture:** browsers' video pop-outs float small in a corner on every space; any window can do it from the Window menu or Super+Shift+P.
-- **Window tabs:** merge windows into tabs (Window menu or Super+T, Super+[ / ] to switch). Tabs look like Hyprland's bar restyled, or Tessera's own with icons (Settings → Appearance).
+- **Picture in Picture:** browsers' video pop-outs float small in a corner on every space; any window can do it from the Window menu or Super+Alt+P.
+- **Window tabs:** merge windows into tabs (Window menu or Super+Alt+T, Super+[ / ] to switch). Tabs look like Hyprland's bar restyled, or Tessera's own with icons (Settings → Appearance).
 - **Stages:** one group of windows in front, the rest as thumbnails on the left. New apps open in their own stage; Shift-click a thumbnail to merge it into the front one. Turn it on in Quick Settings.
 
 ## Apps
@@ -101,8 +101,8 @@ Recent apps, minimized windows, a Downloads stack and Trash, right-click menus, 
 
 ## Tools
 
-- **Screenshots** of the screen, a window or a selection; Super+Shift+5 opens a toolbar. Area screenshots open in Swappy to crop, draw and annotate (Settings → Keyboard Shortcuts).
-- **Ask about the screen** (Super+Shift+A): select part of the screen and ask the AI about it ("what's this error?").
+- **Screenshots** of the screen, a window or a selection; Super+Print opens a toolbar. Area screenshots open in Swappy to crop, draw and annotate (Settings → Keyboard Shortcuts).
+- **Ask about the screen** (Super+Alt+A): select part of the screen and ask the AI about it ("what's this error?").
 - **Circle to search** (Super+Shift+Space, a 3-finger long press, or the circle button in the AI sidebar): circle, scribble over or box anything on the screen and the AI says what it is. **Search the web** under the answer sends the picture to Google Lens (only when you click it) and opens the results.
 - **Copy text from pictures:** select the text in a screenshot or picture, read on this computer (OCR); translate text on screen; record the screen.
 - **Overlay widgets** (Super+G): notes, resources, recorder, volume mixer, floating image, crosshair, MangoHud FPS limit. Widgets can be pinned and made click-through.
@@ -147,45 +147,51 @@ The Material look has its own page: [material-look.md](material-look.md).
 
 Super is ⌘. Press **Super+/** for the full list, which is read live from Hyprland. Put your own Hyprland changes in `~/.config/hypr/custom.lua`: Tessera loads it last, and an error in it won't break the rest of the config.
 
+<!-- keymap: written by tools/gen-keymap.py -->
 | Keys | Action |
 |---|---|
-| Super (tap) | Overview of spaces, with search |
+| Super (tap) | Overview of spaces, with search (Super tapped alone; Settings can change it) |
 | Super+Space | Search |
 | Super+Ctrl+Space | App Drawer |
 | Super+V | Clipboard history |
-| Super+Tab | All Windows |
+| Super+Tab / Super+Shift+Tab | Overview / All Windows |
 | Super+A | AI and tools sidebar |
-| Super+C / Super+N | Quick Settings / Notification Center |
+| Super+Alt+C / Super+N | Quick Settings / Notification Center |
 | Super+, | Settings |
-| Super+Shift+3 / 4 / 5 | Screenshot screen / area / tools |
-| Super+Shift+S | Screenshot of the screen (saved straight away) |
-| Super+Ctrl+Shift+S | Screenshot of an area |
+| Super+/ | All keyboard shortcuts |
+| Print / Super+Shift+S / Super+Print | Screenshot of the screen / of an area / screenshot and recording tools |
 | Super+Escape | Close everything (if a panel is stuck) |
 | Super+Ctrl+Escape | Repair the shell: duplicated bars or a frozen shell. Restarts only the shell; apps and windows keep running (also in the system menu) |
-| Super+Shift+T / Y | Copy text from screen / translate screen |
-| Super+Shift+A | Ask AI about part of the screen |
+| Super+Shift+X / Super+Shift+T | Copy text from the screen / translate text on the screen |
+| Super+Alt+A | Ask AI about part of the screen |
+| Super+Shift+A | Search an area with Google Lens (sends it to Google) |
 | Super+Shift+Space | Circle to search |
-| Super+Shift+R | Start or stop recording |
+| Super+Shift+R | Start or stop recording an area |
 | Super+G / Super+K | Overlay widgets / on-screen keyboard |
-| Super+Ctrl+Q | Lock |
-| Super+Q, F, D | Close, full screen, zoom window |
-| Super+Ctrl+Arrows | Tile to a half of the screen |
-| Super+Ctrl+F / C / R | Fill, centre, return to previous size |
-| Super+Shift+P | Picture in Picture |
-| Super+T, Super+[ / ] | Merge into tabs (or move a tab out), previous / next tab |
-| Super+1–9 | Spaces |
-| Super+scroll | Next or previous space |
+| Super+L / Super+Ctrl+Q | Lock |
+| Super+Q / Super+F / Super+D | Close, full screen, zoom window |
+| Super+Ctrl+Alt+Left / Super+Ctrl+Alt+Right | Tile to the left / right half |
+| Super+Ctrl+F / Super+Ctrl+C / Super+Ctrl+Backspace | Fill, centre, back to the previous size |
+| Super+Alt+P | Picture in Picture |
+| Super+Alt+T / Super+[ / Super+] | Merge into tabs (or move a tab out), previous / next tab |
+| Super+1 … Super+9 | Spaces 1 to 9 (the display you're on) |
+| Super+Ctrl+Left / Super+Ctrl+Right | Previous / next space |
+| Super+scroll | Next or previous space (scroll) |
 
 | Gesture | Action |
 |---|---|
-| 3 fingers left or right | Switch spaces |
-| 3 fingers up / down | Overview / App Windows |
-| 4 fingers left / right | Sidebar / Notification Center |
-| Pinch / spread 4 fingers | App Drawer / Show Desktop |
+| 3 fingers, swipe | Move the window under the fingers |
+| 3 fingers, pinch | Full screen |
+| 4 fingers, left or right | Switch workspace |
+| 4 fingers, up | Overview |
+| 4 fingers, down | Overview |
+| 4 fingers, pinch | App Drawer |
+| 4 fingers, spread | Show desktop |
 | 3 fingers, long press | Circle to search (needs Tessera's glass plugin) |
-| Three-finger drag (Settings → Trackpad) | Move the window under your fingers; the swipes above move to 4 fingers |
+| Three-finger drag (Settings → Trackpad) | Move the window under your fingers; the 3-finger gestures move to 4 fingers |
 | Touchscreen: pull down from the menu bar | Quick Settings (right third) or Notification Center |
 | Touchscreen: swipe up from the bottom edge | Show a hidden dock |
+<!-- keymap end -->
 
 ## Sharing files
 

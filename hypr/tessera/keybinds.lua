@@ -210,7 +210,11 @@ local function bind(e, user)
     if e.action and e.action.shell == "superTap" and keys:upper():gsub("%s", "") == (MOD .. "+" .. modifierKey):upper() then
         keys = modifierKey
     end
-    local norm = keys:upper():gsub("%s", "")
+    -- (its parts in any order: SUPER+CTRL+S and CTRL+SUPER+S are one; audit #63)
+    local parts = {}
+    for p in keys:upper():gsub("%s", ""):gmatch("[^+]+") do parts[#parts + 1] = p end
+    table.sort(parts)
+    local norm = table.concat(parts, "+")
     if taken[norm] then
         log("skipped " .. tostring(e.id) .. ": " .. keys .. " is already " .. taken[norm])
         return

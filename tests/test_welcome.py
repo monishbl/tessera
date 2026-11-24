@@ -14,7 +14,7 @@ import unittest
 LATEST = 3
 
 ROOT = Path(__file__).resolve().parents[1]
-BUNDLE = Path.home() / ".local/share/tessera/quickshell"
+BUNDLE = Path(os.environ.get("TESSERA_TEST_QS") or Path.home() / ".local/share/tessera/quickshell")
 QS = BUNDLE/'bin/qs'
 
 # Prints welcome.done (and the defaults version) half a second after the

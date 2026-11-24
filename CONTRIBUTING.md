@@ -60,6 +60,14 @@ tools/run-python-tests.sh tests/test_licences.py   # one file
 
 Some tests read the README, the docs and the website (`tests/test_trademarks.py`, `tests/test_licences.py`): run them when you change text.
 
+The runner keeps tests off your session (no display, compositor or session bus; its own runtime folder and system root), prints how many tests were skipped and why, and, for a whole run, also runs the **Node** tests (`tests/*.test.cjs`: the polkit rules, the bug-report Worker and more) when `node` is installed:
+
+```sh
+node --test tests/*.test.cjs                       # the Node tests alone
+```
+
+Two variables bring in what lives outside the checkout: `TESSERA_TEST_QS` (Tessera's own Quickshell, for the QML load tests; by default the one in your home) and `TESSERA_UI_TEST_BINARY` (a tessera-ui build, for the tests of the real program; `target/fast`, `release` and `debug` are looked in too).
+
 **Rust**, per crate:
 
 ```sh

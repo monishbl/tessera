@@ -134,7 +134,12 @@ class Polkit(unittest.TestCase):
 
 
 def binary():
-    for kind in ("release", "debug"):
+    # (TESSERA_UI_TEST_BINARY: the build machine's own build; target/fast is
+    # where its builds go, audit #184)
+    own = os.environ.get("TESSERA_UI_TEST_BINARY")
+    if own and Path(own).exists():
+        return Path(own)
+    for kind in ("fast", "release", "debug"):
         b = CRATE / "target" / kind / "tessera-ui"
         if b.exists():
             return b

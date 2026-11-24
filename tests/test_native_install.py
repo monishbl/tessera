@@ -555,12 +555,15 @@ class Install(Fixture):
         self.assertEqual(r["kind"], "busy")
         self.assertEqual(calls, [])
 
-    @unittest.skipUnless(os.environ.get("TESSERA_UI_TEST_BINARY") or (ROOT / "native/tessera-ui/target/release/tessera-ui").exists(),
+    @unittest.skipUnless(os.environ.get("TESSERA_UI_TEST_BINARY") or (ROOT / "native/tessera-ui/target/release/tessera-ui").exists()
+                         or (ROOT / "native/tessera-ui/target/fast/tessera-ui").exists(),
                          "no built tessera-ui here")
     def test_a_real_tessera_ui_build(self):
         # A real build (main's), packed and signed as the workflow does:
         # checked by --version (run without any display) and installed
-        real = Path(os.environ.get("TESSERA_UI_TEST_BINARY") or ROOT / "native/tessera-ui/target/release/tessera-ui")
+        real = Path(os.environ.get("TESSERA_UI_TEST_BINARY") or next(
+            (p for p in (ROOT / "native/tessera-ui/target/release/tessera-ui", ROOT / "native/tessera-ui/target/fast/tessera-ui") if p.exists()),
+            ROOT / "native/tessera-ui/target/release/tessera-ui"))
         said = ni.program_version(str(real))
         self.assertRegex(said, r"^tessera-ui \d")
         stage = self.d / "real"

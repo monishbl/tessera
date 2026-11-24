@@ -354,7 +354,7 @@
   "group": "Screen",
   "label": "Pick a colour",
   "action": {
-   "exec": "hyprpicker -a -r"
+   "exec": "hyprpicker -a"
   }
  },
  {
@@ -1364,15 +1364,6 @@
   "keys": "$MOD + S",
   "group": "Workspace",
   "label": "Show or hide the scratchpad",
-  "action": {
-   "dsp": "hl.dsp.workspace.toggle_special(\"special\")"
-  }
- },
- {
-  "id": "scratchpad-ctrl",
-  "keys": "CTRL + $MOD + S",
-  "group": "Workspace",
-  "label": "Show or hide the scratchpad (alternative)",
   "action": {
    "dsp": "hl.dsp.workspace.toggle_special(\"special\")"
   }

@@ -41,6 +41,8 @@ make -C "$ROOT/hypr/plugin/tessera-glass" -s
 mkdir -p "$DEST"
 cp "$ROOT/hypr/plugin/tessera-glass/tessera-glass.so" "$DEST/tessera-glass.so.new"
 mv "$DEST/tessera-glass.so.new" "$DEST/tessera-glass.so"
+# (a new build is tried again at the next start: hypr/tessera/glass.lua's crash mark goes)
+rm -f "$DEST/tessera-glass.loading"
 printf '%s\n' "$headers" >"$DEST/tessera-glass.built-for"
 echo "Built $DEST/tessera-glass.so for Hyprland $headers"
 (( LOAD )) || exit 0

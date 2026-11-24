@@ -166,7 +166,6 @@ b("ws-send-next", "$MOD + SHIFT + Page_Down", "Workspace", "Move window to the n
 b("ws-scroll-down", "$MOD + mouse_down", "Workspace", "Next space (scroll)", dsp('hl.dsp.focus({ workspace = "m+1" })'))
 b("ws-scroll-up", "$MOD + mouse_up", "Workspace", "Previous space (scroll)", dsp('hl.dsp.focus({ workspace = "m-1" })'))
 b("scratchpad", "$MOD + S", "Workspace", "Show or hide the scratchpad", dsp('hl.dsp.workspace.toggle_special("special")'))
-b("scratchpad-ctrl", "CTRL + $MOD + S", "Workspace", "Show or hide the scratchpad (alternative)", dsp('hl.dsp.workspace.toggle_special("special")'))
 b("scratchpad-mouse", "$MOD + mouse:275", "Workspace", "Show or hide the scratchpad (mouse)", dsp('hl.dsp.workspace.toggle_special("special")'))
 b("scratchpad-send", "$MOD + ALT + S", "Workspace", "Send window to the scratchpad", dsp('hl.dsp.window.move({ workspace = "special:special", follow = false })'))
 
@@ -207,8 +206,94 @@ gestures = [
 
 ids = [x["id"] for x in binds]
 assert len(ids) == len(set(ids)), "duplicate bind ids"
-keys = [x["keys"] for x in binds]
+# (a combination is its parts in any order: "$MOD + CTRL + S" and
+# "CTRL + $MOD + S" are one, and Hyprland runs both binds; audit #63)
+def combo(k):
+    return tuple(sorted(p.strip().upper() for p in k.split("+")))
+
+
+keys = [combo(x["keys"]) for x in binds]
 assert len(keys) == len(set(keys)), "two binds on one key: " + str({k for k in keys if keys.count(k) > 1})
+# ── docs/FEATURES.md's tables: from the binds above, never by hand (audit
+# #59: they said Super+C was Quick Settings, Super+Shift+3 a screenshot…).
+# tests/test_keymap.py checks the file says this.
+DOC_KEYS = [
+    (["spotlight-tap"], "Overview of spaces, with search (Super tapped alone; Settings can change it)"),
+    (["spotlight"], "Search"),
+    (["launchpad"], "App Drawer"),
+    (["clipboard"], "Clipboard history"),
+    (["overview", "mission-control"], "Overview / All Windows"),
+    (["sidebar"], "AI and tools sidebar"),
+    (["control-center", "notifications"], "Quick Settings / Notification Center"),
+    (["settings-comma"], "Settings"),
+    (["cheatsheet"], "All keyboard shortcuts"),
+    (["screenshot-print", "snip", "screen-tools"], "Screenshot of the screen / of an area / screenshot and recording tools"),
+    (["reset"], "Close everything (if a panel is stuck)"),
+    (["repair-escape"], "Repair the shell: duplicated bars or a frozen shell. Restarts only the shell; apps and windows keep running (also in the system menu)"),
+    (["ocr", "translate"], "Copy text from the screen / translate text on the screen"),
+    (["ask-screen"], "Ask AI about part of the screen"),
+    (["lens"], "Search an area with Google Lens (sends it to Google)"),
+    (["circle-search"], "Circle to search"),
+    (["record"], "Start or stop recording an area"),
+    (["overlay", "keyboard"], "Overlay widgets / on-screen keyboard"),
+    (["lock", "lock-mac"], "Lock"),
+    (["close", "fullscreen", "maximize"], "Close, full screen, zoom window"),
+    (["snap-left", "snap-right"], "Tile to the left / right half"),
+    (["snap-fill", "snap-center", "snap-restore"], "Fill, centre, back to the previous size"),
+    (["pip"], "Picture in Picture"),
+    (["tabs", "tab-prev", "tab-next"], "Merge into tabs (or move a tab out), previous / next tab"),
+    (["ws-1", "ws-9"], "Spaces 1 to 9 (the display you're on)", " … "),
+    (["ws-prev", "ws-next"], "Previous / next space"),
+    (["ws-scroll-down"], "Next or previous space (scroll)"),
+]
+DOC_GESTURES_AFTER = [
+    ("Three-finger drag (Settings → Trackpad)", "Move the window under your fingers; the 3-finger gestures move to 4 fingers"),
+    ("Touchscreen: pull down from the menu bar", "Quick Settings (right third) or Notification Center"),
+    ("Touchscreen: swipe up from the bottom edge", "Show a hidden dock"),
+]
+NAMES = {"$MOD": "Super", "$MODKEY": "(tap)", "CTRL": "Ctrl", "SHIFT": "Shift", "ALT": "Alt", "Comma": ",", "Period": ".",
+         "Slash": "/", "BackSpace": "Backspace", "bracketleft": "[", "bracketright": "]", "Return": "Enter",
+         "mouse_down": "scroll", "mouse_up": "scroll", "Escape": "Escape"}
+ORDER = ["Super", "Ctrl", "Alt", "Shift"]
+
+
+def key_text(keys):
+    """'$MOD + SHIFT + S' as the docs write it: 'Super+Shift+S'"""
+    parts = [NAMES.get(p.strip(), p.strip()) for p in keys.split("+")]
+    mods = sorted((p for p in parts if p in ORDER), key=ORDER.index)
+    rest = [p for p in parts if p not in ORDER]
+    if rest == ["(tap)"]:
+        return "Super (tap)"
+    return "+".join(mods + rest)
+
+
+def doc_tables(binds, gestures):
+    by_id = {b["id"]: b for b in binds}
+    out = ["| Keys | Action |", "|---|---|"]
+    for row in DOC_KEYS:
+        ids, label, sep = row if len(row) == 3 else (*row, " / ")
+        out.append("| " + sep.join(key_text(by_id[i]["keys"]) for i in ids) + " | " + label + " |")
+    out += ["", "| Gesture | Action |", "|---|---|"]
+    how = {"swipe": "swipe", "pinch": "pinch", "horizontal": "left or right", "up": "up", "down": "down",
+           "pinchin": "pinch", "pinchout": "spread", "hold": "long press"}
+    for g in gestures:
+        note = " (needs Tessera's glass plugin)" if g["direction"] == "hold" else ""
+        out.append("| %d fingers, %s | %s%s |" % (g["fingers"], how.get(g["direction"], g["direction"]), g["label"], note))
+    out += ["| %s | %s |" % r for r in DOC_GESTURES_AFTER]
+    return "\n".join(out) + "\n"
+
+
+DOC = os.path.join(ROOT, "docs", "FEATURES.md")
+START, END = "<!-- keymap: written by tools/gen-keymap.py -->\n", "<!-- keymap end -->\n"
+with open(DOC) as f:
+    doc = f.read()
+if START in doc and END in doc:
+    head, rest = doc.split(START, 1)
+    doc = head + START + doc_tables(binds, gestures) + END + rest.split(END, 1)[1]
+    with open(DOC, "w") as f:
+        f.write(doc)
+    print("wrote", DOC)
+
 for name, data in (("keymap.json", binds), ("gestures.json", gestures)):
     path = os.path.join(ROOT, "hypr", "tessera", name)
     with open(path, "w") as f:

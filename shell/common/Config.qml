@@ -500,6 +500,12 @@ Singleton {
                 property string lidCaffeine: "lock" // with Caffeine on, instead of sleeping: lock | nothing | sleep
                 property int passwordAfterSleep: 0 // seconds asleep before the password is needed again: 0 | 60 | 300
                 property bool appEnergy: true // keep an hour of which apps used the CPU (a look every 5 min)
+                // (the Rust shell's only, kept here so this fallback writing the
+                // file doesn't drop them: Battery saver, tessera-ui power.rs;
+                // audit #61)
+                property string saver: "auto" // off | auto (at saverLevel) | battery (always on battery)
+                property int saverLevel: 20
+                property bool saverProfile: false // battery saver asks for Low Power too
             }
             property JsonObject cooling: JsonObject {
                 // Cool-down (Settings → Appearance): less work while hot, on battery or switched on
@@ -521,6 +527,11 @@ Singleton {
                 // file doesn't drop it: Graphics processor, low | auto | a GPU
                 // family; tessera-ui core/src/gpu.rs, "low" when unset)
                 property string gpu: "low"
+            }
+            // (the Rust shell's only, kept for the same reason: Circle to
+            // Search's edge light, tessera-ui edgefx.rs; audit #61)
+            property JsonObject circle: JsonObject {
+                property string glow: "" // "": dots (the default), siri, gemini, ripple…
             }
             property JsonObject keyboard: JsonObject {
                 property string superTap: "overview" // tapping Super alone: overview | spotlight | none
