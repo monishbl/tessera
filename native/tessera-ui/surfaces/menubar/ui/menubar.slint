@@ -948,8 +948,8 @@ export component Menu inherits Window {
                 y: pad;
                 width: menu-w;
                 height: parent.height - 2 * pad;
-                viewport-width: menu-w;
-                viewport-height: content.preferred-height;
+                content-width: menu-w;
+                content-height: content.preferred-height;
                 content := VerticalLayout {
                     width: menu-w;
                     spacing: 0;
@@ -958,10 +958,10 @@ export component Menu inherits Window {
                         // (arrow keys in a long menu: the row is scrolled into view)
                         changed hot => {
                             if self.hot {
-                                if self.y + scroller.viewport-y < 0 {
-                                    scroller.viewport-y = -self.y;
-                                } else if self.y + self.height + scroller.viewport-y > scroller.height {
-                                    scroller.viewport-y = scroller.height - self.y - self.height;
+                                if self.y + scroller.content-y < 0 {
+                                    scroller.content-y = -self.y;
+                                } else if self.y + self.height + scroller.content-y > scroller.height {
+                                    scroller.content-y = scroller.height - self.y - self.height;
                                 }
                             }
                         }

@@ -300,12 +300,12 @@ export component Center inherits Window {
     out property <float> body-opacity: body.opacity;
     out property <length> radius: Theme.material ? 24px + pad : 36px + pad;
     // (the list as scrolled, for the chips' glass)
-    out property <length> list-top: body.y + pad + outer.viewport-y + list-at.y;
+    out property <length> list-top: body.y + pad + outer.content-y + list-at.y;
     out property <length> list-scroll: -flick.content-y;
     out property <length> list-height: flick.height;
     out property <float> openness: shown ? 1 : 0;
     // the widgets' card, in the panel (Glass without the panel: its glass)
-    out property <length> widgets-y: pad + outer.viewport-y + widgets.y;
+    out property <length> widgets-y: pad + outer.content-y + widgets.y;
     out property <length> widgets-h: widgets.height;
 
     callback dismissed(); // a click outside, Esc
@@ -417,8 +417,8 @@ export component Center inherits Window {
             y: pad;
             width: content-w;
             height: body.height - 2 * pad;
-            viewport-width: content-w;
-            viewport-height: col.preferred-height;
+            content-width: content-w;
+            content-height: col.preferred-height;
             col := VerticalLayout {
                 width: content-w;
                 height: self.preferred-height;

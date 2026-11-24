@@ -511,13 +511,18 @@ mod tests {
         m.insert("xesam:title".to_string(), ov(Value::from("Midnight City")));
         m.insert("xesam:artist".to_string(), ov(Value::from(vec!["M83", "Anthony Gonzalez"])));
         m.insert("xesam:album".to_string(), ov(Value::from("Hurry Up, We're Dreaming")));
-        m.insert("mpris:artUrl".to_string(), ov(Value::from("file:///tmp/art%20one.png")));
+        // (a real file: art that isn't one is none; audit #105)
+        let dir = std::env::temp_dir().join(format!("tessera-mpris-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let art = dir.join("art one.png");
+        std::fs::write(&art, b"x").unwrap();
+        m.insert("mpris:artUrl".to_string(), ov(Value::from(format!("file://{}", art.display().to_string().replace(' ', "%20")))));
         m.insert("mpris:length".to_string(), ov(Value::from(243_000_000i64)));
         let t = track_from(&m);
         assert_eq!(t.title, "Midnight City");
         assert_eq!(t.artist, "M83, Anthony Gonzalez");
         assert_eq!(t.length, 243_000_000);
-        assert_eq!(art_file(&t.art_url), Some(std::path::PathBuf::from("/tmp/art one.png")));
+        assert_eq!(art_file(&t.art_url), Some(art.clone()));
         // a plain string for the artist, an unsigned length, nothing else
         let mut m = HashMap::new();
         m.insert("xesam:artist".to_string(), ov(Value::from("Solo")));
@@ -554,7 +559,14 @@ mod tests {
     fn only_local_and_web_art() {
         assert_eq!(art_file(""), None);
         assert_eq!(art_file("data:image/png;base64,xx"), None);
-        assert_eq!(art_file("file:///a/b.png?track=3"), Some(std::path::PathBuf::from("/a/b.png")));
+        let dir = std::env::temp_dir().join(format!("tessera-mpris-art-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let b = dir.join("b.png");
+        std::fs::write(&b, b"x").unwrap();
+        assert_eq!(art_file(&format!("file://{}?track=3", b.display())), Some(b.clone()));
+        // (no such file, a device, the kernel's files: never art)
+        assert_eq!(art_file("file:///nowhere/b.png"), None);
+        assert_eq!(art_file("file:///dev/zero"), None);
         // (what the loop may know at once, without a fetch or a read)
         assert_eq!(art_now("file:///a/b%20c.JPG?x=1"), ArtNow::Ready(Some(std::path::PathBuf::from("/a/b c.JPG"))));
         assert_eq!(art_now("file:///tmp/.org.chromium.Chromium.abc"), ArtNow::Fetch);
