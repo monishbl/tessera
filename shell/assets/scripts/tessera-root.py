@@ -2095,6 +2095,51 @@ def write_tree(files, dest):
     shutil.rmtree(old, ignore_errors=True)
 
 
+# The login screen's keyboard layout: the system's (localectl writes it to
+# 00-keyboard.conf, the file the console and other login screens read),
+# written as Hyprland Lua next to greeter.lua, which loads it. Without one,
+# a German or French password was typed as US at the login screen and
+# refused (audit #7). No layout set: no file (Hyprland's "us").
+XKB_CONF = "/etc/X11/xorg.conf.d/00-keyboard.conf"
+XKB_FIELDS = (("XkbLayout", "kb_layout"), ("XkbVariant", "kb_variant"), ("XkbModel", "kb_model"), ("XkbOptions", "kb_options"))
+XKB_VALUE = re.compile(r"^[A-Za-z0-9_,:+().-]+$")
+
+
+def greeter_keyboard_lua(prefix="/"):
+    """keyboard.lua's bytes for the system's layout, or None when none is set
+    (or a value isn't one a layout is made of: tools/keyboard-lua.sh's rule)"""
+    text = read_text(_at(prefix, XKB_CONF)) or ""
+    found = {}
+    for key, _ in XKB_FIELDS:
+        m = re.search(r'^\s*Option\s+"' + key + r'"\s+"([^"]*)"', text, re.M)
+        if m and m.group(1):
+            found[key] = m.group(1)
+    if not found.get("XkbLayout") or not all(XKB_VALUE.match(v) for v in found.values()):
+        return None
+    fields = ", ".join(f'{lua} = "{found[key]}"' for key, lua in XKB_FIELDS if key in found)
+    return ("-- Written by Tessera's root helper from the system's keyboard layout\n"
+            f"-- ({XKB_CONF}: localectl set-x11-keymap changes it; the next update copies it here)\n"
+            f"hl.config({{ input = {{ {fields} }} }})\n").encode()
+
+
+def write_greeter_keyboard(share, prefix="/"):
+    """SHARE/keyboard.lua as the system's layout is now. Returns what changed."""
+    dest = os.path.join(share, "keyboard.lua")
+    want = greeter_keyboard_lua(prefix)
+    try:
+        with open(dest, "rb") as f:
+            have = f.read()
+    except OSError:
+        have = None
+    if want == have:
+        return []
+    if want is None:
+        os.unlink(dest)
+    else:
+        write_root(dest, want, 0o644)
+    return [dest]
+
+
 def refresh_login(src, uid, prefix=None):
     """The login screen's copy of Tessera, from the same checkout as setup's
     files, where ./install.sh --greeter made one. Returns what it wrote."""
@@ -2136,6 +2181,7 @@ def refresh_login(src, uid, prefix=None):
         if data != before:
             write_root(dest, data, 0o644)
             written.append(dest)
+        written += write_greeter_keyboard(share, prefix)
     # The Rust login screen, where the switch put one (greeter-start.sh
     # prefers it): the one you run now. Only the QML copy was refreshed, so
     # the login screen stayed the program from the day of the switch. Only
@@ -2586,6 +2632,7 @@ def install_login_copy(repo, look, uid, prefix, run, chown=os.chown):
     for rel, data, mode in files:
         write_root(os.path.join(share, rel), data, mode)
         done.append(os.path.join(share, rel))
+    done += write_greeter_keyboard(share, prefix)
     # Where the login screen says it showed (greeter-start.sh, as greeter)
     seen = os.path.dirname(_at(prefix, GREETER_SEEN))
     os.makedirs(seen, mode=0o755, exist_ok=True)

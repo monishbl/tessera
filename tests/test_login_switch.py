@@ -132,6 +132,27 @@ class LoginSwitch(unittest.TestCase):
         return self.r.login_switch_on(str(self.repo / "shell"), json.dumps(look or LOOK), os.getuid(),
                                       prefix=str(self.root), run=self.sys, which=which)
 
+    def test_the_login_screen_types_in_the_systems_layout(self):
+        # (audit #7: the greeter's compositor was always "us")
+        self.put("etc/X11/xorg.conf.d/00-keyboard.conf", 'Section "InputClass"\n        Identifier "system-keyboard"\n'
+                 '        Option "XkbLayout" "de,us"\n        Option "XkbVariant" "nodeadkeys,"\n'
+                 '        Option "XkbOptions" "grp:alt_shift_toggle"\nEndSection\n')
+        self.switch()
+        kb = (self.root / "usr/share/tessera/keyboard.lua").read_text()
+        self.assertIn('kb_layout = "de,us", kb_variant = "nodeadkeys,", kb_options = "grp:alt_shift_toggle"', kb)
+        # (the refresh at each update follows a change; none set: the file goes, "us")
+        self.put("etc/X11/xorg.conf.d/00-keyboard.conf", 'Option "XkbLayout" "fr"\n')
+        self.r.refresh_login(str(self.repo / "shell"), os.getuid(), prefix=str(self.root))
+        self.assertIn('kb_layout = "fr"', (self.root / "usr/share/tessera/keyboard.lua").read_text())
+        (self.root / "etc/X11/xorg.conf.d/00-keyboard.conf").unlink()
+        self.r.refresh_login(str(self.repo / "shell"), os.getuid(), prefix=str(self.root))
+        self.assertFalse((self.root / "usr/share/tessera/keyboard.lua").exists())
+        # (nothing odd reaches the Lua)
+        self.put("etc/X11/xorg.conf.d/00-keyboard.conf", 'Option "XkbLayout" "de\\" }) os.exit() --"\n')
+        self.assertIsNone(self.r.greeter_keyboard_lua(str(self.root)))
+        # (and the real greeter.lua loads it)
+        self.assertIn('pcall(dofile, "/usr/share/tessera/keyboard.lua")', (ROOT / "hypr/greeter.lua").read_text())
+
     def test_switches_from_sddm_and_keeps_the_way_back(self):
         rec = self.switch()
         self.assertEqual(self.dm(), "greetd")

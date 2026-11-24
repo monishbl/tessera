@@ -13,6 +13,12 @@ hl.config({
     ecosystem = { no_update_news = true, no_donation_nag = true }
 })
 
+-- The system's keyboard layout, so a password is typed as it is in your
+-- session (the root helper writes keyboard.lua from localectl's setting; none
+-- means "us"), and the number pad on, as in the session
+hl.config({ input = { numlock_by_default = true } })
+pcall(dofile, "/usr/share/tessera/keyboard.lua")
+
 hl.layer_rule({ match = { namespace = "tessera:.*" }, blur = true })
 hl.layer_rule({ match = { namespace = "tessera:.*" }, ignore_alpha = 0.4 })
 hl.layer_rule({ match = { namespace = "tessera:wallpaper" }, blur = false })
