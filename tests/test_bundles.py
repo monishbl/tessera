@@ -547,6 +547,18 @@ class RootHold(unittest.TestCase):
         with self.assertRaises(R.Refused):
             R.with_hold_include("[core]\n")
 
+    def test_unhold_takes_out_only_what_the_hold_wrote(self):
+        # (audit #10: uninstall left IgnorePkg for good)
+        conf = self.root / "etc/pacman.conf"
+        R.write_hold(["hyprland"], prefix=str(self.root))
+        conf.write_text(conf.read_text() + "Color\n")  # (an edit made after the hold)
+        done = R.unhold(prefix=str(self.root))
+        self.assertEqual(sorted(done), sorted([R.PACMAN_CONF, R.HOLD_CONF, R.PACMAN_CONF + ".pre-tessera"]))
+        self.assertEqual(conf.read_text(), "# pacman\n[options]\nHoldPkg = pacman glibc\nArchitecture = auto\n\n[core]\n"
+                                           "Include = /etc/pacman.d/mirrorlist\nColor\n")
+        self.assertFalse((self.root / "etc/pacman.d/tessera-hold.conf").exists())
+        self.assertEqual(R.unhold(prefix=str(self.root)), [])
+
     def test_update_takes_a_lock_file_by_its_full_path(self):
         self.assertEqual(R.parse_update(["--lock", "/home/u/.local/share/tessera/versions/abc/bundle.json"])["lock"],
                          "/home/u/.local/share/tessera/versions/abc/bundle.json")

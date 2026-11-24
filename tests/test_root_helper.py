@@ -1375,20 +1375,54 @@ class NoPartialUpgrades(unittest.TestCase):
     upgraded on its own (Arch has no partial upgrades): pacman -Syu first,
     in the same run. Brand-new packages install from the current database."""
 
-    def run_script(self, installed, to_install, system="0", held=""):
+    def run_script(self, installed, to_install, system="0", held="", hold=None, conflict=None):
+        """HOLD: the hold file's text (None: none). CONFLICT: pacman -Syu
+        breaks a dependency "held" (while that file holds anything) or "always" """
         d = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, d)
         log = d / "calls"
+        hold_file = d / "tessera-hold.conf"
+        if hold is not None:
+            hold_file.write_text(hold)
+        run_dir = d / "run"
+        run_dir.mkdir()
         fake = d / "pacman"
         fake.write_text("#!/bin/sh\necho \"$*\" >> %s\nif [ \"$1\" = -Q ]; then shift; [ \"$1\" = -- ] && shift\n"
-                        "  for p in \"$@\"; do case \" %s \" in *\" $p \"*) ;; *) exit 1 ;; esac; done; fi\nexit 0\n"
-                        % (log, " ".join(installed)))
+                        "  for p in \"$@\"; do case \" %s \" in *\" $p \"*) ;; *) exit 1 ;; esac; done; fi\n"
+                        "if [ \"$1\" = -Syu ] && { [ %s = always ] || { [ %s = held ] && grep -q '^IgnorePkg' %s 2>/dev/null; }; }; then\n"
+                        "  echo 'error: failed to prepare transaction (could not satisfy dependencies)'\n"
+                        "  echo ':: installing libdisplay-info (0.3.0-1) breaks dependency libdisplay-info.so=2-64 required by aquamarine'\n"
+                        "  exit 1\nfi\nexit 0\n"
+                        % (log, " ".join(installed), conflict or "no", conflict or "no", hold_file))
         fake.chmod(0o755)
         env = dict(os.environ, PATH=f"{d}:{os.environ['PATH']}")
-        p = subprocess.run(["sh", "-c", R.UPDATE_SCRIPT, "sh", "", held, ",".join(to_install), "", system],
+        p = subprocess.run(["sh", "-c", R.UPDATE_SCRIPT, "sh", "", held, ",".join(to_install), "", system, str(hold_file), str(run_dir)],
                            env=env, capture_output=True, text=True, timeout=20)
         calls = [l for l in log.read_text().splitlines() if not l.startswith("-Q")] if log.exists() else []
+        self.out, self.dropped = p.stdout, (run_dir / "dropped").exists()
+        self.hold_after = hold_file.read_text() if hold_file.exists() else None
         return p.returncode, calls
+
+    def test_a_hold_that_breaks_a_dependency_is_lifted_for_that_update(self):
+        # (audit #17: a library the held Hyprland needs changed soname)
+        hold = R.hold_text(["aquamarine", "hyprland"])
+        rc, calls = self.run_script(["hyprland"], [], system="1", hold=hold, conflict="held")
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls, ["-Syu --noconfirm", "-Syu --noconfirm"])
+        self.assertTrue(self.dropped)
+        self.assertIn("past the versions this Tessera was tested with", self.out)
+        self.assertEqual(self.hold_after, hold)  # (the hold is back after it)
+
+    def test_without_a_conflict_or_a_hold_nothing_is_lifted(self):
+        hold = R.hold_text(["hyprland"])
+        rc, calls = self.run_script(["hyprland"], [], system="1", hold=hold)
+        self.assertEqual((rc, calls, self.dropped), (0, ["-Syu --noconfirm"], False))
+        # (no hold: a conflict isn't Tessera's to lift; the update fails as before)
+        rc, calls = self.run_script(["hyprland"], [], system="1", hold=None, conflict="always")
+        self.assertEqual((rc, calls, self.dropped), (21, ["-Syu --noconfirm"], False))
+        # (lifting doesn't help: it still fails, and the hold is back)
+        rc, calls = self.run_script(["hyprland"], [], system="1", hold=hold, conflict="always")
+        self.assertEqual((rc, len(calls), self.dropped, self.hold_after), (21, 2, True, hold))
 
     def test_new_packages_install_without_a_system_update(self):
         rc, calls = self.run_script(["hyprland"], ["cliphist"])

@@ -179,6 +179,9 @@ if [[ -n $helper && -z $S ]]; then
     quiet sudo "$helper" phonecam off
     quiet sudo "$helper" quickshare-trust off
     quiet sudo "$helper" sharing-ports close
+    # (the package hold: IgnorePkg for the Hyprland family, else every later
+    # pacman -Syu skips it for good)
+    quiet sudo "$helper" unhold
 fi
 # The Tessera login screen: switch back to the login manager it replaced
 # (or none: then log in on a console and start your desktop yourself)
@@ -272,6 +275,15 @@ for f in polkit-1 sudo greetd ly sddm lightdm lxdm; do
             opt sudo sed -i "/$mark/d" "$S/etc/pam.d/$f"
         fi
     done
+done
+# The package hold (an older helper has no unhold): the two marked lines out
+# of pacman.conf (only those: later edits stay), the hold file and the copy
+if grep -qxF "Include = /etc/pacman.d/tessera-hold.conf" "$S/etc/pacman.conf" 2>/dev/null; then
+    opt sudo sed -i -e '\#^Include = /etc/pacman.d/tessera-hold.conf$#d' \
+        -e '\#^\# tessera: the packages Tessera holds at its tested versions#d' "$S/etc/pacman.conf"
+fi
+for f in "$S/etc/pacman.d/tessera-hold.conf" "$S/etc/pacman.conf.pre-tessera"; do
+    [[ -e $f ]] && opt sudo rm -f "$f"
 done
 # The boot animation: the system's own again when it's one of Tessera's (the
 # helper rebuilds the boot image, and puts it back as it was if that fails)

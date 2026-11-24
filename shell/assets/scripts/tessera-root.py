@@ -62,6 +62,11 @@ With the password:
       `auth sufficient pam_howdy.so` first, the rest (a fingerprint, the
       password) as it was. polkit's own PAM file isn't changed; off removes
       the drop-in, and so does setting up a regular camera.
+  unhold
+      Tessera's package hold gone (update --lock's IgnorePkg): /etc/pacman.d/
+      tessera-hold.conf, its two marked lines in /etc/pacman.conf and the
+      pacman.conf.pre-tessera copy. uninstall.sh runs it; the next update
+      with a lock holds them again.
   phonecam on|off
       a virtual camera for an Android phone's camera (Settings → Phone): the
       v4l2loopback module with one device, /dev/video42 "Phone camera",
@@ -3447,12 +3452,37 @@ def setup(src, uid, prefix=None, run=subprocess.run):
 # ── update: the system part, and the broker for the AUR step ────────────
 # The pacman steps as one inline script, as before (sysupdate.py's protocol):
 # $1 snapshot tool, $2 held packages, $3 to install, $4 to remove,
-# $5 1 = pacman -Syu
+# $5 1 = pacman -Syu, $6 Tessera's hold file (HOLD_CONF), $7 a folder of
+# this run's own (a file "dropped" there: the hold was lifted, see below)
+# A system update the hold (IgnorePkg) blocks, because a library a held
+# package needs changed (pacman: "breaks dependency", "could not satisfy
+# dependencies"), runs once more with Tessera's hold lifted for that one
+# transaction, said loudly; the hold file comes back after it either way,
+# and the lock step leaves the held packages where that update put them
+# (audit #17: else Hyprland could only stay broken or block every update)
 UPDATE_SCRIPT = r"""
-if [ "$5" = 1 ]; then
+syu() {
     echo "@@step system"
-    if [ -n "$2" ]; then pacman -Syu --noconfirm --ignore "$2" || exit 21
-    else pacman -Syu --noconfirm || exit 21; fi
+    log="$7/syu.log"
+    { if [ -n "$2" ]; then pacman -Syu --noconfirm --ignore "$2"; else pacman -Syu --noconfirm; fi; echo $? >"$log.rc"; } 2>&1 | tee "$log"
+    rc=$(cat "$log.rc" 2>/dev/null || echo 1)
+    [ "$rc" = 0 ] && return 0
+    if [ -n "$6" ] && grep -q '^IgnorePkg' "$6" 2>/dev/null && \
+        grep -q -e 'breaks dependency' -e 'could not satisfy dependencies' -e 'unable to satisfy dependency' "$log"; then
+        echo "Tessera's held packages (Hyprland and its libraries) block this update: a library they need changed."
+        echo "Updating them too, this once, past the versions this Tessera was tested with."
+        cp -p "$6" "$7/hold.conf" || return 1
+        sed -i '/^IgnorePkg/d' "$6"
+        : >"$7/dropped"
+        if [ -n "$2" ]; then pacman -Syu --noconfirm --ignore "$2"; else pacman -Syu --noconfirm; fi
+        rc=$?
+        cp -p "$7/hold.conf" "$6"
+        return $rc
+    fi
+    return "$rc"
+}
+if [ "$5" = 1 ]; then
+    syu "$@" || exit 21
 fi
 if [ -n "$3" ]; then
     # One already installed is an upgrade: never on its own (Arch has no
@@ -3461,9 +3491,7 @@ if [ -n "$3" ]; then
     if [ "$5" != 1 ]; then
         for p in $(echo "$3" | tr , ' '); do
             if pacman -Q -- "$p" >/dev/null 2>&1; then
-                echo "@@step system"
-                if [ -n "$2" ]; then pacman -Syu --noconfirm --ignore "$2" || exit 21
-                else pacman -Syu --noconfirm || exit 21; fi
+                syu "$@" || exit 21
                 break
             fi
         done
@@ -3644,7 +3672,9 @@ def lock_moves(lock, run=subprocess.run):
 def hold_text(names):
     return ("# Written by Tessera (tessera-root update --lock): these packages stay at the\n"
             "# versions this Tessera was tested with, until the next Tessera version moves\n"
-            "# them. Remove this file (or the Include line in /etc/pacman.conf) to stop it.\n"
+            "# them. If pacman -Syu says one of them breaks a dependency, update with\n"
+            "# `tessera update` (it lifts the hold for that update), or stop holding them:\n"
+            "# sudo /usr/lib/tessera/tessera-root unhold\n"
             + ("IgnorePkg = " + " ".join(names) + "\n" if names else ""))
 
 
@@ -3676,6 +3706,30 @@ def write_hold(names, prefix="/"):
             shutil.copy2(at(PACMAN_CONF), at(PACMAN_CONF) + ".pre-tessera")
         write_root(at(PACMAN_CONF), new.encode(), 0o644)
     return "Held at their tested versions: " + (", ".join(sorted(set(names))) or "nothing")
+
+
+def without_hold_include(text):
+    """pacman.conf without the marked Include line (and its mark)"""
+    return "".join(l for l in text.splitlines(keepends=True) if l.strip() not in (HOLD_MARK, HOLD_INCLUDE))
+
+
+def unhold(prefix="/"):
+    """Tessera's hold gone: HOLD_CONF, and the two marked lines out of
+    pacman.conf (only those: a restore of pacman.conf.pre-tessera would drop
+    later edits), and that copy. Returns what changed (audit #10)."""
+    at = lambda f: os.path.join(prefix, f.lstrip("/"))
+    done = []
+    text = read_text(at(PACMAN_CONF))
+    if text is not None:
+        new = without_hold_include(text)
+        if new != text:
+            write_root(at(PACMAN_CONF), new.encode(), 0o644)
+            done.append(PACMAN_CONF)
+    for f in (HOLD_CONF, PACMAN_CONF + ".pre-tessera"):
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(at(f))
+            done.append(f)
+    return done
 
 
 def apply_lock(lock, say, out, run=subprocess.run):
@@ -3970,12 +4024,17 @@ def _update(args, uid, out=sys.stdout):
         # Held first: the system update below never moves them
         say("@@step hold")
         say(write_hold(lock_moves(lock)["hold"]))
-    code = subprocess.run(["/bin/sh", "-c", UPDATE_SCRIPT, "sh", p["snapshot"], ",".join(p["ignore"]),
-                           ",".join(p["install"]), ",".join(p["remove"]), "1" if p["system"] else "0"],
-                          stdout=out, stderr=subprocess.STDOUT).returncode
+    with tempfile.TemporaryDirectory(prefix="tessera-update-") as run_dir:
+        code = subprocess.run(["/bin/sh", "-c", UPDATE_SCRIPT, "sh", p["snapshot"], ",".join(p["ignore"]),
+                               ",".join(p["install"]), ",".join(p["remove"]), "1" if p["system"] else "0", HOLD_CONF, run_dir],
+                              stdout=out, stderr=subprocess.STDOUT).returncode
+        dropped = os.path.exists(os.path.join(run_dir, "dropped"))
     if code != 0:
         return code
-    if lock is not None:
+    if lock is not None and dropped:
+        # (moving them back would undo what the system update needed)
+        say("The held packages stay where this system update put them; the next Tessera version moves them again")
+    elif lock is not None:
         say("@@step lock")
         if not apply_lock(lock, say, out):
             return 25
@@ -4193,6 +4252,10 @@ def main(argv):
             return 0
         if cmd == "face" and args:
             return face(args, uid)
+        if cmd == "unhold" and not args:
+            for d in unhold():
+                print("changed", d)
+            return 0
         if cmd == "phonecam" and len(args) == 1 and args[0] in ("on", "off"):
             for d in phonecam(args[0] == "on"):
                 print("changed", d)
@@ -4247,7 +4310,7 @@ def main(argv):
             for d in setup(args[0], uid):
                 print("installed", d)
             return 0
-        raise Refused("usage: tessera-root wallpaper <path> | login-look <json> | fix <id> | wifi-helper | fingerprint on|off <where> | phonecam on|off | face … | bootmenu on|off | "
+        raise Refused("usage: tessera-root wallpaper <path> | login-look <json> | fix <id> | wifi-helper | fingerprint on|off <where> | unhold | phonecam on|off | face … | bootmenu on|off | "
                       "bootsplash <id>|system|none | quickshare-trust on|off | priority on|off | sharing-ports open [<set>…]|close | "
                       "update … | boot-check [--repair] | rescue [undo|status] | features <ids> [--face-camera <camera>] [--fprintd-wait] [--login-look <json>] [--shell <folder>] | setup <folder> | login-switch on <shell folder> <look json> | login-switch off [<login manager>]")
     except Refused as e:
