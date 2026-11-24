@@ -87,8 +87,11 @@ pub fn merge(localsend: &[(String, String, String)], quickshare: &[(String, Stri
         } else {
             d.localsend = Some(id.into());
         }
-        // A more specific kind wins (a phone over a generic desktop)
-        if d.kind == "desktop" && !kind.is_empty() {
+        // A more specific kind wins (a phone over a generic desktop), from
+        // the entry's own protocol only: a Quick Share device named like
+        // your LocalSend computer turned it into a phone and took its sends
+        // (audit #205)
+        if d.kind == "desktop" && !kind.is_empty() && d.via.first().map(String::as_str) == Some(via) {
             d.kind = type_of(kind);
         }
     };
@@ -164,6 +167,13 @@ mod tests {
         assert_eq!(m[0].prefer, "localsend");
         let both = merge(&[t("Desk", "desktop", "l2")], &[t("Desk", "", "q2")]);
         assert_eq!(both[0].prefer, "localsend");
+    }
+
+    #[test]
+    fn a_stranger_named_like_your_computer_never_takes_its_sends() {
+        // (audit #205: a Quick Share "phone" named Desk turned your LocalSend Desk into a phone)
+        let m = merge(&[t("Desk", "desktop", "l2")], &[t("Desk", "phone", "q9")]);
+        assert_eq!((m[0].kind.as_str(), m[0].prefer.as_str()), ("desktop", "localsend"));
     }
 
     #[test]

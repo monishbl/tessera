@@ -284,6 +284,10 @@ class L2capMessages:
         self._buf = bytearray()
         self._messages = asyncio.Queue()
         self.closed = False
+        # (one whole message at a time: an acknowledgement sent while a data
+        # message waited for credits landed in its middle, or replaced its
+        # waiter and stalled the transfer; audit #199)
+        self._send_lock = None
 
     def feed(self, data):
         if self.closed:
@@ -310,7 +314,12 @@ class L2capMessages:
     async def send(self, message):
         if self.closed:
             raise TransportClosed("Bluetooth connection closed")
-        await self.link.send(struct.pack(">I", len(message)) + message)
+        if self._send_lock is None:
+            self._send_lock = asyncio.Lock()
+        async with self._send_lock:
+            if self.closed:
+                raise TransportClosed("Bluetooth connection closed")
+            await self.link.send(struct.pack(">I", len(message)) + message)
 
     async def recv(self, timeout=None):
         msg = await asyncio.wait_for(self._messages.get(), timeout)

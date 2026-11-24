@@ -76,16 +76,28 @@ impl Sharing {
     /// The status file was read
     pub fn update_status(&mut self, h: &mut Host, text: &str) {
         self.upd.reading = false;
+        let mut ours = false;
         if let Ok(j) = serde_json::from_str::<Value>(text.trim()) {
             // The last run's file, read before the new run wrote its own
             let older = self.upd.requested > 0.0 && j["started"].as_f64().unwrap_or(0.0) < self.upd.requested - 2.0;
             if !older {
+                ours = true;
                 let was_running = self.upd.running();
                 self.upd.job = Some(j.clone());
                 if was_running && j["state"] != "running" {
                     self.update_finished(h, &j);
                 }
             }
+        }
+        // (no status of this request's own within 20 s: it never started,
+        // another update held the lock, or python3 failed. Said as failed,
+        // never "Installing" for ever with every later install "busy";
+        // audit #206)
+        let now = tessera_core::util::now_ms() as f64 / 1000.0;
+        if !ours && self.upd.running() && self.upd.requested > 0.0 && now - self.upd.requested > 20.0 {
+            let j = json!({"state": "failed", "error": "Software Update is busy with another update, or didn't start. Try again in a moment.", "started": self.upd.requested});
+            self.upd.job = Some(j.clone());
+            self.update_finished(h, &j);
         }
         if self.upd.running() {
             self.sched.set("upd_poll", 500);

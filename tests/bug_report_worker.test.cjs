@@ -187,3 +187,19 @@ test("a long log is cut from the start to fit GitHub's issue size", () => {
     assert.ok(body.includes("newest line"));
     assert.ok(!body.includes("old\n"));
 });
+
+test("only Tessera's own JSON posts: a web page's (Origin, no JSON type) is refused (audit #135)", async () => {
+    const env = { DB: new FakeD1() };
+    const fromPage = new Request("https://tessera-bugs.monishbl.in/api/bug-reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.9", Origin: "https://evil.example" },
+        body: "{}",
+    });
+    assert.equal((await worker.fetch(fromPage, env)).status, 403);
+    const plain = new Request("https://tessera-bugs.monishbl.in/api/bug-reports", {
+        method: "POST",
+        headers: { "Content-Type": "text/plain", "CF-Connecting-IP": "203.0.113.9" },
+        body: "{}",
+    });
+    assert.equal((await worker.fetch(plain, env)).status, 415);
+});

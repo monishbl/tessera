@@ -88,9 +88,10 @@ class ClassicTwin(unittest.TestCase):
         self.assertEqual(fp.real_name("98-34-8C-03-82-DC"), "")
         self.assertEqual(fp.real_name("realme Buds Air 5"), "realme Buds Air 5")
 
-    def test_by_name(self):
+    def test_never_by_name_alone(self):
+        # (audit #128: any radio can advertise a name; only the address proves the device)
         devs = [self.dev("11:22:33:44:55:66", "Other buds"), self.dev("AA:BB:CC:00:00:01", "realme Buds Air 5")]
-        self.assertEqual(fp.pick_twin(devs, "realme Buds Air 5", "98:34:8C:03:82:DC"), devs[1][0])
+        self.assertIsNone(fp.pick_twin(devs, "realme Buds Air 5", "98:34:8C:03:82:DC"))
 
     def test_by_address_tail_when_nameless(self):
         # (the user's buds: LE 98:34:8C:03:82:DC, the classic side shares 03:82:DC)
@@ -101,12 +102,10 @@ class ClassicTwin(unittest.TestCase):
         devs = [self.dev("29:46:8C:03:82:DC", "Buds", paired=True), self.dev("AA:46:8C:03:82:DC", "Phone", cls=0x5a020c)]
         self.assertIsNone(fp.pick_twin(devs, "", "98:34:8C:03:82:DC", fallback=True))
 
-    def test_fallback_only_one_close_audio_device(self):
+    def test_never_the_one_close_by(self):
+        # (audit #128: "the one audio device near" is a stranger's as easily as yours)
         one = [self.dev("11:22:33:44:55:66", "Buds X", rssi=-55), self.dev("11:22:33:44:55:77", "Far", rssi=-90)]
-        self.assertIsNone(fp.pick_twin(one, "", "98:34:8C:03:82:DC"))  # (not before the scan is over)
-        self.assertEqual(fp.pick_twin(one, "", "98:34:8C:03:82:DC", fallback=True), one[0][0])
-        two = one + [self.dev("11:22:33:44:55:88", "Buds Y", rssi=-60)]
-        self.assertIsNone(fp.pick_twin(two, "", "98:34:8C:03:82:DC", fallback=True))  # (which? don't guess)
+        self.assertIsNone(fp.pick_twin(one, "", "98:34:8C:03:82:DC", fallback=True))
 
 
 class AlreadyPaired(unittest.TestCase):

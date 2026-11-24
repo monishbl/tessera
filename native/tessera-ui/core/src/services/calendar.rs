@@ -1,7 +1,8 @@
 //! Calendar events, as shell/services/Calendar.qml has them: your own events
 //! (Reminders: $XDG_STATE_HOME/tessera/events.json) and the iCalendar
-//! subscriptions in $XDG_CONFIG_HOME/tessera/calendars.json whose link is a
-//! file on this computer ("/…" or "file://…"), parsed here with the same
+//! subscriptions in $XDG_CONFIG_HOME/tessera/calendars.json: a file on this
+//! computer ("/…" or "file://…"), or a link (https, webcal) fetched every
+//! half hour into $XDG_CACHE_HOME/tessera/calendars/, parsed here with the same
 //! rules (TZID read as local time; DAILY/WEEKLY/MONTHLY/YEARLY with INTERVAL,
 //! COUNT, UNTIL, BYDAY, BYMONTHDAY, BYMONTH, BYSETPOS, WKST; EXDATE and moved
 //! instances; a rule with other parts shows its first date only).
@@ -160,7 +161,7 @@ pub struct IcsEvent {
 pub struct Calendar {
     pub local: Vec<Local>,
     pub sources: Vec<Source>,
-    /// parsed events by subscription url (files only)
+    /// parsed events by subscription url (files, and links' fetched copies)
     pub parsed: HashMap<String, Vec<IcsEvent>>,
     /// the accounts' events and tasks (standalone; empty otherwise)
     pub accounts: std::sync::Arc<super::accounts::Data>,
@@ -713,8 +714,10 @@ fn read_all() -> (Calendar, Vec<(PathBuf, Option<SystemTime>)>) {
         accounts: Default::default(),
     };
     let mut watched = vec![(events.clone(), mtime(&events)), (sources.clone(), mtime(&sources))];
-    for s in cal.sources.iter().filter(|s| s.enabled && s.is_file()) {
-        let path = PathBuf::from(s.url.strip_prefix("file://").unwrap_or(&s.url));
+    for s in cal.sources.iter().filter(|s| s.enabled) {
+        // (a link: its copy fetched into the cache; audit #126, links were
+        // listed and never fetched)
+        let path = if s.is_file() { PathBuf::from(s.url.strip_prefix("file://").unwrap_or(&s.url)) } else { link_cache(&s.url) };
         watched.push((path.clone(), mtime(&path)));
         if let Ok(t) = std::fs::read_to_string(&path) {
             if t.contains("BEGIN:VCALENDAR") {
@@ -729,20 +732,87 @@ pub fn spawn(tx: Sender<Msg>) {
     std::thread::spawn(move || {
         // (sent with the accounts' items: accounts.rs keeps both halves)
         let (cal, mut watched) = read_all();
+        let mut links = links_of(&cal.sources);
         if !super::accounts::calendar_read(cal, &tx) {
             return;
         }
+        // (links fetched now, then every half hour and when the list changes)
+        fetch_links(&links);
+        let mut fetched = std::time::Instant::now();
         loop {
             std::thread::sleep(Duration::from_secs(2));
+            if fetched.elapsed() >= LINK_EVERY {
+                fetch_links(&links);
+                fetched = std::time::Instant::now();
+            }
             if watched.iter().any(|(p, t)| mtime(p) != *t) {
                 let (cal, w) = read_all();
                 watched = w;
+                let now = links_of(&cal.sources);
+                if now != links {
+                    links = now;
+                    fetch_links(&links);
+                    fetched = std::time::Instant::now();
+                }
                 if !super::accounts::calendar_read(cal, &tx) {
                     return;
                 }
             }
         }
     });
+}
+
+/// How often a calendar link is fetched again
+const LINK_EVERY: Duration = Duration::from_secs(30 * 60);
+
+/// The enabled link subscriptions (https or webcal)
+fn links_of(sources: &[Source]) -> Vec<String> {
+    sources.iter().filter(|s| s.enabled && !s.is_file()).map(|s| s.url.clone()).collect()
+}
+
+/// Where a link's fetched copy is kept
+pub fn link_cache(url: &str) -> PathBuf {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in url.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    crate::util::xdg("XDG_CACHE_HOME", ".cache").join(format!("tessera/calendars/{h:016x}.ics"))
+}
+
+/// A link as fetched: webcal is https; only https and http
+pub fn fetch_url(url: &str) -> Option<String> {
+    let u = url.trim();
+    let u = if let Some(rest) = u.strip_prefix("webcal://") { format!("https://{rest}") } else { u.to_string() };
+    (u.starts_with("https://") || u.starts_with("http://")).then_some(u)
+}
+
+/// Each link's calendar into its cache file (20 s each, 5 MB at most; a
+/// failed fetch keeps the copy before)
+fn fetch_links(links: &[String]) {
+    for url in links {
+        let Some(u) = fetch_url(url) else { continue };
+        let dest = link_cache(url);
+        let Some(dir) = dest.parent() else { continue };
+        if std::fs::create_dir_all(dir).is_err() {
+            continue;
+        }
+        let tmp = dest.with_extension("ics.new");
+        let ok = std::process::Command::new("curl")
+            .args(["-fsSL", "--max-time", "20", "--max-filesize", "5000000", "--proto", "=https,http", "-o"])
+            .arg(&tmp)
+            .arg(&u)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        if ok && std::fs::read_to_string(&tmp).is_ok_and(|t| t.contains("BEGIN:VCALENDAR")) {
+            let _ = std::fs::rename(&tmp, &dest);
+        } else {
+            let _ = std::fs::remove_file(&tmp);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -786,6 +856,15 @@ mod tests {
         assert_eq!(duration("P1DT2H"), Some(1560));
         assert_eq!(duration("P1W"), Some(10080));
         assert_eq!(duration("1H"), None);
+    }
+
+    #[test]
+    fn links_are_fetched_over_https() {
+        // (audit #126: links were accepted and never fetched)
+        assert_eq!(fetch_url("webcal://p01-calendars.icloud.com/x.ics").as_deref(), Some("https://p01-calendars.icloud.com/x.ics"));
+        assert_eq!(fetch_url("https://a.b/c.ics").as_deref(), Some("https://a.b/c.ics"));
+        assert_eq!(fetch_url("ftp://a.b/c.ics"), None);
+        assert_ne!(link_cache("https://a/1.ics"), link_cache("https://a/2.ics"));
     }
 
     #[test]

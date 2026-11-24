@@ -464,7 +464,9 @@ impl Sharing {
                     self.store_ask("installed", json!({}), p);
                 } else {
                     let q = query.trim_start();
-                    let q = if q.len() >= 4 && q[..4].eq_ignore_ascii_case("aur:") { q[4..].trim_start() } else { &query };
+                    // (get: never a slice inside a character, "日本" or "café"
+                    // panicked the sharing host; audit #204)
+                    let q = if q.get(..4).is_some_and(|p| p.eq_ignore_ascii_case("aur:")) { q[4..].trim_start() } else { &query };
                     let sources = if filter == "all" { json!(["repo", "flathub"]) } else { json!([filter]) };
                     self.store_ask("search", json!({"q": q, "limit": 40, "sources": sources}), p);
                 }

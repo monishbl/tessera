@@ -822,6 +822,8 @@ impl Service for Sharing {
     }
 
     fn start(&mut self, h: &mut Host) {
+        // (a mirror the shell before this one left running: stopped; audit #127)
+        self.mirror_left_over();
         self.cfg = h.cfg().clone();
         // the readings it follows (the focused screen, what plays, Bluetooth)
         h.st.shell.want("hypr");
@@ -1017,6 +1019,9 @@ impl Service for Sharing {
         self.link.job.stop();
         self.cast.session.stop();
         self.cast.browser.stop();
+        // (the screen stops going to the TV with the shell: a mirror kept on
+        // unseen, with nothing left to stop it; audit #127)
+        self.mirror_stop();
         self.mirror.watch.kept.stop();
         self.phone.watch.kept.stop();
         self.fast.watch.kept.stop();

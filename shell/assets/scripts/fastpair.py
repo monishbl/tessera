@@ -109,6 +109,10 @@ def device_vendor(d):
     return int(m.group(1), 16) if m else None
 
 
+# The audio profiles connected after pairing: A2DP sink, HFP, HSP
+CONNECT_UUIDS = ("0000110b-0000-1000-8000-00805f9b34fb", "0000111e-0000-1000-8000-00805f9b34fb", "00001108-0000-1000-8000-00805f9b34fb")
+
+
 def pick_known(devices, advert):
     """Earbuds paired with this computer already, among devices [(path,
     Device1 props)], that the Fast Pair advert `advert` (Device1 props) comes
@@ -123,9 +127,8 @@ def pick_known(devices, advert):
     for p, d in devices:
         if d.get("Paired") and str(d.get("Address", "")).upper() == address:
             return p
-    for p, d in paired:
-        if name and name in (d.get("Alias"), d.get("Name")):
-            return p
+    # (never by name alone: any radio can advertise your earbuds' name, and
+    # its "Pair again" removed your real pairing for the stranger's; audit #128)
     for p, d in paired:
         if address and str(d.get("Address", "")).upper()[-8:] == address[-8:]:
             return p
@@ -145,21 +148,18 @@ def pick_twin(devices, name, address, fallback=False):
     and classic sides addresses that differ only at the front). With
     `fallback` (the scan is over), the one audio device in pairing mode
     that's close by, when there's exactly one."""
-    name = real_name(name)
+    # (by address only: a name, or "the one audio device close by", is what
+    # any stranger in range can copy, and Connect paired, trusted and
+    # connected it; audit #128. `name` and `fallback` are kept for callers)
     tail = (address or "").upper()[-8:]
-    near = []
     for path, d in devices:
         if d.get("Paired") or not str(d.get("Address", "")).strip():
             continue
         if not is_audio(d):
             continue
-        if name and name in (d.get("Alias"), d.get("Name")):
-            return path
         if tail and str(d.get("Address", "")).upper()[-8:] == tail:
             return path
-        if (d.get("RSSI") or -127) >= -70:
-            near.append(path)
-    return near[0] if fallback and len(near) == 1 else None
+    return None
 
 
 # The advertisement monitor: Fast Pair adverts are service data (AD type
@@ -514,14 +514,39 @@ class Watcher:
             if not target:
                 raise RuntimeError("Couldn't find the earbuds. Hold the button on the case until the light flashes, then try again." if path
                                    else "The earbuds went out of range. Open the case near the computer and try again.")
-            self.pair(target)
-            self.call(target, "org.freedesktop.DBus.Properties", "Set", (dev, "Trusted", self.GLib.Variant("b", True)), "(ssv)")
-            self.call(target, dev, "Connect", timeout=30000)
-            return {"ok": True, "error": "", "address": self.address_of(target)}
+            return self.pair_audio(target)
         except Exception as e:  # noqa: BLE001
             msg = getattr(e, "message", str(e))
             return {"ok": False, "error": "Pairing didn't finish. Put the earbuds in pairing mode and try again."
                     if "Failed" in msg or "Timeout" in msg else msg.split(":")[-1].strip()}
+
+    def pair_audio(self, target):
+        """Pairs TARGET as earbuds: never trusted by itself, refused (and
+        unpaired again) when it also offers a keyboard or mouse, and only its
+        audio profiles connected (audit #128: Connect connected every
+        profile a stranger's device claimed, a keyboard's included)"""
+        dev = "org.bluez.Device1"
+        self.pair(target)
+        props = self.call(target, "org.freedesktop.DBus.Properties", "GetAll", (dev,), "(s)")[0]
+        uuids = [str(u).lower() for u in props.get("UUIDs", [])]
+        if any(u.startswith(("00001124-", "00001812-")) for u in uuids):
+            if self.adapter:
+                try:
+                    self.call(self.adapter, "org.bluez.Adapter1", "RemoveDevice", (target,), "(o)")
+                except Exception:  # noqa: BLE001
+                    pass
+            return {"ok": False, "error": "That device also says it's a keyboard or mouse, so it wasn't connected. "
+                                          "If it's yours, pair it in Bluetooth settings."}
+        audio = [u for u in CONNECT_UUIDS if u in uuids]
+        if audio:
+            for u in audio:
+                try:
+                    self.call(target, dev, "ConnectProfile", (u,), "(s)", timeout=30000)
+                except Exception:  # noqa: BLE001
+                    continue
+        else:
+            self.call(target, dev, "Connect", timeout=30000)
+        return {"ok": True, "error": "", "address": self.address_of(target)}
 
     def address_of(self, path):
         try:
@@ -574,10 +599,7 @@ class Watcher:
         if not target:
             return {"ok": False, "error": "Couldn't find the earbuds. Hold the button on the case until the light flashes, then pair them in Bluetooth settings."}
         try:
-            self.pair(target)
-            self.call(target, "org.freedesktop.DBus.Properties", "Set", (dev, "Trusted", self.GLib.Variant("b", True)), "(ssv)")
-            self.call(target, dev, "Connect", timeout=30000)
-            return {"ok": True, "error": "", "address": self.address_of(target)}
+            return self.pair_audio(target)
         except Exception as e:  # noqa: BLE001
             msg = getattr(e, "message", str(e))
             return {"ok": False, "error": "Pairing didn't finish. Put the earbuds in pairing mode and try again."

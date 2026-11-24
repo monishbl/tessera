@@ -246,7 +246,13 @@ class QuickShareService:
                 pass
         if self.server:
             self.server.close()
-            await self.server.wait_closed()
+            # (closed: no new connections. Not waited for whole: since Python
+            # 3.12 that waits for every accepted connection, a transfer under
+            # way included, and the command loop stopped behind it; audit #198)
+            try:
+                await asyncio.wait_for(self.server.wait_closed(), 1)
+            except (asyncio.TimeoutError, TimeoutError):
+                pass
             self.server = None
         self.port = 0
 
@@ -429,9 +435,16 @@ class QuickShareService:
             self.emit({"ev": "failed", "session": sid, "dir": "in", "message": "Cancelled" if entry.get("cancelled") else f"{sender} cancelled"})
         except asyncio.CancelledError:
             raise
-        except (ProtocolError, TransportClosed, OSError, ValueError, asyncio.TimeoutError) as e:
-            self.emit({"ev": "failed", "session": sid, "dir": "in",
-                       "message": f"The transfer from {sender} stopped: {e or 'the connection was lost'}."})
+        except (ProtocolError, TransportClosed, OSError, ValueError, asyncio.TimeoutError, Exception) as e:
+            if entry.get("answer") is None:
+                # (nothing was ever offered: a port scan, a stranger's idle
+                # connection. Ended quietly, in the log only: it raised an
+                # alert with a name of the stranger's choosing; audit #132)
+                self._step(f"{sid}: a connection ended before any offer ({type(e).__name__})")
+                self.emit({"ev": "ended", "session": sid, "dir": "in", "reason": ""})
+            else:
+                self.emit({"ev": "failed", "session": sid, "dir": "in",
+                           "message": f"The transfer from {sender} stopped: {e or 'the connection was lost'}."})
         finally:
             self.sessions.pop(sid, None)
             await conn.close()
@@ -861,6 +874,9 @@ class QuickShareService:
                        if conn is None else f"Sending to {name} stopped: {e or 'the connection was lost'}."})
         except (ProtocolError, TransportClosed, ValueError) as e:
             self.emit({"ev": "failed", "session": sid, "dir": "out", "message": f"Sending to {name} stopped: {e}."})
+        except Exception as e:  # noqa: BLE001 (no send ends without a last word: the item waited for ever; audit #133)
+            self._step(f"{sid}: send stopped on {type(e).__name__}: {e}")
+            self.emit({"ev": "failed", "session": sid, "dir": "out", "message": f"Sending to {name} stopped ({type(e).__name__})."})
         finally:
             self.sessions.pop(sid, None)
             if conn:

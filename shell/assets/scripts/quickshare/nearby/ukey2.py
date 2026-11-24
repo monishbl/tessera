@@ -24,7 +24,9 @@ P256_SHA512 = ukey.P256_SHA512
 
 
 class HandshakeError(Exception):
-    """The other side broke the protocol (the connection can't go on)."""
+    """The other side broke the protocol (the connection can't go on).
+    connection.py raises it on as a ProtocolError, so every transfer that
+    meets one ends with "failed" (audit #133)"""
 
 
 def hkdf(ikm, salt, info, length=32):

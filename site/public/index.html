@@ -608,7 +608,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space
   <section class="feature wrap" id="install">
     <header class="reveal">
       <h2>One line. Two minutes.</h2>
-      <p class="sub">It runs on its own console. Your ~/.config and usual session aren't touched.</p>
+      <p class="sub">It runs on its own console, and your ~/.config and usual session aren't touched. It does install its packages, add a "Tessera" entry to your login screen and turn on BlueZ's experimental features (battery levels for headphones).</p>
     </header>
     <div class="install reveal">
       <div class="cmd">
@@ -675,7 +675,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space
       </details>
       <details>
         <summary>How do I remove it?</summary>
-        <div class="ans"><p>Delete the <code class="inline">~/tessera</code> folder. Nothing else was changed.</p></div>
+        <div class="ans"><p>Run <code class="inline">~/tessera/uninstall.sh</code>: it takes out the login screen's entry, the Bluetooth setting and anything else Tessera added, then you can delete the <code class="inline">~/tessera</code> folder. The packages it installed stay; remove them with pacman if you like.</p></div>
       </details>
     </div>
   </section>

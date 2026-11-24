@@ -149,6 +149,10 @@ class Connection:
                 await self._handshake_server()
         except asyncio.TimeoutError as e:
             raise ProtocolError("the other device stopped answering while connecting") from e
+        except ukey2.HandshakeError as e:
+            # (a busy phone's ALERT, another cipher, a damaged frame: a send
+            # that met one never ended, the item waiting and the ports open)
+            raise ProtocolError(f"the other device ended the secure handshake ({e})") from e
         self._keepalive = asyncio.ensure_future(self._keepalive_loop())
 
     async def _read_plain(self):
@@ -352,7 +356,11 @@ class Connection:
             # (bwu_manager.cc: enable_encryption = !supports_disabling ||
             # !local_supports_disabling), and says so in the introduction.
             # A phone that offers it doesn't encrypt there, whatever we say
-            plain = bool(info.supports_disabling_encryption)
+            # Never on the shared Wi-Fi (everyone on it could read and
+            # inject frames): there this side says no, and both encrypt
+            # (enable_encryption = !theirs || !ours); a phone's own hotspot or
+            # Wi-Fi Direct group is WPA2 between the two alone (audit #131)
+            plain = bool(info.supports_disabling_encryption) and new.medium in ("wifi_direct", "wifi_hotspot")
             intro = BWU.ClientIntroduction(endpoint_id=self.endpoint_id, supports_disabling_encryption=plain)
             if plain:
                 self._plain.add(new)
@@ -415,8 +423,9 @@ class Connection:
             if who != self.remote_id:
                 raise ProtocolError("someone else connected to the upgrade path")
             self._log(f"← CLIENT_INTRODUCTION [{new.medium}]")
-            if intro.v1.bandwidth_upgrade_negotiation.client_introduction.supports_disabling_encryption:
-                self._plain.add(new)  # (it asked for it: Nearby's hosts go along)
+            # (this side offered supports_disabling_encryption = False, so the
+            # channel stays encrypted whatever the introduction says: both
+            # sides must allow it; audit #131)
             await new.write_frame(bwu_frame(BWU.CLIENT_INTRODUCTION_ACK,
                                             client_introduction_ack=BWU.ClientIntroductionAck()).SerializeToString())
             self._log(f"→ CLIENT_INTRODUCTION_ACK [{new.medium}]")

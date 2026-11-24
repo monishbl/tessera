@@ -101,9 +101,18 @@ export function issueBody(r, id, origin) {
     return parts.join("\n\n");
 }
 
+// An address's bucket: IPv6 by its /64 (one host owns all of it), IPv4 whole
+function rateKey(ip) {
+    if (!ip.includes(":"))
+        return ip;
+    const parts = ip.split("::")[0].split(":");
+    const full = ip.includes("::") ? parts.concat(Array(8).fill("0")).slice(0, 4) : ip.split(":").slice(0, 4);
+    return full.map(p => p || "0").join(":") + "::/64";
+}
+
 async function limited(env, ip) {
     const hour = Math.floor(Date.now() / 3600000);
-    const bucket = await sha256((env.RATE_SALT ?? "tessera") + "|" + ip + "|" + hour);
+    const bucket = await sha256((env.RATE_SALT ?? "tessera") + "|" + rateKey(ip) + "|" + hour);
     await env.DB.prepare("DELETE FROM rate WHERE hour < ?").bind(hour - 24).run();
     const row = await env.DB.prepare("INSERT INTO rate (bucket, hour, count) VALUES (?, ?, 1) ON CONFLICT(bucket) DO UPDATE SET count = count + 1 RETURNING count").bind(bucket, hour).first();
     return (row?.count ?? 1) > PER_HOUR;
@@ -128,7 +137,23 @@ async function fileIssue(env, r, id, origin) {
     return (await res.json()).html_url ?? null;
 }
 
+// Reports filed as issues in an hour, from everyone: past it they're kept, not filed
+const GLOBAL_PER_HOUR = 60;
+
+async function overGlobal(env) {
+    const hour = Math.floor(Date.now() / 3600000);
+    const row = await env.DB.prepare("INSERT INTO rate (bucket, hour, count) VALUES (?, ?, 1) ON CONFLICT(bucket) DO UPDATE SET count = count + 1 RETURNING count")
+        .bind(await sha256((env.RATE_SALT ?? "tessera") + "|global|" + hour), hour).first();
+    return (row?.count ?? 1) > GLOBAL_PER_HOUR;
+}
+
 async function create(request, env) {
+    // (Tessera sends JSON and no Origin: a web page's fetch made its visitors
+    // file reports from their own addresses; audit #135)
+    if (!(request.headers.get("Content-Type") ?? "").toLowerCase().startsWith("application/json"))
+        return fail(415, "Reports are sent as JSON.");
+    if (request.headers.get("Origin") || (request.headers.get("Sec-Fetch-Site") ?? "none") === "cross-site")
+        return fail(403, "Reports are sent from Tessera, not from a web page.");
     const length = Number(request.headers.get("Content-Length") ?? 0);
     if (length > MAX_BODY)
         return fail(413, "The report is too large. Untick the screenshot or the log, then send again.");
@@ -149,7 +174,8 @@ async function create(request, env) {
         .bind(id, Date.now(), r.title, r.happened, r.steps, r.expected, r.version, JSON.stringify(r.sysinfo), r.log,
             r.screenshot ? r.screenshot.bytes : null, r.screenshot ? r.screenshot.type : null)
         .run();
-    const issue = await fileIssue(env, r, id, new URL(request.url).origin).catch(() => null);
+    // (past the hour's cap for everyone: kept here, not filed on GitHub)
+    const issue = await overGlobal(env) ? null : await fileIssue(env, r, id, new URL(request.url).origin).catch(() => null);
     if (issue)
         await env.DB.prepare("UPDATE reports SET issue_url = ? WHERE id = ?").bind(issue, id).run();
     return json({ ok: true, id, issue_url: issue }, 201);

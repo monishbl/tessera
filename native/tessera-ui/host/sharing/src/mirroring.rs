@@ -118,6 +118,8 @@ impl Sharing {
         }
         if r["ok"].as_bool().unwrap_or(false) {
             self.mirror.stream = js(&r["stream"]);
+            // (noted, so a shell started after a crash stops it: audit #127)
+            let _ = std::fs::write(mirror_note(), &self.mirror.stream);
         } else {
             self.mirror.target.clear();
             self.mirror.error = r["error"].as_str().filter(|e| !e.is_empty()).unwrap_or("The TV didn't answer.").to_string();
@@ -128,8 +130,21 @@ impl Sharing {
             let script = self.script("screen-mirror.py");
             crate::proc::detach(&["python3", "-I", &script, "stop", &self.mirror.stream.clone()]);
         }
+        let _ = std::fs::remove_file(mirror_note());
         self.mirror.stream.clear();
         self.mirror.target.clear();
+    }
+    /// A mirror the shell before this one left streaming (it quit or
+    /// crashed mid-mirror, and nothing showed the screen still going to the
+    /// TV): stopped at start
+    pub fn mirror_left_over(&mut self) {
+        let Ok(stream) = std::fs::read_to_string(mirror_note()) else { return };
+        let stream = stream.trim().to_string();
+        if !stream.is_empty() && self.mirror.stream.is_empty() {
+            let script = self.script("screen-mirror.py");
+            crate::proc::detach(&["python3", "-I", &script, "stop", &stream]);
+        }
+        let _ = std::fs::remove_file(mirror_note());
     }
     pub fn protocol_name(p: &str) -> &'static str {
         match p {
@@ -151,4 +166,9 @@ impl Sharing {
             "target": self.mirror.target, "targetName": self.mirror_target_name(), "state": self.mirror_state(), "starting": self.mirror_starting(),
             "installing": self.upd.installing("mirror"), "installError": self.mirror.install_error})
     }
+}
+
+/// Where the stream a mirror runs is noted (the runtime folder: gone with the session)
+fn mirror_note() -> std::path::PathBuf {
+    tessera_core::util::xdg("XDG_RUNTIME_DIR", ".cache").join("tessera-mirror-stream")
 }

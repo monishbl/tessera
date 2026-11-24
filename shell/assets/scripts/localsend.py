@@ -27,6 +27,7 @@ import os
 import platform
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import tempfile
 import secrets
@@ -417,18 +418,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if name in ("", ".", ".."):
             name = "file"
         path = None
+        # (written to a hidden part file, given its name only once every
+        # byte is there: a receive cut by the shell quitting left a truncated
+        # file under the real name, looking finished; audit #130)
+        part = os.path.join(DOWNLOADS, ".%s.localsend-part" % secrets.token_hex(8))
         try:
-            base, ext = os.path.splitext(name)
-            for n in range(10000):
-                candidate = os.path.join(DOWNLOADS, name if n == 0 else "%s (%d)%s" % (base, n, ext))
-                try:
-                    out = open(candidate, "xb")
-                    path = candidate
-                    break
-                except FileExistsError:
-                    continue
-            if path is None:
-                raise OSError("No free destination name")
+            os.makedirs(DOWNLOADS, exist_ok=True)
+            out = os.fdopen(os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb")
+            with parts_lock:
+                PARTS.add(part)
             left, last = length, 0
             with out:
                 while left:
@@ -452,6 +450,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     if time.monotonic() - last > .3:
                         last = time.monotonic()
                         emit("progress", session=sid, dir="in", done=done, total=total, name=name)
+            path = publish_part(part, name)
             with session_lock:
                 if s["cancelled"]:
                     raise OSError("Cancelled")
@@ -461,9 +460,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     sessions.pop(sid, None)
                     emit("finished", session=sid, dir="in", paths=s["paths"], **{"from": s["from"]})
         except (OSError, ValueError):
-            if path:
-                try: os.unlink(path)
-                except FileNotFoundError: pass
+            for p in (part, path):
+                if p:
+                    try: os.unlink(p)
+                    except FileNotFoundError: pass
             cancel_incoming(sid, "Transfer interrupted or could not be saved")
             try: self.reply(500)
             except OSError: pass
@@ -624,12 +624,67 @@ def send(to, paths):
 
 
 # ── Commands ─────────────────────────────────────────────────────────────
+
+# Part files of receives under way: removed when the helper ends (the
+# shell quit, SIGTERM) before they were finished
+PARTS = set()
+parts_lock = threading.Lock()
+
+
+def publish_part(part, name):
+    """The finished part under a free name in Downloads (a hard link only
+    succeeds on a free name; a drive without them gets a rename)"""
+    base, ext = os.path.splitext(name)
+    try:
+        for n in range(10000):
+            candidate = os.path.join(DOWNLOADS, name if n == 0 else "%s (%d)%s" % (base, n, ext))
+            try:
+                os.link(part, candidate)
+            except FileExistsError:
+                continue
+            except OSError:
+                if os.path.lexists(candidate):
+                    continue
+                os.rename(part, candidate)
+                return candidate
+            os.chmod(candidate, 0o644)
+            os.unlink(part)
+            return candidate
+        raise OSError("No free destination name")
+    finally:
+        with parts_lock:
+            PARTS.discard(part)
+
+
+def drop_parts():
+    with parts_lock:
+        for p in list(PARTS):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        PARTS.clear()
+
+
+def sweep_parts():
+    """Part files a helper before this one left (a crash, a power cut): gone after a day"""
+    try:
+        for n in os.listdir(DOWNLOADS):
+            p = os.path.join(DOWNLOADS, n)
+            if n.endswith(".localsend-part") and time.time() - os.path.getmtime(p) > 86400:
+                os.unlink(p)
+    except OSError:
+        pass
+
 def main():
     try:
         configure_tls()
     except (OSError, subprocess.SubprocessError, ssl.SSLError):
         emit("error", message="Could not initialize encrypted sharing. Check openssl and private state storage.")
         return
+    sweep_parts()
+    # (SIGTERM from the shell: unfinished part files go, then out)
+    signal.signal(signal.SIGTERM, lambda *_: (drop_parts(), os._exit(0)))
     threading.Thread(target=expire_sessions, daemon=True).start()
     threading.Thread(target=listen, daemon=True).start()
     threading.Thread(target=serve, daemon=True).start()
@@ -663,6 +718,7 @@ def main():
                 ev = answers.get(s["id"])
                 if ev:
                     ev.set()
+    drop_parts()
     os._exit(0)  # stdin closed: the shell quit
 
 

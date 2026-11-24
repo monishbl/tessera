@@ -17,6 +17,7 @@ over the network (MICE, Windows' way), and Chromecast.
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -68,7 +69,30 @@ def has_owner(conn):
         return False
 
 
+class Stopped(BaseException):
+    """SIGTERM or SIGHUP: the shell stopped watching (closed the picker, quit)"""
+
+
+def stopped(*_):
+    raise Stopped()
+
+
+def die_with_parent():
+    """In the daemon, before exec: it ends when this watcher does, even
+    killed (PR_SET_PDEATHSIG)"""
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(1, signal.SIGTERM)
+    except OSError:
+        pass
+
+
 def watch():
+    # (the daemon this started goes with the watcher: SIGTERM ended Python
+    # without its finally, and gnome-network-displays-daemon stayed until
+    # logout, looking for TVs; audit #134)
+    signal.signal(signal.SIGTERM, stopped)
+    signal.signal(signal.SIGHUP, stopped)
     conn = bus()
     daemon = None
     if not has_owner(conn):
@@ -76,7 +100,7 @@ def watch():
         if not exe:
             print(json.dumps({"displays": [], "error": "Screen mirroring needs gnome-network-displays."}), flush=True)
             return 1
-        daemon = subprocess.Popen([exe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        daemon = subprocess.Popen([exe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=die_with_parent)
         for _ in range(50):
             if has_owner(conn):
                 break
@@ -85,6 +109,8 @@ def watch():
     last = None
     try:
         while True:
+            if os.getppid() == 1:
+                return 0  # (the shell that started it is gone)
             try:
                 now = displays(conn)
             except Exception:  # noqa: BLE001
@@ -95,6 +121,8 @@ def watch():
             if daemon and daemon.poll() is not None:
                 return 1
             time.sleep(1.5)
+    except Stopped:
+        return 0
     finally:
         if daemon and daemon.poll() is None:
             daemon.terminate()

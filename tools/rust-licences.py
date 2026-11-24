@@ -21,7 +21,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCKS = ("native/tessera-ui/Cargo.lock", "native/tessera-events/Cargo.lock")
-OURS = re.compile(r"^(tessera|irice)[-_]")
+OURS = re.compile(r"^tessera[-_]")
 LICENCE_FILES = ("LICENSE", "LICENSE-MIT", "LICENSE-APACHE", "LICENSE.md", "LICENSE.txt", "COPYING", "LICENSE-BSD", "LICENSE-ZLIB")
 
 

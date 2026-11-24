@@ -216,6 +216,7 @@ class Share:
         self.strangers = 0
         self.received = 0
         self.incoming = 0  # bytes of uploads under way (counted against the free space)
+        self.parts = set()  # the hidden part files of uploads under way (removed if the share ends first)
         self.stop = threading.Event()
         self.lock = threading.Lock()
 
@@ -362,6 +363,7 @@ def handler_for(share):
                     return self._text(507, "That computer doesn't have room for this file. Free some space on it, then try again.")
                 tmp = os.path.join(share.folder, f".tessera-incoming-{secrets.token_hex(6)}.part")
                 fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+                share.parts.add(tmp)
                 share.received += 1
                 share.incoming += length
             done = 0
@@ -386,6 +388,7 @@ def handler_for(share):
             finally:
                 with share.lock:
                     share.incoming -= length
+                    share.parts.discard(tmp)
             emit({"ev": "received", "paths": [path]})
             self._text(200, "OK")
 
@@ -437,6 +440,16 @@ def main(argv):
     share = Share(mode, token, computer=name or socket.gethostname(), **share_args)
     # Ports the firewall lets in meanwhile (SharingPorts.qml, "links"):
     # Cast's file port when it isn't casting, else the faster-link one
+    # (part files a share before this one left, a crash or a power cut mid
+    # upload: gone after a day)
+    if share.folder and os.path.isdir(share.folder):
+        for n in os.listdir(share.folder):
+            p = os.path.join(share.folder, n)
+            try:
+                if n.startswith(".tessera-incoming-") and n.endswith(".part") and time.time() - os.path.getmtime(p) > 86400:
+                    os.unlink(p)
+            except OSError:
+                pass
     server = None
     for port in ports_to_try(bool(os.environ.get("TESSERA_LINKSHARE_HOST"))):
         try:
@@ -471,8 +484,22 @@ def main(argv):
     threading.Thread(target=watch_stdin, daemon=True).start()
     signal.signal(signal.SIGTERM, lambda *_: share.stop.set())  # (the shell ends it: still tidy up)
     why = "closed" if share.stop.wait(LIFETIME) else "expired"
+    # (an upload under way when the time runs out finishes first, an hour at
+    # most; it was cut, with only "expired" said; audit #129)
+    if why == "expired":
+        end = time.time() + 3600
+        while share.incoming > 0 and time.time() < end and not share.stop.wait(5):
+            pass
     server.shutdown()
     server.server_close()
+    # (part files of uploads cut by the close: the handler threads die with
+    # the process, never reaching their own clean-up)
+    with share.lock:
+        for p in list(share.parts):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
     try:
         os.unlink(qr)
     except OSError:
