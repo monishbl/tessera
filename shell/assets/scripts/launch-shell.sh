@@ -172,6 +172,12 @@ rollback_ui() {
     fi
     python3 -I "$CHECKOUT/tools/native-install.py" rollback --json >/dev/null 2>&1
 }
+# Quickshell is there and answers (the QML fallback can start)
+qml_runs() {
+    local q
+    q=$(command -v "$QS" 2>/dev/null) || return 1
+    timeout 5 "$q" --version >/dev/null 2>&1
+}
 standalone_ui() {
     [[ "${TESSERA_STANDALONE:-}" == 0 ]] && return 1
     if [[ "${TESSERA_STANDALONE:-}" != 1 ]]; then
@@ -200,6 +206,24 @@ sys.exit(1 if off else 0)' "$c" 2>/dev/null && return 1
         if (( $(head -1 "$STARTS" 2>/dev/null || echo 0) >= 2 )) && rollback_ui; then
             echo "launch-shell: the updated tessera-ui didn't stay up twice: back to the previous build" >&2
             rm -f "$STARTS"
+        fi
+        # (the QML shell only when it can start at all: a bundle install may
+        # not have Quickshell, and a Qt update breaks a frozen build. Else the
+        # Rust shell again, said, after a wait that grows each time; audit #98)
+        if (( $(head -1 "$STARTS" 2>/dev/null || echo 0) >= 2 )) && ! qml_runs; then
+            local tries waited rf step
+            rf="$(dirname "$STARTS")/rust-retries"
+            # (counted per login, as the starts are)
+            [[ "$(sed -n 2p "$rf" 2>/dev/null)" == "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] || rm -f "$rf"
+            tries=$(( $(head -1 "$rf" 2>/dev/null || echo 0) + 1 ))
+            printf '%s\n%s\n' "$tries" "${HYPRLAND_INSTANCE_SIGNATURE:-}" >"$rf" 2>/dev/null
+            step=${TESSERA_SHELL_RETRY_STEP:-30}
+            waited=$(( tries * step > 300 ? 300 : tries * step ))
+            echo "launch-shell: tessera-ui didn't stay up twice and the QML shell can't start: tessera-ui again in ${waited}s" >&2
+            notify-send -a Tessera -u critical "Tessera's shell keeps stopping" \
+                "The fallback shell (Quickshell) isn't available, so Tessera tries again in ${waited} seconds. Settings → Report a Bug has the crash." 2>/dev/null &
+            rm -f "$STARTS"
+            sleep "$waited"
         fi
         if (( $(head -1 "$STARTS" 2>/dev/null || echo 0) >= 2 )); then
             echo "launch-shell: tessera-ui didn't stay up twice: the QML shell this time ($STARTS)" >&2

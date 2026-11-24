@@ -65,21 +65,25 @@ def main():
             done["armed"] = True  # plugged in: ready for the next time
             return
         if done["armed"] and should_sleep(p, s, args.sleep_at):
-            done["armed"] = False
             # (the shell's own "Battery empty" says the same: power_policy.rs
-            # battery_alert; while this guard runs, it's the only one that does)
-            subprocess.run(["notify-send", "-u", "critical", "-a", "Tessera", "-i", "battery-caution",
-                            # (the battery's one live entry: x-tessera-key, live.rs)
-                            "-h", "string:x-tessera-key:battery", "-h", "int:x-tessera-severity:3", "Battery empty",
-                            f"{p:.0f}% left · sleeping now to keep your work"],
-                           check=False, timeout=5)
+            # battery_alert; while this guard runs, it's the only one that does).
+            # Never waited for: a frozen notification server, or no
+            # notify-send at all, must not stop the sleep (audit #96)
+            try:
+                subprocess.Popen(["notify-send", "-u", "critical", "-a", "Tessera", "-i", "battery-caution",
+                                  # (the battery's one live entry: x-tessera-key, live.rs)
+                                  "-h", "string:x-tessera-key:battery", "-h", "int:x-tessera-severity:3", "Battery empty",
+                                  f"{p:.0f}% left · sleeping now to keep your work"],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            except (OSError, subprocess.SubprocessError) as e:
+                print(f"couldn't say it: {e}", file=sys.stderr)
             try:
                 login = Gio.DBusProxy.new_sync(bus, Gio.DBusProxyFlags.NONE, None, "org.freedesktop.login1",
                                                "/org/freedesktop/login1", "org.freedesktop.login1.Manager")
                 login.call_sync("Suspend", GLib.Variant("(b)", (False,)), Gio.DBusCallFlags.NONE, 10000, None)
+                done["armed"] = False  # (only once it slept: a failed try is tried again)
             except GLib.Error as e:
                 print(f"couldn't sleep: {e.message}", file=sys.stderr)
-                done["armed"] = True
 
     device.connect("g-properties-changed", check)
     check()

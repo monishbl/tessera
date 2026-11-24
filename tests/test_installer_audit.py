@@ -425,7 +425,8 @@ class LaunchFallback(Temp):
             self.mark.unlink()
         script = script or self.checkout / "shell/assets/scripts/launch-shell.sh"
         subprocess.run(["bash", str(script), "-c", "tessera"], env=dict(self.env, **env), capture_output=True, text=True, timeout=30)
-        return self.mark.read_text().splitlines() if self.mark.exists() else []
+        # (qs --version: the check that the QML fallback can start at all)
+        return [l for l in self.mark.read_text().splitlines() if l != "qml --version"] if self.mark.exists() else []
 
     def starts(self, n=None, sig=SIG):
         f = self.state / "standalone-starts"
@@ -448,6 +449,13 @@ class LaunchFallback(Temp):
         # a new login tries Rust again
         self.assertEqual(self.launch(HYPRLAND_INSTANCE_SIGNATURE="session-two"), ["rust --standalone"])
         self.assertFalse((self.state / "fallback").exists())
+
+    def test_without_quickshell_the_rust_shell_is_tried_again(self):
+        # (audit #98: the QML fallback picked for the rest of the login, though it couldn't start)
+        self.fake("qs", "exit 127\n")
+        self.starts(2)
+        self.assertEqual(self.launch(TESSERA_SHELL_RETRY_STEP="0"), ["rust --standalone"])
+        self.assertEqual((self.state / "rust-retries").read_text().splitlines(), ["1", self.SIG])
 
     def test_turned_off_or_forbidden_is_the_qml_shell(self):
         self.assertEqual(self.launch(TESSERA_STANDALONE="0"), ["qml -c tessera"])

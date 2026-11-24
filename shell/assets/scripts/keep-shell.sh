@@ -25,6 +25,14 @@ running() {
         { tr '\0' '\n' <"/proc/$p/environ"; } 2>/dev/null | grep -qx "HYPRLAND_INSTANCE_SIGNATURE=$SIG" || continue
         tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -q -e '--standalone' && return 0
     done
+    # A launcher of this session still getting ready (an update's finish
+    # step at login, a wait before trying again) is a shell starting: a
+    # second one started a shell from a half-installed tree and counted a
+    # crash that wasn't (audit #190)
+    for p in $(pgrep -f 'scripts/launch-shell\.sh'); do
+        [[ $p == "$$" ]] && continue
+        { tr '\0' '\n' <"/proc/$p/environ"; } 2>/dev/null | grep -qx "HYPRLAND_INSTANCE_SIGNATURE=$SIG" && return 0
+    done
     return 1
 }
 
