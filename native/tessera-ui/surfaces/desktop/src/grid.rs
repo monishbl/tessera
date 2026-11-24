@@ -312,7 +312,9 @@ pub fn kind_of(e: &Entry) -> &'static str {
     if e.dir {
         return "Folders";
     }
-    if e.name.len() >= 10 && e.name[..10].eq_ignore_ascii_case("screenshot") {
+    // (bytes, not a str slice: byte 10 can fall inside a character, as in
+    // "Capture d’écran" or a CJK name, and slicing there panicked; audit #4)
+    if e.name.as_bytes().get(..10).is_some_and(|p| p.eq_ignore_ascii_case(b"screenshot")) {
         return "Screenshots";
     }
     let x = e.name.rsplit('.').next().unwrap_or("").to_lowercase();
@@ -574,6 +576,11 @@ mod tests {
         assert_eq!(kind_of(&e("notes.md", false, 0)), "Documents");
         assert_eq!(kind_of(&e("x", true, 0)), "Folders");
         assert_eq!(kind_of(&e("run.sh", false, 0)), "Other");
+        // (a character across byte 10 never panics: audit #4)
+        assert_eq!(kind_of(&e("Capture d’écran 2026.png", false, 0)), "Images");
+        assert_eq!(kind_of(&e("日本語のファイル.txt", false, 0)), "Documents");
+        assert_eq!(kind_of(&e("screensho🙂.png", false, 0)), "Images");
+        assert_eq!(kind_of(&e("SCREENSHOT 🙂", false, 0)), "Screenshots");
         let list = vec![e("b.pdf", false, 1), e("a.png", false, 5), e("c.txt", false, 9), e("dir", true, 0)];
         let s = items(&list, true);
         assert_eq!(s.iter().map(|i| i.key.as_str()).collect::<Vec<_>>(), vec!["stack:Folders", "stack:Documents", "stack:Images"]);

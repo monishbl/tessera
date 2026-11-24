@@ -155,8 +155,8 @@ pub fn set_shell_glass(g: ShellGlass) -> bool {
 
 /// The glass line from the shell: {"src":"shell","kind":"glass","tone":"#rrggbb","cooldown":"keep"}
 pub fn shell_glass_from(v: &Value) -> ShellGlass {
-    let tone = v["tone"].as_str().filter(|t| t.len() >= 7 && is_hex(&t[..7])).map(|t| {
-        let c = rgbf(&t[..7]);
+    let tone = v["tone"].as_str().and_then(|t| t.get(..7)).filter(|t| is_hex(t)).map(|t| {
+        let c = rgbf(t);
         [c[0], c[1], c[2]]
     });
     let cooldown = v["cooldown"].as_str().filter(|c| ["keep", "frosted", "solid"].contains(c)).unwrap_or("keep").to_string();

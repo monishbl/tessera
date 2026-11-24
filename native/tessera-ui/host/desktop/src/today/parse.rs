@@ -26,6 +26,13 @@ fn last_word(s: &str) -> Option<(&str, &str)> {
     Some((&s[..i], s[i..].trim_start()))
 }
 
+/// The byte index just after the last character matching `f` (0 when none):
+/// the character's own length, never `i + 1`, so a multi-byte one (é, 日, 🙂)
+/// isn't cut through
+fn after_last(s: &str, f: impl Fn(char) -> bool) -> usize {
+    s.char_indices().rev().find(|&(_, c)| f(c)).map_or(0, |(i, c)| i + c.len_utf8())
+}
+
 fn strip_prefix_ci<'a>(s: &'a str, p: &str) -> Option<&'a str> {
     (s.len() >= p.len() && s.is_char_boundary(p.len()) && s[..p.len()].eq_ignore_ascii_case(p)).then(|| &s[p.len()..])
 }
@@ -94,11 +101,11 @@ pub fn parse_quick(text: &str, now: i64) -> Option<(String, i64)> {
     let mut title_end;
     // "… in 20 min|hours"
     let ltrim = l.trim_end();
-    let unit_start = ltrim.rfind(|c: char| !c.is_ascii_alphabetic()).map_or(0, |i| i + 1);
+    let unit_start = after_last(ltrim, |c| !c.is_ascii_alphabetic());
     let unit = &ltrim[unit_start..];
     let in_match = ["min", "mins", "minute", "minutes", "h", "hr", "hrs", "hour", "hours"].contains(&unit).then_some(()).and_then(|_| {
         let before = ltrim[..unit_start].trim_end();
-        let ds = before.rfind(|c: char| !c.is_ascii_digit()).map_or(0, |i| i + 1);
+        let ds = after_last(before, |c| !c.is_ascii_digit());
         let digits = &before[ds..];
         let pre = &before[..ds];
         let pre_t = pre.trim_end();
@@ -331,6 +338,22 @@ mod tests {
         assert_eq!(parse_clock("25", now), None);
         assert_eq!(describe(5400), "1 h 30 min");
         assert_eq!(describe(45), "45 s");
+    }
+
+    #[test]
+    fn any_text_never_panics() {
+        // (audit high #3: a to-do whose last word ended in é, Devanagari, CJK or an emoji
+        // cut a character in half and took the whole Today service down)
+        let now = at(2026, 10, 6, 10, 0);
+        let words = ["Acheter du café", "call José", "दूध लाना", "buy milk 🙂", "牛乳を買う", "café in 20 min", "rendez-vous à 5pm",
+                     "🙂 in 5 hours", "x in ５ min", "tomorrow 5pm über", "naïve at 7", "in 20 minutés", "é", "🙂", " ", "",
+                     "remind me to café at 5pm", "ünïcödé tomorrow at 19:45", "in 🙂 min", "1é in 2 h"];
+        for w in words {
+            let _ = parse_quick(w, now);
+            let _ = parse_todo(w, now);
+        }
+        let (t, _) = parse_quick("Acheter du café in 20 min", now).unwrap();
+        assert_eq!(t, "Acheter du café");
     }
 
     #[test]
