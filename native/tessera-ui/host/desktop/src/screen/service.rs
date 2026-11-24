@@ -220,6 +220,9 @@ impl ScreenSvc {
                 self.captured(h, a[0].as_str().unwrap_or(""), scr, (n(2), n(3), n(4), n(5)), frozen);
             }
             "screen.cancel" | "screen.cancelSelect" => self.cancel_select(h),
+            // (an install through Software Update ended: the system host says
+            // so, as for Face and Fingerprint; audit #41)
+            "screen.installDone" => self.install_done(h, a[0].as_str().map_or(true, |s| s == "ok"), a[1].as_str().unwrap_or("").to_string()),
             // the shell's shortcuts, menus and panels (ScreenTools.select / screenshotScreen /
             // stopRecording / recordScreen; "record" = the shortcut's start-or-stop)
             // (a second argument "pointer": a gesture opened it, so Circle to Search

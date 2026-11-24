@@ -84,6 +84,20 @@ pub fn strips(groups: &[Group], clients: &[Client], monitors: &[Monitor]) -> Vec
             if wins.len() < 2 || cur.workspace.id != m.active.id || cur.fullscreen > 0 || (cur.size.0 == 0 && cur.at.0 == 0 && cur.at.1 == 0) {
                 continue;
             }
+            // (the strip is a Top layer, above every window: where a window
+            // over the group (floating, or focused since) covers the bar, it
+            // goes, rather than draw over that window and take its clicks;
+            // audit #48)
+            let (sx, sy, sw, sh) = (cur.at.0, cur.at.1 - GAP - BAR_H, cur.size.0, BAR_H + GAP);
+            let covered = clients.iter().any(|c| {
+                let ours = wins.iter().any(|w| norm(&w.address) == norm(&c.address));
+                !ours && c.mapped && !c.hidden && c.workspace.id == cur.workspace.id
+                    && (c.floating && !cur.floating || c.focus_history_id < cur.focus_history_id)
+                    && c.at.0 < sx + sw && c.at.0 + c.size.0 > sx && c.at.1 < sy + sh && c.at.1 + c.size.1 > sy
+            });
+            if covered {
+                continue;
+            }
             out.push(Strip { output: m.name.clone(), current: norm(&g.current), windows: wins.clone(), x: cur.at.0 - m.x, y: cur.at.1 - m.y - GAP - BAR_H, w: cur.size.0 });
         }
     }
@@ -531,6 +545,23 @@ mod tests {
         let s = strips(&groups, &clients, &[m]);
         assert_eq!(s.len(), 1, "another space's group, and a group of one, have none");
         assert_eq!((s[0].x, s[0].y, s[0].w, s[0].current.as_str()), (100, 200 - 4 - 30, 800, "0xb"));
+    }
+
+    #[test]
+    fn a_window_over_the_group_hides_its_strip() {
+        // (audit #48: the Top-layer strip drew over a dialog and took its clicks)
+        let m = Monitor { id: 0, name: "DP-1".into(), x: 0, y: 0, width: 1920, height: 1080, scale: 1.0, active: WsRef { id: 1, name: "1".into() }, ..Default::default() };
+        let groups = vec![Group { current: "0xb".into(), windows: vec!["0xa".into(), "0xb".into()], locked: false }];
+        let mut clients = vec![c("0xa", 1, (100, 200), (800, 600)), c("0xb", 1, (100, 200), (800, 600))];
+        let mut dialog = c("0xf", 1, (300, 150), (400, 300));
+        dialog.mapped = true;
+        dialog.floating = true;
+        clients.push(dialog.clone());
+        assert!(strips(&groups, &clients, &[m.clone()]).is_empty());
+        dialog.at = (300, 500); // (below the bar: the strip stays)
+        clients.pop();
+        clients.push(dialog);
+        assert_eq!(strips(&groups, &clients, &[m]).len(), 1);
     }
 
     #[test]

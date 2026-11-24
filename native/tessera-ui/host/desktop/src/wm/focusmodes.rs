@@ -143,29 +143,46 @@ impl FocusModes {
     }
 
     // ── effects ──────────────────────────────────────────────────────────────
-    fn apply_effects(&mut self, h: &mut Host, m: &Value) {
-        let mut r = serde_json::Map::new();
+    /// The mode's look on, and what to put back when it ends. KEEP: the
+    /// record from a mode being replaced (your own look, which the config,
+    /// with the old mode's writes still queued, no longer says; audit #43)
+    fn apply_effects(&mut self, h: &mut Host, m: &Value, keep: Value) {
+        let mut r = keep.as_object().cloned().unwrap_or_default();
         if let Some(wp) = m["wallpaper"].as_str().filter(|s| !s.is_empty()) {
-            let w = &h.cfg()["wallpaper"];
-            r.insert("wallpaper".into(), json!({"path": w["path"], "dynamic": w["dynamic"], "live": w["live"]}));
+            if !r.contains_key("wallpaper") {
+                let w = &h.cfg()["wallpaper"];
+                r.insert("wallpaper".into(), json!({"path": w["path"], "dynamic": w["dynamic"], "live": w["live"]}));
+            }
             h.ask("wallpaper.set", json!([wp]));
+        } else if let Some(w) = r.remove("wallpaper") {
+            // (the old mode's wallpaper, which this one doesn't set: yours back)
+            Self::put_wallpaper(&w);
         }
         if let Some(a) = m["appearance"].as_str().filter(|s| !s.is_empty()) {
-            let cur = h.cfg()["appearance"]["mode"].clone();
-            if cur != a {
-                r.insert("appearance".into(), cur);
+            if r.contains_key("appearance") {
                 hx::set_cfg("appearance", "mode", json!(a));
+            } else {
+                let cur = h.cfg()["appearance"]["mode"].clone();
+                if cur != a {
+                    r.insert("appearance".into(), cur);
+                    hx::set_cfg("appearance", "mode", json!(a));
+                }
             }
+        } else if let Some(a) = r.remove("appearance") {
+            hx::set_cfg("appearance", "mode", a);
         }
         self.restore = Value::Object(r);
+    }
+    fn put_wallpaper(w: &Value) {
+        let path = if w.is_string() { w.clone() } else { w["path"].clone() };
+        hx::set_cfg("wallpaper", "path", path);
+        hx::set_cfg("wallpaper", "dynamic", if w["dynamic"].is_null() { json!("off") } else { w["dynamic"].clone() });
+        hx::set_cfg("wallpaper", "live", if w["live"].is_null() { json!("") } else { w["live"].clone() });
     }
     fn undo_effects(&mut self) {
         let r = std::mem::replace(&mut self.restore, json!({}));
         if let Some(w) = r.get("wallpaper") {
-            let path = if w.is_string() { w.clone() } else { w["path"].clone() };
-            hx::set_cfg("wallpaper", "path", path);
-            hx::set_cfg("wallpaper", "dynamic", if w["dynamic"].is_null() { json!("off") } else { w["dynamic"].clone() });
-            hx::set_cfg("wallpaper", "live", if w["live"].is_null() { json!("") } else { w["live"].clone() });
+            Self::put_wallpaper(w);
         }
         if let Some(a) = r.get("appearance") {
             hx::set_cfg("appearance", "mode", a.clone());
@@ -177,15 +194,16 @@ impl FocusModes {
     pub fn activate(&mut self, h: &mut Host, io: &mut Io, id: &str, duration_ms: i64, from_schedule: bool) {
         let Some(m) = self.by_id(id) else { return };
         let again = self.on() && self.active == id; // same mode, new duration
-        if self.on() && !again {
-            self.undo_effects();
-        }
+        // (another mode on: its record of your look is kept, and the new
+        // mode's look goes on top; never undone and read back, which read
+        // the old mode's look as yours)
+        let keep = if self.on() && !again { std::mem::replace(&mut self.restore, json!({})) } else { json!({}) };
         self.active = id.to_string();
         self.source = if from_schedule { "schedule" } else { "manual" }.into();
         self.until = if duration_ms > 0 { now_ms() + duration_ms } else if duration_ms == -1 { Self::until_evening() } else { 0 };
         // Re-applying would overwrite what to restore with the mode's own look
         if !again {
-            self.apply_effects(h, &m);
+            self.apply_effects(h, &m, keep);
         }
         self.changed(h, io);
     }

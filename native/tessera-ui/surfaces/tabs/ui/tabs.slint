@@ -65,18 +65,20 @@ export component TabBar inherits Window {
                 background: Theme.separator;
             }
             HorizontalLayout {
-                property <length> w: min(self.preferred-width, parent.width - 36px);
+                property <length> w: min(self.preferred-width, max(0px, parent.width - (strip.tab-w >= 96px ? 36px : 12px)));
                 x: (parent.width - w) / 2;
                 width: w;
                 spacing: 6px;
-                if t.has-icon: Image {
+                // (a narrow tab drops its icon, so the title keeps the room;
+                // eight tabs left two letters of it; audit #49)
+                if t.has-icon && strip.tab-w >= 96px: Image {
                     width: 14px;
                     height: 14px;
                     source: t.icon;
                     accessible-role: none;
                 }
                 Text {
-                    max-width: strip.tab-w - 60px;
+                    max-width: max(0px, strip.tab-w - (t.has-icon && strip.tab-w >= 96px ? 60px : 24px));
                     text: t.title;
                     overflow: elide;
                     vertical-alignment: center;

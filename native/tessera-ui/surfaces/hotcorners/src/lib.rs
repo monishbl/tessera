@@ -61,6 +61,12 @@ pub fn anchor(corner: &str) -> Anchor {
 /// The monitor's current space has a fullscreen window
 pub fn fullscreen(h: &Snapshot, monitor: &str) -> bool {
     let Some(ws) = h.active.get(monitor) else { return false };
+    // (real fullscreen only: Hyprland's hasfullscreen is set for a maximized
+    // window too, and the corners went dead while anything was maximized;
+    // audit #181. The workspace's flag only when there's no window list)
+    if !h.clients.is_empty() {
+        return h.clients.iter().any(|c| c.workspace.id == *ws && c.fullscreen & 2 != 0);
+    }
     h.workspaces.iter().any(|w| w.id == *ws && w.fullscreen)
 }
 
@@ -299,6 +305,11 @@ mod tests {
         assert!(fullscreen(&h, "DP-1"));
         assert!(!fullscreen(&h, "HDMI-A-1"));
         assert!(!fullscreen(&h, "nowhere"));
+        // (a maximized window (1) isn't fullscreen (2): the corners work; audit #181)
+        h.clients = vec![crate::services::hypr::Client { workspace: crate::services::hypr::WsRef { id: 1 }, fullscreen: 1, ..Default::default() }];
+        assert!(!fullscreen(&h, "DP-1"));
+        h.clients[0].fullscreen = 2;
+        assert!(fullscreen(&h, "DP-1"));
         assert!(allowed(true, false, false));
         assert!(!allowed(true, true, false));
         assert!(!allowed(false, false, false));

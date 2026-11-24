@@ -26,6 +26,25 @@ fn last_word(s: &str) -> Option<(&str, &str)> {
     Some((&s[..i], s[i..].trim_start()))
 }
 
+/// A whole day word, as the parser names it ("mon".."sun", today, tonight,
+/// tomorrow), or None: "sunscreen", "money", "friend" are not days (audit
+/// #42: their to-dos lost the word and got a due date)
+pub fn day_word(w: &str) -> Option<&'static str> {
+    Some(match w {
+        "today" => "today",
+        "tonight" => "tonight",
+        "tomorrow" => "tomorrow",
+        "mon" | "monday" => "mon",
+        "tue" | "tues" | "tuesday" => "tue",
+        "wed" | "weds" | "wednesday" => "wed",
+        "thu" | "thur" | "thurs" | "thursday" => "thu",
+        "fri" | "friday" => "fri",
+        "sat" | "saturday" => "sat",
+        "sun" | "sunday" => "sun",
+        _ => return None,
+    })
+}
+
 /// The byte index just after the last character matching `f` (0 when none):
 /// the character's own length, never `i + 1`, so a multi-byte one (é, 日, 🙂)
 /// isn't cut through
@@ -140,7 +159,7 @@ pub fn parse_quick(text: &str, now: i64) -> Option<(String, i64)> {
                 day = w2.to_string();
                 cut = r2.len();
             } else if w2.len() >= 3 && w2.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                if let Some(i) = DAYS.iter().position(|d| w2.starts_with(d)) {
+                if let Some(i) = day_word(w2).and_then(|d| DAYS.iter().position(|x| *x == d)) {
                     if let Some((r3, w3)) = last_word(r2) {
                         if w3 == "on" {
                             dow = Some(i);
@@ -208,8 +227,7 @@ pub fn parse_todo(text: &str, now: i64) -> Parsed {
     let tl = t.to_ascii_lowercase();
     if let Some((rest0, w)) = last_word(&tl) {
         if w.chars().all(|c| c.is_ascii_alphabetic()) {
-            let names = ["today", "tonight", "tomorrow", "mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-            if let Some(name) = names.iter().find(|n| w.starts_with(**n)) {
+            if let Some(name) = day_word(w).as_ref() {
                 let mut rest = rest0;
                 if let Some((r, p)) = last_word(rest) {
                     if p == "by" || p == "on" {
@@ -354,6 +372,20 @@ mod tests {
         }
         let (t, _) = parse_quick("Acheter du café in 20 min", now).unwrap();
         assert_eq!(t, "Acheter du café");
+    }
+
+    #[test]
+    fn only_whole_day_words_are_days() {
+        // (audit #42: "buy sunscreen" was "Buy", due Sunday)
+        let now = at(2026, 10, 6, 10, 0);
+        for t in ["buy sunscreen", "send money", "call friend", "plan wedding", "pay monthly", "order satay"] {
+            let p = parse_todo(t, now);
+            assert_eq!((p.text.as_str(), p.due), (t, 0), "{t}");
+        }
+        assert!(parse_todo("call mum friday", now).due > 0);
+        assert!(parse_todo("pay rent on Tuesday", now).due > 0);
+        assert_eq!(day_word("thurs"), Some("thu"));
+        assert_eq!(day_word("sunscreen"), None);
     }
 
     #[test]

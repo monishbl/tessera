@@ -943,6 +943,12 @@ impl Service for About {
                     // told it, so their pages never refreshed and a failed
                     // install said nothing; audit #57)
                     h.ask("accounts.updatesFinished", json!([job.clone()]));
+                    // (and OCR's and Dictation's installs, which waited for a
+                    // word nobody sent: "Installing…" for ever; audit #41)
+                    let ok = if job["state"] == "done" { "ok" } else { "fail" };
+                    let why = job["error"].as_str().unwrap_or("").to_string();
+                    h.ask("screen.installDone", json!([ok, why.clone()]));
+                    h.ask("dictation.installDone", json!([ok, why]));
                     if std::mem::take(&mut self.feat_running) {
                         self.features_finished(&job);
                     } else if job["state"] == "done" && h.cfg()["features"]["offer"].as_str().unwrap_or("").is_empty() {

@@ -1425,7 +1425,11 @@ export component TodoTab {
                     font-size: Theme.material ? 14px : Theme.body;
                 }
             }
-            if th.has-hover && renaming != t.key: IconButton {
+            // (made while the row is there, shown while the row or the button
+            // itself has the pointer: made on the row's hover alone, it went
+            // away under the pointer and clicks missed; audit #180)
+            if renaming != t.key: IconButton {
+                visible: th.has-hover || self.hovered;
                 x: parent.width - self.width + 6px;
                 y: (parent.height - self.height) / 2;
                 width: 24px;

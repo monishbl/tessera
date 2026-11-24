@@ -199,6 +199,11 @@ struct Photo {
     a: String,
     b: String,
     front_a: bool,
+    /// the folder the list is of, and when it was read: another folder
+    /// (Widget Options) or a quarter of an hour reads it again, so new
+    /// pictures come and deleted ones go (audit #46)
+    folder: String,
+    listed_at: i64,
 }
 
 #[derive(Default)]
@@ -229,6 +234,8 @@ pub struct Desktop {
     // data read here
     images: HashMap<String, slint::Image>,
     pending: HashSet<String>,
+    /// which decode lane the next picture goes to
+    lane: usize,
     /// Pictures that wouldn't decode, and when (not tried again on every
     /// update: once a second with the System widget. Tried again after
     /// RETRY_FAILED_MS, or when the Desktop folder changes)
@@ -629,8 +636,12 @@ impl Desktop {
             return None;
         }
         if self.pending.insert(key.clone()) {
+            // (two lanes, taken in turn: a thread a picture decoded a desktop
+            // of photos all at once, gigabytes for a few seconds; audit #44)
+            static LANES: [tessera_core::work::Lane; 2] = [tessera_core::work::Lane::new("desktop-images-a"), tessera_core::work::Lane::new("desktop-images-b")];
+            self.lane = self.lane.wrapping_add(1);
             let to = st.shell.sender(NAME);
-            std::thread::spawn(move || {
+            LANES[self.lane % 2].run(move || {
                 let px = job();
                 to(Box::new(M::Image(key, px)));
             });
@@ -668,8 +679,11 @@ impl Desktop {
         items
             .iter()
             .enumerate()
-            .map(|(i, it)| {
-                let (c, r) = self.spots.get(&it.key).copied().unwrap_or((0, 0));
+            .filter_map(|(i, it)| {
+                // (no free spot left: not drawn, rather than all of them piled
+                // on the top-left cell over each other; audit #45. The folder
+                // has them, and Use Stacks fits them)
+                let (c, r) = self.spots.get(&it.key).copied()?;
                 let mut row = ui::DeskIcon {
                     index: i as i32,
                     key: it.key.as_str().into(),
@@ -697,7 +711,7 @@ impl Desktop {
                     row.has_pic = thumb.is_some();
                     row.pic = thumb.unwrap_or_else(|| self.file_icon(st, &e));
                 }
-                row
+                Some(row)
             })
             .collect()
     }
@@ -980,8 +994,17 @@ impl Desktop {
             }
             "photos" => {
                 let p = self.photos.entry(key.to_string()).or_default();
-                if p.list.is_empty() {
+                let now = crate::util::now_ms();
+                if p.list.is_empty() || p.folder != c.photos || now - p.listed_at > 15 * 60_000 {
+                    let moved = p.folder != c.photos;
                     p.list = files::pictures(&c.photos);
+                    p.folder = c.photos.clone();
+                    p.listed_at = now;
+                    // (another folder, or the shown picture gone: start again from this list)
+                    if moved || !p.list.contains(&p.a) {
+                        p.a.clear();
+                        p.b.clear();
+                    }
                     if !p.list.is_empty() && p.a.is_empty() {
                         p.a = p.list[pick(key, p.list.len())].clone();
                         p.front_a = true;

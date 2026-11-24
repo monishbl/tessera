@@ -90,6 +90,26 @@ impl Metrics {
     pub fn max_width(&self, dividers: &[bool]) -> f32 {
         self.pill_rest(dividers) + if self.material { 0.0 } else { self.extra() * 2.6 }
     }
+
+    /// Smaller icons when the dock wouldn't fit WIDTH (as a Mac's dock does;
+    /// 24 px at the least): with many items the pill ran off the screen and
+    /// its ends couldn't be clicked (audit #47)
+    pub fn fit(mut self, dividers: &[bool], width: f32) -> Self {
+        let avail = width - 2.0 * 16.0;
+        let w = self.max_width(dividers);
+        if width <= 0.0 || w <= avail || self.base <= 0.0 {
+            return self;
+        }
+        let f = (avail / w).max(24.0 / self.base).min(1.0);
+        self.base = (self.base * f).round();
+        self.glyph = (self.glyph * f).round();
+        self.pad = (self.pad * f).round();
+        self.corner = (self.corner * f).round();
+        self.gap = (self.gap * f).round();
+        self.bar_h = self.base + 2.0 * self.pad;
+        self.divider_w = 1.0 + 2.0 * self.gap;
+        self
+    }
 }
 
 /// One icon's place: its left edge within the pill, its size, and the
@@ -311,6 +331,18 @@ mod tests {
 
     fn glass(cfg: serde_json::Value) -> Metrics {
         Metrics::new(&Settings::read(&cfg), false)
+    }
+
+    #[test]
+    fn a_full_dock_fits_the_screen() {
+        // (audit #47: 30 items ran off a 1366 px screen)
+        let m = Metrics::new(&Settings::read(&json!({})), false);
+        let d = vec![false; 30];
+        assert!(m.max_width(&d) > 1366.0);
+        let f = m.fit(&d, 1366.0);
+        assert!(f.max_width(&d) <= 1366.0 || f.base == 24.0, "{}", f.max_width(&d));
+        let few = vec![false; 5];
+        assert_eq!(m.fit(&few, 1366.0).base, m.base);
     }
 
     #[test]

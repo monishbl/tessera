@@ -98,10 +98,21 @@ pub fn trash(path: &str) {
     });
 }
 
+/// A picture decoded with a ceiling on its memory (128 MB; image's own is
+/// 512 MB a decode, and a desktop of photos decoded them all at once;
+/// audit #44). One that's larger is skipped: its icon shows instead
+pub fn open_limited(path: &str) -> Option<image::DynamicImage> {
+    let mut r = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(128 * 1024 * 1024);
+    r.limits(limits);
+    r.decode().ok()
+}
+
 /// A thumbnail for a picture on the desktop, `px` device pixels at most
 /// (decoded on the caller's thread)
 pub fn thumbnail(path: &str, px: u32) -> Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>> {
-    let img = image::open(path).ok()?.thumbnail(px, px).to_rgba8();
+    let img = open_limited(path)?.thumbnail(px, px).to_rgba8();
     let (w, h) = img.dimensions();
     Some(slint::SharedPixelBuffer::clone_from_slice(img.as_raw(), w, h))
 }
@@ -109,7 +120,7 @@ pub fn thumbnail(path: &str, px: u32) -> Option<slint::SharedPixelBuffer<slint::
 /// A picture filling `w` × `h` (cropped to cover, as PreserveAspectCrop),
 /// for the Photos widget
 pub fn cover(path: &str, w: u32, h: u32) -> Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>> {
-    let img = image::open(path).ok()?;
+    let img = open_limited(path)?;
     let (iw, ih) = (img.width().max(1) as f32, img.height().max(1) as f32);
     let s = (w as f32 / iw).max(h as f32 / ih);
     let (cw, ch) = ((w as f32 / s).round().max(1.0) as u32, (h as f32 / s).round().max(1.0) as u32);

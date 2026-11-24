@@ -258,8 +258,13 @@ impl Dock {
         Settings::read(&st.shell.cfg)
     }
 
-    fn metrics(st: &State) -> Metrics {
-        Metrics::new(&Self::settings(st), st.shell.look.material)
+    /// The dock's sizes, made smaller when its items wouldn't fit the
+    /// narrowest screen it's on (audit #47)
+    fn metrics(&self, st: &State) -> Metrics {
+        let m = Metrics::new(&Self::settings(st), st.shell.look.material);
+        let dividers: Vec<bool> = self.items.iter().map(|i| i.divider).collect();
+        let width = self.wins.iter().map(|w| w.surface.logical_size().0).filter(|w| *w > 0).min().unwrap_or(0);
+        m.fit(&dividers, width as f32)
     }
 
     /// How icons are drawn in this look
@@ -313,7 +318,7 @@ impl Dock {
         let minimized: HashSet<String> = self.items.iter().filter(|i| i.kind == Kind::Minimized).filter_map(|i| i.windows.first().cloned()).collect();
         self.thumbs.images.retain(|a, _| minimized.contains(a));
         self.thumbs.failed.retain(|a| minimized.contains(a));
-        let px = (Self::metrics(st).base * 2.0 * self.scale.max(1.0)).ceil() as u32;
+        let px = (self.metrics(st).base * 2.0 * self.scale.max(1.0)).ceil() as u32;
         for a in &minimized {
             self.thumbs.ask(st, NAME, a, (px, px));
         }
@@ -350,7 +355,7 @@ impl Dock {
     /// The size icons are drawn at (device pixels): Glass at their largest
     /// (magnified), Material its glyph
     fn icon_px(&self, st: &State) -> u32 {
-        let m = Self::metrics(st);
+        let m = self.metrics(st);
         let logical = if m.material { m.glyph } else { m.base * m.max_scale };
         (logical * self.scale.max(1.0)).ceil() as u32
     }
@@ -399,7 +404,7 @@ impl Dock {
     /// Every window's slots, sizes, hover and auto-hide, from the items and the pointer
     fn update(&mut self, st: &mut State) {
         let s = Self::settings(st);
-        let m = Self::metrics(st);
+        let m = self.metrics(st);
         let dividers: Vec<bool> = self.items.iter().map(|i| i.divider).collect();
         let popup = self.menu.as_ref().is_some_and(|mw| mw.open) || self.stack_open;
         let windows = st.shell.get::<Windows>().cloned().unwrap_or_default();
@@ -522,7 +527,7 @@ impl Dock {
     }
 
     fn pointer(&mut self, st: &mut State, output: &str, x: f32, y: f32, on: bool) {
-        let m = Self::metrics(st);
+        let m = self.metrics(st);
         let dividers: Vec<bool> = self.items.iter().map(|i| i.divider).collect();
         let Some(w) = self.win(output) else { return };
         w.pointer = on.then_some((x, y));
@@ -643,7 +648,7 @@ impl Dock {
 
     /// The Downloads stack, pointing at an item (DockSlot: stackX; stack.rs)
     fn open_stack(&mut self, st: &mut State, output: &str, i: usize) {
-        let m = Self::metrics(st);
+        let m = self.metrics(st);
         let Some(w) = self.wins.iter().find(|w| w.output == output) else { return };
         let slot = w.slots.get(i).unwrap_or_default();
         let at = w.ui.get_pill_x() + slot.x + if m.material { m.base } else { slot.size } / 2.0;
@@ -656,7 +661,7 @@ impl Dock {
 
     fn open_menu(&mut self, st: &mut State, output: &str, i: usize) {
         let Some(it) = self.items.get(i).cloned() else { return };
-        let m = Self::metrics(st);
+        let m = self.metrics(st);
         let Some(w) = self.wins.iter().find(|w| w.output == output) else { return };
         // the screen x the menu points at: the icon's centre
         let slot = w.slots.get(i).unwrap_or_default();
@@ -809,7 +814,7 @@ impl Dock {
     /// Size and exclusive zone after a settings change
     fn reshape(&mut self, st: &mut State) {
         let s = Self::settings(st);
-        let m = Self::metrics(st);
+        let m = self.metrics(st);
         for w in &mut self.wins {
             w.surface.layer.set_exclusive_zone(m.exclusive(s.auto_hide));
             w.surface.show(0, m.window_height());
@@ -848,7 +853,7 @@ impl Part for Dock {
         if !s.enabled || self.wins.iter().any(|w| w.output == name) {
             return;
         }
-        let m = Self::metrics(st);
+        let m = self.metrics(st);
         let surface = st.prepare_surface(Self::spec(output, name, &m, &s));
         let ui = ui::Dock::new().expect("Dock");
         st.shell.apply_theme(&ui.global::<ui::Theme>());
@@ -1122,7 +1127,7 @@ impl Part for Dock {
             return;
         }
         let look = st.shell.look.clone();
-        let m = Self::metrics(st);
+        let m = self.metrics(st);
         for w in &mut self.wins {
             if !w.surface.mapped.get() {
                 continue;
