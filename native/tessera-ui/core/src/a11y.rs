@@ -12,7 +12,7 @@ use accesskit::{Action, ActionHandler, ActionRequest, ActivationHandler, Deactiv
 use i_slint_core::accessibility::{accessible_descendents, AccessibilityAction, AccessibleStringProperty, SupportedAccessibilityAction};
 use i_slint_core::input::FocusReason;
 use i_slint_core::item_tree::{ItemTreeRc, ItemTreeRef, ItemTreeWeak};
-use i_slint_core::items::{AccessibleRole, ItemRc, WindowItem};
+use i_slint_core::items::{AccessibleRole, InputType, ItemRc, TextInput, WindowItem};
 use i_slint_core::properties::PropertyTracker;
 use i_slint_core::window::WindowInner;
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
@@ -231,7 +231,11 @@ impl A11y {
             }
         }
         if let Some(v) = prop(AccessibleStringProperty::Value).filter(|v| !v.is_empty()) {
-            n.set_value(v.to_string());
+            // (a password field's text never leaves: Slint binds a TextInput's
+            // accessible-value to its text, and any client of the a11y bus
+            // could read the lock screen's or the polkit dialog's password as
+            // it was typed; audit #12. A bullet per character, as GTK does)
+            n.set_value(if is_password(&item) { mask(&v) } else { v.to_string() });
         }
         if let Some(p) = prop(AccessibleStringProperty::PlaceholderText) {
             n.set_placeholder(p.to_string());
@@ -268,9 +272,26 @@ impl A11y {
     }
 }
 
+/// A TextInput whose input-type is password
+fn is_password(item: &ItemRc) -> bool {
+    item.downcast::<TextInput>().is_some_and(|t| t.as_pin_ref().input_type() == InputType::Password)
+}
+
+/// What a password field says instead of its text
+fn mask(text: &str) -> String {
+    "•".repeat(text.chars().count())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_password_says_only_how_long_it_is() {
+        assert_eq!(mask("hunter2"), "•••••••");
+        assert_eq!(mask("pässwörd🙂"), "•••••••••");
+        assert_eq!(mask(""), "");
+    }
 
     #[test]
     fn component_numbers_are_never_handed_out_twice() {
