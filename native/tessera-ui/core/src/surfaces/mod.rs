@@ -10,6 +10,7 @@
 //! If this process ends, the shell draws them again itself.
 
 pub mod shapes;
+pub mod anchors; // (where the bar's items are: menus opened by a shortcut go under theirs)
 // (polar outlines that morph, and pictures cut to a shape: the lock, the session menu, polkit)
 pub mod polar;
 pub mod events; // (Hyprland's socket2 lines a part follows itself: tiling, decorations)

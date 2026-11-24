@@ -86,6 +86,9 @@ export global LockData {
     // tinted just enough for its words to read
     in property <float> field-lo: 0.1;
     in property <float> field-hi: 0.1;
+    // How much shade Material's clock and date get from a light wallpaper
+    // behind them (0 dark: unchanged; logic.rs clock_scrim)
+    in property <float> clock-scrim: 0;
     // Time
     in property <string> date;
     in property <string> time;
@@ -1897,6 +1900,23 @@ component MaterialLock inherits Rectangle {
         // ── Clock, date and smartspace
         property <length> large-x: split ? round(W * 0.08 / 1px) * 1px : round((W - header.width) / 2 / 1px) * 1px;
         property <length> large-y: round(H * (split ? 0.14 : ios ? 0.09 : 0.11) / 1px) * 1px;
+        // A soft shade behind the clock and date on a light wallpaper: the
+        // pale inks read ~1.3:1 there (#164). A blurred shadow of a see-through
+        // rounded box, so no edge shows; none at all on a dark wallpaper or
+        // with dark ink
+        Rectangle {
+            property <float> k: dark-ink ? 0 : LockData.clock-scrim;
+            visible: k > 0.01;
+            x: header.x + 32px;
+            y: header.y + 24px;
+            width: max(0px, header.width - 64px);
+            height: max(0px, header.height - 48px);
+            border-radius: min(self.width, self.height) / 2;
+            background: transparent;
+            drop-shadow-blur: 96px;
+            drop-shadow-color: #000000.with-alpha(0.55 * k);
+            opacity: header.opacity * (1 - sb);
+        }
         header := Rectangle {
             x: large-x + (max(48px, round(W * 0.04 / 1px) * 1px) - large-x) * small-t;
             y: large-y + (72px - large-y) * small-t + rise - part;
@@ -2462,6 +2482,12 @@ component Bedside inherits Rectangle {
     property <color> m-ink: night || !Theme.material ? ink : LockData.sb-m-ink;
     property <color> m-ink2: night || !Theme.material ? ink : LockData.sb-m-ink2;
     property <color> m-ink3: night || !Theme.material ? ink2 : LockData.sb-m-ink3;
+    // the date line at night: a light red, at full strength, so it reads
+    // (≥ 4.5:1) under the night's dimming; it was dim red on black (#147,
+    // logic.rs NIGHT_DATE_INK)
+    property <color> date-ink: night ? #FF9C92 : ink2;
+    property <color> m-date-ink: night ? #FF9C92 : m-ink3;
+    property <float> date-opacity: night ? 1 : LockData.sb-opacity;
     out property <length> clock-size: round(min(H * 0.16, W * 0.14) / 1px) * 1px;
     out property <length> m-clock-size: round(min(H * 0.3, W * 0.17) / 1px) * 1px;
     background: black;
@@ -2523,9 +2549,9 @@ component Bedside inherits Rectangle {
             }
             Text {
                 horizontal-alignment: center;
-                opacity: LockData.sb-opacity * date-fade;
+                opacity: date-opacity * date-fade;
                 text: LockData.date + (LockData.weather-ready ? "   " + LockData.temp + " " + LockData.condition : "");
-                color: ink2;
+                color: date-ink;
                 font-size: max(16px, round(clock-size * 0.14 / 1px) * 1px);
                 font-weight: 500;
             }
@@ -2555,9 +2581,9 @@ component Bedside inherits Rectangle {
                 }
                 Text {
                     horizontal-alignment: center;
-                    opacity: LockData.sb-opacity * date-fade;
+                    opacity: date-opacity * date-fade;
                     text: LockData.date + (LockData.weather-ready && night ? "   " + LockData.temp + " " + LockData.condition : "");
-                    color: m-ink3;
+                    color: m-date-ink;
                     font-size: max(18px, round(m-clock-size * 0.09 / 1px) * 1px);
                     font-weight: 500;
                 }
@@ -2678,6 +2704,9 @@ component Bedside inherits Rectangle {
     // the wheel changes the view
     TouchArea {
         enabled: LockData.standby;
+        // (no pointer over the bedside clock; a move past the jitter wakes
+        // the lock and brings it back)
+        mouse-cursor: LockData.standby && root.sb >= 1 ? MouseCursor.none : MouseCursor.default;
         property <length> fx: -1px;
         property <length> fy: -1px;
         changed enabled => { fx = -1px; }

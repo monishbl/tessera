@@ -369,6 +369,7 @@ export component Bar inherits Window {
     in property <bool> has-card;
     in property <bool> hot;
     in property <bool> pinned;
+    in property <bool> pinned-rest; // open by the pin alone: the status line only
     in property <string> layout: "replace";
     in property <Live> live;
     in property <int> live-count;
@@ -410,6 +411,7 @@ export component Bar inherits Window {
     out property <bool> hovered: reveal.has-hover || (island-on && island.island-hovered);
     callback menu(string, length); // system | app | window, at x
     callback clicked(string, PointerEventButton, length); // an entry: its id
+    callback item-placed(string, length); // an entry's left edge, as laid out (menus opened by a shortcut go under it)
     callback go(int);
     callback space-menu(int, length);
     callback arrow(int);
@@ -673,6 +675,10 @@ export component Bar inherits Window {
                 height: 24px;
                 spacing: 0;
                 for e in entries: Item {
+                    // (its left edge on the bar, said as it moves: anchors.rs)
+                    property <length> gx: right.x + self.x;
+                    init => { root.item-placed(e.id, self.absolute-position.x); }
+                    changed gx => { root.item-placed(e.id, self.absolute-position.x); }
                     e: e;
                     ink: root.ink;
                     ink-dark: root.ink-dark;
@@ -709,6 +715,7 @@ export component Bar inherits Window {
         pilled: root.pills;
         hot: root.hot;
         pinned: root.pinned;
+        pinned-rest: root.pinned-rest;
         layout: root.layout;
         fg: pills ? Theme.m3-on-surface : root.wall-ink;
         chips: root.chips;

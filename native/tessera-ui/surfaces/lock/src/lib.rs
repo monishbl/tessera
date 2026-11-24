@@ -2374,10 +2374,18 @@ impl Part for Lock {
             M::Wallpaper(path, size, px) => {
                 let Some((sharp, soft)) = px else {
                     // (no picture: the entrance over the plain colour)
+                    for w in &self.wins {
+                        w.ui.global::<ui::LockData>().set_clock_scrim(0.0);
+                    }
                     self.wins.iter_mut().for_each(reveal);
                     return;
                 };
                 let (lo, hi) = field_light(&soft);
+                // (a light wallpaper behind the clock: a soft shade under it, #164)
+                let scrim = {
+                    let rgb: Vec<[u8; 3]> = soft.as_slice().iter().map(|p| [p.r, p.g, p.b]).collect();
+                    logic::clock_scrim(logic::clock_luma(&rgb, soft.width() as usize, soft.height() as usize))
+                };
                 let (sharp, soft) = (Image::from_rgb8(sharp), Image::from_rgb8(soft));
                 for w in &mut self.wins {
                     if w.picture.0 == path && w.picture.1 == size {
@@ -2386,6 +2394,7 @@ impl Part for Lock {
                         d.set_soft(soft.clone());
                         d.set_field_lo(lo);
                         d.set_field_hi(hi);
+                        d.set_clock_scrim(scrim);
                         d.set_has_wallpaper(true);
                         w.sharp = Some(sharp.clone());
                     }

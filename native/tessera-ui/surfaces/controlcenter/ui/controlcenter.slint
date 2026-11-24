@@ -528,8 +528,11 @@ component GlassModule {
             y: m.rows == 2 ? art.y + art.height + 8px : (root.height - self.preferred-height) / 2;
             height: self.preferred-height;
             Text {
-                text: media.title != "" ? media.title : "Not Playing";
+                // (one wording with the Now Playing menu; nothing playing, it
+                // may take two lines rather than end in "Not playi…")
+                text: media.title != "" ? media.title : "Nothing playing";
                 overflow: elide;
+                wrap: media.title != "" ? no-wrap : word-wrap;
                 color: Theme.label;
                 font-size: Theme.small;
                 font-weight: 600;
@@ -1123,10 +1126,13 @@ component QsMedia {
             font-weight: 500;
         }
         Text {
-            text: media.title != "" ? media.title : "Not playing";
+            // (one wording with the Now Playing menu, and it fits: two lines
+            // and a size smaller rather than "Not playi…", #163)
+            text: media.title != "" ? media.title : "Nothing playing";
             overflow: elide;
+            wrap: media.title != "" ? no-wrap : word-wrap;
             color: ink;
-            font-size: 16px;
+            font-size: media.title != "" ? 16px : 14px;
             font-weight: 500;
         }
         if media.artist != "": Text {

@@ -15,6 +15,12 @@ struct Bind {
     key: String,
     #[serde(default)]
     description: String,
+    /// bound as `code:N` (the keypad's + and −): `key` is empty then
+    #[serde(default)]
+    keycode: i64,
+    /// a release bind ("finish when Alt is let go")
+    #[serde(default)]
+    release: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -29,42 +35,9 @@ pub struct Group {
     pub binds: Vec<Row>,
 }
 
-/// Keybinds.prettyKey
+/// Keybinds.prettyKey (the shared names: tessera_core::keynames)
 pub fn pretty_key(k: &str) -> String {
-    let mapped = match k {
-        "Return" => Some("Enter"),
-        "space" | "Space" => Some("Space"),
-        "Tab" => Some("Tab"),
-        "Escape" => Some("Esc"),
-        "Print" => Some("Print Screen"),
-        "Period" | "period" => Some("."),
-        "Comma" => Some(","),
-        "Slash" => Some("/"),
-        "mouse:272" => Some("Left Click"),
-        "mouse:273" => Some("Right Click"),
-        "mouse:274" => Some("Middle Click"),
-        "SUPER_L" | "SUPER_R" => Some(""),
-        "mouse_down" => Some("Scroll Down"),
-        "mouse_up" => Some("Scroll Up"),
-        _ => None,
-    };
-    if let Some(m) = mapped {
-        return m.to_string();
-    }
-    if let Some(rest) = k.strip_prefix("XF86") {
-        // "AudioRaiseVolume" -> "Audio Raise Volume"
-        let mut out = String::new();
-        let mut prev_lower = false;
-        for c in rest.chars() {
-            if c.is_ascii_uppercase() && prev_lower {
-                out.push(' ');
-            }
-            prev_lower = c.is_ascii_lowercase();
-            out.push(c);
-        }
-        return out;
-    }
-    if k.chars().count() == 1 { k.to_uppercase() } else { k.to_string() }
+    tessera_core::keynames::pretty_key(k)
 }
 
 /// "Go to space 1" … "Go to space 9" → one row "Go to space 1–9" with keys "1–9"
@@ -109,11 +82,7 @@ pub fn groups(json: &str) -> Option<Vec<Group>> {
             Some(i) if i > 0 => (b.description[..i].to_string(), b.description[i + 2..].to_string()),
             _ => ("General".to_string(), b.description.clone()),
         };
-        let mut keys: Vec<String> = [(64, "Super"), (4, "Ctrl"), (8, "Alt"), (1, "Shift")].iter().filter(|(bit, _)| b.modmask & bit != 0).map(|(_, n)| n.to_string()).collect();
-        let key = pretty_key(&b.key);
-        if !key.is_empty() {
-            keys.push(key);
-        }
+        let keys = tessera_core::keynames::bind_keys(b.modmask, &b.key, b.keycode, b.release);
         let g = match order.iter().position(|g| g.name == group) {
             Some(i) => &mut order[i],
             None => {
@@ -200,14 +169,21 @@ mod tests {
             {"modmask":65,"key":"1","description":"Spaces: Move to space 1"},
             {"modmask":0,"key":"XF86AudioRaiseVolume","description":"Volume up"},
             {"modmask":64,"key":"Q","description":""},
-            {"modmask":64,"key":"Return","description":"Launch: Search"}
+            {"modmask":64,"key":"Return","description":"Launch: Search"},
+            {"modmask":64,"key":"","keycode":86,"description":"Screen: Zoom in (keypad)"},
+            {"modmask":8,"key":"Alt_L","release":true,"description":"Shell: Switch windows (finish when Alt is let go)"},
+            {"modmask":64,"key":"Equal","description":"Screen: Zoom in"}
         ]"#;
         let g = groups(j).unwrap();
-        assert_eq!(g.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(), vec!["Launch", "Spaces", "General"]);
+        assert_eq!(g.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(), vec!["Launch", "Spaces", "General", "Screen", "Shell"]);
+        assert_eq!(g[3].binds[0].keys, vec!["Super", "Keypad +"]);
+        assert_eq!(g[3].binds[1].keys, vec!["Super", "="]);
+        assert_eq!(g[4].binds[0].keys, vec!["Alt", "release"]);
+        assert_eq!(keys("linux", &g[4].binds[0].keys), vec!["Alt", "release"]);
         assert_eq!(g[0].binds, vec![Row { keys: vec!["Super".into(), "Space".into()], description: "Search".into() }]);
         assert_eq!(g[1].binds[0], Row { keys: vec!["Super".into(), "1–9".into()], description: "Go to space 1–9".into() });
         assert_eq!(g[1].binds[1].keys, vec!["Super", "Shift", "1"]);
-        assert_eq!(g[2].binds[0].keys, vec!["Audio Raise Volume"]);
+        assert_eq!(g[2].binds[0].keys, vec!["Volume Up"]);
         assert!(groups("not json").is_none());
     }
 

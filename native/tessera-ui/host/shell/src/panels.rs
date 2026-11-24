@@ -87,9 +87,9 @@ impl Model {
             None if !focused.is_empty() => focused.to_string(),
             None => first.to_string(),
         };
-        if let Some(x) = x {
-            self.anchor_x = x;
-        }
+        // (no x — a shortcut, a command — is "no item": 0, so the menu finds
+        // its own item rather than the last panel's, #159)
+        self.anchor_x = x.unwrap_or(0.0);
     }
 
     /// Panels.toggle: a click on a menu bar item first dismisses the open
@@ -852,6 +852,9 @@ mod tests {
         // no screen and no focused one: the first
         m.show("emoji", None, Some(12.0), None, "", "eDP-1");
         assert_eq!((m.screen.as_str(), m.anchor_x), ("eDP-1", 12.0));
+        // opened without an x (a shortcut): no stale anchor from the last one
+        m.show("soundMenu", None, None, None, "", "eDP-1");
+        assert_eq!(m.anchor_x, 0.0);
     }
 
     #[test]

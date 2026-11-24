@@ -148,8 +148,9 @@ pub struct Surface {
     retired: Cell<bool>,
     ime: RefCell<Option<slint_ime::Props>>, // what the focused text field wants from the input method
     pub stats: RefCell<crate::stats::Frames>,
-    /// the pointer's shape Slint asked for over this surface (a TouchArea's `mouse-cursor`)
-    pub cursor: Cell<Shape>,
+    /// the pointer's shape Slint asked for over this surface (a TouchArea's
+    /// `mouse-cursor`); None: hidden (`MouseCursor.none`: Bedside Mode)
+    pub cursor: Cell<Option<Shape>>,
     /// the part that made it: its input runs as that part's code, and it
     /// goes with that part if it panics (contain.rs)
     pub owner: &'static str,
@@ -530,8 +531,9 @@ impl i_slint_core::window::WindowAdapterInternal for Surface {
     // (a TouchArea's mouse-cursor: applied after the pointer event that changed it)
     fn set_mouse_cursor(&self, cursor: i_slint_core::cursor::MouseCursorInner) {
         let shape = match cursor {
-            i_slint_core::cursor::MouseCursorInner::BuiltIn(c) => cursor_shape(c),
-            _ => Shape::Default,
+            i_slint_core::cursor::MouseCursorInner::BuiltIn(i_slint_core::items::BuiltInMouseCursor::None) => None,
+            i_slint_core::cursor::MouseCursorInner::BuiltIn(c) => Some(cursor_shape(c)),
+            _ => Some(Shape::Default),
         };
         if self.cursor.replace(shape) != shape {
             CURSOR_DIRTY.set(true);
@@ -992,7 +994,7 @@ impl State {
             retired: Cell::new(false),
             ime: RefCell::new(None),
             stats: RefCell::new(Default::default()),
-            cursor: Cell::new(Shape::Default),
+            cursor: Cell::new(Some(Shape::Default)),
             owner: crate::contain::current(),
         });
         NEXT.with(|n| *n.borrow_mut() = Some(surface.clone()));
@@ -1175,9 +1177,19 @@ impl State {
             && self.surfaces.first().is_some_and(|s| s.window.has_active_animations())
     }
 
-    fn set_cursor(&self, serial: u32, shape: Shape) {
-        if let Some(c) = &self.cursor {
-            c.set_shape(serial, shape);
+    fn set_cursor(&self, serial: u32, shape: Option<Shape>) {
+        match shape {
+            Some(shape) => {
+                if let Some(c) = &self.cursor {
+                    c.set_shape(serial, shape);
+                }
+            }
+            // (hidden: cursor-shape-v1 has no "none"; wl_pointer's null surface)
+            None => {
+                if let Some(p) = &self.pointer {
+                    p.set_cursor(serial, None, 0, 0);
+                }
+            }
         }
     }
 

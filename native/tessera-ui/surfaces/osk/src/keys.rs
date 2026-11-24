@@ -27,12 +27,17 @@ const fn w(label: &'static str, sym: &'static str, units: f32) -> Key {
     Key { label, shifted: label, sym, units }
 }
 
+/// Every row is ROW_UNITS wide (the wide keys stretched: ⌫, Tab, backslash, Caps,
+/// Return, both Shifts, the space bar), so the rows share one left and one
+/// right edge; the QML's rows ran 14.6 to 15.8 and the edges were ragged
+pub const ROW_UNITS: f32 = 15.6;
+
 pub const ROWS: [&[Key]; 5] = [
-    &[n("`", "~", "grave"), p("1", "!"), p("2", "@"), p("3", "#"), p("4", "$"), p("5", "%"), p("6", "^"), p("7", "&"), p("8", "*"), p("9", "("), p("0", ")"), n("-", "_", "minus"), n("=", "+", "equal"), w("⌫", "BackSpace", 1.6)],
-    &[w("Tab", "Tab", 1.5), l("q"), l("w"), l("e"), l("r"), l("t"), l("y"), l("u"), l("i"), l("o"), l("p"), n("[", "{", "bracketleft"), n("]", "}", "bracketright"), Key { label: "\\", shifted: "|", sym: "backslash", units: 1.1 }],
-    &[w("Caps", "@caps", 1.8), l("a"), l("s"), l("d"), l("f"), l("g"), l("h"), l("j"), l("k"), l("l"), n(";", ":", "semicolon"), n("'", "\"", "apostrophe"), w("Return", "Return", 2.0)],
-    &[w("Shift", "@shift", 2.3), l("z"), l("x"), l("c"), l("v"), l("b"), l("n"), l("m"), n(",", "<", "comma"), n(".", ">", "period"), n("/", "?", "slash"), w("Shift", "@shift", 2.5)],
-    &[w("Ctrl", "@ctrl", 1.4), w("Super", "@logo", 1.4), w("Alt", "@alt", 1.4), w("", "space", 6.2), w("←", "Left", 1.0), w("↓", "Down", 1.0), w("↑", "Up", 1.0), w("→", "Right", 1.0), w("Esc", "Escape", 1.4)],
+    &[n("`", "~", "grave"), p("1", "!"), p("2", "@"), p("3", "#"), p("4", "$"), p("5", "%"), p("6", "^"), p("7", "&"), p("8", "*"), p("9", "("), p("0", ")"), n("-", "_", "minus"), n("=", "+", "equal"), w("⌫", "BackSpace", 2.6)],
+    &[w("Tab", "Tab", 2.0), l("q"), l("w"), l("e"), l("r"), l("t"), l("y"), l("u"), l("i"), l("o"), l("p"), n("[", "{", "bracketleft"), n("]", "}", "bracketright"), Key { label: "\\", shifted: "|", sym: "backslash", units: 1.6 }],
+    &[w("Caps", "@caps", 2.0), l("a"), l("s"), l("d"), l("f"), l("g"), l("h"), l("j"), l("k"), l("l"), n(";", ":", "semicolon"), n("'", "\"", "apostrophe"), w("Return", "Return", 2.6)],
+    &[w("Shift", "@shift", 2.6), l("z"), l("x"), l("c"), l("v"), l("b"), l("n"), l("m"), n(",", "<", "comma"), n(".", ">", "period"), n("/", "?", "slash"), w("Shift", "@shift", 3.0)],
+    &[w("Ctrl", "@ctrl", 1.4), w("Super", "@logo", 1.4), w("Alt", "@alt", 1.4), w("", "space", 6.0), w("←", "Left", 1.0), w("↓", "Down", 1.0), w("↑", "Up", 1.0), w("→", "Right", 1.0), w("Esc", "Escape", 1.4)],
 ];
 
 /// The sticky modifiers (tap Shift, then a key)
@@ -318,6 +323,17 @@ mod tests {
         assert!(k.contains("<K1> = 9;") && k.contains("key <K1> {[ grave ]};"));
         assert!(k.contains(&format!("modifier_map Shift {{ <K{}> }};", code("Shift_L").unwrap())));
         assert!(k.contains(&format!("maximum = {};", syms.len() + 9)));
+    }
+
+    #[test]
+    fn every_row_has_the_same_edges() {
+        for (i, r) in ROWS.iter().enumerate() {
+            let w: f32 = r.iter().map(|k| k.units).sum();
+            assert!((w - ROW_UNITS).abs() < 1e-4, "row {i} is {w} units");
+        }
+        // (and the window holds a full row: its panel is ROW_UNITS + 24 px wide)
+        let u = unit(1920.0);
+        assert!(u * ROW_UNITS - 6.0 <= window_size(1920.0, 20.0).0 as f32 - 40.0 - 24.0);
     }
 
     #[test]

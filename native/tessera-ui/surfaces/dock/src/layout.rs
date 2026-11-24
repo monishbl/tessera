@@ -319,6 +319,20 @@ pub fn auto_hiding(mode: AutoHide, overlapped: bool) -> bool {
     mode == AutoHide::Always || (mode == AutoHide::Windows && overlapped)
 }
 
+/// The on-screen keyboard (the "keyboard" panel) is up on this output: the
+/// dock steps out of its way (hidden, no input, no room kept) instead of
+/// being lifted above it into the middle of the screen
+pub fn under_keyboard(open: &str, screen: &str, output: &str) -> bool {
+    open == "keyboard" && (screen.is_empty() || screen == output)
+}
+
+/// The exclusive zone while the keyboard is up: none of its own, and laid
+/// over the screen's edge (-1: under the keyboard, which is on the overlay
+/// layer) rather than stacked on top of the keyboard's zone
+pub fn zone_with_keyboard(normal: i32, keyboard_up: bool) -> i32 {
+    if keyboard_up { -1 } else { normal }
+}
+
 /// Hidden: auto-hiding, not revealed, and no menu or Downloads stack open
 pub fn hidden(auto_hiding: bool, revealed: bool, popup_open: bool) -> bool {
     auto_hiding && !revealed && !popup_open
@@ -328,6 +342,18 @@ pub fn hidden(auto_hiding: bool, revealed: bool, popup_open: bool) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_keyboard_moves_the_dock_away() {
+        assert!(under_keyboard("keyboard", "DP-1", "DP-1"));
+        assert!(under_keyboard("keyboard", "", "DP-1"));
+        assert!(!under_keyboard("keyboard", "HDMI-A-1", "DP-1"));
+        assert!(!under_keyboard("spotlight", "DP-1", "DP-1"));
+        assert!(!under_keyboard("", "", "DP-1"));
+        assert_eq!(zone_with_keyboard(70, true), -1);
+        assert_eq!(zone_with_keyboard(70, false), 70);
+        assert_eq!(zone_with_keyboard(0, false), 0);
+    }
 
     fn glass(cfg: serde_json::Value) -> Metrics {
         Metrics::new(&Settings::read(&cfg), false)

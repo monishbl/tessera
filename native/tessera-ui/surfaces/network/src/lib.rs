@@ -116,6 +116,8 @@ pub struct Network {
     wifi: Wifi,
     speed: Speed,
     anchor_x: f32,
+    /// Panels.anchorX as given (0: none, a shortcut or a command)
+    anchor_given: f32,
     /// the network waiting for a password, and why Join didn't go ahead
     asking: Option<String>,
     hint: String,
@@ -225,6 +227,9 @@ impl Network {
         }
         self.push_wifi();
         self.push_speed(st);
+        // (no x: under the bar's Wi-Fi item, else right-aligned; it was the
+        // top-left corner)
+        self.anchor_x = tessera_core::surfaces::anchors::place(self.anchor_given, &output, "wifiMenu");
         let w = self.win.as_mut().unwrap();
         w.region = (0, 0);
         w.ui.set_anchor_x(self.anchor_x);
@@ -569,7 +574,13 @@ impl Part for Network {
 
     fn command(&mut self, st: &mut State, cmd: &Command) {
         match cmd.cmd.as_str() {
-            "open" => self.open(st, cmd.screen.clone()),
+            "open" => {
+                // (Panels' follow says where its item is; 0 when nothing did)
+                if let Some(x) = cmd.args["anchorX"].as_f64() {
+                    self.anchor_given = x as f32;
+                }
+                self.open(st, cmd.screen.clone())
+            }
             "close" => self.close(st, false),
             "toggle" => {
                 if self.open {
@@ -621,8 +632,9 @@ impl Part for Network {
                     self.push_speed(st);
                 }
                 if let Some(x) = v["anchorX"].as_f64() {
-                    self.anchor_x = x as f32;
+                    self.anchor_given = x as f32;
                     if let Some(w) = &self.win {
+                        self.anchor_x = tessera_core::surfaces::anchors::place(self.anchor_given, &w.output, "wifiMenu");
                         w.ui.set_anchor_x(self.anchor_x);
                     }
                 }

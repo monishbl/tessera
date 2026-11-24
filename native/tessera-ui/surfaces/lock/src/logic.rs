@@ -325,9 +325,84 @@ pub fn came_back(idle: bool, now_ms: i64, last_touch_ms: i64) -> bool {
     idle || now_ms - last_touch_ms > 30_000
 }
 
+/// How light the wallpaper is behind the clock and date (0..1): the 60th
+/// percentile of the luma over the top of the screen's middle (both the
+/// centred and the split layout's clock), from the blurred copy's RGB
+pub fn clock_luma(rgb: &[[u8; 3]], w: usize, h: usize) -> f32 {
+    if w == 0 || h == 0 || rgb.len() < w * h {
+        return 0.0;
+    }
+    let mut l: Vec<u8> = Vec::new();
+    let (y0, y1) = (h * 6 / 100, (h * 44 / 100).max(h * 6 / 100 + 1).min(h));
+    let (x0, x1) = (w * 6 / 100, (w * 94 / 100).max(w * 6 / 100 + 1).min(w));
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let p = rgb[y * w + x];
+            l.push((0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32) as u8);
+        }
+    }
+    if l.is_empty() {
+        return 0.0;
+    }
+    l.sort_unstable();
+    l[(l.len() - 1) * 60 / 100] as f32 / 255.0
+}
+
+/// The shade behind Material's clock and date (0..1) for that lightness:
+/// none on a dark wallpaper (the look unchanged), all of it on a light one
+/// (the pale clock inks read ~1.3:1 there, #164)
+pub fn clock_scrim(luma: f32) -> f32 {
+    ((luma - 0.45) / 0.25).clamp(0.0, 1.0)
+}
+
+/// Bedside Mode at night: the date line's ink. Still red, light enough to
+/// read (≥ 4.5:1) under the night's dimming (NIGHT_DIM black over it all)
+pub const NIGHT_DATE_INK: [u8; 3] = [0xFF, 0x9C, 0x92];
+/// The night's black over everything (lock.slint's #00000059)
+pub const NIGHT_DIM: f64 = 0x59 as f64 / 255.0;
+
+/// WCAG's contrast of a colour shown at `alpha` over black, then dimmed by
+/// `dim` (black over it), against black
+pub fn contrast_on_black(rgb: [u8; 3], alpha: f64, dim: f64) -> f64 {
+    let lin = |c: u8| {
+        let v = c as f64 / 255.0 * alpha * (1.0 - dim);
+        if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    };
+    let y = 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]);
+    (y + 0.05) / 0.05
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_clock_reads_on_a_light_wallpaper() {
+        let (w, h) = (40, 30);
+        let bright = vec![[235u8, 240, 230]; w * h];
+        let dark = vec![[30u8, 40, 60]; w * h];
+        assert!(clock_luma(&bright, w, h) > 0.85);
+        assert!(clock_luma(&dark, w, h) < 0.2);
+        assert_eq!(clock_scrim(clock_luma(&dark, w, h)), 0.0, "a dark wallpaper looks as it did");
+        assert_eq!(clock_scrim(clock_luma(&bright, w, h)), 1.0);
+        assert!(clock_scrim(0.55) > 0.0 && clock_scrim(0.55) < 1.0);
+        // only the top: a light bottom half doesn't shade the clock
+        let mut half = dark.clone();
+        for p in half.iter_mut().skip(w * h / 2) {
+            *p = [250, 250, 250];
+        }
+        assert_eq!(clock_scrim(clock_luma(&half, w, h)), 0.0);
+        assert_eq!(clock_luma(&[], 0, 0), 0.0);
+    }
+
+    #[test]
+    fn bedside_night_date_reads() {
+        // the old ink: red at 60 %, the clock's 70 %, then the night's dimming
+        assert!(contrast_on_black([0xFF, 0x3B, 0x30], 0.6 * 0.7, NIGHT_DIM) < 2.0);
+        // the new: at least 4.5:1, and still red
+        assert!(contrast_on_black(NIGHT_DATE_INK, 1.0, NIGHT_DIM) >= 4.5, "{}", contrast_on_black(NIGHT_DATE_INK, 1.0, NIGHT_DIM));
+        assert!(NIGHT_DATE_INK[0] > NIGHT_DATE_INK[1] && NIGHT_DATE_INK[0] > NIGHT_DATE_INK[2]);
+    }
 
     #[test]
     fn faillock_settings() {

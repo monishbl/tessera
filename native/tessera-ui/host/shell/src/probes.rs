@@ -192,37 +192,7 @@ fn needs_script() -> String {
 // ── Keybinds.qml ────────────────────────────────────────────────────────────
 
 pub fn pretty_key(k: &str) -> String {
-    match k {
-        "Return" => "Enter".into(),
-        "space" | "Space" => "Space".into(),
-        "Tab" => "Tab".into(),
-        "Escape" => "Esc".into(),
-        "Print" => "Print Screen".into(),
-        "Period" | "period" => ".".into(),
-        "Comma" => ",".into(),
-        "Slash" => "/".into(),
-        "mouse:272" => "Left Click".into(),
-        "mouse:273" => "Right Click".into(),
-        "mouse:274" => "Middle Click".into(),
-        "SUPER_L" | "SUPER_R" => String::new(),
-        "mouse_down" => "Scroll Down".into(),
-        "mouse_up" => "Scroll Up".into(),
-        k if k.starts_with("XF86") => {
-            // "XF86AudioMute" -> "Audio Mute"
-            let mut out = String::new();
-            let mut prev_lower = false;
-            for c in k[4..].chars() {
-                if prev_lower && c.is_uppercase() {
-                    out.push(' ');
-                }
-                prev_lower = c.is_lowercase();
-                out.push(c);
-            }
-            out
-        }
-        k if k.chars().count() == 1 => k.to_uppercase(),
-        k => k.to_string(),
-    }
+    tessera_core::keynames::pretty_key(k)
 }
 
 /// "Go to space 1" … "Go to space 9" → one row "Go to space 1–9" with keys "1–9"
@@ -255,7 +225,6 @@ pub fn merge_numbered(binds: Vec<(Vec<String>, String)>) -> Vec<(Vec<String>, St
 /// hyprctl -j binds → [{name, binds: [{keys, description}]}]; only binds with a
 /// description, "Group: Action" under that group
 pub fn bind_groups(binds: &Value) -> Value {
-    const MODS: [(i64, &str); 4] = [(64, "Super"), (4, "Ctrl"), (8, "Alt"), (1, "Shift")];
     let mut order: Vec<String> = Vec::new();
     let mut by_group: BTreeMap<String, Vec<(Vec<String>, String)>> = BTreeMap::new();
     for b in binds.as_array().cloned().unwrap_or_default() {
@@ -268,11 +237,7 @@ pub fn bind_groups(binds: &Value) -> Value {
             _ => ("General".to_string(), desc.to_string()),
         };
         let mask = b["modmask"].as_i64().unwrap_or(0);
-        let mut keys: Vec<String> = MODS.iter().filter(|(bit, _)| mask & bit != 0).map(|(_, n)| n.to_string()).collect();
-        let key = pretty_key(b["key"].as_str().unwrap_or(""));
-        if !key.is_empty() {
-            keys.push(key);
-        }
+        let keys = tessera_core::keynames::bind_keys(mask as u32, b["key"].as_str().unwrap_or(""), b["keycode"].as_i64().unwrap_or(0), b["release"].as_bool().unwrap_or(false));
         if !by_group.contains_key(&group) {
             order.push(group.clone());
         }
@@ -1041,7 +1006,7 @@ mod tests {
     fn key_names() {
         assert_eq!(pretty_key("Return"), "Enter");
         assert_eq!(pretty_key("a"), "A");
-        assert_eq!(pretty_key("XF86AudioMute"), "Audio Mute");
+        assert_eq!(pretty_key("XF86AudioMute"), "Mute");
         assert_eq!(pretty_key("SUPER_L"), "");
         assert_eq!(pretty_key("mouse:272"), "Left Click");
     }

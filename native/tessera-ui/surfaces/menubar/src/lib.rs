@@ -81,6 +81,22 @@ const MENU_AUTO_CLOSE_MS: u64 = 5000;
 /// a wheel notch, as Island.scroll counts it (Qt's angleDelta)
 const NOTCH_PX: f64 = 120.0;
 
+/// The menu a bar item opens under itself (the status menus, Wi-Fi's):
+/// the panel whose place the bar remembers (anchors.rs)
+pub fn item_panel(id: &str) -> Option<&'static str> {
+    Some(match id {
+        "nowPlaying" => "nowPlaying",
+        "resources" => "resourcesMenu",
+        "weather" => "weatherMenu",
+        "battery" => "batteryMenu",
+        "bluetooth" => "bluetoothMenu",
+        "wifi" => "wifiMenu",
+        "sound" => "soundMenu",
+        "privacy" => "privacyMenu",
+        _ => return None,
+    })
+}
+
 /// Its own messages (Msg::Part("menubar", …))
 enum M {
     Tick,
@@ -913,14 +929,19 @@ impl Menubar {
             let over_fs = snapshot.fullscreen_on(&b.output);
             let panel_here = !shell.str("open").is_empty() && (shell.str("screen") == b.output || shell.str("screen").is_empty());
             let menu_here = open_menu.as_ref().is_some_and(|(o, _)| *o == b.output);
+            // a centred panel (Search, the App Drawer, Shortcuts…) here: the
+            // island rests as its pill under it (#148, #169, #177)
+            let centred_here = panel_here && island::centred_panel(shell.str("open"));
             let showing = event.is_some();
             if showing && !b.had_event {
-                b.alerts_below = (b.hover_open || pinned) && !over_fs;
+                // (pinned but not hovered, an alert opens it as unpinned and
+                // goes: a card held under the pinned island stayed for good)
+                b.alerts_below = b.hover_open && !over_fs && !centred_here;
             } else if !showing {
                 b.alerts_below = false;
             }
             b.had_event = showing;
-            let view = island::view(&self.island, b.hover_open, pinned, over_fs, &fs_mode, b.fs_open, b.alerts_below);
+            let view = island::view(&self.island, b.hover_open, pinned, over_fs, &fs_mode, b.fs_open, b.alerts_below, centred_here);
             ui.set_alerts_below(b.alerts_below && showing);
             any_expanded |= view.mode == Mode::Expanded;
             let revealed = !cfg.auto_hide || b.hovered || panel_here || menu_here || (cfg.island && event.is_some());
@@ -1028,6 +1049,7 @@ impl Menubar {
             ui.set_has_card(has_card);
             ui.set_hot(shell.bool("island.hot"));
             ui.set_pinned(pinned);
+            ui.set_pinned_rest(view.pinned_rest);
             ui.set_layout(cfg.activity_layout.as_str().into());
             ui.set_playing(playing);
             // (the dancing bars hold still on battery under 30 %: IslandLive's barClock)
@@ -1574,6 +1596,10 @@ impl Menubar {
     // ── What the bar's items do ──────────────────────────────────────────
 
     fn toggle_at(output: &str, panel: &str, x: f32) {
+        // (and where it is, for when it opens by a shortcut)
+        if x > 0.0 {
+            tessera_core::surfaces::anchors::remember(output, panel, x);
+        }
         bridge::call(&["rustui", "act", "toggleAt", &format!("{panel} {output} {}", x.round())]);
     }
 
@@ -2629,6 +2655,16 @@ impl Part for Menubar {
             ui.on_clicked(move |id, b, x| to(Box::new(M::Clicked(o.clone(), id.to_string(), b == slint::platform::PointerEventButton::Right, x))));
         }
         {
+            // (where each item with a menu sits: a menu opened by a shortcut,
+            // with no click's x, goes under its item: anchors.rs)
+            let o = out.clone();
+            ui.on_item_placed(move |id, x| {
+                if let Some(panel) = item_panel(&id) {
+                    tessera_core::surfaces::anchors::remember(&o, panel, x);
+                }
+            });
+        }
+        {
             let to = to.clone();
             ui.on_go(move |id| to(Box::new(M::Go(id))));
         }
@@ -3121,5 +3157,18 @@ mod meter_tests {
         assert!(meter_may_restart(None, now));
         assert!(!meter_may_restart(Some(now), now + std::time::Duration::from_millis(500)));
         assert!(meter_may_restart(Some(now), now + std::time::Duration::from_secs(2)));
+    }
+}
+
+#[cfg(test)]
+mod item_panel_tests {
+    use super::item_panel;
+
+    #[test]
+    fn the_items_that_open_menus_under_them() {
+        assert_eq!(item_panel("sound"), Some("soundMenu"));
+        assert_eq!(item_panel("wifi"), Some("wifiMenu"));
+        assert_eq!(item_panel("nowPlaying"), Some("nowPlaying"));
+        assert_eq!(item_panel("clock"), None);
     }
 }

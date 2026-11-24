@@ -2098,6 +2098,9 @@ export component Island inherits Rectangle {
     in property <bool> pilled; // Material, no bar background: it idles in a pill
     in property <bool> hot;
     in property <bool> pinned;
+    // open by the pin alone (not hovered, no alert): only the status line;
+    // Recent and the cards show on a hover (#165)
+    in property <bool> pinned-rest;
     in property <string> layout: "replace"; // replace | split | beside
     in property <color> fg; // the bar's text colour (idle and compact)
     // the spaces
@@ -2293,6 +2296,10 @@ export component Island inherits Rectangle {
     changed expanded => {
         if !expanded { root.stat-hover("*", false, 0, 0); recent-open = false; }
     }
+    // (back to the pin's rest: Recent closes with the hover)
+    changed pinned-rest => {
+        if pinned-rest { recent-open = false; recent-hold-h = 0; }
+    }
 
     background: transparent;
 
@@ -2351,7 +2358,7 @@ export component Island inherits Rectangle {
                 height: parent.height;
                 source: root.island-art-img;
                 image-fit: fill;
-                opacity: expanded && !event-inside && !recent-over ? 0.82 : 0;
+                opacity: expanded && !event-inside && !recent-over && !pinned-rest ? 0.82 : 0;
                 animate opacity { duration: Theme.popover; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
             }
         }
@@ -2540,7 +2547,7 @@ export component Island inherits Rectangle {
                         }
                     }
                     // the focused activity, open (IslandFocusCard, simplified)
-                    if !event-inside && card-on && !recent-over: cardl := VerticalLayout {
+                    if !event-inside && card-on && !recent-over && !pinned-rest: cardl := VerticalLayout {
                         spacing: 8px;
                         // (the focus moved: the new one fades and slides in from its side)
                         opacity: swap;
@@ -3023,7 +3030,7 @@ export component Island inherits Rectangle {
                     }
                     // all at once: the others, stacked (IslandActivity)
                     // (only with rows: an empty one still took a spacing, pushing the status line down)
-                    if !event-inside && all-mode && !recent-over && act-rows.length > 0: VerticalLayout {
+                    if !event-inside && all-mode && !recent-over && !pinned-rest && act-rows.length > 0: VerticalLayout {
                         spacing: 10px;
                         for r[i] in act-rows: ActivityRow {
                             r: r;
@@ -3042,7 +3049,7 @@ export component Island inherits Rectangle {
                         hover(k, on, x, y) => { root.stat-hover(k, on && expanded, x, y); }
                     }
                     // the last few alerts; with live activities, a header that opens them in their place
-                    if !event-inside && recent-n > 0 && (live-count == 0 || recent-open): RecentList {
+                    if !event-inside && !pinned-rest && recent-n > 0 && (live-count == 0 || recent-open): RecentList {
                         rows: recent;
                         n: recent-n;
                         shown: expanded;
@@ -3064,7 +3071,7 @@ export component Island inherits Rectangle {
             y: 3px;
             width: 26px;
             height: 26px;
-            visible: !event-inside && live-count > 0 && recent-n > 0 && expanded && shape.height > 40px;
+            visible: !event-inside && !pinned-rest && live-count > 0 && recent-n > 0 && expanded && shape.height > 40px;
             opacity: content-in;
             icon: "\u{e1a0}"; // clock-counter-clockwise
             fill: recent-open;

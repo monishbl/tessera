@@ -355,11 +355,12 @@ impl StatusMenus {
         let state = st.shell.get::<ShellState>().cloned().unwrap_or_default();
         let panel = args["panel"].as_str().map(str::to_string).unwrap_or_else(|| state.str("open").to_string());
         let Some((panel, cw, off)) = model::panel(&panel) else { return };
-        if let Some(x) = args["anchorX"].as_f64().or_else(|| state.get("panels.anchorX").as_f64()) {
-            self.anchor_x = x as f32;
-        }
+        let given = args["anchorX"].as_f64().or_else(|| state.get("panels.anchorX").as_f64()).unwrap_or(0.0) as f32;
         let output = screen.filter(|s| !s.is_empty()).or_else(|| self.win.as_ref().map(|w| w.output.clone())).or_else(|| st.outputs_now().first().map(|o| o.1.clone()));
         let Some(output) = output else { return };
+        // (no x, by a shortcut or a command: under its own bar item, else
+        // right-aligned under the status area; it was the top-left corner)
+        self.anchor_x = tessera_core::surfaces::anchors::place(given, &output, panel);
         let again = self.open && self.panel == panel && self.win.as_ref().is_some_and(|w| w.output == output);
         if !self.window(st, &output) {
             return;

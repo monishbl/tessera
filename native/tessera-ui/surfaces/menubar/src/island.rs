@@ -372,16 +372,35 @@ pub struct View {
     pub mode: Mode,
     /// the alerts are in it (not a hover or the pin)
     pub event_inside: bool,
+    /// open only because it's pinned (not hovered, no alert in it): the
+    /// status line alone, Recent and the cards wait for a hover (#165)
+    pub pinned_rest: bool,
+}
+
+/// The panels that open in the middle of the screen, over where the open
+/// island hangs: while one is open the island rests as its pill (#148,
+/// #169, #177: Search's bar landed on the pinned island, the overlay's
+/// toolbar sat against it)
+pub const CENTRED_PANELS: &[&str] = &["spotlight", "launchpad", "cheatsheet", "overlay", "overview", "missionControl", "clipboard"];
+
+pub fn centred_panel(open: &str) -> bool {
+    CENTRED_PANELS.contains(&open)
 }
 
 /// `fs_mode`: show | important | compact (Settings → island → in full screen)
 /// `below`: the alerts came while it was open (hovered or pinned): a card under it (IslandAlertStack)
-pub fn view(i: &Island, hover_open: bool, pinned: bool, over_fs: bool, fs_mode: &str, fs_open: bool, below: bool) -> View {
+/// `panel_open`: a centred panel (CENTRED_PANELS) is open on this screen
+#[allow(clippy::too_many_arguments)]
+pub fn view(i: &Island, hover_open: bool, pinned: bool, over_fs: bool, fs_mode: &str, fs_open: bool, below: bool, panel_open: bool) -> View {
     // (alerts that are leaving don't hold it open: their content is gone in
     // 140 ms, and the island stayed open and empty for the rest of
     // LEAVE_MS and the sweep's 250 ms, a dark pill with nothing in it)
     let showing = i.alerts.iter().any(|a| !a.leaving);
-    let pill = over_fs && fs_mode == "compact" && showing && !fs_open && !i.ringing();
+    // (a centred panel open: neither the pin nor a hover opens it, and an
+    // alert shows as the small pill; a call still opens it)
+    let hover_open = hover_open && !panel_open;
+    let pinned = pinned && !panel_open;
+    let pill = ((over_fs && fs_mode == "compact" && !fs_open) || panel_open) && showing && !i.ringing();
     let event_inside = showing && !below;
     let expanded = (hover_open && !over_fs) || (event_inside && !pill) || (pinned && !over_fs);
     let mode = if pill {
@@ -395,7 +414,8 @@ pub fn view(i: &Island, hover_open: bool, pinned: bool, over_fs: bool, fs_mode: 
     } else {
         Mode::Idle
     };
-    View { mode, event_inside }
+    let pinned_rest = mode == Mode::Expanded && pinned && !hover_open && !event_inside;
+    View { mode, event_inside, pinned_rest }
 }
 
 /// An SVG arc for a ring: from the top, clockwise, `frac` of the way round
@@ -641,18 +661,41 @@ mod tests {
     #[test]
     fn what_it_shows() {
         let mut i = Island::default();
-        assert_eq!(view(&i, false, false, false, "show", false, false).mode, Mode::Idle);
-        assert_eq!(view(&i, true, false, false, "show", false, false).mode, Mode::Expanded);
-        assert_eq!(view(&i, false, true, false, "show", false, false).mode, Mode::Expanded);
+        assert_eq!(view(&i, false, false, false, "show", false, false, false).mode, Mode::Idle);
+        assert_eq!(view(&i, true, false, false, "show", false, false, false).mode, Mode::Expanded);
+        assert_eq!(view(&i, false, true, false, "show", false, false, false).mode, Mode::Expanded);
         i.set_activities(vec![act("music")]);
-        assert_eq!(view(&i, false, false, false, "show", false, false).mode, Mode::Compact);
+        assert_eq!(view(&i, false, false, false, "show", false, false, false).mode, Mode::Compact);
         // over a fullscreen app: hidden, and the pin and hover don't open it
-        assert_eq!(view(&i, true, true, true, "show", false, false).mode, Mode::Hidden);
+        assert_eq!(view(&i, true, true, true, "show", false, false, false).mode, Mode::Hidden);
         i.post(ev("charging", "Charging"), 3000.0, 1, 0.0);
-        let v = view(&i, false, false, false, "show", false, false);
+        let v = view(&i, false, false, false, "show", false, false, false);
         assert!(v.event_inside && v.mode == Mode::Expanded);
-        assert_eq!(view(&i, false, false, true, "show", false, false).mode, Mode::Expanded);
-        assert_eq!(view(&i, false, false, true, "compact", false, false).mode, Mode::Pill);
-        assert_eq!(view(&i, false, false, true, "compact", true, false).mode, Mode::Expanded);
+        assert_eq!(view(&i, false, false, true, "show", false, false, false).mode, Mode::Expanded);
+        assert_eq!(view(&i, false, false, true, "compact", false, false, false).mode, Mode::Pill);
+        assert_eq!(view(&i, false, false, true, "compact", true, false, false).mode, Mode::Expanded);
+    }
+
+    #[test]
+    fn pinned_it_rests_and_steps_back_for_centred_panels() {
+        let mut i = Island::default();
+        // pinned, not hovered: open, but only its status line
+        let v = view(&i, false, true, false, "show", false, false, false);
+        assert!(v.mode == Mode::Expanded && v.pinned_rest);
+        // hovered: all of it (Recent, the cards)
+        let v = view(&i, true, true, false, "show", false, false, false);
+        assert!(v.mode == Mode::Expanded && !v.pinned_rest);
+        // Search (or the App Drawer, Shortcuts…) open: the resting pill
+        assert_eq!(view(&i, false, true, false, "show", false, false, true).mode, Mode::Idle);
+        assert_eq!(view(&i, true, true, false, "show", false, false, true).mode, Mode::Idle);
+        i.set_activities(vec![act("music")]);
+        assert_eq!(view(&i, true, true, false, "show", false, false, true).mode, Mode::Compact);
+        // an alert meanwhile: the small pill, not the open island over the panel
+        i.post(ev("charging", "Charging"), 3000.0, 1, 0.0);
+        assert_eq!(view(&i, false, true, false, "show", false, false, true).mode, Mode::Pill);
+        // an alert while pinned (not hovered): inside, as unpinned
+        let v = view(&i, false, true, false, "show", false, false, false);
+        assert!(v.event_inside && !v.pinned_rest);
+        assert!(centred_panel("spotlight") && centred_panel("missionControl") && !centred_panel("soundMenu") && !centred_panel(""));
     }
 }

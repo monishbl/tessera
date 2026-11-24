@@ -25,6 +25,7 @@ pub mod skia;
 pub mod egl;
 pub mod gpu;
 pub mod inhibit;
+pub mod keynames; // (media, symbol and keypad keys by plain name: shortcuts sheet, Settings, probes)
 pub mod outside; // (popovers close on a press on any screen: outside.rs)
 pub mod memory; // (malloc's arenas and threshold, freed memory given back when quiet: memory.rs)
 pub mod env;

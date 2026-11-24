@@ -243,24 +243,53 @@ export component Cheatsheet inherits Window {
                     current <=> root.tab;
                 }
 
-                // Shortcuts, flowed into three columns
-                if tab == 0: Flickable {
+                // Shortcuts, flowed into three columns. The list scrolls:
+                // room under the last row, and while more is below, a fade
+                // at the bottom edge (Glass and Material's solid surface) and
+                // a slim scroll bar, so a row cut at the edge reads as more.
+                if tab == 0: Rectangle {
                     y: tabs.height + 18px;
                     width: parent.width;
                     height: parent.height - self.y;
-                    content-height: flow.preferred-height;
-                    flow := VerticalLayout {
+                    property <length> span: max(0px, list.content-height - list.height);
+                    property <bool> more-below: span > 1px && -list.content-y < span - 1px;
+                    property <color> under: Theme.material ? Theme.m3-surface-container.with-alpha(Theme.blur ? Theme.panel-alpha : 1) : Theme.panel;
+                    list := Flickable {
                         width: parent.width;
-                        spacing: 24px;
-                        alignment: start;
-                        for r in rows: HorizontalLayout {
+                        height: parent.height;
+                        content-height: flow.preferred-height;
+                        flow := VerticalLayout {
+                            width: parent.width;
                             spacing: 24px;
+                            padding-bottom: 28px;
                             alignment: start;
-                            for grp in r.groups: Group {
-                                g: grp;
-                                width: (content.width - 2 * 24px) / 3;
+                            for r in rows: HorizontalLayout {
+                                spacing: 24px;
+                                alignment: start;
+                                for grp in r.groups: Group {
+                                    g: grp;
+                                    width: (content.width - 2 * 24px) / 3;
+                                }
                             }
                         }
+                    }
+                    // (on the plugin's glass the dialog has no colour of its
+                    // own to fade into: the scroll bar alone says it)
+                    if !on-glass: Rectangle {
+                        y: parent.height - self.height;
+                        height: 40px;
+                        opacity: more-below ? 1 : 0;
+                        animate opacity { duration: Theme.hover; }
+                        background: @linear-gradient(180deg, under.with-alpha(0) 0%, under 100%);
+                    }
+                    if span > 1px: Rectangle {
+                        property <length> th: max(28px, parent.height * list.height / max(1px, list.content-height));
+                        x: parent.width + 8px;
+                        y: (parent.height - th) * max(0, min(1, -list.content-y / max(1px, span)));
+                        width: 4px;
+                        height: th;
+                        border-radius: 2px;
+                        background: Theme.material ? Theme.m3-on-surface-variant.with-alpha(0.35) : Theme.secondary.with-alpha(0.35);
                     }
                 }
 

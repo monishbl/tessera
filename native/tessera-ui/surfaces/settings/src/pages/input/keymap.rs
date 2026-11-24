@@ -247,7 +247,7 @@ pub fn key_label(k: &str) -> String {
     }
     let named: &[(&str, &str)] = &[
         ("Period", "."), ("period", "."), ("Comma", ","), ("comma", ","), ("Slash", "/"), ("slash", "/"), ("Semicolon", ";"), ("semicolon", ";"),
-        ("Apostrophe", "'"), ("apostrophe", "'"), ("Minus", "-"), ("minus", "-"), ("Equal", "="), ("equal", "="),
+        ("Apostrophe", "'"), ("apostrophe", "'"), ("Minus", "−"), ("minus", "−"), ("Equal", "="), ("equal", "="),
         ("bracketleft", "["), ("BracketLeft", "["), ("bracketright", "]"), ("BracketRight", "]"), ("grave", "`"), ("Grave", "`"),
         ("backslash", "\\"), ("Backslash", "\\"), ("Print", "Print Screen"), ("Page_Up", "Page Up"), ("Page_Down", "Page Down"),
         ("Delete", "Delete"), ("Home", "Home"), ("End", "End"), ("Insert", "Insert"),
@@ -266,17 +266,8 @@ pub fn key_label(k: &str) -> String {
     if let Some(n) = k.strip_prefix("mouse:").filter(|n| digits(n)) {
         return format!("Mouse button {n}");
     }
-    if let Some(rest) = k.strip_prefix("XF86") {
-        let mut out = String::new();
-        let mut prev_lower = false;
-        for c in rest.chars() {
-            if c.is_ascii_uppercase() && prev_lower {
-                out.push(' ');
-            }
-            prev_lower = c.is_ascii_lowercase();
-            out.push(c);
-        }
-        return out;
+    if let Some(x) = tessera_core::keynames::xf86(k) {
+        return x;
     }
     if k.chars().count() == 1 {
         k.to_uppercase()
@@ -404,7 +395,8 @@ fn key_matches(keys_of_bind: &str, k: &Query) -> bool {
     }
     let key = p.key.to_lowercase();
     let label = key_label(&p.key).to_lowercase();
-    key == k.key || label == k.key
+    // (Minus shows as "−" but is typed "-")
+    key == k.key || label == k.key || label.replace('−', "-") == k.key
 }
 
 /// Keymap.matches: keys ("super s") match keys only; words match names
@@ -585,7 +577,9 @@ mod tests {
         assert!(parse_keys("$MODKEY").tap);
         assert_eq!(key_label("Print"), "Print Screen");
         assert_eq!(key_label("code:12"), "Key 12");
-        assert_eq!(key_label("XF86AudioPlay"), "Audio Play");
+        assert_eq!(key_label("XF86AudioPlay"), "Play");
+        assert_eq!(key_label("XF86AudioRaiseVolume"), "Volume Up");
+        assert_eq!(key_label("Minus"), "−");
         assert_eq!(key_list("$MOD + SHIFT + S", "SUPER"), ["SUPER", "SHIFT", "S"]);
         assert_eq!(key_list("$MODKEY", "SUPER"), ["SUPER"]);
         assert_eq!(key_text("$MOD + SHIFT + S", "SUPER", "linux"), "Super Shift S");
