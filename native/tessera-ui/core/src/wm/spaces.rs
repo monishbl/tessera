@@ -84,6 +84,16 @@ impl Info {
         bar::groups(name, &self.bases, h, self.count, false, &self.labels).into_iter().flat_map(|g| g.ids).collect()
     }
 
+    /// The spaces Overview and All Windows show for a display, in its order
+    /// (both from here, so they always agree): the ones Hyprland has (with
+    /// windows, on a screen, or kept by a rule) and the current one. The
+    /// menu bar's own list (ids_for) also keeps the always-shown count and
+    /// fills the gaps; these two show what's there, and + makes another.
+    pub fn shown_for(&self, name: &str, h: &Snapshot) -> Vec<i32> {
+        let active = h.active.get(name).copied();
+        self.ids_for(name, h).into_iter().filter(|id| Some(*id) == active || h.workspaces.iter().any(|w| w.id == *id)).collect()
+    }
+
     /// A space from a display that isn't connected (a monitor badge)
     pub fn guest(&self, id: i32) -> bool {
         !self.bases.is_empty() && !self.bases.values().any(|b| *b == base_of_id(id))
@@ -253,6 +263,20 @@ mod tests {
         assert_eq!(i.next_free("eDP-1", &h), 3);
         assert_eq!(i.next_free("DP-1", &h), 102);
         assert_eq!(i.id_for("DP-1", 1), 101);
+    }
+
+    #[test]
+    fn overview_and_all_windows_show_the_same_spaces() {
+        // 1–3 in use, 8 current (4–7 aren't there): 1, 2, 3, 8, not 1–8
+        let i = Info::from_json(&json!({"bases": {"eDP-1": 0}}), 5);
+        let ws = |id| Workspace { id, monitor: "eDP-1".into(), ..Default::default() };
+        let mut h = Snapshot { workspaces: vec![ws(1), ws(2), ws(3), ws(8)], ..Default::default() };
+        h.active.insert("eDP-1".into(), 8);
+        assert_eq!(i.ids_for("eDP-1", &h), (1..=8).collect::<Vec<_>>(), "the menu bar's own list fills the gaps");
+        assert_eq!(i.shown_for("eDP-1", &h), vec![1, 2, 3, 8]);
+        // the current space shows even before Hyprland lists it
+        h.active.insert("eDP-1".into(), 4);
+        assert_eq!(i.shown_for("eDP-1", &h), vec![1, 2, 3, 4, 8]);
     }
 
     #[test]

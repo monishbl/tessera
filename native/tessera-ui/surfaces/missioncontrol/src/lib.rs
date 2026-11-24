@@ -203,9 +203,7 @@ impl MissionControl {
         self.open = Some(out);
         self.expose = self.told.clone();
         self.thumbs.retake();
-        if OverviewCfg::read(&st.shell.cfg).wallpapers {
-            self.wall.want(st, NAME, (320, 200));
-        }
+        self.want_wallpaper(st);
         let w = &mut self.wins[i];
         w.press = Press::None;
         w.drag_space = 0;
@@ -216,6 +214,15 @@ impl MissionControl {
         w.surface.show(0, 0);
         w.ui.invoke_focus_keys();
         self.rebuild(st);
+    }
+
+    /// The wallpaper: behind the spaces' windows (overview.wallpapers), and
+    /// in Material the whole background, dimmed (as the Overview's), so it's
+    /// large enough for both
+    fn want_wallpaper(&mut self, st: &State) {
+        if OverviewCfg::read(&st.shell.cfg).wallpapers || st.shell.look.material {
+            self.wall.want(st, NAME, (960, 540));
+        }
     }
 
     fn close(&mut self, st: &mut State, tell: bool) {
@@ -263,9 +270,9 @@ impl MissionControl {
         let scale = self.wins[i].ui.window().scale_factor().max(1.0);
         let active = snap.active.get(&out).copied().unwrap_or(1);
         let mon = wins.monitor(&out).cloned().unwrap_or_default();
-        // The spaces that exist, in this display's order
-        let order = self.info.ids_for(&out, &snap);
-        let ids: Vec<i32> = order.iter().copied().filter(|id| snap.workspaces.iter().any(|w| w.id == *id)).collect();
+        // The spaces that exist and the current one, in this display's
+        // order: the Overview's list (spaces::Info::shown_for)
+        let ids: Vec<i32> = self.info.shown_for(&out, &snap);
         let cards = layout::cards(ids.len(), size);
         let s = layout::CARD_W / size.0.max(1.0);
         let mut card_minis: Vec<(i32, Vec<ui::McMini>)> = Vec::new();
@@ -350,7 +357,8 @@ impl MissionControl {
         let n = list.len();
         ui.set_expose_count(format!("{n} {}", if n == 1 { "window" } else { "windows" }).into());
         ui.set_expose_icon(expose_icon.unwrap_or_default());
-        ui.set_wallpapers(cfg.wallpapers);
+        ui.set_wallpapers(cfg.wallpapers && self.wall.image.is_some());
+        ui.set_has_wallpaper(self.wall.image.is_some());
         ui.set_wallpaper(self.wall.image.clone().unwrap_or_default());
     }
 
@@ -520,6 +528,9 @@ impl Part for MissionControl {
                 self.wins[i].glass_sent.clear();
             }
             self.look(st, i);
+        }
+        if self.open.is_some() {
+            self.want_wallpaper(st);
         }
         self.rebuild(st);
     }

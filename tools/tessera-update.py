@@ -1865,6 +1865,14 @@ def apply(config_dir, choices, extra=(), channel=None, staged=None):
             write_json(fresh_path(), {"to": git("rev-parse", "HEAD").strip(), "from": old_head, "at": int(time.time())})
         except OSError:
             pass
+    # Apple's wallpapers an older installer fetched go (only those exact
+    # files; settings pointing at them go back to the built-in set). The
+    # shell's next start runs it too (apple-wallpapers.py; never fatal)
+    try:
+        subprocess.run([sys.executable, "-I", os.path.join(REPO, "shell", "assets", "scripts", "apple-wallpapers.py")],
+                       capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        pass
     # (the notes, for the new shell's "What's new")
     return {"applied": True, "backup": backup, "stash": stash, "built": built, "failed": failed, "ui": ui, "config": config_sync,
             "now": git("rev-parse", "--short", "HEAD").strip(),

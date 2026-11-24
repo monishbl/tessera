@@ -93,7 +93,7 @@ Files: `site/film/engine/fonts/*.woff2`. Licence: `site/film/engine/fonts/OFL-Ge
 
 The installer can fetch these if you choose them. They are not part of Tessera and Tessera's licence doesn't cover them:
 
-- **Apple's macOS wallpapers**, downloaded from a community mirror by `tools/get-wallpapers.sh`. © Apple Inc., all rights reserved.
+- **Apple's macOS wallpapers**: no longer fetched (an installer before 3 November downloaded them from a community mirror into `~/Pictures/Wallpapers/macOS`; `shell/assets/scripts/apple-wallpapers.py` removes exactly those files from an older install). © Apple Inc., all rights reserved.
 - **Google Sans Flex**, the apps' font in Tessera's desktop look: Tessera's own copy (Tessera Sans Flex, above) is installed for apps in `~/.local/share/fonts/tessera` by `shell/assets/scripts/desktop-look.py`; only when that copy is missing is the original downloaded there unmodified with its licence from Google Fonts' repository (google/fonts, `ofl/googlesansflex`, a pinned commit and SHA-256). © 2015 The Google Sans Flex Authors, SIL Open Font License 1.1 (no Reserved Font Names). "Google", "Google Sans" and "Google Sans Flex" are trademarks of Google LLC; Tessera uses the name only to name the original font and isn't affiliated with Google.
 - **Darkly** and **Breeze Plus** (AUR: darkly-bin, breeze-plus), the Qt apps' style and icons in Tessera's desktop look, when you choose the app style. Each under its own licence.
 - **ttf-apple-emoji** (AUR), the Apple emoji style. Apple's font, repackaged by the AUR package; check its terms before you install it.

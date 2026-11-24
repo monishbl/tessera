@@ -63,6 +63,11 @@ pub const PARTS: &[(&str, &str, &str)] = &[
     ("biometrics", "security", ""),
 ];
 
+/// Parts that open on their own (`settings biometrics`): (file, its own
+/// title). PARTS keeps the frozen SettingsMap.js's empty heading; the header
+/// shows this title under its section's crumb instead of an empty one.
+pub const PART_TITLES: &[(&str, &str)] = &[("biometrics", "Face & Fingerprint")];
+
 /// Older page ids -> (page, part to show)
 pub const ALIASES: &[(&str, &str, &str)] = &[
     ("dock", "menubar", "Dock"),
@@ -108,7 +113,23 @@ pub fn section(id: &str) -> Option<&'static Section> {
 
 /// The section a page id is in ("about/health" -> about)
 pub fn section_of(page: &str) -> Option<&'static Section> {
-    section(page.split('/').next().unwrap_or(""))
+    section(section_id_of(page))
+}
+
+/// A part opened on its own: (the section it's a part of, its title)
+pub fn standalone_part(page: &str) -> Option<(&'static Section, &'static str)> {
+    let title = PART_TITLES.iter().find(|t| t.0 == page)?.1;
+    let parent = PARTS.iter().find(|p| p.0 == page)?.1;
+    Some((section(parent)?, title))
+}
+
+/// The section id a page belongs to: its first segment, or the section a
+/// part opened on its own is a part of ("biometrics" -> security)
+pub fn section_id_of(page: &str) -> &str {
+    match standalone_part(page) {
+        Some((s, _)) => s.id,
+        None => page.split('/').next().unwrap_or(""),
+    }
 }
 
 /// Where an older id goes now: (page, part) or None
@@ -191,5 +212,20 @@ mod tests {
         assert_eq!(page_of_file("appearance"), ("appearance".into(), "".into()));
         assert_eq!(section_of("about/health").unwrap().name, "About");
         assert_eq!(alias("trackpad"), Some(("mouse", "Trackpad")));
+    }
+
+    #[test]
+    fn parts_opened_alone_have_a_title_and_a_section() {
+        // (every part with an empty heading that opens on its own names itself)
+        for p in PARTS.iter().filter(|p| p.2.is_empty()) {
+            let (sec, title) = standalone_part(p.0).unwrap_or_else(|| panic!("{} has no title", p.0));
+            assert!(!title.is_empty());
+            assert_eq!(sec.id, p.1);
+        }
+        assert_eq!(standalone_part("biometrics").map(|(s, t)| (s.name, t)), Some(("Privacy & Security", "Face & Fingerprint")));
+        assert_eq!(section_id_of("biometrics"), "security");
+        assert_eq!(section_of("biometrics").unwrap().id, "security");
+        assert_eq!(section_id_of("about/health"), "about");
+        assert!(standalone_part("security").is_none());
     }
 }

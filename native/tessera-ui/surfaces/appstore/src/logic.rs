@@ -23,10 +23,12 @@ pub const PLACES: [(&str, &str, &str, bool); 11] = [
 pub const FILTERS: [&str; 4] = ["all", "repo", "flathub", "aur"];
 
 /// Cards a row and a card's width for the content area's width
-/// (24 px margins; 300 px cards at least, 12 / 16 apart)
+/// (24 px margins; 380 px cards at least, 12 / 16 apart: names and
+/// descriptions get two lines each, not cut at a few words)
+pub const CARD_MIN: f32 = 380.0;
 pub fn columns(content_w: f32, material: bool) -> (usize, f32) {
     let gap = if material { 12.0 } else { 16.0 };
-    let cols = (((content_w - 48.0 + gap) / (300.0 + gap)).floor() as i64).max(1) as usize;
+    let cols = (((content_w - 48.0 + gap) / (CARD_MIN + gap)).floor() as i64).max(1) as usize;
     let w = (content_w - 48.0 - (cols as f32 - 1.0) * gap) / cols as f32;
     (cols, w)
 }
@@ -339,16 +341,24 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn cards_fill_the_width_three_hundred_at_least() {
-        // 980 wide, a 230 sidebar: 750 of content, 702 for cards: two
-        assert_eq!(columns(750.0, false).0, 2);
-        assert_eq!(columns(750.0, false).1, (750.0 - 48.0 - 16.0) / 2.0);
-        // Material: 1040 - 272
-        let (c, w) = columns(768.0, true);
-        assert_eq!((c, w), (2, (768.0 - 48.0 - 12.0) / 2.0));
-        // narrow: one, wide: four
+    fn cards_fill_the_width_three_hundred_and_eighty_at_least() {
+        // 980 wide, a 230 sidebar: 750 of content, 702 for cards: one
+        assert_eq!(columns(750.0, false).0, 1);
+        // 1040 - 272 in Material: 720 for cards, still one
+        assert_eq!(columns(768.0, true).0, 1);
+        // 860 of content: two
+        let (c, w) = columns(860.0, true);
+        assert_eq!((c, w), (2, (860.0 - 48.0 - 12.0) / 2.0));
+        // 1920 px with Material's 272 sidebar: four, never five
+        let (c, w) = columns(1920.0 - 272.0, true);
+        assert_eq!(c, 4);
+        assert!(w >= CARD_MIN, "{w}");
+        // the Glass look's 230 sidebar at 1920: four too
+        assert_eq!(columns(1920.0 - 230.0, false).0, 4);
+        // 1440: two (three from about 1490)
+        assert_eq!(columns(1440.0 - 272.0, true).0, 2);
+        assert_eq!(columns(1500.0 - 272.0, true).0, 3);
         assert_eq!(columns(300.0, false).0, 1);
-        assert_eq!(columns(1300.0, false).0, 4);
         assert_eq!(columns(10.0, true).0, 1);
     }
 

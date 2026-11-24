@@ -125,6 +125,11 @@ pub fn upgrades(cfg: &Value) -> Vec<(&'static str, Value)> {
     if cfg["workspaces"]["switchCue"].as_str() == Some("") {
         out.push(("workspaces.switchCue", json!(if cfg["workspaces"]["dimOthers"].as_bool().unwrap_or(false) { "glow" } else { "off" })));
     }
+    // 24 Nov: the spaces in Overview and All Windows show the wallpaper
+    // behind their windows (they were blank dark tiles). Config.qml's
+    // default is off (frozen) and was written into every settings file, so
+    // it's turned on once for every install; turned off after, it stays off.
+    once(&tessera_core::util::state_dir().join("migrations/overview-wallpapers-on"), || set_config("overview.wallpapers", json!(true)));
     // (a version that isn't a number, "3" or 3.0, reads as what it says)
     let version = match &cfg["defaultsVersion"] {
         Value::Number(n) => n.as_f64().unwrap_or(0.0) as i64,
@@ -150,6 +155,19 @@ pub fn upgrades(cfg: &Value) -> Vec<(&'static str, Value)> {
     }
     out.push(("defaultsVersion", json!(3)));
     out
+}
+
+/// A change made once per install: `apply` runs while `marker` isn't there,
+/// and the marker is written when it worked (false: tried again next start)
+fn once(marker: &std::path::Path, apply: impl FnOnce() -> bool) -> bool {
+    if marker.exists() || !apply() {
+        return false;
+    }
+    if let Some(d) = marker.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    let _ = std::fs::write(marker, "done\n");
+    true
 }
 
 // ── Theme.qml's dark, Daylight.qml, TimeFormat.qml ──────────────────────────
@@ -552,6 +570,29 @@ mod tests {
         assert_eq!(at(&v, "a.x.c"), &Value::Null);
         assert_eq!(cfg_str(&v, "a.b.c", "d"), "d");
         assert!(cfg_bool(&v, "nothing", true));
+    }
+
+    #[test]
+    fn a_change_made_once_per_install() {
+        let dir = std::env::temp_dir().join(format!("tessera-once-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let marker = dir.join("migrations/overview-wallpapers-on");
+        // (not written: tried again)
+        assert!(!once(&marker, || false));
+        assert!(!marker.exists());
+        let mut runs = 0;
+        assert!(once(&marker, || {
+            runs += 1;
+            true
+        }));
+        assert!(marker.exists());
+        // (done: never again, so turning it off after stays off)
+        assert!(!once(&marker, || {
+            runs += 1;
+            true
+        }));
+        assert_eq!(runs, 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

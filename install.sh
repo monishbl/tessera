@@ -1765,6 +1765,9 @@ adopt_old_names() {
         return 0
     fi
     python3 -I "$ROOT/shell/assets/scripts/migrate-names.py" --no-checkout || true
+    # Apple's wallpapers an older installer fetched (~/Pictures/Wallpapers/macOS):
+    # only those exact files go; settings pointing at them go back to the built-in set
+    python3 -I "$ROOT/shell/assets/scripts/apple-wallpapers.py" || true
     old_names_install "${TESSERA_SYSTEM_ROOT:-}" 0
     return 0
 }

@@ -501,7 +501,7 @@ impl Dock {
             if kb != w.under_keyboard {
                 w.under_keyboard = kb;
                 w.surface.layer.set_exclusive_zone(layout::zone_with_keyboard(m.exclusive(s.auto_hide), kb));
-                w.surface.layer.commit();
+                w.surface.wl.commit();
             }
             let hidden = layout::hidden(auto, w.reveal.revealed, popup) || kb;
             ui.set_hidden(hidden);

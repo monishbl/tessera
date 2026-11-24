@@ -717,7 +717,7 @@ impl Settings {
     fn sync_chrome(&mut self, st: &State) {
         let Some(w) = &self.win else { return };
         let material = st.shell.look.material;
-        let current = self.page.split('/').next().unwrap_or("").to_string();
+        let current = map::section_id_of(&self.page).to_string();
         let mut last_group = "";
         let sections: Vec<ui::SSection> = map::SECTIONS
             .iter()
@@ -803,10 +803,18 @@ impl Settings {
             eprintln!("debug: settings: {page_id} shown in {:.1} ms (kept: {})", t.elapsed().as_secs_f64() * 1000.0, self.pages.ids().join(" "));
         }
         let sec = map::section_of(&page_id);
-        let is_sub = page_id.contains('/');
+        // (a part opened on its own, `settings biometrics`: its own title
+        // under its section's crumb, as a subpage)
+        let part = map::standalone_part(&page_id);
+        let is_sub = page_id.contains('/') || part.is_some();
         if let Some(w) = &self.win {
             let name = sec.map_or("", |s| s.name);
-            w.ui.set_page_title(if is_sub { page.title.as_str() } else { name }.into());
+            let title = match part {
+                Some((_, t)) => t,
+                None if is_sub => page.title.as_str(),
+                None => name,
+            };
+            w.ui.set_page_title(title.into());
             w.ui.set_crumb(name.into());
             w.ui.set_is_sub(is_sub);
             w.ui.global::<ui::SBus>().set_picker_busy(self.feed["look"]["pickerBusy"].as_bool().unwrap_or(false) || self.feed["devices"]["pickerBusy"].as_bool().unwrap_or(false));
@@ -1047,7 +1055,7 @@ impl Part for Settings {
             M::Back => self.step(st, false),
             M::Forward => self.step(st, true),
             M::Crumb => {
-                let sec = self.page.split('/').next().unwrap_or("").to_string();
+                let sec = map::section_id_of(&self.page).to_string();
                 self.go(st, &sec, "", false);
             }
             M::Menu(id, x, y, w, h) => {
@@ -1106,7 +1114,7 @@ impl Part for Settings {
             M::Close => self.close(st, true),
             M::Drag(..) => {} // (the compositor moves the window)
             M::KeyNav(d) => {
-                let cur = self.page.split('/').next().unwrap_or("");
+                let cur = map::section_id_of(&self.page);
                 let i = map::SECTIONS.iter().position(|s| s.id == cur).unwrap_or(0) as i32;
                 // (Up and Down step; Home and End go to the first and last)
                 let last = map::SECTIONS.len() as i32 - 1;

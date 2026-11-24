@@ -49,10 +49,10 @@ pub fn wallpaper_use_set(s: &Value) {
     }
 }
 
-/// The sets in the wallpaper folder (assets/scripts/wallpaper-sets.sh): newest macOS-style names first, then by name
+/// The sets in the wallpaper folder (assets/scripts/wallpaper-sets.sh), by
+/// name: all of them are your own pictures (no names are put first: Apple's
+/// sets an older installer fetched aren't Tessera's, apple-wallpapers.py)
 pub fn parse_sets(text: &str) -> Vec<Value> {
-    const ORDER: &[&str] = &["tahoe beach", "tahoe", "sequoia", "sonoma", "ventura", "monterey", "big sur", "catalina", "mojave"];
-    let rank = |n: &str| ORDER.iter().position(|o| *o == n.to_lowercase()).unwrap_or(ORDER.len());
     let mut sets: Vec<Value> = text
         .lines()
         .filter(|l| !l.is_empty())
@@ -64,7 +64,7 @@ pub fn parse_sets(text: &str) -> Vec<Value> {
         .collect();
     sets.sort_by(|x, y| {
         let (nx, ny) = (x["name"].as_str().unwrap_or(""), y["name"].as_str().unwrap_or(""));
-        rank(nx).cmp(&rank(ny)).then_with(|| nx.to_lowercase().cmp(&ny.to_lowercase()))
+        nx.to_lowercase().cmp(&ny.to_lowercase())
     });
     sets
 }
@@ -865,6 +865,12 @@ impl Service for Bridges {
     }
     fn start(&mut self, h: &mut Host) {
         upgrade_config();
+        // Apple's wallpapers an older installer fetched go (only those exact
+        // files; settings pointing at them go back to the built-in set):
+        // assets/scripts/apple-wallpapers.py, a no-op once they're gone
+        if !sandboxed() {
+            run_owned(vec!["python3".into(), "-I".into(), script("apple-wallpapers.py").to_string_lossy().into_owned()]);
+        }
         self.dark = Some(tessera_core::wallpaper::dark_now(h.cfg()));
         self.w_look = cfg_str(h.cfg(), "appearance.look", "glass").to_string();
         // Where the bundled pictures really are (the Material look runs from a folder of links)
@@ -1188,14 +1194,15 @@ mod tests {
     }
 
     #[test]
-    fn sets_come_newest_first_then_by_name() {
-        let text = "pair\tZebra\t/w/Zebra Light.jpg\t/w/Zebra Dark.jpg\ntime\tApple\t/w/Apple\t/w/Apple/1.jpg\npair\tSonoma\t/w/Sonoma Light.jpg\t/w/Sonoma Dark.jpg\npair\tTahoe\t/w/Tahoe Light.jpg\t/w/Tahoe Dark.jpg\n";
+    fn sets_come_by_name() {
+        let text = "pair\tZebra\t/w/Zebra Light.jpg\t/w/Zebra Dark.jpg\ntime\tApple\t/w/Apple\t/w/Apple/1.jpg\npair\tSonoma\t/w/Sonoma Light.jpg\t/w/Sonoma Dark.jpg\npair\tbeach\t/w/beach Light.jpg\t/w/beach Dark.jpg\n";
         let sets = parse_sets(text);
         let names: Vec<&str> = sets.iter().map(|s| s["name"].as_str().unwrap()).collect();
-        assert_eq!(names, vec!["Tahoe", "Sonoma", "Apple", "Zebra"]);
-        assert_eq!(sets[0]["light"], "/w/Tahoe Light.jpg");
-        assert_eq!(sets[2]["folder"], "/w/Apple");
-        assert_eq!(sets[2]["preview"], "/w/Apple/1.jpg");
+        // (no macOS names put first any more)
+        assert_eq!(names, vec!["Apple", "beach", "Sonoma", "Zebra"]);
+        assert_eq!(sets[1]["light"], "/w/beach Light.jpg");
+        assert_eq!(sets[0]["folder"], "/w/Apple");
+        assert_eq!(sets[0]["preview"], "/w/Apple/1.jpg");
     }
 
     #[test]

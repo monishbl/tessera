@@ -498,7 +498,9 @@ component AppCard inherits FocusScope {
     callback opened();
     callback act();
     focus-on-click: false;
-    height: Theme.material ? 88px : 76px;
+    // (room for a two-line name and a two-line description: CardGrid's
+    // card-h is the same)
+    height: Theme.material ? 120px : 108px;
     accessible-role: button;
     accessible-label: app.name;
     accessible-description: app.summary;
@@ -531,17 +533,26 @@ component AppCard inherits FocusScope {
             height: parent.height;
             alignment: center;
             spacing: Theme.material ? 0px : 2px;
+            // The name and the description wrap to two lines each before
+            // they're cut ("LibreOffice Writer", "GNU Image Manipulation
+            // Program" whole)
             Text {
+                property <length> line: (Theme.material ? 16px : Theme.body) * 1.3;
                 text: app.name;
+                wrap: word-wrap;
                 overflow: elide;
+                max-height: 2 * line;
                 color: Theme.label;
                 font-size: Theme.material ? 16px : Theme.body;
                 font-weight: Theme.material ? 500 : 600;
                 accessible-role: none;
             }
             Text {
+                property <length> line: (Theme.material ? 14px : Theme.small) * 1.3;
                 text: app.summary == "" ? " " : app.summary;
+                wrap: word-wrap;
                 overflow: elide;
+                max-height: 2 * line;
                 color: Theme.secondary;
                 font-size: Theme.material ? 14px : Theme.small;
                 accessible-role: none;
@@ -575,7 +586,7 @@ component CardGrid inherits Rectangle {
     in property <AsGlyphs> g;
     callback opened(int);
     callback act(int);
-    property <length> card-h: Theme.material ? 88px : 76px;
+    property <length> card-h: Theme.material ? 120px : 108px;
     height: apps.length == 0 ? 0px : ceil(apps.length / cols) * (card-h + gap) - gap;
     for a[i] in apps: AppCard {
         x: mod(i, cols) * (card-w + gap);
@@ -929,7 +940,9 @@ export component AppStoreWindow inherits Window {
         height: parent.height;
         background: Theme.material ? Theme.m3-surface : Theme.dark ? #1E1E21 : #F5F5F7;
         property <length> gap: Theme.material ? 12px : 16px;
-        property <int> cols: max(1, floor((self.width - 48px + gap) / (300px + gap)));
+        // (380 px cards at least, both looks: 4 a row at 1920 px, 3 from
+        // about 1490; logic.rs's columns() is the same rule)
+        property <int> cols: max(1, floor((self.width - 48px + gap) / (380px + gap)));
         property <length> card-w: (self.width - 48px - (cols - 1) * gap) / cols;
 
         list := Flickable {

@@ -608,6 +608,34 @@ def check_hyprland(_):
                   steps=["Open Software Update and install the system update", "Log out and in again"])
 
 
+def look():
+    """appearance.look from Tessera's settings ("glass" when unset or unreadable)."""
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    try:
+        with open(os.path.join(app_dir(base), "config.json"), encoding="utf-8") as f:
+            v = (json.load(f).get("appearance") or {}).get("look")
+    except (OSError, ValueError, AttributeError):
+        v = None
+    return v if isinstance(v, str) and v else "glass"
+
+
+def plugin_answer(out):
+    """What `hyprctl tessera-glass ping` said: (loaded, version, current).
+
+    Loaded is what `tessera doctor` checks: the answer names the plugin.
+    The version alone doesn't say how old a build is: a current build answers
+    "tessera-glass 2 shadow blur turned" when Hyprland's pointer function
+    couldn't be hooked (pointer.cpp: pointerReady), so "blur" (16 Nov) marks
+    a current build whatever the number; an old one is 3 or 4 without it, as
+    Appearance's Glass row (glassplugin.rs) calls them outdated."""
+    m = re.search(r"^tessera-glass\b(.*)$", out or "", re.M)
+    if not m:
+        return False, 0, False
+    words = m.group(1).split()
+    n = int(words[0]) if words and words[0].isdigit() else 1
+    return True, n, "blur" in words or n >= PLUGIN_VERSION
+
+
 def check_plugin(_):
     code, out = run(["hyprctl", "tessera-glass", "ping"])
     m = re.search(r"tessera-glass (\d+)", out or "")
@@ -636,6 +664,9 @@ def check_plugin(_):
                       f"An older build is loaded (version {n}): pointer and focus fixes need the new one",
                       "Run Software Update, or rebuild it: Settings → Appearance → Glass → Rebuild glass; then log out and in",
                       page="appearance/glass", steps=["Open Glass and press Rebuild glass", "Log out and in again"])
+    if look() == "material":
+        # (the Material look draws no glass: not loaded is nothing to fix)
+        return result("plugin", "Glass plugin", "Tessera itself", "off", "Not loaded: the Material look doesn't use it")
     if install_mode() == "bundle":
         return result("plugin", "Glass plugin", "Tessera itself", "fail", "Not loaded: glass falls back to frosted",
                       "Run Software Update, then log out and in", page="update", steps=bundle_steps("glass plugin"))

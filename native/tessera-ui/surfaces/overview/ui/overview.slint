@@ -231,7 +231,9 @@ export component OverviewPanel inherits Window {
         opacity: min(1, openness);
     }
     Rectangle {
-        background: Theme.material ? scrim.with-alpha((mac ? 0.24 : 0.4) * min(1, openness)) : #000000.with-alpha((mac ? 0.12 : 0.2) * min(1, openness));
+        // (Material's strip: as dim as the grid, so the desktop's widgets
+        // recede under the bar's faded edge rather than show through it)
+        background: Theme.material ? scrim.with-alpha(0.4 * min(1, openness)) : #000000.with-alpha((mac ? 0.12 : 0.2) * min(1, openness));
     }
 
     content := Rectangle {
@@ -245,9 +247,15 @@ export component OverviewPanel inherits Window {
             visible: mac;
             y: -(1 - min(1, openness)) * 40px;
             height: bar-h;
-            background: Theme.material ? Theme.m3-surface-container : Theme.dark ? #1f1f24.with-alpha(0.6) : #ffffff.with-alpha(0.5);
-            border-bottom-left-radius: Theme.material ? Theme.radius-panel : 0;
-            border-bottom-right-radius: Theme.material ? Theme.radius-panel : 0;
+            background: Theme.material ? transparent : Theme.dark ? #1f1f24.with-alpha(0.6) : #ffffff.with-alpha(0.5);
+            // Material: the bar's surface fades out below the spaces (a scrim
+            // edge) instead of ending in a hard line that sliced through the
+            // desktop's widgets (the clock's lower half showed under it)
+            if Theme.material: Rectangle {
+                y: 0;
+                height: parent.height + 72px;
+                background: @linear-gradient(180deg, Theme.m3-surface-container 0%, Theme.m3-surface-container.with-alpha(0.92) 60%, Theme.m3-surface-container.with-alpha(0.55) 80%, Theme.m3-surface-container.with-alpha(0) 100%);
+            }
             if !Theme.material: Rectangle {
                 y: parent.height - 1px;
                 height: 1px;

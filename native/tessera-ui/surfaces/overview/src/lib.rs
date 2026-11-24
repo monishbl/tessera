@@ -581,7 +581,9 @@ impl Overview {
                 .iter()
                 .map(|n| {
                     let g = geo_of(&wins, n, (ww, wh));
-                    (n.clone(), self.info.ids_for(n, &snap), g.h / g.w.max(1.0))
+                    // (the spaces there are and the current one: All Windows
+                    // shows the same, spaces::Info::shown_for)
+                    (n.clone(), self.info.shown_for(n, &snap), g.h / g.w.max(1.0))
                 })
                 .collect();
             let cols = layout::columns(rows_mode, rows.iter().map(|r| r.1.len()).max().unwrap_or(1));

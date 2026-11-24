@@ -4,7 +4,8 @@
 // current space's windows spread out below as pictures; App Exposé: one
 // app's windows from every space, its name on top instead of the spaces.
 // Glass sits on a full-screen borderless glass (the plugin's, Rust sends
-// it) under a light veil; Material on its surface. Rust lays it out and
+// it) under a light veil; Material on the wallpaper under a scrim (as the
+// Overview), its surface only until the picture is there. Rust lays it out and
 // decides hover, clicks and drags from the pointer (one tracker).
 
 import { Theme } from "@tessera/theme.slint";
@@ -56,6 +57,8 @@ export component MissionControlPanel inherits Window {
     in property <string> expose-count;
     in property <image> expose-icon;
     in property <bool> wallpapers;
+    // (the picture is decoded: Material draws it as the background)
+    in property <bool> has-wallpaper;
     in property <image> wallpaper;
     in property <color> glass-fill;
     in property <string> hover-win;
@@ -74,6 +77,9 @@ export component MissionControlPanel inherits Window {
         if !shown && progress <= 0.001 { closed(); }
     }
 
+    // Material on the dimmed wallpaper: light text, as on Glass's veil
+    property <bool> on-wall: Theme.material && has-wallpaper;
+
     callback key(string) -> bool;
     callback pointer(length, length, bool);
     callback press(length, length, int);
@@ -91,10 +97,22 @@ export component MissionControlPanel inherits Window {
     forward-focus: keys;
 
     // The blurred wallpaper (Glass: the plugin's glass, with a veil;
-    // Material: its surface)
+    // Material: the wallpaper under a scrim, as the Overview's; its surface
+    // until the picture is decoded)
     Rectangle {
-        background: Theme.material ? Theme.panel : glass-fill;
+        background: Theme.material ? (on-wall ? transparent : Theme.panel) : glass-fill;
         opacity: progress;
+    }
+    if on-wall: Image {
+        width: 100%;
+        height: 100%;
+        source: wallpaper;
+        image-fit: cover;
+        opacity: progress;
+        accessible-role: none;
+    }
+    if on-wall: Rectangle {
+        background: Theme.m3-scrim.with-alpha(0.5 * progress);
     }
     if !Theme.material: Rectangle {
         background: #000000.with-alpha(0.18 * progress);
@@ -126,13 +144,13 @@ export component MissionControlPanel inherits Window {
             alignment: center;
             Text {
                 text: expose-name;
-                color: Theme.material ? Theme.m3-on-surface : white;
+                color: Theme.material && !on-wall ? Theme.m3-on-surface : white;
                 font-size: 20px;
                 font-weight: 600;
             }
             Text {
                 text: expose-count;
-                color: Theme.material ? Theme.m3-on-surface-variant : #ffffff.with-alpha(0.7);
+                color: Theme.material && !on-wall ? Theme.m3-on-surface-variant : #ffffff.with-alpha(0.7);
                 font-size: Theme.small;
             }
         }
@@ -204,7 +222,7 @@ export component MissionControlPanel inherits Window {
                 width: parent.width;
                 horizontal-alignment: center;
                 text: c.title;
-                color: Theme.material ? (c.current ? Theme.m3-on-surface : Theme.m3-on-surface-variant) : c.current ? white : #ffffff.with-alpha(0.7);
+                color: Theme.material && !on-wall ? (c.current ? Theme.m3-on-surface : Theme.m3-on-surface-variant) : c.current ? white : #ffffff.with-alpha(0.7);
                 font-size: Theme.small;
                 font-weight: c.current ? 600 : 500;
                 overflow: elide;
@@ -224,7 +242,7 @@ export component MissionControlPanel inherits Window {
         transform-origin: { x: self.width / 2, y: self.height / 2 };
         if tiles.length == 0: Text {
             text: expose ? "No open windows" : "No windows on this desktop";
-            color: Theme.material ? Theme.m3-on-surface-variant : #ffffff.with-alpha(0.7);
+            color: Theme.material && !on-wall ? Theme.m3-on-surface-variant : #ffffff.with-alpha(0.7);
             font-size: Theme.title;
         }
         for t in tiles: tile := Rectangle {

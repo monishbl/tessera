@@ -185,6 +185,24 @@ class HealthCheck(unittest.TestCase):
         self.assertEqual(self.rows(FAKE_HYPR="v0.56.9")["hyprland"]["status"], "ok")
         self.assertEqual(self.rows(FAKE_HYPR="v0.57.2")["hyprland"]["status"], "ok")
 
+    def test_the_glass_plugin_agrees_with_doctor(self):
+        # a current build whose pointer hook couldn't be placed answers 2 with
+        # its feature words: loaded and current, as `tessera doctor` says
+        row = self.rows(FAKE_PLUGIN="2 shadow blur turned")["plugin"]
+        self.assertEqual(row["status"], "ok", row)
+        self.assertEqual(self.rows(FAKE_PLUGIN="6 shadow blur turned")["plugin"]["detail"], "Loaded (version 6)")
+        # an old build (3 or 4, no blur) is still a warning in the Glass look
+        self.assertEqual(self.rows(FAKE_PLUGIN="3 shadow")["plugin"]["status"], "warn")
+        # the Material look doesn't use it: not loaded is off, an old build fine
+        self.env["XDG_CONFIG_HOME"] = str(self.home / ".config")
+        cfg = self.home / ".config/tessera"
+        cfg.mkdir(parents=True)
+        (cfg / "config.json").write_text(json.dumps({"appearance": {"look": "material"}}))
+        self.assertEqual(self.rows(FAKE_DOWN="hyprctl:tessera-glass")["plugin"]["status"], "off")
+        self.assertEqual(self.rows(FAKE_PLUGIN="3")["plugin"]["status"], "ok")
+        (cfg / "config.json").write_text(json.dumps({"appearance": {"look": "glass"}}))
+        self.assertEqual(self.rows(FAKE_DOWN="hyprctl:tessera-glass")["plugin"]["status"], "fail")
+
     def test_quickshell_versions_and_a_fix_that_is_true(self):
         self.assertEqual(self.rows(FAKE_QS="0.3.3")["quickshell"]["status"], "ok")  # newer than the minimum
         old = self.rows(FAKE_QS="0.2.1")["quickshell"]

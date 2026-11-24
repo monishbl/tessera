@@ -155,7 +155,10 @@ pub fn mac(w: f32, h: f32, rows: &[(String, Vec<i32>, f32)], rows_mode: bool, ma
         let tile_h = (tile_w * aspect).round();
         let shown = ids.len() as f32;
         let sw = shown * tile_w + (shown - 1.0).max(0.0) * 24.0;
-        let x0 = ((w - sw) / 2.0).round();
+        // (the + comes right after the last space, the two centred together:
+        // alone at the far right it read as something else's)
+        let size = if material { 40.0 } else { 36.0 };
+        let x0 = ((w - (sw + 24.0 + size)) / 2.0).round();
         let sy = y + if rows_mode { 20.0 } else { 6.0 };
         let tiles = ids
             .iter()
@@ -165,8 +168,7 @@ pub fn mac(w: f32, h: f32, rows: &[(String, Vec<i32>, f32)], rows_mode: bool, ma
                 CellBox { id, row: out.len(), rect: r, title: Rect { x: r.x, y: sy + tile_h + 6.0, w: tile_w, h: SMALL_H } }
             })
             .collect();
-        let size = if material { 40.0 } else { 36.0 };
-        let plus = Rect { x: w - 28.0 - size, y: sy + tile_h / 2.0 - size / 2.0, w: size, h: size };
+        let plus = Rect { x: x0 + sw + 24.0, y: sy + tile_h / 2.0 - size / 2.0, w: size, h: size };
         out.push(MacRow { name: name.clone(), label: (28.0, y), tiles, plus });
         y += (if rows_mode { 20.0 } else { 0.0 }) + strip_h + 26.0 + 16.0;
     }
@@ -321,7 +323,11 @@ mod tests {
         let t = &m.rows[0].tiles;
         assert_eq!(t[0].rect.w, 170.0); // (120 / 0.5625 is wider: capped)
         assert_eq!(t[1].rect.x - t[0].rect.x, 194.0);
-        assert_eq!(m.rows[0].plus.x, 1920.0 - 28.0 - 36.0);
+        // the + right after the last space, the strip and it centred
+        let p = m.rows[0].plus;
+        assert_eq!(p.x, t[2].rect.x + t[2].rect.w + 24.0);
+        assert_eq!(t[0].rect.x, ((1920.0 - (3.0 * 170.0 + 2.0 * 24.0 + 24.0 + 36.0)) / 2.0f32).round());
+        assert_eq!(m.rows[0].plus.w, 36.0);
         assert_eq!(m.bar_h, 20.0 + 120.0 + 26.0 + 20.0);
         assert_eq!(nearest_x(t, 0, t[2].rect.x), 3);
     }

@@ -257,6 +257,39 @@ pub fn status(events: &[Value], samples: &[Sample], now: i64) -> Top {
     Top { label: "Running smoothly".into(), detail: more, ok: true, ..Default::default() }
 }
 
+/// The top line with the service checks (About's System health) counted
+/// in: never "Running smoothly" while any of them needs attention. When the
+/// record's own line is already a warning (restarts, slow moments) it stays,
+/// and the services are added to its explanation.
+pub fn with_services(line: (String, String, bool), attention: &[String]) -> (String, String, bool) {
+    if attention.is_empty() {
+        return line;
+    }
+    let (label, detail, ok) = line;
+    let n = count(attention.len(), "thing needs attention", "things need attention");
+    let names = attention.join(", ");
+    if ok {
+        (n, format!("{names}. System health, below, says how to fix {}.", if attention.len() == 1 { "it" } else { "them" }), false)
+    } else {
+        (label, format!("{detail} Also: {n} ({names})."), false)
+    }
+}
+
+/// The names of the service checks that need attention (warn or fail)
+pub fn attention(checks: &Value) -> Vec<String> {
+    checks
+        .as_array()
+        .map(|a| a.iter().filter(|c| c["status"] == "fail" || c["status"] == "warn").filter_map(|c| c["name"].as_str().map(String::from)).collect())
+        .unwrap_or_default()
+}
+
+/// The link to System health, saying what its checks found
+fn services_row(needs: &[String], act: String) -> Row {
+    let label = if needs.is_empty() { "System health".to_string() } else { count(needs.len(), "thing needs attention", "things need attention") };
+    let detail = if needs.is_empty() { "Whether the services Tessera uses are working".to_string() } else { format!("{}: open System health to fix", needs.join(", ")) };
+    Row::link(label, "about/health").icon(if needs.is_empty() { "heartbeat" } else { "warning-circle" }).detail(detail).id(act)
+}
+
 /// What one event was, for people: (title, explanation, what to offer)
 pub enum Offer {
     None,
@@ -473,20 +506,31 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
     let now = v["now"].as_i64().unwrap_or(0);
     let samples = samples_of(&v);
     let events: Vec<Value> = v["events"].as_array().cloned().unwrap_or_default();
+    // (the service checks, as About's System health lists them: the bridge
+    // runs them when this page opens too)
+    let feed = cx.feed;
+    let needs = attention(&feed["about"]["health"]["checks"]);
+    let services_link = cx.link("about/health", "");
     if samples.is_empty() && events.is_empty() {
         let (label, detail) = if v["recording"] == true {
             ("No history yet", "Tessera notes its memory, processor time and slow moments every 5 minutes, and any crash or restart as it happens. Check back in a few minutes.")
         } else {
             ("Not recorded here", "Tessera keeps this record when it runs as the whole shell. Started beside the basic shell, it doesn't.")
         };
-        p.group("").footer(footer).row(Row::new(label).detail(detail).icon("heartbeat"));
+        let (label, detail, ok) = with_services((label.to_string(), detail.to_string(), true), &needs);
+        p.group("").footer(footer).row(Row::new(label).detail(detail).icon(if ok { "heartbeat" } else { "warning-circle" })).row(services_row(&needs, services_link.clone()));
         setup_steps(cx, p);
         services(cx, p);
         return;
     }
 
     // ── How it's going ──
-    let top = status(&events, &samples, now);
+    let mut top = status(&events, &samples, now);
+    // (never "running smoothly" while services need attention: audit #172)
+    let (label, detail, ok) = with_services((top.label.clone(), top.detail.clone(), top.ok), &needs);
+    top.label = label;
+    top.detail = detail;
+    top.ok = ok;
     let mut detail = match run_start(&events) {
         Some(t) if v["recording"] == true && !top.says_start => format!("{} Running since {}.", top.detail, since(t, now)),
         _ => top.detail.clone(),
@@ -495,10 +539,12 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
         detail = format!("{detail}\n{}", super::super::about::health::numbered(&top.steps));
     }
     let row = Row::new(top.label.clone()).detail(detail).icon(if top.ok { "check-circle" } else { "warning-circle" });
-    p.group("").row(match top.open {
-        Some(open) => open_button(cx, row, open),
-        None => row,
-    });
+    p.group("")
+        .row(match top.open {
+            Some(open) => open_button(cx, row, open),
+            None => row,
+        })
+        .row(services_row(&needs, services_link));
     setup_steps(cx, p);
 
     // ── The services ──
@@ -711,6 +757,25 @@ mod tests {
         let old = ev(&format!("{{\"t\":{},\"ev\":\"start\",\"why\":\"crash\"}}", now - 3 * 86400));
         let (l, d, ok) = st(&old, &[], now);
         assert!(ok && l == "Running smoothly" && d.contains("1 problem in the last 7 days"), "{d}");
+    }
+
+    #[test]
+    fn the_top_line_never_says_smoothly_while_services_need_attention() {
+        let smooth = ("Running smoothly".to_string(), "No crashes or restarts in the last 7 days.".to_string(), true);
+        assert_eq!(with_services(smooth.clone(), &[]), smooth);
+        let (l, d, ok) = with_services(smooth.clone(), &["Glass plugin".into()]);
+        assert_eq!((l.as_str(), ok), ("1 thing needs attention", false));
+        assert!(d.starts_with("Glass plugin."), "{d}");
+        let (l, _, _) = with_services(smooth, &["Avahi".into(), "Portal".into()]);
+        assert_eq!(l, "2 things need attention");
+        // (a stronger message of the record's own stays, the services added)
+        let slow = ("Some slow moments today".to_string(), "Tessera paused.".to_string(), false);
+        let (l, d, ok) = with_services(slow, &["Avahi".into()]);
+        assert_eq!((l.as_str(), ok), ("Some slow moments today", false));
+        assert!(d.contains("Also: 1 thing needs attention (Avahi)."), "{d}");
+        let checks = json!([{"name": "Avahi", "status": "fail"}, {"name": "Glass plugin", "status": "ok"}, {"name": "Bluetooth", "status": "off"}, {"name": "Portal", "status": "warn"}]);
+        assert_eq!(attention(&checks), vec!["Avahi".to_string(), "Portal".to_string()]);
+        assert!(attention(&Value::Null).is_empty());
     }
 
     #[test]
