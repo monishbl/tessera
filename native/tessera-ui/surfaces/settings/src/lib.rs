@@ -168,6 +168,10 @@ pub struct Settings {
     actions: Vec<model::Action>,
     menus: HashMap<String, Vec<MenuItem>>,
     menu_id: String,
+    /// the open menu's action, as it was when the menu opened: a pick runs
+    /// this, never whatever has that position after a rebuild (audit #14: a
+    /// Wi-Fi row dropping out above moved "Forget" onto its neighbour)
+    menu_action: Option<model::Action>,
     toast_undo: Option<model::Action>,
     toast_timer: slint::Timer,
     reveal_timer: slint::Timer,
@@ -475,6 +479,7 @@ impl Settings {
         win.ui.set_menu_open(true);
         win.ui.global::<ui::SBus>().set_menu_shown(id.as_str().into());
         self.local.insert("menu.open".into(), Value::Bool(true));
+        self.menu_action = action_for(&self.actions, &id);
         self.menu_id = id;
         self.menu = Some(MenuWin { surface, ui });
     }
@@ -562,6 +567,7 @@ impl Settings {
             st.drop_surface(&m.surface);
         }
         self.menu_id.clear();
+        self.menu_action = None;
         self.local.remove("menu.open");
         if let Some(w) = &self.win {
             w.ui.set_menu_open(false);
@@ -858,8 +864,7 @@ impl Settings {
     }
 
     fn act(&mut self, st: &mut State, id: &str, arg: Arg) {
-        let Some(n) = id.strip_prefix('a').and_then(|n| n.parse::<usize>().ok()) else { return };
-        let Some(f) = self.actions.get(n).cloned() else { return };
+        let Some(f) = action_for(&self.actions, id) else { return };
         self.run(st, f, arg);
     }
 
@@ -1028,8 +1033,11 @@ impl Part for Settings {
             }
             M::MenuPick(i) => {
                 let id = self.menu_id.clone();
+                let f = self.menu_action.take();
                 self.close_menu(st);
-                self.act(st, &id, Arg { i, f: 0.0, s: String::new(), id: id.clone() });
+                if let Some(f) = f {
+                    self.run(st, f, Arg { i, f: 0.0, s: String::new(), id });
+                }
             }
             M::MenuDismiss => self.close_menu(st),
             M::FocusCheck => {
@@ -1287,6 +1295,34 @@ impl Part for Settings {
         if let Some(w) = &self.win {
             eprintln!("tessera-ui: stats {}", w.surface.stats.borrow_mut().report("settings"));
         }
+    }
+}
+
+/// A control's action by its id ("a17": its place in the last build)
+fn action_for(actions: &[model::Action], id: &str) -> Option<model::Action> {
+    actions.get(id.strip_prefix('a')?.parse::<usize>().ok()?).cloned()
+}
+
+#[cfg(test)]
+mod menu_tests {
+    use super::*;
+
+    #[test]
+    fn a_menu_keeps_the_action_it_opened_with() {
+        // (audit #14: the page rebuilt while a row's menu was open, a row
+        // above it gone, and "Forget" ran the neighbour's)
+        let hit = Rc::new(std::cell::RefCell::new(String::new()));
+        let row = |name: &'static str| -> model::Action {
+            let hit = hit.clone();
+            Rc::new(move |_: &mut model::Ctx, _: &model::Arg| *hit.borrow_mut() = name.into())
+        };
+        let before = vec![row("Cafe"), row("Home")];
+        let kept = action_for(&before, "a1").unwrap();
+        let after = [row("Home")]; // ("Cafe" dropped out of the scan)
+        assert!(Rc::ptr_eq(&kept, &before[1]));
+        assert!(!Rc::ptr_eq(&kept, &after[0]));
+        assert!(action_for(&after, "a1").is_none());
+        assert!(action_for(&before, "x1").is_none() && action_for(&before, "a").is_none());
     }
 }
 

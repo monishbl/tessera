@@ -57,7 +57,8 @@ pub fn menubar(cx: &mut Ctx, p: &mut Page) {
     let current = if !battery { 0 } else { values.iter().position(|v| *v == percent).unwrap_or(0).max(1) as i32 };
     let pick = cx.on(move |cx, a| {
         if a.i > 0 {
-            cx.set("menubar.batteryPercent", if a.i == 1 { "off" } else { values[a.i as usize] });
+            let Some(v) = values.get(a.i as usize) else { return };
+            cx.set("menubar.batteryPercent", if a.i == 1 { "off" } else { *v });
         }
         cx.set("menubar.battery", a.i > 0);
     });
