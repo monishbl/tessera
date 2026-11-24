@@ -121,6 +121,11 @@ class FileManagerMenus(unittest.TestCase):
         if script.exists():  # (on machines with nautilus-python, the extension is used instead)
             self.assertTrue(os.access(script, os.X_OK))
             self.assertIn("NAUTILUS_SCRIPT_SELECTED_URIS", script.read_text())
+            # (one file selected: one argument, never an empty one that is the open folder; audit #22)
+            line = next(l for l in script.read_text().splitlines() if l.startswith("mapfile"))
+            r = subprocess.run(["bash", "-c", line + '\nprintf "%s|" "${#uris[@]}" "${uris[@]}"'], capture_output=True, text=True,
+                               env=dict(os.environ, NAUTILUS_SCRIPT_SELECTED_URIS="file:///home/me/a.jpg\n"))
+            self.assertEqual(r.stdout, "1|file:///home/me/a.jpg|")
         else:
             self.assertTrue((self.h.root / "data/nautilus-python/extensions/tessera-share.py").exists())
 

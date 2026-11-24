@@ -436,16 +436,25 @@ class Account:
                     e.update(color=calendar['color'], calendar=calendar['title'], writable=calendar.get('writable', True))
             since = cal_pos.get(cid, '')
             rows = None
-            if since:
-                try:
-                    rows, since = self.pages_with_token(path, token, singleEvents='true', maxResults=2500, syncToken=since)
-                except Gone:
-                    since = ''
-            if rows is None:
-                for key in [k for k in events if k[0] == cid]:
-                    del events[key]
-                rows, since = self.pages_with_token(path, token, singleEvents='true', maxResults=2500,
-                                                    timeMin=(now - WINDOW).isoformat(), timeMax=(now + WINDOW).isoformat())
+            # (one calendar Google won't give, a subscription whose owner
+            # deleted it or took access back: its events as last seen and its
+            # position kept, and the other calendars and tasks still sync;
+            # audit #23)
+            try:
+                if since:
+                    try:
+                        rows, since = self.pages_with_token(path, token, singleEvents='true', maxResults=2500, syncToken=since)
+                    except Gone:
+                        since = ''
+                if rows is None:
+                    rows, since = self.pages_with_token(path, token, singleEvents='true', maxResults=2500,
+                                                        timeMin=(now - WINDOW).isoformat(), timeMax=(now + WINDOW).isoformat())
+                    for key in [k for k in events if k[0] == cid]:
+                        del events[key]
+            except HttpError as exc:
+                if exc.code not in (403, 404):
+                    raise
+                continue
             cal_pos[cid] = since
             for row in rows:
                 if row.get('status') == 'cancelled' or not row.get('start') or not row.get('end'):
@@ -775,13 +784,33 @@ class Hub:
     # or was deleted there, or the change is invalid): drop it, keep Google's
     # version, and say so once. Afterwards, only what was touched is fetched.
     def flush(self):
+        """The outbox in order. A change Google turns away is dropped and
+        said; a change that can't go now waits. An account whose sign-in
+        fails (removed from Online Accounts, a refresh Google refuses, a
+        401) keeps all its changes and the other accounts' still go (audit
+        #24, #25); its reason is raised at the end."""
         ops = self.ops()
         touched = {}
         sent = False
+        kept, blocked = [], {}
         while ops:
             op = ops[0]
             account = self.account(op['account'], must=False)
+            if account is not None and account.id in blocked:
+                kept.append(op)
+                ops = ops[1:]
+                continue
             if account is not None:
+                # (the sign-in first, on its own: a refresh Google refuses is
+                # a 400 too, and must never pass for "this change refused")
+                try:
+                    account.access()
+                except (Offline, OSError):
+                    self.save(kept + ops)
+                    raise
+                except (RuntimeError, HttpError) as exc:
+                    blocked[account.id] = exc
+                    continue
                 try:
                     op = self.current(op)
                     reply = account.send(op)
@@ -791,18 +820,27 @@ class Hub:
                     kinds = touched.setdefault(account.id, set())
                     kinds.add(('tasks', op['listId']) if op['cmd'].startswith('task') else ('events', ''))
                 except (Offline, OSError):
-                    self.save(ops)
+                    self.save(kept + ops)
                     raise
                 except Conflict as exc:
                     emit({'conflict': {'title': op.get('title') or Hub.describe(op), 'what': Hub.describe(op),
                                        'reason': 'deleted' if 'deleted' in str(exc) else 'changed'}})
+                except RuntimeError as exc:
+                    blocked[account.id] = exc
+                    continue
                 except HttpError as exc:
-                    if exc.code == 401:
-                        self.save(ops)
-                        raise
+                    # (not now: the sign-in, a rate limit, a timeout; the change waits)
+                    if exc.code in (401, 408, 429):
+                        blocked[account.id] = exc
+                        continue
                     emit({'conflict': {'title': op.get('title') or Hub.describe(op), 'what': Hub.describe(op), 'reason': str(exc)}})
+                except (KeyError, ValueError, TypeError) as exc:
+                    # (a change that can never be sent: said and dropped, never retried for ever)
+                    emit({'conflict': {'title': op.get('title') or Hub.describe(op), 'what': Hub.describe(op),
+                                       'reason': 'Tessera couldn\'t send this change (%s).' % type(exc).__name__}})
             ops = ops[1:]
-            self.save(ops)
+            self.save(kept + ops)
+        self.save(kept)
         if sent:
             emit({'mutationComplete': True})
         for aid, kinds in touched.items():
@@ -812,6 +850,9 @@ class Hub:
             else:
                 for _kind, list_id in kinds:
                     account.sync_list(list_id)
+        if blocked:
+            exc = next(iter(blocked.values()))
+            raise RuntimeError(str(exc) + ' Your changes are kept and sent once that is fixed.')
 
     # ── What the shell sees ─────────────────────────────────────────────
     def status(self):
@@ -954,9 +995,10 @@ class Hub:
                 shutil.rmtree(account.directory, ignore_errors=True)
                 raise
         elif cmd in ('sync', 'flush'):
+            # (a change that can't go never stops the accounts syncing; audit #24)
             try:
                 self.flush()
-            except (Offline, OSError):
+            except (Offline, OSError, RuntimeError, HttpError):
                 if cmd == 'flush':
                     raise
             if cmd == 'sync':

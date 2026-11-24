@@ -465,8 +465,14 @@ class Accounts(unittest.TestCase):
         self.apis = {}
         self.goa = []
         self.notes = []
+        self.signed_out = set()
+
+        def access(account):
+            if account.goa in self.signed_out:
+                raise RuntimeError('That Google account is no longer in Online Accounts. Connect your Google account again.')
+            return account.goa
         for p in (patch.object(google, 'request', side_effect=Router(self.apis)),
-                  patch.object(google.Account, 'access', autospec=True, side_effect=lambda account: account.goa),
+                  patch.object(google.Account, 'access', autospec=True, side_effect=access),
                   patch.object(google.OnlineAccounts, 'accounts', side_effect=lambda: [dict(a) for a in self.goa]),
                   patch.object(google.OnlineAccounts, 'access', return_value='ok'),
                   patch.object(google, 'emit', side_effect=self.notes.append)):
@@ -656,6 +662,33 @@ class Accounts(unittest.TestCase):
         self.assertEqual(api.tasks['inbox']['t1']['status'], 'completed')
         self.assertIn('Rye bread', [t.get('title') for t in api.tasks['inbox'].values()])
         self.assertEqual(sorted(t['text'] for t in status['tasks']), ['Milk', 'Rye bread'])
+
+    def test_a_signed_out_account_keeps_its_changes_and_never_stops_the_others(self):
+        # (audit #24: one account's sign-in failing stopped every sync and change, retried for ever)
+        work, home = self.add('/goa/work', 'work@example.com'), self.add('/goa/home', 'me@example.com')
+        for api in (work, home):
+            api.tasks['inbox']['t1'] = {'id': 't1', 'title': 'Milk', 'status': 'needsAction', 'etag': '"t1"', '_updated': 1}
+        wid = self.connect('/goa/work')['accounts'][0]['id']
+        hid = [a['id'] for a in self.connect('/goa/home')['accounts'] if a['identity'] == 'me@example.com'][0]
+        work.offline = home.offline = True
+        for aid in (wid, hid):
+            with self.assertRaises(google.Offline):
+                self.hub().run({'cmd': 'taskUpdate', 'account': aid, 'listId': 'inbox', 'id': 't1', 'etag': '"t1"', 'patch': {'done': True}})
+        work.offline = home.offline = False
+        self.signed_out.add('/goa/work')
+        home.tasks['inbox']['t2'] = {'id': 't2', 'title': 'Bread', 'status': 'needsAction', 'etag': '"t2"', '_updated': 2}
+        home.change('task', 't2')
+        with self.assertRaises(RuntimeError):  # (said: the shell shows "connect again")
+            self.hub().run({'cmd': 'sync'})
+        status = self.hub().status()
+        self.assertEqual(home.tasks['inbox']['t1']['status'], 'completed')  # (the other account's change went)
+        self.assertEqual(work.tasks['inbox']['t1']['status'], 'needsAction')
+        self.assertEqual(status['outbox'], 1)  # (work's waits, not dropped)
+        self.assertIn('Bread', [t['text'] for t in status['tasks']])  # (and home still synced)
+        self.assertFalse([n for n in self.notes if 'conflict' in n])
+        self.signed_out.clear()
+        self.assertEqual(self.hub().run({'cmd': 'sync'})['outbox'], 0)
+        self.assertEqual(work.tasks['inbox']['t1']['status'], 'completed')
 
     def test_a_change_that_lost_to_google_keeps_googles_version_and_says_so_once(self):
         api = self.add('/goa/me', 'me@example.com')

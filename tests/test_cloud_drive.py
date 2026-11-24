@@ -23,6 +23,8 @@ elif a[:2] == ["config", "create"]:
     if os.environ.get("FAKE_SIGNIN") == "fail":
         sys.exit(1)
     remotes.append(a[2]); json.dump(remotes, open(st, "w"))
+elif a[:2] == ["config", "paths"]:
+    print("Config file: x\nCache dir:          " + os.path.join(os.environ["FAKE_DIR"], "cache") + "\nTemp dir: /tmp")
 elif a[:2] == ["config", "delete"]:
     remotes = [r for r in remotes if r != a[2]]; json.dump(remotes, open(st, "w"))
 '''
@@ -97,6 +99,27 @@ class Drive(unittest.TestCase):
         self.assertTrue(r["ok"], r)
         self.assertFalse(self.run_("status")["drives"]["gdrive"]["connected"])
         self.assertFalse((self.t / "home" / "Google Drive").exists())  # (the empty mount point)
+
+    def test_disconnect_waits_for_uploads_then_clears_the_cache(self):
+        # (audit #21: uploads still waiting were dropped with the remote, and the cache kept the files)
+        self.run_("connect", "gdrive")
+        meta = self.t / "cache/vfsMeta/tessera-gdrive/Photos"
+        meta.mkdir(parents=True)
+        (meta / "a.jpg").write_text(json.dumps({"Size": 3, "Dirty": True}))
+        (meta / "b.jpg").write_text(json.dumps({"Size": 3, "Dirty": False}))
+        files = self.t / "cache/vfs/tessera-gdrive/Photos"
+        files.mkdir(parents=True)
+        (files / "a.jpg").write_text("abc")
+        r = self.run_("disconnect", "gdrive")
+        self.assertFalse(r["ok"])
+        self.assertIn("1 file you saved in it hasn't finished uploading", r["error"])
+        self.assertTrue(self.run_("status")["drives"]["gdrive"]["connected"])
+        (meta / "a.jpg").write_text(json.dumps({"Size": 3, "Dirty": False}))  # (uploaded)
+        r = self.run_("disconnect", "gdrive")
+        self.assertTrue(r["ok"], r)
+        self.assertFalse((self.t / "cache/vfs/tessera-gdrive").exists())
+        self.assertFalse((self.t / "cache/vfsMeta/tessera-gdrive").exists())
+        self.assertIn("config disconnect tessera-gdrive:", (self.t / "calls").read_text())
 
     def test_mount_table_reads_escaped_spaces(self):
         (self.t / "home" / "Google Drive").mkdir()

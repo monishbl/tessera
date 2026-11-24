@@ -73,6 +73,45 @@ class Ics(unittest.TestCase):
         self.assertFalse(ca.ics_props(self.EVENT)["repeats"])
         self.assertTrue(ca.ics_props(self.EVENT.replace("SEQUENCE:2", "RRULE:FREQ=WEEKLY"))["repeats"])
 
+    APPLE = ("BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:America/New_York\r\nBEGIN:DAYLIGHT\r\nTZOFFSETFROM:-0500\r\n"
+             "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU\r\nDTSTART:20070311T020000\r\nTZOFFSETTO:-0400\r\nEND:DAYLIGHT\r\n"
+             "BEGIN:STANDARD\r\nRRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU\r\nDTSTART:20071104T020000\r\nTZOFFSETTO:-0500\r\n"
+             "END:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:ABC\r\nDTSTART;TZID=America/New_York:20261120T090000\r\n"
+             "DTEND;TZID=America/New_York:20261120T100000\r\nEXDATE;TZID=America/New_York:20261127T090000,20261204T090000\r\n"
+             "SUMMARY:Standup\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+
+    def test_a_time_zones_own_rule_isnt_a_repeat(self):
+        # (audit #20: every timed iPhone event in a summer-time zone was read-only)
+        self.assertEqual(ca.ics_props(self.APPLE), {"uid": "ABC", "repeats": False})
+        self.assertTrue(ca.ics_props(self.APPLE.replace("SUMMARY:Standup", "RRULE:FREQ=WEEKLY"))["repeats"])
+
+    def test_times_in_another_zone_become_utc(self):
+        # (audit #18: 09:00 in New York showed at 09:00 here)
+        out = ca.ics_to_utc(self.APPLE)
+        self.assertIn("DTSTART:20261120T140000Z", out)
+        self.assertIn("DTEND:20261120T150000Z", out)
+        self.assertIn("EXDATE:20261127T140000Z,20261204T140000Z", out)
+        self.assertIn("DTSTART:20070311T020000", out)  # (the zone's own block untouched)
+        unknown = self.APPLE.replace("TZID=America/New_York:2026", "TZID=Customized Time Zone:2026")
+        self.assertIn("DTSTART;TZID=Customized Time Zone:20261120T090000", ca.ics_to_utc(unknown))
+        _, at = ca.ics_due("20261120T090000", "DUE;TZID=America/New_York")
+        self.assertEqual(at, int(ca.datetime(2026, 11, 20, 14, tzinfo=ca.timezone.utc).timestamp() * 1000))
+
+    def test_todo_dates_are_local_days(self):
+        # (audit #178: midnight in India comes back as 18:30 the day before, in UTC)
+        env = os.environ.get("TZ")
+        try:
+            os.environ["TZ"] = "Asia/Kolkata"
+            time.tzset()
+            self.assertEqual(ca.todo_date("2026-11-19T18:30:00.0000000"), "2026-11-20")
+            self.assertEqual(ca.todo_due("2026-11-20"), "2026-11-19T18:30:00")
+        finally:
+            if env is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = env
+            time.tzset()
+
     def test_vcards(self):
         text = ("BEGIN:VCARD\nVERSION:3.0\nN:Doe;Jane;;;\nFN:Jane Doe\nitem1.EMAIL;type=INTERNET:jane@example.com\n"
                 "TEL;type=CELL:+1 555 0100\nEND:VCARD\nBEGIN:VCARD\nVERSION:3.0\nFN:No Way To Reach\nEND:VCARD\n")
@@ -292,7 +331,7 @@ class Microsoft(unittest.TestCase):
         self.srv = FakeGraph()
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
         self.state = tempfile.TemporaryDirectory()
-        self.env = dict(os.environ, XDG_STATE_HOME=self.state.name)
+        self.env = dict(os.environ, XDG_STATE_HOME=self.state.name, TZ="UTC")
         self.graph = f"http://127.0.0.1:{self.srv.server_address[1]}/v1.0"
 
     def tearDown(self):
@@ -363,8 +402,10 @@ class Reminders(unittest.TestCase):
         self.assertEqual(p["dueAt"], self.ms(2026, 11, 20, 17, 0))
         dated = ca.vtodo_props(self.TODO.replace("DUE:20261120T170000Z", "DUE;VALUE=DATE:20261121"))
         self.assertEqual((dated["date"], dated["dueAt"]), ("2026-11-21", 0))
-        # (a time with a zone name or none is local time, as the calendar reads it)
-        local = ca.vtodo_props(self.TODO.replace("DUE:20261120T170000Z", "DUE;TZID=Europe/Paris:20261120T170000"))
+        # (a time with a zone name is that zone's, audit #18; one with none is local time)
+        paris = ca.vtodo_props(self.TODO.replace("DUE:20261120T170000Z", "DUE;TZID=Europe/Paris:20261120T170000"))
+        self.assertEqual(paris["dueAt"], self.ms(2026, 11, 20, 16, 0))
+        local = ca.vtodo_props(self.TODO.replace("DUE:20261120T170000Z", "DUE:20261120T170000"))
         self.assertEqual(local["dueAt"], int(ca.datetime(2026, 11, 20, 17, 0).timestamp() * 1000))
         self.assertTrue(ca.vtodo_props(self.TODO.replace("STATUS:NEEDS-ACTION", "STATUS:COMPLETED"))["done"])
         self.assertEqual(ca.vtodo_props("nothing")["uid"], "")
@@ -610,7 +651,7 @@ class MicrosoftOffline(unittest.TestCase):
         self.srv = FakeGraph()
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
         self.state = tempfile.TemporaryDirectory()
-        self.env = dict(os.environ, XDG_STATE_HOME=self.state.name)
+        self.env = dict(os.environ, XDG_STATE_HOME=self.state.name, TZ="UTC")
         self.graph = f"http://127.0.0.1:{self.srv.server_address[1]}/v1.0"
         s = run({"cmd": "connectMicrosoft", "identity": "sam@outlook.com", "graph": self.graph, "testToken": "test-token"}, self.env)
         self.acc = s["accounts"][0]["id"]

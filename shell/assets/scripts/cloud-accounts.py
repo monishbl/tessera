@@ -58,6 +58,10 @@ import urllib.request
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
+try:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+except ImportError:  # (Python before 3.9: TZID read as local time, as before)
+    ZoneInfo, ZoneInfoNotFoundError = None, Exception
 
 
 def app_dir(base):
@@ -334,10 +338,83 @@ def patch_ics(text, fields):
 
 
 def ics_props(text):
-    """UID and RRULE of the event (to know whether it repeats)."""
-    lines = unfold(text)
-    return {"uid": next((l.split(":", 1)[1] for l in lines if l.upper().startswith("UID")), ""),
-            "repeats": any(l.upper().startswith(("RRULE", "RDATE")) for l in lines)}
+    """UID and RRULE of the event (to know whether it repeats): the VEVENT's
+    own lines only. Apple's VTIMEZONE has RRULE lines of its own (its
+    daylight-saving rule), which made every timed event from an iPhone in
+    a zone with summer time read-only (audit #20)."""
+    uid, repeats, depth = "", False, 0
+    for l in unfold(text):
+        u = l.upper()
+        if u.startswith("BEGIN:"):
+            depth += 1
+            if u == "BEGIN:VEVENT":
+                depth = 1
+            continue
+        if u.startswith("END:"):
+            depth = max(0, depth - 1)
+            continue
+        if depth != 1:
+            continue
+        if u.startswith("UID") and not uid:
+            uid = l.split(":", 1)[1] if ":" in l else ""
+        elif u.startswith(("RRULE", "RDATE")):
+            repeats = True
+    return {"uid": uid, "repeats": repeats}
+
+
+def ics_zone(params):
+    """The zone a TZID parameter names (zoneinfo), or None: none given, or
+    one this computer doesn't know (then read as local time, as before)"""
+    m = re.search(r'(?:^|;)TZID="?([^";:]+)"?', params or "", re.I)
+    if not m or ZoneInfo is None:
+        return None
+    try:
+        return ZoneInfo(m.group(1).strip())
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return None
+
+
+ZONED = ("DTSTART", "DTEND", "EXDATE", "RECURRENCE-ID", "RDATE", "DUE")
+
+
+def ics_to_utc(text):
+    """Times with a TZID as UTC ("...Z"), so the calendar reads the instant:
+    a 09:00 New York meeting showed at 09:00 here (audit #18). Dates, UTC
+    times, floating times and unknown zones are left as they are; so is the
+    VTIMEZONE block itself."""
+    out, depth, zone_block = [], 0, False
+    for l in unfold(text):
+        u = l.upper()
+        if u.startswith("BEGIN:"):
+            zone_block = zone_block or u == "BEGIN:VTIMEZONE"
+        elif u.startswith("END:VTIMEZONE"):
+            zone_block = False
+        head, sep, value = l.partition(":")
+        name, _, params = head.partition(";")
+        if not sep or zone_block or name.upper() not in ZONED or "VALUE=DATE" in params.upper() and "DATE-TIME" not in params.upper():
+            out.append(l)
+            continue
+        zone = ics_zone(params)
+        if zone is None:
+            out.append(l)
+            continue
+        vals = []
+        for v in value.split(","):
+            v = v.strip()
+            try:
+                if v.endswith("Z") or len(v) < 15:
+                    raise ValueError
+                d = datetime.strptime(v[:15], "%Y%m%dT%H%M%S").replace(tzinfo=zone).astimezone(timezone.utc)
+                vals.append(d.strftime("%Y%m%dT%H%M%SZ"))
+            except ValueError:
+                vals = None
+                break
+        if vals is None:
+            out.append(l)
+            continue
+        rest = ";".join(p for p in params.split(";") if p and not p.upper().startswith("TZID="))
+        out.append(name + (";" + rest if rest else "") + ":" + ",".join(vals))
+    return "\r\n".join(fold(l) for l in out) + "\r\n"
 
 
 def when_of(ms, all_day):
@@ -363,7 +440,7 @@ def ics_unescape(s):
 
 def ics_due(value, params):
     """A reminder's DUE -> (date "yyyy-mm-dd", dueAt ms or 0 for a date).
-    A time with a TZID or none is read as local time (as the calendar does)."""
+    A time with a TZID is read in that zone; none, as local time."""
     v = value.strip()
     try:
         if len(v) == 8 or "VALUE=DATE" in params.upper() and "DATE-TIME" not in params.upper():
@@ -371,6 +448,8 @@ def ics_due(value, params):
             return d.strftime("%Y-%m-%d"), 0
         if v.endswith("Z"):
             d = datetime.strptime(v[:15], "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
+        elif ics_zone(params):
+            d = datetime.strptime(v[:15], "%Y%m%dT%H%M%S").replace(tzinfo=ics_zone(params))
         else:
             d = datetime.strptime(v[:15], "%Y%m%dT%H%M%S")
     except ValueError:
@@ -768,6 +847,23 @@ def graph_safe_fields(g, event_id, fields):
     return out, ""
 
 
+def todo_date(value):
+    """To Do's due: local midnight, sent to us in UTC ("2026-11-19T18:30:00"
+    for 20 Nov in India): the local date of that instant (audit #178: the
+    first ten characters said 19 Nov)"""
+    try:
+        d = datetime.strptime(value[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return value[:10]
+    return d.astimezone().strftime("%Y-%m-%d")
+
+
+def todo_due(date):
+    """A due date as To Do keeps it: that day's local midnight, in UTC"""
+    d = datetime.strptime(date, "%Y-%m-%d").astimezone()
+    return d.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+
 def graph_when(x, all_day):
     v = (x or {}).get("dateTime", "")
     return {"date": v[:10]} if all_day else {"dateTime": v[:19] + "Z"}
@@ -892,9 +988,18 @@ class Hub:
         cals = [c for c in found if c["kind"] == "events"]
         events = []
         for c in cals:
-            for e in d.events(c["id"], now - BACK, now + AHEAD):
+            # (one calendar iCloud won't give, a subscription withdrawn: its
+            # events as last seen, and the others still sync; audit #23)
+            try:
+                got = d.events(c["id"], now - BACK, now + AHEAD)
+            except Offline:
+                raise
+            except Failed:
+                events += [e for e in self.cache.get("events", []) if e.get("account") == a["id"] and e.get("calendarId") == c["id"]]
+                continue
+            for e in got:
                 p = ics_props(e["ics"])
-                events.append(dict(e, account=a["id"], calendarId=c["id"], uid=p["uid"],
+                events.append(dict(e, ics=ics_to_utc(e["ics"]), account=a["id"], calendarId=c["id"], uid=p["uid"],
                                    writable=c["writable"] and not p["repeats"]))
         # Reminders: the lists iCloud still shares over CalDAV (open ones)
         lists, tasks = [], []
@@ -945,7 +1050,7 @@ class Hub:
         for l in g.pages("/me/todo/lists"):
             lists.append({"account": a["id"], "id": l["id"], "title": l.get("displayName", "Tasks")})
             for t in g.pages(f"/me/todo/lists/{urllib.parse.quote(l['id'])}/tasks?$filter=" + urllib.parse.quote("status ne 'completed'") + "&$top=100"):
-                due = ((t.get("dueDateTime") or {}).get("dateTime") or "")[:10]
+                due = todo_date((t.get("dueDateTime") or {}).get("dateTime") or "")
                 tasks.append({"account": a["id"], "listId": l["id"], "id": t["id"], "etag": t.get("@odata.etag", ""),
                               "text": t.get("title", ""), "done": t.get("status") == "completed", "date": due})
         return {"calendars": cals, "events": events, "taskLists": lists, "tasks": tasks}
@@ -1026,7 +1131,7 @@ class Hub:
         if "done" in f:
             body["status"] = "completed" if f["done"] else "notStarted"
         if "date" in f:
-            body["dueDateTime"] = {"dateTime": f["date"] + "T00:00:00", "timeZone": "UTC"} if f["date"] else None
+            body["dueDateTime"] = {"dateTime": todo_due(f["date"]), "timeZone": "UTC"} if f["date"] else None
         if req["cmd"] == "taskInsert":
             new = g.call("POST", base, body).get("id", "")
         elif req["cmd"] == "taskPatch":

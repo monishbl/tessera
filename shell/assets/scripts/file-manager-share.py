@@ -120,7 +120,7 @@ class TesseraShare(GObject.GObject, Nautilus.MenuProvider):
         # Scripts menu: Nautilus hands the selection over as URIs, one per line
         write(script, f'''#!/usr/bin/env bash
 # Tessera: send these to a nearby device (file-manager-share.py installed this)
-mapfile -t uris <<< "$NAUTILUS_SCRIPT_SELECTED_URIS"
+mapfile -t uris < <(printf '%s' "$NAUTILUS_SCRIPT_SELECTED_URIS" | sed '/^$/d')
 exec {quoted(SCRIPT)} "${{uris[@]}}"
 ''', executable=True)
         if ext.exists():

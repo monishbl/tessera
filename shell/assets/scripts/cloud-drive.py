@@ -186,13 +186,57 @@ def connect(name):
     return mount(name)
 
 
+def cache_dir():
+    """rclone's cache folder (`rclone config paths`, else its default)"""
+    exe = rclone()
+    if exe:
+        try:
+            for line in run([exe, "config", "paths"], timeout=10).stdout.splitlines():
+                if line.lower().startswith("cache dir:"):
+                    return line.split(":", 1)[1].strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "rclone")
+
+
+def not_uploaded(name, base=None):
+    """Files saved in the drive that rclone hasn't uploaded yet: its cache
+    keeps an Info per file, "Dirty" until the upload is done"""
+    meta = os.path.join(base or cache_dir(), "vfsMeta", remote(name))
+    n = 0
+    for top, _, files in os.walk(meta):
+        for f in files:
+            try:
+                with open(os.path.join(top, f)) as fh:
+                    if json.load(fh).get("Dirty"):
+                        n += 1
+            except (OSError, ValueError, AttributeError):
+                pass
+    return n
+
+
 def disconnect(name):
+    # (audit #21: the remote went with uploads still waiting in the cache,
+    # never sent and never said; and the cache kept copies of the files)
+    base = cache_dir()
+    waiting = not_uploaded(name, base)
+    if waiting:
+        how = "Wait a minute, then try again." if mounted(folder(name)) else "Open the drive again so they upload, then disconnect."
+        return {"ok": False, "error": f"{waiting} file{'s' if waiting != 1 else ''} you saved in it "
+                                      f"{'haven' if waiting != 1 else 'hasn'}'t finished uploading. {how}"}
     r = unmount(name)
     if not r["ok"]:
         return r
     exe = rclone()
     if exe:
+        # (the sign-in revoked where the service allows it, then forgotten here)
+        try:
+            run([exe, "config", "disconnect", remote(name) + ":"], timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            pass
         run([exe, "config", "delete", remote(name)])
+    for sub in ("vfs", "vfsMeta"):
+        shutil.rmtree(os.path.join(base, sub, remote(name)), ignore_errors=True)
     try:
         os.rmdir(folder(name))  # (only when it's empty: the mount point)
     except OSError:

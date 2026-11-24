@@ -41,6 +41,10 @@ enum M {
 struct Queued {
     request: Value,
     key: String,
+    /// the other occurrences a series change or deletion showed changed
+    /// now: their overrides go when it's done too (audit #19: they stayed
+    /// until tessera-ui restarted, masking Google's version)
+    also: Vec<String>,
 }
 
 struct Deleting {
@@ -281,12 +285,15 @@ impl Google {
         true
     }
     fn write(&mut self, request: Value, key: &str, over: Option<Value>) -> bool {
+        self.write_also(request, key, over, vec![])
+    }
+    fn write_also(&mut self, request: Value, key: &str, over: Option<Value>, also: Vec<String>) -> bool {
         if !key.is_empty() {
             if let Some(o) = over {
                 self.set_override(key, Some(o));
             }
         }
-        self.queue.push(Queued { request, key: key.to_string() });
+        self.queue.push(Queued { request, key: key.to_string(), also });
         self.pump();
         true
     }
@@ -381,6 +388,7 @@ impl Google {
             let moves = fields["start"].as_i64();
             let shift = moves.map_or(0, |s| s - was);
             let length = moves.map_or(0, |s| fields["end"].as_i64().unwrap_or(s) - s);
+            let mut also = vec![];
             for other in self.series_of(e) {
                 let mut f = fields.clone();
                 if moves.is_some() {
@@ -391,8 +399,9 @@ impl Google {
                 let key = event_key(&other);
                 let patch = merge(&self.patch_of(&key), &shown_fields(&f));
                 self.set_override(&key, Some(json!({"patch": patch})));
+                also.push(key);
             }
-            return self.write(request, "", None);
+            return self.write_also(request, "", None, also);
         }
         let key = event_key(e);
         let patch = merge(&self.patch_of(&key), &shown_fields(fields));
@@ -579,6 +588,9 @@ impl Service for Google {
                     if !cur.key.is_empty() {
                         self.set_override(&cur.key, None);
                     }
+                    for k in &cur.also {
+                        self.set_override(k, None);
+                    }
                 }
                 // A failed sync waits longer each time before the automatic ones try again
                 if self.operation == "sync" || self.operation == "status" {
@@ -594,7 +606,9 @@ impl Service for Google {
                 }
                 // Changes still waiting (offline): tried again later
                 if self.outbox() > 0 && self.queue.is_empty() {
-                    if self.offline {
+                    // (any failure backs off, not only offline: a sign-in to
+                    // renew was tried every 30 s for ever; audit #24)
+                    if self.offline || !self.last_error.is_empty() {
                         self.send_failures += 1;
                     }
                     self.arm_resend();
@@ -645,7 +659,18 @@ impl Google {
             due
         };
         for d in due {
-            self.write(d.request, &d.key, Some(json!({"hidden": true})));
+            // (a whole series: the other occurrences hidden with it are let go when it's done)
+            let also: Vec<String> = match d.request.get("series").filter(|s| !s.is_null()) {
+                Some(series) => self
+                    .arr("events")
+                    .into_iter()
+                    .filter(|x| x["account"] == d.request["account"] && &x["series"] == series)
+                    .map(|x| event_key(&x))
+                    .filter(|k| *k != d.key)
+                    .collect(),
+                None => vec![],
+            };
+            self.write_also(d.request, &d.key, Some(json!({"hidden": true})), also);
         }
         let lk = locked();
         let id = idle_long();

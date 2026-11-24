@@ -24,6 +24,8 @@ uris=$(python3 -I -c '
 import sys, urllib.parse, os
 out = []
 for a in sys.argv[1:]:
+    if not a.strip():
+        continue  # (an empty one, from a list that ended in a newline, would be the folder you are in)
     if a.startswith("file://"):
         out.append(a)  # already a URI (Dolphin %U, Nautilus)
     else:
