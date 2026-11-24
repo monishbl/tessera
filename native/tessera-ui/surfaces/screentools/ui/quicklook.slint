@@ -408,19 +408,30 @@ export component QuickLook inherits Window {
                 }
             }
 
-            // Text and code: the first 200 KB
-            if kind == "text": Flickable {
-                content-height: text-view.preferred-height;
-                text-view := TextInput {
-                    width: parent.width;
-                    text: text-body;
-                    read-only: true;
-                    single-line: false;
-                    wrap: word-wrap;
-                    color: Theme.label;
-                    selection-background-color: Theme.accent.with-alpha(0.4);
-                    font-family: Theme.mono;
-                    font-size: 12px;
+            // Text and code: the first 200 KB. (A click in the text gives it
+            // the keyboard: what it doesn't take, Esc, Space, Return, comes up
+            // here to Quick Look's keys; they went nowhere; audit #200)
+            if kind == "text": FocusScope {
+                width: parent.width;
+                height: parent.height;
+                focus-on-click: false;
+                key-pressed(e) => {
+                    if root.key(e.text, e.modifiers.control) { return accept; }
+                    reject
+                }
+                Flickable {
+                    content-height: text-view.preferred-height;
+                    text-view := TextInput {
+                        width: parent.width;
+                        text: text-body;
+                        read-only: true;
+                        single-line: false;
+                        wrap: word-wrap;
+                        color: Theme.label;
+                        selection-background-color: Theme.accent.with-alpha(0.4);
+                        font-family: Theme.mono;
+                        font-size: 12px;
+                    }
                 }
             }
 
@@ -442,6 +453,9 @@ export component QuickLook inherits Window {
                             color: Theme.label;
                             font-size: Theme.body;
                             vertical-alignment: center;
+                            // (a long name ends in an ellipsis inside the card)
+                            horizontal-stretch: 1;
+                            overflow: elide;
                         }
                     }
                 }

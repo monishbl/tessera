@@ -101,6 +101,31 @@ pub struct Notes {
     folder: String,
     /// the loop, for what a thread reads (the clipboard)
     to: Option<smithay_client_toolkit::reexports::calloop::channel::Sender<crate::Msg>>,
+    /// the draft written to disk a moment after typing stops
+    draft_timer: slint::Timer,
+}
+
+/// The unsaved draft, kept across a shell restart, an update or a logout
+/// (it lived only in memory; audit #138); gone once the note is saved
+pub fn draft_path() -> std::path::PathBuf {
+    tessera_core::util::xdg("XDG_STATE_HOME", ".local/state").join("tessera/quick-note-draft.txt")
+}
+
+fn write_draft(text: &str) {
+    let p = draft_path();
+    if blank(text) {
+        let _ = std::fs::remove_file(&p);
+        return;
+    }
+    if let Some(d) = p.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    let tmp = p.with_extension("txt.new");
+    if std::fs::write(&tmp, text).is_ok() {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+        let _ = std::fs::rename(&tmp, &p);
+    }
 }
 
 impl Notes {
@@ -270,6 +295,8 @@ impl Notes {
             if self.saving.as_deref() == Some(p) {
                 self.saving = None;
                 self.text.clear();
+                self.draft_timer.stop();
+                write_draft("");
                 if let Some(w) = &self.win {
                     w.ui.set_saving(false);
                     w.ui.set_text("".into());
@@ -296,6 +323,9 @@ impl Part for Notes {
 
     fn start(&mut self, st: &mut State) {
         self.to = Some(st.tx.clone());
+        if let Ok(t) = std::fs::read_to_string(draft_path()) {
+            self.text = t;
+        }
     }
 
     fn command(&mut self, st: &mut State, cmd: &Command) {
@@ -336,6 +366,8 @@ impl Part for Notes {
                     w.ui.set_text_trimmed_empty(blank(&t));
                 }
                 self.text = t;
+                let text = self.text.clone();
+                self.draft_timer.start(slint::TimerMode::SingleShot, std::time::Duration::from_millis(800), move || write_draft(&text));
             }
             M::Save => self.save(),
             M::Dismissed => self.close(true),

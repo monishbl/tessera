@@ -554,6 +554,10 @@ impl Spotlight {
     }
 
     fn open(&mut self, st: &mut State, screen: Option<String>) {
+        // (the last session's files go: they belong to its query)
+        self.file_query.clear();
+        self.files.clear();
+        self.contents.clear();
         let output = screen.or_else(|| self.win.as_ref().map(|w| w.output.clone())).or_else(|| st.outputs_now().first().map(|o| o.1.clone()));
         let Some(output) = output else { return };
         if !self.window(st, &output) {
@@ -742,6 +746,10 @@ impl Spotlight {
         if let Some(fq) = wants.files {
             if fq != self.file_query {
                 self.file_query = fq;
+                // (the last query's files never show under this one while
+                // it's looked for: Enter opened them; audit #143)
+                self.files.clear();
+                self.contents.clear();
                 self.after(st, T_FILES, 200, || M::FindFiles);
             }
         }

@@ -110,6 +110,9 @@ pub fn icon_name(path: &str, dir: bool) -> &'static str {
     }
 }
 
+/// The rows a folder's preview shows at most (then "and N more")
+pub const FOLDER_ROWS: usize = 200;
+
 /// A folder's entries, folders first, then by name (no hidden ones)
 pub fn entries(dir: &str) -> Vec<(String, bool)> {
     let mut v: Vec<(String, bool)> = std::fs::read_dir(dir)
@@ -559,10 +562,17 @@ impl QuickLook {
                 std::thread::spawn(move || {
                     // (the names first, as the QML's list shows them; then
                     // each kind of icon drawn once)
-                    let rows: Vec<(String, &'static str)> = entries(&p).into_iter().map(|(n, dir)| {
+                    // (the first FOLDER_ROWS: each row is made at once, and a
+                    // folder of thousands stalled the shell; audit #142)
+                    let all = entries(&p);
+                    let more = all.len().saturating_sub(FOLDER_ROWS);
+                    let mut rows: Vec<(String, &'static str)> = all.into_iter().take(FOLDER_ROWS).map(|(n, dir)| {
                         let i = icon_name(&n, dir);
                         (n, i)
                     }).collect();
+                    if more > 0 {
+                        rows.push((format!("and {more} more"), "folder"));
+                    }
                     let mut names: Vec<&'static str> = rows.iter().map(|r| r.1).collect();
                     names.sort_unstable();
                     names.dedup();
@@ -1022,11 +1032,21 @@ impl Part for QuickLook {
                 if p != self.path {
                     return;
                 }
-                if let (Some(w), Some((px, nw, nh))) = (&self.win, r) {
-                    w.ui.set_picture(image_of(&px));
-                    w.ui.set_natural_w(nw);
-                    w.ui.set_natural_h(nh);
-                    self.picture_ready = true;
+                match (&self.win, r) {
+                    (Some(w), Some((px, nw, nh))) => {
+                        w.ui.set_picture(image_of(&px));
+                        w.ui.set_natural_w(nw);
+                        w.ui.set_natural_h(nh);
+                        self.picture_ready = true;
+                    }
+                    // (a picture it can't decode (SVG, AVIF, HEIC, TIFF…) or a
+                    // PDF without pdftoppm: the file's icon and "No preview",
+                    // not an empty card; audit #139)
+                    (Some(w), None) => {
+                        self.kind = "other";
+                        w.ui.set_kind(self.kind.into());
+                    }
+                    _ => {}
                 }
                 self.live_on();
                 self.push();

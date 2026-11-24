@@ -382,10 +382,18 @@ impl Clipboard {
             return;
         }
         self.open = false;
+        // (closed before it showed: no closing animation will ever call
+        // closed(), so it's hidden here; it stayed mapped, an invisible layer
+        // taking every click; audit #136)
+        let never_shown = std::mem::take(&mut self.waiting);
+        self.show_timer.stop();
         if let Some(w) = &self.win {
             w.ui.set_shown(false);
             w.surface.layer.set_keyboard_interactivity(KeyboardInteractivity::None);
             w.surface.layer.commit();
+            if never_shown {
+                w.surface.hide();
+            }
         }
         if tell {
             crate::shell::closed(NAME);

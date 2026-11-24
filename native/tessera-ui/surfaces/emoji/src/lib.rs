@@ -605,10 +605,16 @@ impl Emoji {
             }
         }
         if let Some(w) = &self.win {
+            // (closed before it showed: no animation will call closed(), so
+            // it's hidden here; audit #137)
+            let never_shown = !w.ui.get_shown();
             w.ui.set_shown(false);
             w.ui.set_tone_open(false);
             w.surface.layer.set_keyboard_interactivity(KeyboardInteractivity::None);
             w.surface.layer.commit();
+            if never_shown {
+                w.surface.hide();
+            }
         }
         if tell {
             crate::shell::closed(NAME);

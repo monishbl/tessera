@@ -263,8 +263,11 @@ impl Core {
     fn text_size(&self) -> f32 {
         self.geo.unit * [6.0, 9.0, 13.0][self.s.width.min(2)]
     }
+    /// Redact's cell: the whole box, one averaged colour. Mosaic blocks of
+    /// 3 to 8 px left text readable, or recoverable by trying glyphs
+    /// (audit #140); one colour over the box keeps nothing of what's under it
     fn block_size(&self) -> f32 {
-        (self.geo.unit * [3.0, 5.0, 8.0][self.s.width.min(2)]).round().max(2.0)
+        1.0e9
     }
     fn view(&self) -> (f32, f32) {
         let s = self.shown();
@@ -967,7 +970,15 @@ impl Core {
         // (the edited image, under the screenshot's name, for the recipient)
         self.busy = "share".into();
         self.push_editor();
-        self.flatten_to("share", Some(format!("{}/tessera-share/{}", runtime_dir(), base_name(&self.s.path))));
+        // (always PNG bytes: a photo.jpg's edited copy is named photo.png,
+        // or phones that trust the name refuse it; audit #141)
+        let name = base_name(&self.s.path).to_string();
+        let name = if writes_back(&self.s.path) {
+            name
+        } else {
+            format!("{}.png", std::path::Path::new(&name).file_stem().and_then(|s| s.to_str()).unwrap_or("picture"))
+        };
+        self.flatten_to("share", Some(format!("{}/tessera-share/{}", runtime_dir(), name)));
     }
 
     /// Immediate; the thumbnail turns into an Undo toast
