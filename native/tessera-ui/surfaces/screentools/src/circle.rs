@@ -217,6 +217,10 @@ pub struct Circle {
     screen: String,
     /// this opening's, then this circle's number: replies of an older one are dropped
     gen: u64,
+    /// the hide timer's own count: only open and close change it (audit #15:
+    /// a Restart during the exit bumped gen, the Hide was dropped, and the
+    /// faded-out window stayed mapped, taking every click)
+    hide_gen: u64,
     shot: Option<Arc<image::RgbaImage>>,
     drag: Rc<RefCell<Drag>>,
     crop: Option<Crop>,
@@ -547,6 +551,7 @@ impl Circle {
         self.stop_fx();
         self.open = true;
         self.gen += 1;
+        self.hide_gen += 1;
         self.screen = output.clone();
         self.shot = None;
         self.crop = None;
@@ -606,12 +611,15 @@ impl Circle {
         self.open = false;
         self.stop_ai();
         self.gen += 1;
+        self.hide_gen += 1;
         self.later.stop();
         let Some(w) = &self.win else { return };
         w.ui.set_open(false);
         w.ui.set_busy(false);
         w.surface.layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-        let (to, gen) = (to_part(st), self.gen);
+        // (clicks go through while it plays out)
+        st.set_input_region(&w.surface, Some(&[]));
+        let (to, gen) = (to_part(st), self.hide_gen);
         self.hide.start(slint::TimerMode::SingleShot, Duration::from_millis(EXIT_MS), move || to(Cm::Hide(gen)));
     }
 
@@ -863,6 +871,9 @@ impl Circle {
                 self.start_fx(st);
             }
             Cm::Restart => {
+                if !self.open {
+                    return;
+                }
                 self.gen += 1;
                 self.stop_ai();
                 self.crop = None;
@@ -1056,7 +1067,7 @@ impl Circle {
                 }
             }
             Cm::Hide(gen) => {
-                if gen != self.gen || self.open {
+                if gen != self.hide_gen || self.open {
                     return;
                 }
                 self.shot = None;

@@ -525,6 +525,8 @@ export component CircleSearch inherits Window {
 
     // ── Circling ────────────────────────────────────────────────────────
     TouchArea {
+        // (nothing while it plays out: audit #15)
+        enabled: root.open;
         mouse-cursor: chosen ? default : crosshair;
         pointer-event(e) => {
             if e.kind == PointerEventKind.down {
