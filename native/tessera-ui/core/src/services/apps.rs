@@ -278,6 +278,18 @@ pub fn run(argv: Vec<String>, id: &str, dir: Option<String>) {
             cmd.current_dir(d);
         }
         scrub(&mut cmd);
+        // (every signal unblocked in the app: it inherited the shell's
+        // blocked SIGTERM, SIGINT and SIGUSR1/2 through setsid, so kill,
+        // Ctrl+C and systemd stopping it at logout didn't work; audit #104)
+        {
+            use std::os::unix::process::CommandExt;
+            unsafe {
+                cmd.pre_exec(|| {
+                    crate::util::child_signals();
+                    Ok(())
+                });
+            }
+        }
         // (setsid -f forks the app away and returns at once: reaped here)
         if let Ok(mut c) = cmd.spawn() {
             let _ = c.wait();

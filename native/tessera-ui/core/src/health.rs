@@ -117,7 +117,10 @@ pub fn start() {
     let gpu = gpu_now();
     crate::work::spawn(move || {
         let path = path();
-        let tail = read_tail(&path, 16 * 1024);
+        // (the whole record, capped at 200 KB, read here on the pool: a 16 KB
+        // tail lost the last start after a day of samples, and a long
+        // session's crash was counted as a normal start; audit #103)
+        let tail = read_tail(&path, 256 * 1024);
         let (why, report) = start_reason(&parse_lines(&tail), &sig);
         let mut e = json!({"t": crate::util::now_ms() / 1000, "ev": "start", "why": why, "s": sig});
         if !gpu.is_empty() {

@@ -94,14 +94,24 @@ pub fn parse_address(addr: &str, sender: &str) -> (String, String) {
     }
 }
 
+/// The largest pixmap a tray item may send (nothing draws one bigger)
+pub const MAX_PIXMAP: i32 = 512;
+
 /// The pixmap closest above `want` px (else the largest), ARGB32 in network
 /// order turned into RGBA
 pub fn best_pixmap(list: &[(i32, i32, Vec<u8>)], want: i32) -> Option<(u32, u32, Vec<u8>)> {
-    let ok: Vec<&(i32, i32, Vec<u8>)> = list.iter().filter(|(w, h, d)| *w > 0 && *h > 0 && d.len() >= (*w * *h * 4) as usize).collect();
+    // (sizes checked in usize, and at most MAX_PIXMAP a side: 65536 × 65536
+    // wrapped the i32 product to 0 and passed, and the menu bar then asked
+    // for 16 GiB; audit #106)
+    let len = |w: i32, h: i32| (w as usize).checked_mul(h as usize).and_then(|n| n.checked_mul(4));
+    let ok: Vec<&(i32, i32, Vec<u8>)> = list
+        .iter()
+        .filter(|(w, h, d)| *w > 0 && *h > 0 && *w <= MAX_PIXMAP && *h <= MAX_PIXMAP && len(*w, *h).is_some_and(|n| d.len() >= n))
+        .collect();
     let pick = ok.iter().filter(|(w, _, _)| *w >= want).min_by_key(|(w, _, _)| *w).or_else(|| ok.iter().max_by_key(|(w, _, _)| *w))?;
     let (w, h, d) = (pick.0 as u32, pick.1 as u32, &pick.2);
-    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
-    for px in d.chunks_exact(4).take((w * h) as usize) {
+    let mut rgba = Vec::with_capacity(w as usize * h as usize * 4);
+    for px in d.chunks_exact(4).take(w as usize * h as usize) {
         rgba.extend_from_slice(&[px[1], px[2], px[3], px[0]]);
     }
     Some((w, h, rgba))
@@ -285,7 +295,9 @@ fn serve_watcher(conn: &Connection) -> zbus::Result<bool> {
 
 fn conn() -> Option<&'static Connection> {
     static C: OnceLock<Option<Connection>> = OnceLock::new();
-    C.get_or_init(|| Connection::session().ok()).as_ref()
+    // (every call to an app answers within 2 s, or is given up: one frozen
+    // tray app stopped the whole tray; audit #194)
+    C.get_or_init(|| zbus::blocking::connection::Builder::session().map(|b| b.method_timeout(std::time::Duration::from_secs(2))).and_then(|b| b.build()).ok()).as_ref()
 }
 
 fn proxy<'a>(c: &Connection, dest: &'a str, path: &'a str, iface: &'a str) -> zbus::Result<Proxy<'a>> {
@@ -630,6 +642,15 @@ mod tests {
         assert_eq!(parse_address(":1.45/org/ayatana/NotificationItem/nm", ""), (":1.45".into(), "/org/ayatana/NotificationItem/nm".into()));
         // (only a path: the one who registered it)
         assert_eq!(parse_address("/StatusNotifierItem", ":1.9"), (":1.9".into(), "/StatusNotifierItem".into()));
+    }
+
+    #[test]
+    fn a_huge_pixmap_is_refused() {
+        // (audit #106: 65536 × 65536 passed through overflow)
+        assert!(best_pixmap(&[(65536, 65536, vec![])], 22).is_none());
+        assert!(best_pixmap(&[(i32::MAX, i32::MAX, vec![0; 16])], 22).is_none());
+        assert!(best_pixmap(&[(1024, 1024, vec![0; 1024 * 1024 * 4])], 22).is_none());
+        assert!(best_pixmap(&[(2, 2, vec![0; 16])], 22).is_some());
     }
 
     #[test]

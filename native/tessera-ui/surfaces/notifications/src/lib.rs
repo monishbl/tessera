@@ -1009,6 +1009,12 @@ impl Part for Notifications {
         st.shell.want("notify");
         // (app icons: the shell's index of its icon theme, core/src/icon_theme.rs)
         st.shell.want("icons");
+        // (made again after a panic: the list and the name's owner heard
+        // again, as they were sent only once; audit #101. At the first start
+        // the server doesn't know its bus yet, and this does nothing)
+        if let Some(b) = tessera_core::services::notify::bus() {
+            b.resync();
+        }
     }
 
     /// Notification Center: opened and closed through the shell's Panels

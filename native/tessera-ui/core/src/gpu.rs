@@ -44,6 +44,25 @@ const PROBE_KEY: &str = "gpuProbe";
 const NOTICE_KEY: &str = "gpuFellBack";
 /// A check is trusted this long (a driver update may change it)
 const PROBE_TTL_MS: i64 = 30 * 24 * 3600 * 1000;
+/// How long a GPU that couldn't draw stays passed over: this boot only, and
+/// a week at most. It was for good, and after the reboot that fixes the
+/// usual cause (a driver updated, the module not yet reloaded) the GPU you
+/// picked was still never used (audit #102)
+const CANT_TTL_MS: i64 = 7 * 24 * 3600 * 1000;
+
+fn boot_id() -> String {
+    std::fs::read_to_string("/proc/sys/kernel/random/boot_id").map(|s| s.trim().to_string()).unwrap_or_default()
+}
+
+fn cant_record(family: &str) -> serde_json::Value {
+    serde_json::json!({"family": family, "boot": boot_id(), "t": crate::util::now_ms()})
+}
+
+/// The family passed over now, from the record (an older plain name: no longer)
+pub fn cant_now(v: &serde_json::Value, boot: &str, now: i64) -> Option<String> {
+    let fresh = v["boot"].as_str() == Some(boot) && v["t"].as_i64().is_some_and(|t| now - t < CANT_TTL_MS);
+    fresh.then(|| v["family"].as_str().map(String::from)).flatten()
+}
 
 /// The environment as this process got it (remember_env), and the restart
 /// marker it carried
@@ -349,7 +368,7 @@ pub fn prefer_gpu(conn: &Connection) -> Vec<&'static str> {
         tell_fell_back(from, to);
     }
     // (a GPU whose EGL didn't start for this desktop: the desktop's instead)
-    let cant = crate::cfgfile::state_get(CANT_KEY);
+    let cant = serde_json::json!(cant_now(&crate::cfgfile::state_get(CANT_KEY), &boot_id(), crate::util::now_ms()));
     if let Some(m) = FELL_BACK.get().and_then(|m| m.clone()) {
         // (the restart after one didn't start: the desktop's, whatever the
         // settings say, should they not have been saved; the low-power one
@@ -427,7 +446,7 @@ pub fn fall_back() -> Option<Vec<(OsString, OsString)>> {
     let marker = format!("{}>{}", d.on.family, back.family);
     let notice = marker.clone();
     if let Err(e) = crate::cfgfile::edit_state(move |m| {
-        m.insert(CANT_KEY.into(), serde_json::json!(on));
+        m.insert(CANT_KEY.into(), cant_record(on));
         m.insert(NOTICE_KEY.into(), serde_json::json!(notice));
         true
     }) {
@@ -498,7 +517,7 @@ fn verified(to: &Gpu) -> bool {
         eprintln!("tessera-ui: checked the {} GPU for this desktop: {}", family_label(to.family), if ok { "it draws" } else { "it can't draw here" });
         crate::cfgfile::set_state(PROBE_KEY, serde_json::json!({"to": to.pci, "desktop": desktop, "ok": ok, "t": crate::util::now_ms()}));
         if !ok {
-            crate::cfgfile::set_state(CANT_KEY, serde_json::json!(to.family));
+            crate::cfgfile::set_state(CANT_KEY, cant_record(to.family));
         }
         checked = Some(ok);
     }
@@ -754,6 +773,16 @@ mod tests {
         // the desktop doesn't say: only a passed check counts
         assert!(!offer_ok(&nv, None, None));
         assert!(offer_ok(&nv, None, Some(true)));
+    }
+
+    #[test]
+    fn a_gpu_that_couldnt_draw_is_passed_over_this_boot_only() {
+        // (audit #102: it was for good)
+        let v = serde_json::json!({"family": "nvidia", "boot": "b1", "t": 1000});
+        assert_eq!(cant_now(&v, "b1", 2000).as_deref(), Some("nvidia"));
+        assert_eq!(cant_now(&v, "b2", 2000), None);
+        assert_eq!(cant_now(&v, "b1", 1000 + CANT_TTL_MS), None);
+        assert_eq!(cant_now(&serde_json::json!("nvidia"), "b1", 2000), None);
     }
 
     #[test]

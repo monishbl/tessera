@@ -160,7 +160,8 @@ pub fn spawn(tx: Sender<Msg>) {
     crate::work::spawn(|| prune_art(&art_dir(), ART_KEEP_FILES, ART_KEEP_BYTES));
     std::thread::spawn(move || loop {
         let run = || -> zbus::Result<()> {
-            let conn = Connection::session()?;
+            // (a frozen player's calls give up after 2 s, never the whole reading; audit #194)
+            let conn = zbus::blocking::connection::Builder::session().map(|b| b.method_timeout(std::time::Duration::from_secs(2))).and_then(|b| b.build())?;
             let (dirty, wake) = mpsc::channel::<()>();
             watch_rule(
                 &conn,
@@ -214,7 +215,7 @@ static CONN: std::sync::Mutex<Option<Connection>> = std::sync::Mutex::new(None);
 fn session() -> Option<Connection> {
     let mut c = CONN.lock().unwrap_or_else(|e| e.into_inner());
     if c.is_none() {
-        *c = Connection::session().ok();
+        *c = zbus::blocking::connection::Builder::session().map(|b| b.method_timeout(std::time::Duration::from_secs(2))).and_then(|b| b.build()).ok();
     }
     c.clone()
 }
@@ -395,16 +396,27 @@ fn named_by_kind(p: std::path::PathBuf) -> std::path::PathBuf {
     if picture_named(&p) {
         return p;
     }
-    let Ok(bytes) = std::fs::read(&p) else { return p };
-    let Ok(kind) = image::guess_format(&bytes) else { return p };
+    // (only a regular file of picture size, read by its first bytes: the
+    // address comes from any program on the session bus, and file:///dev/zero
+    // or a FIFO grew or blocked the read for ever; audit #105)
+    let Ok(meta) = std::fs::metadata(&p) else { return p };
+    if !meta.is_file() || meta.len() > MAX_ART {
+        return p;
+    }
+    let mut head = [0u8; 32];
+    let n = std::fs::File::open(&p).and_then(|mut f| std::io::Read::read(&mut f, &mut head)).unwrap_or(0);
+    let Ok(kind) = image::guess_format(&head[..n]) else { return p };
     let Some(ext) = kind.extensions_str().first() else { return p };
-    let stamp = std::fs::metadata(&p).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
-    let out = art_dir().join(format!("{:016x}.{ext}", fnv(&format!("{}\n{}\n{stamp}", p.display(), bytes.len()))));
-    if out.exists() || (std::fs::create_dir_all(art_dir()).is_ok() && std::fs::write(&out, &bytes).is_ok()) {
+    let stamp = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
+    let out = art_dir().join(format!("{:016x}.{ext}", fnv(&format!("{}\n{}\n{stamp}", p.display(), meta.len()))));
+    if out.exists() || (std::fs::create_dir_all(art_dir()).is_ok() && std::fs::copy(&p, &out).is_ok()) {
         return out;
     }
     p
 }
+
+/// The largest file taken as album art (16 MB)
+const MAX_ART: u64 = 16 * 1024 * 1024;
 
 fn art_dir() -> std::path::PathBuf {
     let base = crate::util::xdg("XDG_CACHE_HOME", ".cache");
@@ -414,6 +426,10 @@ fn art_dir() -> std::path::PathBuf {
 fn art_path(url: &str) -> Option<std::path::PathBuf> {
     if let Some(p) = url.strip_prefix("file://") {
         let p = percent_decode(p.split('?').next().unwrap_or(p));
+        // (devices and the kernel's files are never art)
+        if ["/dev/", "/proc/", "/sys/"].iter().any(|d| p.starts_with(d)) || !std::path::Path::new(&p).is_file() {
+            return None;
+        }
         return Some(std::path::PathBuf::from(p));
     }
     if !(url.starts_with("http://") || url.starts_with("https://")) {

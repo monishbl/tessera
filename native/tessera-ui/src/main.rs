@@ -434,6 +434,9 @@ fn main() {
     }
     // (freed memory given back once the shell is quiet after drawing: memory.rs)
     let mut idle_trim = tessera_core::memory::IdleTrim::new(Instant::now());
+    // (the loop ending on an error, not a request: said, and counted as a
+    // failed start; audit #107)
+    let mut failed: Option<String> = None;
     while !state.exit {
         if first_frame_at.is_none() && state.first_frame_logged {
             first_frame_at = Some(Instant::now());
@@ -483,6 +486,7 @@ fn main() {
         wakes.note(why, &state);
         if let Err(e) = event_loop.dispatch(timeout, &mut state) {
             eprintln!("tessera-ui: event loop: {e}");
+            failed = Some(e.to_string());
             break;
         }
         // (what this turn's events sent on — a panel closing tells Panels,
@@ -533,11 +537,22 @@ fn main() {
     }
     tessera_core::work::set_leaving();
     state.each_part(|p, st| p.quit(st));
+    if let Some(why) = &failed {
+        tessera_core::health::event_now("crash", serde_json::json!({"why": format!("event loop: {why}"), "fatal": true}));
+    }
     tessera_core::health::stop();
     // (settings and state queued from the loop: written before we go; and
     // Hyprland's dispatches asked last)
     tessera_core::cfgfile::flush();
     tessera_core::services::hypr::IN_ORDER.flush(Duration::from_secs(2));
+    // (a Wayland error, the compositor closing the connection: a failed
+    // start, never an orderly one, so launch-shell.sh's count can fall back
+    // to the QML shell; it was reset each time and the shell restarted every
+    // ten seconds for ever)
+    if failed.is_some() {
+        eprintln!("tessera-ui: ended on an error");
+        std::process::exit(1);
+    }
     // (an orderly exit — a look switch, a restart asked for — isn't a failed
     // start: launch-shell.sh's count of them fell back to the QML shell after
     // three look switches within a minute)

@@ -113,7 +113,21 @@ pub fn spawn(tx: Sender<Msg>) {
         let run = || -> zbus::Result<()> {
             let conn = Connection::system()?;
             let rule = MatchRule::builder().msg_type(zbus::message::Type::Signal).sender("org.bluez")?.build();
-            let mut signals = MessageIterator::for_match_rule(rule, &conn, Some(64))?;
+            let signals = MessageIterator::for_match_rule(rule, &conn, Some(64))?;
+            // (signals pass through a one-slot channel: a burst, a scan's RSSI
+            // changes many times a second, is one re-read, not one each, which
+            // fell minutes behind; audit #192)
+            let (sig_tx, sig_rx) = std::sync::mpsc::sync_channel::<()>(1);
+            std::thread::spawn(move || {
+                for m in signals {
+                    if m.is_err() {
+                        continue;
+                    }
+                    if let Err(std::sync::mpsc::TrySendError::Disconnected(_)) = sig_tx.try_send(()) {
+                        return;
+                    }
+                }
+            });
             let mut last: Option<Bluetooth> = None;
             loop {
                 // (no BlueZ at all: an empty reading, and wait for it)
@@ -122,11 +136,11 @@ pub fn spawn(tx: Sender<Msg>) {
                     tx.send(Msg::Data(Box::new(now.clone()))).map_err(|_| zbus::Error::Failure("ui gone".into()))?;
                     last = Some(now);
                 }
-                if signals.next().is_none() {
+                if sig_rx.recv().is_err() {
                     return Ok(());
                 }
                 // coalesce a burst (a device connecting changes several properties)
-                std::thread::sleep(Duration::from_millis(80));
+                while sig_rx.recv_timeout(Duration::from_millis(80)).is_ok() {}
             }
         };
         if let Err(zbus::Error::Failure(_)) = run() {

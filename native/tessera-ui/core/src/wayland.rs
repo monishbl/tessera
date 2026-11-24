@@ -309,8 +309,20 @@ impl Surface {
             // (and the frame draws only that, with the back buffer's age: egl.rs)
             self.gl_frame.set(true);
         }
-        if let Err(e) = crate::perf::time(|| format!("femtovg draw {}", self.namespace), || self.renderer.draw()) {
-            eprintln!("tessera-ui: render failed: {e}");
+        match crate::perf::time(|| format!("femtovg draw {}", self.namespace), || self.renderer.draw()) {
+            Err(e) => {
+                eprintln!("tessera-ui: render failed: {e}");
+                // (a lost GL context fails every draw for good while the
+                // shell looks alive: past DRAW_FAILS in a row with none
+                // drawn, it's a crash, and a fresh process starts; audit #195)
+                let n = DRAW_FAILS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if n >= MAX_DRAW_FAILS {
+                    crate::health::event_now("crash", serde_json::json!({"why": format!("drawing failed {n} times in a row: {e}"), "fatal": true}));
+                    eprintln!("tessera-ui: drawing failed {n} times in a row (the GL context is lost?): starting again");
+                    std::process::exit(1);
+                }
+            }
+            Ok(_) => DRAW_FAILS.store(0, std::sync::atomic::Ordering::Relaxed),
         }
         // (a frame that skipped items left the window tracking only the drawn
         // ones: every item is read again, so a change anywhere asks for a frame;
@@ -548,6 +560,11 @@ fn cursor_shape(c: i_slint_core::items::BuiltInMouseCursor) -> Shape {
         _ => Shape::Default,
     }
 }
+
+
+/// Draws that failed in a row, every surface counted (one context for all)
+static DRAW_FAILS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+const MAX_DRAW_FAILS: u32 = 30;
 
 thread_local! {
     // Component::new() asks the platform for a window adapter: this one

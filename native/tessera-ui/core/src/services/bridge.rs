@@ -114,7 +114,20 @@ pub fn call(args: &[&str]) {
 pub fn run(cmd: &[&str]) {
     let cmd: Vec<String> = cmd.iter().map(|s| s.to_string()).collect();
     std::thread::spawn(move || {
-        let _ = std::process::Command::new(&cmd[0]).args(&cmd[1..]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+        // (signals unblocked in the child: it inherited the shell's blocked
+        // ones, and couldn't be stopped with kill or at logout; audit #104)
+        let mut c = std::process::Command::new(&cmd[0]);
+        c.args(&cmd[1..]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        {
+            use std::os::unix::process::CommandExt;
+            unsafe {
+                c.pre_exec(|| {
+                    crate::util::child_signals();
+                    Ok(())
+                });
+            }
+        }
+        let _ = c.status();
     });
 }
 

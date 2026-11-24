@@ -65,9 +65,29 @@ enum Out {
 pub struct Bus {
     out: mpsc::Sender<Out>,
     ids: Arc<Mutex<Ids>>,
+    /// what a part made again after a panic must hear again (Restored and
+    /// Owner are sent once, as events; audit #101): the bus id and whether
+    /// the name is ours, and the way to the loop
+    facts: Arc<Mutex<(String, bool)>>,
+    tx: Arc<Mutex<Sender<Msg>>>,
 }
 
 impl Bus {
+    /// A notifications part made again (after a panic) hears Restored and
+    /// Owner again: the list as the last part saved it, and the name as it
+    /// is now. Nothing before the server knows its bus
+    pub fn resync(&self) {
+        let (bus, owner) = self.facts.lock().map(|f| f.clone()).unwrap_or_default();
+        if bus.is_empty() {
+            return;
+        }
+        let kept = std::fs::read_to_string(history_path()).map(|t| model::history_read(&t, &bus)).unwrap_or_default();
+        if let Ok(tx) = self.tx.lock() {
+            let _ = tx.send(Msg::Data(Box::new(Event::Restored { bus, list: kept.list })));
+            let _ = tx.send(Msg::Data(Box::new(Event::Owner(owner))));
+        }
+    }
+
     /// It's gone (dismissed, expired, taken back): the app hears why
     pub fn closed(&self, id: u32, reason: u32) {
         if let Ok(mut ids) = self.ids.lock() {
@@ -330,7 +350,8 @@ fn bus_id(conn: &Connection) -> String {
 pub fn spawn(tx: Sender<Msg>) {
     let (out_tx, out_rx) = mpsc::channel::<Out>();
     let ids = Arc::new(Mutex::new(Ids { next: 1, ..Default::default() }));
-    let _ = BUS.set(Bus { out: out_tx, ids: ids.clone() });
+    let facts = Arc::new(Mutex::new((String::new(), false)));
+    let _ = BUS.set(Bus { out: out_tx, ids: ids.clone(), facts: facts.clone(), tx: Arc::new(Mutex::new(tx.clone())) });
     std::thread::spawn(move || {
         let conn = loop {
             match Connection::session() {
@@ -343,6 +364,9 @@ pub fn spawn(tx: Sender<Msg>) {
         };
         // The list kept from the last run on this bus, its ids still live
         let bus = bus_id(&conn);
+        if let Ok(mut f) = facts.lock() {
+            f.0 = bus.clone();
+        }
         let kept = std::fs::read_to_string(history_path()).map(|t| model::history_read(&t, &bus)).unwrap_or_default();
         if let Ok(mut i) = ids.lock() {
             i.next = kept.next_id();
@@ -381,15 +405,24 @@ pub fn spawn(tx: Sender<Msg>) {
         let (Ok(acq), Ok(lost)) = (rule("NameAcquired"), rule("NameLost")) else { return };
         let (Ok(mut acquired), Ok(lost)) = (MessageIterator::for_match_rule(acq, &conn, Some(8)), MessageIterator::for_match_rule(lost, &conn, Some(8))) else { return };
         let tx2 = tx.clone();
+        let facts2 = facts.clone();
         std::thread::spawn(move || {
             for m in lost.flatten() {
-                if m.body().deserialize::<&str>().is_ok_and(|n| n == NAME) && tx2.send(Msg::Data(Box::new(Event::Owner(false)))).is_err() {
-                    return;
+                if m.body().deserialize::<&str>().is_ok_and(|n| n == NAME) {
+                    if let Ok(mut f) = facts2.lock() {
+                        f.1 = false;
+                    }
+                    if tx2.send(Msg::Data(Box::new(Event::Owner(false)))).is_err() {
+                        return;
+                    }
                 }
             }
         });
         match conn.request_name_with_flags(NAME, Default::default()) {
             Ok(zbus::fdo::RequestNameReply::PrimaryOwner) | Ok(zbus::fdo::RequestNameReply::AlreadyOwner) => {
+                if let Ok(mut f) = facts.lock() {
+                    f.1 = true;
+                }
                 let _ = tx.send(Msg::Data(Box::new(Event::Owner(true))));
             }
             Ok(_) => eprintln!("tessera-ui: notifications: {NAME} is held (the QML shell's server?): waiting for it"),
@@ -400,8 +433,13 @@ pub fn spawn(tx: Sender<Msg>) {
         }
         // (queued: the bus hands it over when the holder leaves)
         for m in acquired.by_ref().flatten() {
-            if m.body().deserialize::<&str>().is_ok_and(|n| n == NAME) && tx.send(Msg::Data(Box::new(Event::Owner(true)))).is_err() {
-                return;
+            if m.body().deserialize::<&str>().is_ok_and(|n| n == NAME) {
+                if let Ok(mut f) = facts.lock() {
+                    f.1 = true;
+                }
+                if tx.send(Msg::Data(Box::new(Event::Owner(true)))).is_err() {
+                    return;
+                }
             }
         }
     });

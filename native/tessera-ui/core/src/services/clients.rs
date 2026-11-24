@@ -202,16 +202,18 @@ pub fn spawn(tx: Sender<Msg>) {
                 continue;
             };
             let mut r = BufReader::new(stream);
-            let mut line = String::new();
+            // (bytes per line, made text lossily: audit #193)
+            let mut raw: Vec<u8> = Vec::new();
             let mut burst = crate::services::hypr::Burst::default();
             loop {
                 let _ = r.get_ref().set_read_timeout(burst.wait());
-                match r.read_line(&mut line) {
+                match r.read_until(b'\n', &mut raw) {
                     Ok(0) => break,
                     Ok(_) => {
+                        let line = String::from_utf8_lossy(&raw).into_owned();
                         note_urgent(&mut urgent, line.trim_end());
                         burst.feed(&line, RELEVANT);
-                        line.clear();
+                        raw.clear();
                     }
                     Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
                     Err(_) => break,

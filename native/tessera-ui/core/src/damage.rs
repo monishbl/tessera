@@ -256,6 +256,12 @@ impl ItemRenderer for Probe<'_> {
         // (the caret blinks and the preedit shows from state outside the item)
         let _ = if self.track_tick { self.tick.get() } else { self.tick.get_untracked() };
         let _ = (input.text(), input.color());
+        // (what the renderer draws the caret, the selection and the preedit
+        // from: read here so a change asks for a frame. After a culled frame
+        // these reads are the window's only dependencies, and the caret froze;
+        // audit #191)
+        let _ = (input.cursor_visible(), input.cursor_position_byte_offset(), input.anchor_position_byte_offset(), input.preedit_text(), input.enabled(), input.has_focus());
+        let _ = (input.selection_foreground_color(), input.selection_background_color(), input.horizontal_alignment(), input.vertical_alignment(), input.wrap());
     }
     fn draw_path(&mut self, path: Pin<&Path>, item: &ItemRc, _: LogicalSize) {
         let _ = (path.fitted_path_events(item).is_some(), path.fill(), path.stroke(), path.stroke_width());

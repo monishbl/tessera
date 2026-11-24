@@ -33,9 +33,12 @@ pub fn request(cmd: &str) -> std::io::Result<String> {
         data.push(b' ');
     }
     s.write_all(&data)?;
-    let mut out = String::new();
-    s.read_to_string(&mut out)?;
-    Ok(out)
+    // (bytes, then text with any invalid ones replaced: an old X11 or Wine
+    // window's title in Latin-1 made the whole answer unreadable, and every
+    // window vanished from the shell; audit #193)
+    let mut out = Vec::new();
+    s.read_to_end(&mut out)?;
+    Ok(String::from_utf8_lossy(&out).into_owned())
 }
 
 #[derive(Deserialize, Default, Clone, Debug, PartialEq)]
@@ -209,16 +212,18 @@ pub fn spawn_events(tx: Sender<Msg>) {
             l.1 = stream.try_clone().ok();
         }
         let mut r = BufReader::new(stream);
-        let mut line = String::new();
+        // (bytes per line, made text lossily: one title that isn't UTF-8
+        // broke the reader and dropped what was buffered; audit #193)
+        let mut line: Vec<u8> = Vec::new();
         let mut burst = Burst::default();
         LAST_EVENT.store(now_ms(), std::sync::atomic::Ordering::Relaxed);
         loop {
             let _ = r.get_ref().set_read_timeout(burst.wait());
-            match r.read_line(&mut line) {
+            match r.read_until(b'\n', &mut line) {
                 Ok(0) => break,
                 Ok(_) => {
                     LAST_EVENT.store(now_ms(), std::sync::atomic::Ordering::Relaxed);
-                    burst.feed(&line, RELEVANT);
+                    burst.feed(&String::from_utf8_lossy(&line), RELEVANT);
                     line.clear();
                 }
                 Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}

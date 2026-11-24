@@ -13,6 +13,7 @@ pub struct Frames {
 
 impl Frames {
     pub fn rendered(&mut self, d: Duration) {
+        keep_recent(&mut self.render_us);
         self.render_us.push(d.as_micros() as u32);
     }
     /// A wl_surface.frame callback: `time` is the compositor's ms clock.
@@ -21,6 +22,7 @@ impl Frames {
         if let Some(last) = self.last_time {
             let gap = time.wrapping_sub(last);
             if gap < 250 {
+                keep_recent(&mut self.intervals_ms);
                 self.intervals_ms.push(gap);
             }
         }
@@ -35,6 +37,17 @@ impl Frames {
         );
         *self = Self::default();
         line
+    }
+}
+
+/// The samples a surface keeps between reports: the newest MAX_SAMPLES (a
+/// steadily animating surface kept every frame for as long as the shell
+/// ran, megabytes an hour; audit #203)
+const MAX_SAMPLES: usize = 20_000;
+
+fn keep_recent(v: &mut Vec<u32>) {
+    if v.len() >= MAX_SAMPLES {
+        v.drain(..MAX_SAMPLES / 2);
     }
 }
 
