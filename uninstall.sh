@@ -30,6 +30,41 @@ run() { if [[ $DRY == 1 ]]; then printf '  would run: %s\n' "$*"; else "$@"; fi;
 # unit that was never installed, a login manager removed since: set -e must
 # never stop it halfway)
 opt() { run "$@" || echo "  (didn't work, carrying on: $*)"; return 0; }
+# Tessera's one edit to a system file taken out, the file otherwise as it is
+# now: grub (the "quiet " it put first on GRUB_CMDLINE_LINUX_DEFAULT) or
+# bluetooth (main.conf's Experimental line, as it was before). The copy from
+# before goes. Fails (1) when there was nothing to undo.
+undo_edit() { # kind file backup
+    if [[ $DRY == 1 ]]; then printf '  would take Tessera'"'"'s edit out of %s\n' "$2"; return 0; fi
+    local new
+    new=$(sudo python3 -I - "$1" "$2" "$3" <<'PY'
+import re, sys
+kind, path, backup = sys.argv[1:]
+now, was = open(path).read(), open(backup).read()
+if kind == "grub":
+    key = re.compile(r"""^(GRUB_CMDLINE_LINUX_DEFAULT=['"]?)quiet ?""", re.M)
+    if re.search(r"""^GRUB_CMDLINE_LINUX_DEFAULT=['"]?[^\n]*\bquiet\b""", was, re.M):
+        sys.exit(1)  # (it was quiet before Tessera: nothing of ours)
+    new = key.sub(r"\1", now, count=1)
+else:
+    old = [l for l in was.splitlines() if re.match(r"^\s*#?\s*Experimental\s*=", l)]
+    out, put = [], False
+    for l in now.splitlines():
+        if re.match(r"^\s*Experimental\s*=\s*true\s*$", l):
+            if old and not put:
+                out.append(old[0])
+                put = True
+            continue
+        out.append(l)
+    new = "\n".join(out) + "\n"
+if new == now:
+    sys.exit(1)
+sys.stdout.write(new)
+PY
+) || { sudo rm -f "$3"; return 1; }
+    printf '%s\n' "$new" | sudo tee "$2.tessera-new" >/dev/null && sudo chmod --reference="$2" "$2.tessera-new" \
+        && sudo mv -f "$2.tessera-new" "$2" && sudo rm -f "$3"
+}
 # The same, quiet (things that are often not there)
 quiet() {
     if [[ $DRY == 1 ]]; then printf '  would run: %s\n' "$*"; else "$@" >/dev/null 2>&1 || true; fi
@@ -56,8 +91,15 @@ HYPR_OURS=0
 # binaries, its own Quickshell and its build, the installer's backups of the
 # shell, and the build caches (never a checkout of yours elsewhere)
 BIG=()
+# (a bundle install too: its versions, the links into them, its downloads
+# and state, and the update's own state; audit #87)
 for p in "$DATA/tessera/repo" "$DATA/tessera/bin" "$DATA/tessera/quickshell" "$DATA/tessera/build" "$DATA/tessera/backups" \
-    "$CACHE/tessera/cargo" "$CACHE/tessera/stage-src"; do
+    "$DATA/tessera/versions" "$DATA/tessera/current" "$DATA/tessera/previous" "$DATA/tessera/.downloads" \
+    "$DATA/tessera/bundle-state.json" "$DATA/tessera/.bundle.lock" "$DATA/tessera/update.lock" "$DATA/tessera/.staged" \
+    "$CACHE/tessera/cargo" "$CACHE/tessera/stage-src" "$CACHE/tessera/build-here-src" \
+    "${XDG_STATE_HOME:-$HOME/.local/state}/tessera/update-job" "${XDG_STATE_HOME:-$HOME/.local/state}/tessera/update-staged" \
+    "${XDG_STATE_HOME:-$HOME/.local/state}/tessera/update-notice.json" "${XDG_STATE_HOME:-$HOME/.local/state}/tessera/fresh-update.json" \
+    "${XDG_STATE_HOME:-$HOME/.local/state}/tessera/bad-builds.json"; do
     [[ -e "$p" || -L "$p" ]] && BIG+=("$p")
 done
 big_size() { du -shc "${BIG[@]}" 2>/dev/null | tail -1 | cut -f1; return 0; }
@@ -221,7 +263,12 @@ if [[ $LOGIN_HERE == 1 ]]; then
     opt sudo rm -rf "$S/usr/share/tessera" "$S$OLD_LOGIN_SHARE"
     for b in "$S/etc/greetd/config.toml.pre-tessera" "$S/etc/greetd/config.toml$OLD_BACKUP_SUFFIX"; do
         if [[ -f $b ]]; then
-            opt sudo mv "$b" "$S/etc/greetd/config.toml"
+            # (only while it's still Tessera's: one changed since stays, and says where the old one is)
+            if grep -qi -e tessera -e "$OLD_NAME" "$S/etc/greetd/config.toml" 2>/dev/null; then
+                opt sudo mv "$b" "$S/etc/greetd/config.toml"
+            else
+                echo "  $S/etc/greetd/config.toml changed since Tessera set it: kept as it is (the one from before is $b)"
+            fi
             break
         fi
     done
@@ -248,10 +295,11 @@ for d in "$S/etc/systemd/system/plymouth-quit.service.d/tessera.conf" "$S$OLD_PL
         RELOAD=1
     fi
 done
+# (Tessera's edit undone, not the file put back as it was on install day:
+# a kernel option added since, nvidia_drm.modeset=1, resume=, stays; audit #88)
 for b in "$S/etc/default/grub.pre-tessera" "$S/etc/default/grub$OLD_BACKUP_SUFFIX"; do
     if [[ -f $b ]]; then
-        opt sudo mv "$b" "$S/etc/default/grub"
-        if command -v grub-mkconfig >/dev/null && [[ -z $S ]]; then
+        if undo_edit grub "$S/etc/default/grub" "$b" && command -v grub-mkconfig >/dev/null && [[ -z $S ]]; then
             opt sudo grub-mkconfig -o /boot/grub/grub.cfg
         fi
         break
@@ -309,8 +357,7 @@ done
 BT_RESTART=0
 [[ $RELOAD == 1 ]] && BT_RESTART=1
 if [[ -f "$S/etc/bluetooth/main.conf.pre-tessera" ]]; then
-    opt sudo mv "$S/etc/bluetooth/main.conf.pre-tessera" "$S/etc/bluetooth/main.conf"
-    BT_RESTART=1
+    undo_edit bluetooth "$S/etc/bluetooth/main.conf" "$S/etc/bluetooth/main.conf.pre-tessera" && BT_RESTART=1
 fi
 if [[ $RELOAD == 1 ]]; then
     opt sudo systemctl daemon-reload
