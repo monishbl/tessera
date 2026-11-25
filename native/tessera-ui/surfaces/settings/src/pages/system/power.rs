@@ -218,15 +218,13 @@ pub fn power(cx: &mut Ctx, p: &mut Page) {
             lid_row(cx, "With another display connected", "On the charger", "lidExternal"),
             lid_row(cx, "With Caffeine on", "Instead of sleeping", "lidCaffeine"),
         ];
-        let after = cx.i("power.passwordAfterSleep");
-        let values = [0i64, 60, 300];
-        let id = cx.pick_values("power.passwordAfterSleep", values.iter().map(|v| Value::from(*v)).collect());
         let g = p.group("Lid and waking");
         g.footer("Lock and Do nothing keep the computer running with the lid closed (Wi-Fi, downloads and music carry on; the built-in screen goes off); with another display, it carries on there. A critically low battery still sleeps. If Tessera isn't running, closing the lid sleeps, as it always has.");
         for r in rows {
             g.row(r);
         }
-        g.row(Row::new("Require the password after sleep").segmented(&["Immediately", "After 1 minute", "After 5 minutes"], values.iter().position(|v| *v == after).unwrap_or(0) as i32, id).width(330.0));
+        // (no "Require the password after sleep": it always locks before
+        // sleeping, audit #97)
     }
 
     // ── More options ──

@@ -160,11 +160,24 @@ class IdleConfig(unittest.TestCase):
         self.assertTrue((d / "tessera-locked-sig1").exists(), "the mark a restarted shell locks with")
         self.assertIn("hyprlock --immediate", (d / "ran").read_text())
 
-    def test_a_grace_moves_the_lock_to_the_wake(self):
+    def test_a_grace_no_longer_skips_the_lock_before_sleep(self):
+        # (audit #97: an older shell's grace line; the lock still comes first)
         conf, grace = self.run_idle("ac lock 300\ngrace 60\n")
         self.assertEqual(grace, "60")
-        self.assertIn("idle-action.sh before-sleep", conf)
+        self.assertIn("before_sleep_cmd = QS=qs " + str(SCRIPTS / "shell-ipc.sh") + " call lock lock", conf)
+        self.assertNotIn("before-sleep", conf)
         self.assertIn("after_sleep_cmd = " + str(SCRIPTS / "idle-action.sh") + " after-sleep", conf)
+
+    def test_before_sleep_from_an_older_config_locks(self):
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
+        idle = d / "idle"
+        idle.mkdir()
+        (idle / "grace").write_text("300\n")
+        (idle / "lock-command").write_text("echo locked >> %s/ran\n" % d)
+        env = dict(os.environ, TESSERA_IDLE_DIR=str(idle), XDG_RUNTIME_DIR=str(d), HYPRLAND_INSTANCE_SIGNATURE="sig1")
+        subprocess.run(["bash", str(SCRIPTS / "idle-action.sh"), "before-sleep"], env=env, timeout=10)
+        self.assertEqual((d / "ran").read_text().strip(), "locked")
 
     def test_your_own_hypridle_conf_still_wins(self):
         conf, _ = self.run_idle("ac sleep 60\n", own="listener {\n timeout = 1234\n}\n")

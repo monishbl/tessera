@@ -338,7 +338,7 @@ class PersistenceAndIdentity(unittest.TestCase):
             (p/'config/tessera/idle-listeners').write_text('ac lock 120\ngrace 30\n')
             data=run()
             self.assertIn('lock_cmd = '+lock,data)
-            self.assertIn('before_sleep_cmd = %s before-sleep' % (SCRIPTS/'idle-action.sh'),data)
+            self.assertIn('before_sleep_cmd = '+lock,data)  # (a grace no longer skips it: audit #97)
             self.assertIn('inhibit_sleep = 3',data)
             self.assertEqual((p/('tessera-idle-fixture/grace')).read_text().strip(),'30')
 

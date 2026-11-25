@@ -3,7 +3,7 @@
 #
 # The timers come from Settings → Battery & Power: the shell writes them to
 # $XDG_CONFIG_HOME/tessera/idle-listeners ("<ac|battery> <dim|lock|off|sleep>
-# <seconds>" per line, plus "grace <seconds>" for the password after sleep)
+# <seconds>" per line, an older shell's "grace <seconds>" is read but no longer skips the lock)
 # and ends hypridle (its pid is in the idle folder); this loop starts it again
 # with the new list. A hypridle.conf of your own still wins over all of it.
 # The loop ends with its compositor.
@@ -87,9 +87,11 @@ listener {
 EOF
     fi
     printf '%s\n' "$grace" >"$idle_dir/grace"
-    # Locked before sleeping, unless there's a grace: then the wake decides
+    # Always locked before sleeping (audit #97): a grace that left the lock
+    # to the wake showed the desktop unlocked until hypridle got to it, or
+    # for good if hypridle wasn't running. A "grace" line from an older
+    # shell is read and kept, but no longer skips the lock.
     local before="$lock_command"
-    [[ $grace -gt 0 ]] && printf -v before '%q before-sleep' "$action"
     cat >>"$idle_dir/hypridle.conf" <<EOF
 
 general {

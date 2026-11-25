@@ -4,7 +4,7 @@
 # was set for, so the charger's and the battery's timers can differ while
 # hypridle has one list.
 #   idle-action.sh <ac|battery|any> <dim|undim|lock|off|on|sleep>
-#   idle-action.sh before-sleep | after-sleep     (the password-after-sleep grace)
+#   idle-action.sh before-sleep | after-sleep     (lock; screen on after the wake)
 # The lock command and the grace come from the files start-idle.sh writes
 # next to its hypridle config ($TESSERA_IDLE_DIR).
 set -uo pipefail
@@ -49,24 +49,13 @@ lock() {
 
 case "${1:-}" in
     before-sleep)
-        # Asleep longer than the grace (or no grace): locked before it sleeps,
-        # as always. With a grace, the time is noted and the check waits for
-        # the wake (after-sleep).
-        grace=$(cat "$dir/grace" 2>/dev/null || echo 0)
-        if [[ ${grace:-0} -le 0 ]]; then
-            lock
-        else
-            date +%s >"$dir/slept-at"
-        fi
+        # Always locked before it sleeps (audit #97: a grace that waited for
+        # the wake showed the desktop unlocked until the lock came). Kept
+        # for a hypridle.conf an older shell wrote.
+        lock
         exit 0 ;;
     after-sleep)
         hyprctl dispatch 'hl.dsp.dpms({ action = "enable" })' >/dev/null 2>&1
-        grace=$(cat "$dir/grace" 2>/dev/null || echo 0)
-        if [[ ${grace:-0} -gt 0 ]]; then
-            slept=$(cat "$dir/slept-at" 2>/dev/null || echo 0)
-            rm -f "$dir/slept-at"
-            (( $(date +%s) - slept >= grace )) && lock
-        fi
         exit 0 ;;
 esac
 
