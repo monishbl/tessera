@@ -137,6 +137,18 @@ pub struct Island {
 
 pub const ISLAND_NONE: Island = Island { kind: "", phase: "", hint: "" };
 
+/// Keys reach the password field: not while the screen is locked with the
+/// lid shut and no other display (the lid, or a bag, pressing keys; what's
+/// typed is put back). Docked with the lid shut, an outside keyboard types.
+pub fn typing_counts(lid_closed: bool, locked: bool, outputs: &[&str]) -> bool {
+    !(lid_closed && locked) || outputs.iter().any(|o| !built_in(o))
+}
+
+/// A laptop's own panel (eDP, LVDS, DSI)
+pub fn built_in(output: &str) -> bool {
+    ["eDP", "LVDS", "DSI"].iter().any(|p| output.starts_with(p))
+}
+
 pub fn island(finger: &str, face: &str, typing: bool, busy: bool, leaving: bool) -> Island {
     let known = |p: &str| -> Option<&'static str> { ["waiting", "reading", "match", "miss"].into_iter().find(|q| *q == p) };
     let (f, c) = (known(finger), known(face));
@@ -538,5 +550,21 @@ mod tests {
         assert!(came_back(true, 0, 0));
         assert!(came_back(false, 40_000, 0));
         assert!(!came_back(false, 20_000, 0));
+    }
+}
+
+#[cfg(test)]
+mod lid_tests {
+    #[test]
+    fn a_shut_lid_types_nothing() {
+        assert!(!super::typing_counts(true, true, &["eDP-1"]));
+        assert!(!super::typing_counts(true, true, &[]));
+        assert!(super::typing_counts(false, true, &["eDP-1"]));
+        // (not locked: the lid doesn't matter here)
+        assert!(super::typing_counts(true, false, &["eDP-1"]));
+        // docked, lid shut: the outside keyboard types
+        assert!(super::typing_counts(true, true, &["eDP-1", "DP-2"]));
+        assert!(super::typing_counts(true, true, &["HDMI-A-1"]));
+        assert!(super::built_in("eDP-1") && super::built_in("LVDS-1") && !super::built_in("DP-1"));
     }
 }

@@ -203,8 +203,9 @@ enum M {
     Probed(u64, reader::Why, reader::Probe),
     /// logind's sleep delay inhibitor, taken off the UI thread
     Inhibitor(Option<zbus::zvariant::OwnedFd>),
-    /// the lid was opened (logind)
-    LidOpened,
+    /// the lid closed (true) or opened (false): logind's LidClosed, read at
+    /// the start and on each change
+    Lid(bool),
     /// the camera's "not recognised" has shown long enough (the island's miss)
     FaceMissOver,
     FaceRetry,
@@ -373,6 +374,9 @@ pub struct Lock {
     real: bool,
     backend: Backend,
     held: bool,
+    /// the lid is closed: keys are the lid pressing on the keyboard (or a
+    /// bag), not someone typing, and don't reach the field
+    lid_closed: bool,
     leaving: bool,
     finger_on: bool,
     face_on: bool,
@@ -460,6 +464,7 @@ impl Default for Lock {
             real,
             backend: auth::backend(real),
             held: false,
+            lid_closed: false,
             leaving: false,
             finger_on: false,
             face_on: false,
@@ -1644,7 +1649,30 @@ impl Lock {
         crate::shell::tell(NAME, serde_json::json!({"unlocked": true}));
     }
 
+    fn typing_counts(&self) -> bool {
+        let outs: Vec<&str> = self.wins.iter().map(|w| w.output.as_str()).collect();
+        logic::typing_counts(self.lid_closed, self.held, &outs)
+    }
+
+    /// Empty the field (on every screen), not counted as a try
+    fn drop_typed(&mut self) {
+        if self.password.is_empty() && self.wins.iter().all(|w| w.ui.global::<ui::LockData>().get_password().is_empty()) {
+            return;
+        }
+        self.password.clear();
+        self.typed_on = None;
+        self.field();
+    }
+
     fn set_password(&mut self, st: &mut State, on: String, text: String) {
+        // (the lid closed: the keys aren't someone typing; the field is put
+        // back as it was. Found when a laptop woke in a bag and the field
+        // was full of letters when the lid opened, 25 Nov)
+        if !self.typing_counts() {
+            self.typed_on = None;
+            self.field();
+            return;
+        }
         self.typed_on = Some(on);
         if text == self.password {
             return;
@@ -1932,11 +1960,14 @@ impl Lock {
 
 /// logind's PrepareForSleep, read-only (Lock.qml's EventWatch "login1")
 fn watch_sleep(to: impl Fn(Box<dyn Any + Send>) + Send + Clone + 'static) {
-    // the lid opening (logind's LidClosed turning false): a fresh scan
+    // the lid (logind's LidClosed): as it is now, then each change
     let lid = to.clone();
     std::thread::spawn(move || {
         let run = || -> zbus::Result<()> {
             let conn = zbus::blocking::Connection::system()?;
+            if let Ok(closed) = zbus::blocking::Proxy::new(&conn, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager").and_then(|p| p.get_property::<bool>("LidClosed")) {
+                lid(Box::new(M::Lid(closed)));
+            }
             let rule = zbus::MatchRule::builder()
                 .msg_type(zbus::message::Type::Signal)
                 .sender("org.freedesktop.login1")?
@@ -1948,8 +1979,8 @@ fn watch_sleep(to: impl Fn(Box<dyn Any + Send>) + Send + Clone + 'static) {
             for m in signals.flatten() {
                 let body = m.body();
                 let Ok((_, changed, _)) = body.deserialize::<(String, std::collections::HashMap<String, zbus::zvariant::OwnedValue>, Vec<String>)>() else { continue };
-                if changed.get("LidClosed").and_then(|v| v.downcast_ref::<bool>().ok()) == Some(false) {
-                    lid(Box::new(M::LidOpened));
+                if let Some(closed) = changed.get("LidClosed").and_then(|v| v.downcast_ref::<bool>().ok()) {
+                    lid(Box::new(M::Lid(closed)));
                 }
             }
             Ok(())
@@ -2139,6 +2170,7 @@ impl Part for Lock {
         let Ok(m) = msg.downcast::<M>() else { return };
         match *m {
             M::Edited(on, t) => self.set_password(st, on, t),
+            M::Submit if !self.typing_counts() => {}
             M::Submit => self.submit(st),
             M::Woke => {
                 // (a pointer moving says so many times a second: once in a
@@ -2308,8 +2340,15 @@ impl Part for Lock {
                     self.sleep_fd_asked = false;
                 }
             }
-            M::LidOpened => {
-                if self.held && self.real {
+            M::Lid(closed) => {
+                let was = self.lid_closed;
+                self.lid_closed = closed;
+                // opened: a fresh field (whatever got in while it was shut or
+                // opening isn't yours) and a fresh scan
+                if was && !closed && self.held {
+                    self.drop_typed();
+                }
+                if !closed && self.held && self.real {
                     self.reader_activity(st, true);
                 }
             }
@@ -2353,6 +2392,10 @@ impl Part for Lock {
                 self.finger.probing = false;
                 if going {
                     self.sleeping = true;
+                    // (nothing typed before a sleep is waiting in the field after it)
+                    if self.held {
+                        self.drop_typed();
+                    }
                     let convs: Vec<Conv> = [self.finger.conv.take(), self.face.conv.take()].into_iter().flatten().collect();
                     let fd = self.sleep_fd.take();
                     eprintln!("tessera-ui: lock: going to sleep: ending {} scan(s){}", convs.len(), if fd.is_some() { " before letting the sleep go" } else { "" });
