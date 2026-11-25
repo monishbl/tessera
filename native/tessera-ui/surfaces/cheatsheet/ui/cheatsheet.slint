@@ -256,6 +256,13 @@ export component Cheatsheet inherits Window {
                     width: parent.width;
                     height: parent.height - self.y;
                     property <length> span: max(0px, list.content-height - list.height);
+                    // (more than fits: the list ends after a whole row, the
+                    // groups' first row of shortcuts lining up across the
+                    // columns: a group's name, then rows every 26 + 6 px; a
+                    // row was cut in half at the bottom edge, #161)
+                    hdr := Text { visible: false; text: "Shell"; font-size: Theme.material ? 14px : Theme.small; font-weight: Theme.material ? 500 : 600; }
+                    property <length> h0: hdr.preferred-height + 6px;
+                    property <length> whole: h0 + max(0, floor((self.height - h0 + 6px) / 32px)) * 32px - 6px;
                     property <bool> more-below: span > 1px && -list.content-y < span - 1px;
                     property <color> under: Theme.material ? Theme.m3-surface-container.with-alpha(Theme.blur ? Theme.panel-alpha : 1) : Theme.panel;
                     // (the room the list needs, for the dialog's height: set,
@@ -265,7 +272,7 @@ export component Cheatsheet inherits Window {
                     changed need => { root.list-need = need; }
                     list := Flickable {
                         width: parent.width;
-                        height: parent.height;
+                        height: flow.preferred-height <= parent.height ? parent.height : min(parent.height, whole);
                         content-height: flow.preferred-height;
                         flow := VerticalLayout {
                             width: parent.width;
@@ -285,16 +292,16 @@ export component Cheatsheet inherits Window {
                     // (on the plugin's glass the dialog has no colour of its
                     // own to fade into: the scroll bar alone says it)
                     if !on-glass: Rectangle {
-                        y: parent.height - self.height;
+                        y: list.height - self.height;
                         height: 40px;
                         opacity: more-below ? 1 : 0;
                         animate opacity { duration: Theme.hover; }
                         background: @linear-gradient(180deg, under.with-alpha(0) 0%, under 100%);
                     }
                     if span > 1px: Rectangle {
-                        property <length> th: max(28px, parent.height * list.height / max(1px, list.content-height));
+                        property <length> th: max(28px, list.height * list.height / max(1px, list.content-height));
                         x: parent.width + 8px;
-                        y: (parent.height - th) * max(0, min(1, -list.content-y / max(1px, span)));
+                        y: (list.height - th) * max(0, min(1, -list.content-y / max(1px, span)));
                         width: 4px;
                         height: th;
                         border-radius: 2px;

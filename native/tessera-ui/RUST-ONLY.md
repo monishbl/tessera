@@ -215,5 +215,5 @@ Removed: the passkeys daemon, its Settings group, its polkit-dialog requests and
 | Change | Asked | Status | Commit |
 |---|---|---|---|
 | Panels: a surface's name for its panel opens that panel (`panels toggle osk` is the "keyboard" panel), so the dock steps aside for the on-screen keyboard however it was opened (#151) | 25 Nov | done, unchecked (unit test) | visual fixes round 3 |
-| Shortcuts sheet: as tall as its shortcuts need, from 660 px up to the screen's height less 200 px, so on a 1080p screen no row is cut at the bottom; it still scrolls (with the fade and bar) past that (#161) | 25 Nov | done, unchecked | visual fixes round 3 |
+| Shortcuts sheet: as tall as its shortcuts need, from 660 px up to the screen's height less 200 px; when they still don't all fit, the list ends after a whole row (no row cut in half at the bottom edge) and scrolls, with the fade and bar (#161) | 25 Nov | done, unchecked | visual fixes round 3 |
 | Desktop: while Overview is open on a screen, its widgets and files fade out (140 ms) and come back when it closes (220 ms); its strip no longer slices through a clock widget (#170) | 25 Nov | done, unchecked (unit test) | visual fixes round 3 |
