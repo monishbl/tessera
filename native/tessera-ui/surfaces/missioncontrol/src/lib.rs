@@ -518,6 +518,7 @@ impl Part for MissionControl {
             st.shell.want(s);
         }
         self.info.count = wm::workspace_count(&st.shell.cfg);
+        self.info.open = wm::spaces_open(&st.shell.cfg);
     }
 
     fn command(&mut self, st: &mut State, cmd: &Command) {
@@ -530,6 +531,7 @@ impl Part for MissionControl {
 
     fn config_changed(&mut self, st: &mut State, look: bool) {
         self.info.count = wm::workspace_count(&st.shell.cfg);
+        self.info.open = wm::spaces_open(&st.shell.cfg);
         for i in 0..self.wins.len() {
             if look {
                 st.shell.apply_theme(&self.wins[i].ui.global::<ui::Theme>());
@@ -563,6 +565,7 @@ impl Part for MissionControl {
             Ok(v) => {
                 if v["spaces"].is_object() {
                     self.info = spaces::Info::from_json(&v["spaces"], wm::workspace_count(&st.shell.cfg));
+                    self.info.open = wm::spaces_open(&st.shell.cfg);
                     self.rebuild(st);
                 }
                 if let Some(app) = v["expose"].as_str() {

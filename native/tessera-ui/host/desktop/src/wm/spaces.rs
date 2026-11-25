@@ -30,6 +30,8 @@ pub struct Spaces {
     quiet_until: Option<Instant>,
     reading: bool,
     sent: String,
+    /// menubar.spacesShown is "open" (told to the views)
+    open: bool,
 }
 
 fn q(s: &str) -> String {
@@ -402,11 +404,12 @@ impl Spaces {
     // ── what the views get ───────────────────────────────────────────────────
     pub fn json(&self, count: i64) -> Value {
         let labels: serde_json::Map<String, Value> = self.labels.iter().map(|(b, l)| (b.to_string(), json!(l))).collect();
-        json!({"bases": self.bases, "labels": labels, "count": count})
+        json!({"bases": self.bases, "labels": labels, "count": count, "open": self.open})
     }
     /// To the views and the menu bar's state, when it changed
     pub fn tell(&mut self, h: &mut Host) {
         let count = h.cfg()["menubar"]["workspaceCount"].as_i64().unwrap_or(5);
+        self.open = h.cfg()["menubar"]["spacesShown"].as_str() != Some("fixed");
         let v = self.json(count);
         h.set_state("spaces", json!({"bases": v["bases"], "labels": v["labels"]}));
         self.sent = v.to_string();

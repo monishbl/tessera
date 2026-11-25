@@ -17,12 +17,20 @@ pub struct Info {
     pub bases: BTreeMap<String, i32>,
     pub labels: BTreeMap<i32, String>,
     pub count: i32,
+    /// menubar.spacesShown: only the spaces there are (open), or always
+    /// `count` with no gaps (fixed)
+    pub open: bool,
 }
 
 impl Default for Info {
     fn default() -> Self {
-        Self { bases: BTreeMap::new(), labels: BTreeMap::new(), count: 5 }
+        Self { bases: BTreeMap::new(), labels: BTreeMap::new(), count: 5, open: true }
     }
+}
+
+/// The spaces of a list that are there: Hyprland has them, or it's `active`
+pub fn only_open(ids: Vec<i32>, active: Option<i32>, h: &Snapshot) -> Vec<i32> {
+    ids.into_iter().filter(|id| Some(*id) == active || h.workspaces.iter().any(|w| w.id == *id)).collect()
 }
 
 pub fn base_of_id(id: i32) -> i32 {
@@ -43,7 +51,7 @@ impl Info {
     pub fn from_json(v: &serde_json::Value, count: i32) -> Self {
         let bases = v["bases"].as_object().map(|o| o.iter().filter_map(|(k, b)| b.as_i64().map(|b| (k.clone(), b as i32))).collect()).unwrap_or_default();
         let labels = v["labels"].as_object().map(|o| o.iter().filter_map(|(k, l)| Some((k.parse().ok()?, l.as_str()?.to_string()))).collect()).unwrap_or_default();
-        Self { bases, labels, count: v["count"].as_i64().map(|c| c as i32).unwrap_or(count) }
+        Self { bases, labels, count: v["count"].as_i64().map(|c| c as i32).unwrap_or(count), open: v["open"].as_bool().unwrap_or(true) }
     }
 
     pub fn base_of(&self, name: &str) -> i32 {
@@ -85,13 +93,13 @@ impl Info {
     }
 
     /// The spaces Overview and All Windows show for a display, in its order
-    /// (both from here, so they always agree): the ones Hyprland has (with
-    /// windows, on a screen, or kept by a rule) and the current one. The
-    /// menu bar's own list (ids_for) also keeps the always-shown count and
-    /// fills the gaps; these two show what's there, and + makes another.
+    /// (both from here, so they always agree, and the menu bar the same
+    /// way): open (menubar.spacesShown, the default) the ones Hyprland has
+    /// (with windows, on a screen, or kept by a rule) and the current one,
+    /// + makes another; fixed: always the count, gaps filled (ids_for).
     pub fn shown_for(&self, name: &str, h: &Snapshot) -> Vec<i32> {
-        let active = h.active.get(name).copied();
-        self.ids_for(name, h).into_iter().filter(|id| Some(*id) == active || h.workspaces.iter().any(|w| w.id == *id)).collect()
+        let ids = self.ids_for(name, h);
+        if self.open { only_open(ids, h.active.get(name).copied(), h) } else { ids }
     }
 
     /// A space from a display that isn't connected (a monitor badge)
@@ -277,6 +285,15 @@ mod tests {
         // the current space shows even before Hyprland lists it
         h.active.insert("eDP-1".into(), 4);
         assert_eq!(i.shown_for("eDP-1", &h), vec![1, 2, 3, 4, 8]);
+        // fixed (menubar.spacesShown): always the count, the gaps filled, as the bar
+        let f = Info { open: false, ..i.clone() };
+        assert_eq!(f.shown_for("eDP-1", &h), (1..=8).collect::<Vec<_>>());
+        let g = Info { open: false, ..Info::from_json(&json!({"bases": {"eDP-1": 0}, "open": false}), 5) };
+        assert!(!g.open);
+        h.workspaces = vec![ws(1)];
+        h.active.insert("eDP-1".into(), 1);
+        assert_eq!(g.shown_for("eDP-1", &h), vec![1, 2, 3, 4, 5]);
+        assert_eq!(i.shown_for("eDP-1", &h), vec![1]);
     }
 
     #[test]

@@ -542,6 +542,7 @@ impl Part for Switcher {
         }
         self.look(st);
         self.info.count = wm::workspace_count(&st.shell.cfg);
+        self.info.open = wm::spaces_open(&st.shell.cfg);
     }
 
     fn plugin_changed(&mut self, st: &mut State) {
@@ -557,6 +558,7 @@ impl Part for Switcher {
             Ok(v) => {
                 if v["spaces"].is_object() {
                     self.info = spaces::Info::from_json(&v["spaces"], wm::workspace_count(&st.shell.cfg));
+                    self.info.open = wm::spaces_open(&st.shell.cfg);
                 }
                 if let Some(l) = v["locked"].as_bool() {
                     self.locked = l;

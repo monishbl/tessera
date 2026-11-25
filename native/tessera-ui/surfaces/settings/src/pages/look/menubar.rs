@@ -121,10 +121,20 @@ pub fn menubar(cx: &mut Ctx, p: &mut Page) {
         let ov = cx.pick("menubar.workspaceOverflow", &["arrows", "dynamic"]);
         let other = cx.b("menubar.otherSpaces");
         let ot = cx.toggle("menubar.otherSpaces");
+        let fixed = cx.s("menubar.spacesShown") == "fixed";
+        let shown = cx.pick("menubar.spacesShown", &["open", "fixed"]);
         let g = p.group("Left and centre");
-        g.row(Row::new("Spaces always shown")
+        g.row(Row::new("Spaces shown")
+            .detail(if fixed { "Always the same number, empty ones too, here and in Overview and All Windows" } else { "Only the spaces you have open, here and in Overview and All Windows; + in Overview makes another" })
+            .segmented(&["Open only", "Fixed number"], if fixed { 1 } else { 0 }, shown)
+            .width(220.0));
+        g.row(Row::new(if fixed { "Spaces always shown" } else { "Most dots at once" })
             .visible(spaces_on)
-            .detail(format!("{count} {}; more appear when used", if count == 1 { "space" } else { "spaces" }))
+            .detail(if fixed {
+                format!("{count} {}; more appear when used", if count == 1 { "space" } else { "spaces" })
+            } else {
+                format!("Past {count}, the bar shows arrows or dynamic dots")
+            })
             .slider(count as f32, 1.0, 10.0, 1.0, n)
             .width(200.0));
         g.row(Row::new("When there are more spaces")

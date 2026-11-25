@@ -1622,6 +1622,7 @@ impl Part for Overview {
         self.actions = rank::actions();
         self.home = std::env::var("HOME").unwrap_or_default();
         self.info.count = wm::workspace_count(&st.shell.cfg);
+        self.info.open = wm::spaces_open(&st.shell.cfg);
     }
 
     fn command(&mut self, st: &mut State, cmd: &Command) {
@@ -1634,6 +1635,7 @@ impl Part for Overview {
 
     fn config_changed(&mut self, st: &mut State, look: bool) {
         self.info.count = wm::workspace_count(&st.shell.cfg);
+        self.info.open = wm::spaces_open(&st.shell.cfg);
         for i in 0..self.wins.len() {
             if look {
                 st.shell.apply_theme(&self.wins[i].ui.global::<ui::Theme>());
@@ -1683,6 +1685,7 @@ impl Part for Overview {
                 if v["spaces"].is_object() {
                     let count = wm::workspace_count(&st.shell.cfg);
                     self.info = spaces::Info::from_json(&v["spaces"], count);
+                    self.info.open = wm::spaces_open(&st.shell.cfg);
                     if self.open {
                         self.rebuild(st);
                     }

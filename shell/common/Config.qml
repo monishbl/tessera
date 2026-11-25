@@ -309,7 +309,8 @@ Singleton {
                 property bool showDate: true
                 property bool autoHide: false
                 property string workspaces: "icons" // off | dots | icons
-                property int workspaceCount: 5 // always shown; more appear when used
+                property string spacesShown: "open" // the spaces on the bar, in Overview and All Windows: open (only those there are) | fixed (always workspaceCount)
+                property int workspaceCount: 5 // always shown (fixed); more appear when used
                 property string workspaceOverflow: "arrows" // more spaces than shown: arrows | dynamic (shrinking, fading dots at the ends)
                 property bool otherSpaces: true // also list the spaces living on other displays (marked)
                 property bool windowTitle: false

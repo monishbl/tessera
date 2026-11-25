@@ -393,6 +393,12 @@ impl OverviewCfg {
     }
 }
 
+/// menubar.spacesShown (Config.qml: open): the bar, Overview and All Windows
+/// list only the spaces there are; "fixed": always workspaceCount
+pub fn spaces_open(cfg: &serde_json::Value) -> bool {
+    cfg["menubar"]["spacesShown"].as_str() != Some("fixed")
+}
+
 /// menubar.workspaceCount (Config.qml: 5)
 pub fn workspace_count(cfg: &serde_json::Value) -> i32 {
     cfg["menubar"]["workspaceCount"].as_i64().unwrap_or(5) as i32

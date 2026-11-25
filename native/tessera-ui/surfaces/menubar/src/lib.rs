@@ -1000,7 +1000,14 @@ impl Menubar {
                 .into(),
             );
             // centre: the spaces
-            let groups = spaces::groups(&b.output, &bases, &snapshot, cfg.workspace_count, cfg.other_spaces, &labels);
+            let mut groups = spaces::groups(&b.output, &bases, &snapshot, cfg.workspace_count, cfg.other_spaces, &labels);
+            // open (menubar.spacesShown): this display's spaces that are
+            // there and the current one, as Overview and All Windows list them
+            if cfg.spaces_open {
+                if let Some(own) = groups.first_mut() {
+                    own.ids = tessera_core::wm::spaces::only_open(std::mem::take(&mut own.ids), snapshot.active.get(&b.output).copied(), &snapshot);
+                }
+            }
             let strip = spaces::strip(&b.output, &groups, &snapshot, cfg.workspace_count, cfg.workspace_overflow == "dynamic", b.start);
             b.start = strip.start;
             let icons = cfg.workspaces == "icons";

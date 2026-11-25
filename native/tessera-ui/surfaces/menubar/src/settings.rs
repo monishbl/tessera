@@ -58,6 +58,8 @@ pub struct Bar {
     /// off | dots | icons
     pub workspaces: String,
     pub workspace_count: i32,
+    /// spacesShown: only the spaces there are ("open"), or always the count ("fixed")
+    pub spaces_open: bool,
     /// arrows | dynamic
     pub workspace_overflow: String,
     pub other_spaces: bool,
@@ -135,6 +137,7 @@ pub fn bar(cfg: &Value) -> Bar {
         // (Settings' slider: 1..10; a hand-edited huge count would make a
         // dot for each, so it's held to what a bar can show)
         workspace_count: m["workspaceCount"].as_i64().unwrap_or(5).clamp(1, 30) as i32,
+        spaces_open: s(m, "spacesShown", "open") != "fixed",
         workspace_overflow: s(m, "workspaceOverflow", "arrows"),
         other_spaces: b(m, "otherSpaces", true),
         window_title: b(m, "windowTitle", false),
@@ -254,6 +257,7 @@ mod tests {
                 "workspaces" => json!(d.workspaces),
                 "workspaceCount" => json!(d.workspace_count),
                 "workspaceOverflow" => json!(d.workspace_overflow),
+                "spacesShown" => json!(if d.spaces_open { "open" } else { "fixed" }),
                 "otherSpaces" => json!(d.other_spaces),
                 "windowTitle" => json!(d.window_title),
                 "resources" => json!(d.resources),
