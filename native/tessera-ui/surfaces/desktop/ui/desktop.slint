@@ -1553,6 +1553,11 @@ export component Desktop inherits Window {
     property <float> fx: fx-to;
     animate fx { duration: fx-ms; easing: linear; }
     out property <float> fx-now: fx;
+    // Overview open on this screen: the widgets and files step back (its
+    // strip cut through a clock widget and left a faint slice under it, #170)
+    in property <bool> stepped-back;
+    property <float> present: stepped-back ? 0 : 1;
+    animate present { duration: stepped-back ? 140ms : 220ms; easing: ease-out; }
     callback act(int, string, string); // a widget's control
     callback drag(int, length, length, bool); // a widget dragged (its top left), released
     callback menu(int, length, length); // right-click: a widget's index, or -1 the desktop
@@ -1604,30 +1609,40 @@ export component Desktop inherits Window {
         }
     }
 
-    // Files on the desktop (under the widgets)
-    for ic in icons: IconCell {
-        ic: ic;
-        spot: root.spot;
-        fx: root.fx;
-        fx-zoom: root.fx-zoom;
-        screen-w: root.width;
-        screen-h: root.height;
-        icon(i, what, x, y) => { root.file(i, what, x, y); }
-    }
+    // (the files and widgets, in one layer that steps back under Overview)
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        opacity: root.present;
+        visible: root.present > 0.005;
 
-    for w in widgets: Frame {
-        w: w;
-        fx: root.fx;
-        fx-zoom: root.fx-zoom;
-        screen-w: root.width;
-        screen-h: root.height;
-        editing: root.editing;
-        glass-plugin: root.glass-plugin;
-        cookie12: root.cookie12;
-        cookie9: root.cookie9;
-        act(i, a, b) => { root.act(i, a, b); }
-        drag(i, x, y, on) => { root.drag(i, x, y, on); }
-        menu(i, x, y) => { root.menu(i, x, y); }
+        // Files on the desktop (under the widgets)
+        for ic in icons: IconCell {
+            ic: ic;
+            spot: root.spot;
+            fx: root.fx;
+            fx-zoom: root.fx-zoom;
+            screen-w: root.width;
+            screen-h: root.height;
+            icon(i, what, x, y) => { root.file(i, what, x, y); }
+        }
+
+        for w in widgets: Frame {
+            w: w;
+            fx: root.fx;
+            fx-zoom: root.fx-zoom;
+            screen-w: root.width;
+            screen-h: root.height;
+            editing: root.editing;
+            glass-plugin: root.glass-plugin;
+            cookie12: root.cookie12;
+            cookie9: root.cookie9;
+            act(i, a, b) => { root.act(i, a, b); }
+            drag(i, x, y, on) => { root.drag(i, x, y, on); }
+            menu(i, x, y) => { root.menu(i, x, y); }
+        }
     }
 
     // Empty desktop while editing: a hint where widgets go

@@ -169,7 +169,11 @@ export component Cheatsheet inherits Window {
     property <length> m: 24px;
     property <length> pad: 20px;
     property <length> cw: min(1100px, root.width - 160px);
-    property <length> ch: min(660px, root.height - 200px);
+    // (as tall as its shortcuts need, from 660 px up to the screen's room:
+    // at a fixed 660 the last row was cut at the edge on a 1080p screen
+    // that had room for all of them, #161; the list still scrolls past that)
+    property <length> list-need: 0;
+    property <length> ch: min(max(660px, 36px + 18px + list-need), root.height - 200px);
     property <float> progress: shown ? 1 : 0;
     property <int> hovered: -1;
     animate progress {
@@ -254,6 +258,11 @@ export component Cheatsheet inherits Window {
                     property <length> span: max(0px, list.content-height - list.height);
                     property <bool> more-below: span > 1px && -list.content-y < span - 1px;
                     property <color> under: Theme.material ? Theme.m3-surface-container.with-alpha(Theme.blur ? Theme.panel-alpha : 1) : Theme.panel;
+                    // (the room the list needs, for the dialog's height: set,
+                    // not bound, so the dialog's height doesn't loop through it)
+                    property <length> need: flow.preferred-height;
+                    init => { root.list-need = need; }
+                    changed need => { root.list-need = need; }
                     list := Flickable {
                         width: parent.width;
                         height: parent.height;

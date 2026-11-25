@@ -247,12 +247,15 @@ impl Panels {
         match func {
             "show" | "open" => {
                 let action = a.get(2).and_then(Value::as_str).filter(|_| str_arg(a, 0) == "session");
-                self.m.show(str_arg(a, 0), opt(str_arg(a, 1)), a.get(2).and_then(Value::as_f64), action, &f, &first);
+                self.m.show(&panel_of(str_arg(a, 0)), opt(str_arg(a, 1)), a.get(2).and_then(Value::as_f64), action, &f, &first);
             }
             "showSession" => self.m.show("session", opt(str_arg(a, 1)), None, Some(str_arg(a, 0)), &f, &first),
-            "toggle" => self.m.toggle(str_arg(a, 0), opt(str_arg(a, 1)), a.get(2).and_then(Value::as_f64), now, &f, &first),
+            // (a surface's name for its panel, "osk" for "keyboard", is the
+            // panel: what follows the open panel, the dock's step aside for
+            // the keyboard, knows it by one name; #151)
+            "toggle" => self.m.toggle(&panel_of(str_arg(a, 0)), opt(str_arg(a, 1)), a.get(2).and_then(Value::as_f64), now, &f, &first),
             // toggleAt <panel> <screen> <x>: a panel under its menu bar item
-            "toggleAt" => self.m.toggle(str_arg(a, 0), opt(str_arg(a, 1)), a.get(2).and_then(|x| x.as_f64().or_else(|| x.as_str().and_then(|s| s.parse().ok()))), now, &f, &first),
+            "toggleAt" => self.m.toggle(&panel_of(str_arg(a, 0)), opt(str_arg(a, 1)), a.get(2).and_then(|x| x.as_f64().or_else(|| x.as_str().and_then(|s| s.parse().ok()))), now, &f, &first),
             "close" => self.m.close(now),
             // a panel drawn here is open: close it (the window-management surfaces)
             "closeOpen" => {
@@ -835,6 +838,14 @@ mod tests {
         assert_eq!(surface_of("notificationCenter"), "notifications");
         assert_eq!(surface_of("batteryMenu"), "statusmenus");
         assert_eq!(surface_of("nowPlaying"), "statusmenus");
+    }
+
+    #[test]
+    fn surface_names_open_their_panel() {
+        assert_eq!(panel_of("osk"), "keyboard");
+        assert_eq!(panel_of("keyboard"), "keyboard");
+        assert_eq!(panel_of("spotlight"), "spotlight");
+        assert_eq!(surface_of(&panel_of("osk")), "osk");
     }
 
     #[test]

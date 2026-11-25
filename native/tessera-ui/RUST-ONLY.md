@@ -209,3 +209,11 @@ Removed: the passkeys daemon, its Settings group, its polkit-dialog requests and
 | Menu bar over the wallpaper: Glass's text and icons dark on a light strip (the screen's top 32 px), light on a dark one, at full strength with Increase contrast; Material's pills (no bar background) take the wallpaper's light or dark: light pills with dark ink on a light wallpaper, dark pills with light ink on a dark one, the spaces and the island's idle pill with them (the bar's Theme filled in that mode; the island's open card too). An opaque bar keeps the system's | 24 Nov | done, unchecked | visual fixes round 2 |
 | Lock screen ink: `lock.text` "auto" now reads the wallpaper behind the clock and date (each screen's top 6..44 %) rather than the strip under the menu bar; the clock, date, chips, name and hints (both looks) take it. The lock also follows a time-of-day wallpaper's steps while it's up | 24 Nov | done, unchecked (unit test: clock region) | visual fixes round 2 |
 | Desktop icons: each name's ink follows the wallpaper under it (dark text with a light shadow on a light patch). Widgets keep the system's light or dark: each has its own surface (glass, a Material card or shape) | 24 Nov | done, unchecked (unit test) | visual fixes round 2 |
+
+## Visual fixes round 3 (25 Nov, uncompiled)
+
+| Change | Asked | Status | Commit |
+|---|---|---|---|
+| Panels: a surface's name for its panel opens that panel (`panels toggle osk` is the "keyboard" panel), so the dock steps aside for the on-screen keyboard however it was opened (#151) | 25 Nov | done, unchecked (unit test) | visual fixes round 3 |
+| Shortcuts sheet: as tall as its shortcuts need, from 660 px up to the screen's height less 200 px, so on a 1080p screen no row is cut at the bottom; it still scrolls (with the fade and bar) past that (#161) | 25 Nov | done, unchecked | visual fixes round 3 |
+| Desktop: while Overview is open on a screen, its widgets and files fade out (140 ms) and come back when it closes (220 ms); its strip no longer slices through a clock widget (#170) | 25 Nov | done, unchecked (unit test) | visual fixes round 3 |

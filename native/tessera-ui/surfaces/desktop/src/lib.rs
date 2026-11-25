@@ -1811,6 +1811,25 @@ fn sync<T: Clone + PartialEq + 'static>(m: &VecModel<T>, rows: Vec<T>) {
     }
 }
 
+/// Overview is open on this screen (or on the focused one, no screen
+/// named): its strip lies over the top of the desktop, so the widgets and
+/// files step back rather than show a slice under its edge (#170)
+fn steps_back(open: &str, screen: &str, output: &str) -> bool {
+    open == "overview" && (screen.is_empty() || screen == output)
+}
+
+#[cfg(test)]
+mod step_back_tests {
+    #[test]
+    fn only_overview_on_this_screen() {
+        assert!(super::steps_back("overview", "eDP-1", "eDP-1"));
+        assert!(super::steps_back("overview", "", "eDP-1"));
+        assert!(!super::steps_back("overview", "HDMI-A-1", "eDP-1"));
+        assert!(!super::steps_back("spotlight", "eDP-1", "eDP-1"));
+        assert!(!super::steps_back("", "", "eDP-1"));
+    }
+}
+
 impl Part for Desktop {
     fn name(&self) -> &'static str {
         NAME
@@ -1876,6 +1895,12 @@ impl Part for Desktop {
             // (the wallpaper measured: the icons' names take their ink)
             if self.win.is_some() && Self::cfg(st).icons {
                 self.update(st);
+            }
+        } else if what == TypeId::of::<tessera_core::services::bridge::ShellState>() {
+            // Overview open here: the widgets and files step back (#170)
+            let Some(s) = st.shell.get::<tessera_core::services::bridge::ShellState>() else { return };
+            if let Some(w) = &self.win {
+                w.ui.set_stepped_back(steps_back(s.str("open"), s.str("screen"), &w.output));
             }
         }
     }
