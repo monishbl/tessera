@@ -271,6 +271,10 @@ impl Wm {
             "spaces.newSpace" => self.spaces.new_space(h, &s(0)),
             "spaces.sendWindow" => self.spaces.send_window(h, &s(0), n(1)),
             "spaces.sendWindowToDisplay" => self.spaces.send_window_to_display(h, &s(0), &s(1)),
+            "spaces.sendWindowNew" => {
+                let order: Vec<i32> = a.get(2).and_then(|v| v.as_array()).map(|l| l.iter().map(|x| x.as_f64().unwrap_or(0.0) as i32).collect()).unwrap_or_default();
+                self.spaces.send_window_new(h, &s(0), &s(1), &order, n(3));
+            }
             "spaces.moveSpaceTo" | "spaces.moveSpace" => {
                 let id = n(0);
                 let exists = h.st.shell.get::<tessera_core::services::hypr::Snapshot>().is_some_and(|sn| sn.workspaces.iter().any(|w| w.id == id) || sn.active.values().any(|i| *i == id));

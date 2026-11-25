@@ -7,7 +7,10 @@
 //!          its own spaces (each), the other displays then drop zones on the
 //!          edges that face them
 //!   macos  a strip of spaces per display on a bar at the top, a + for a new
-//!          space, and only the search in the middle
+//!          space, and only the search in the middle; each space shows its
+//!          windows as they last looked (one picture as it opens, never
+//!          live); a window dropped on the +, in the gap between two spaces
+//!          or anywhere else on the bar makes a new space with it there
 //! Click a space to go there, a window to focus it; drag a window onto
 //! another space (or a display's zone, or push it against that display's
 //! edge) to move it; drag a space (by its empty area or its title) to put it
@@ -61,7 +64,7 @@ use tessera_core::rank::{self, Known, Row, Run};
 use tessera_core::wm::{self, spaces, AppIcons, IconsDone, LiveTick, OverviewCfg, Thumbs, Wall, WallPicture};
 use tessera_core::theme;
 use tessera_core::wayland::{Spec, State, Surface};
-use layout::{CellBox, Rect, ZoneBox};
+use layout::{CellBox, NewDrop, Rect, ZoneBox};
 use slint::platform::Key;
 use slint::{ComponentHandle, ModelRc, SharedString};
 use tessera_core::rows::Rows;
@@ -211,6 +214,8 @@ struct Win {
     edge_zone: String,
     drag_win: String,
     drop_cell: i32,
+    /// macOS: a window dragged off the spaces makes a new one (layout::new_space_drop)
+    new_drop: Option<NewDrop>,
     zone_hot: String,
     chip_hot: i32,
     expanded: Option<String>,
@@ -420,6 +425,7 @@ impl Overview {
             edge_zone: String::new(),
             drag_win: String::new(),
             drop_cell: 0,
+            new_drop: None,
             zone_hot: String::new(),
             chip_hot: 0,
             expanded: None,
@@ -545,6 +551,7 @@ impl Overview {
         w.edge_zone.clear();
         w.drag_win.clear();
         w.drop_cell = 0;
+        w.new_drop = None;
         w.zone_hot.clear();
         w.chip_hot = 0;
         w.expanded = None;
@@ -632,7 +639,24 @@ impl Overview {
                             .map(|mi| {
                                 let (w4, h4) = (mi.rect.w.max(4.0), mi.rect.h.max(4.0));
                                 let icon = self.icons.get(st, &mi.class, 18f32.min(h4 * 0.6), scale, false);
-                                ui::OvMini { x: mi.rect.x, y: mi.rect.y, w: w4, h: h4, has_icon: icon.is_some(), icon: icon.unwrap_or_default(), address: mi.address.as_str().into() }
+                                // the window as it last looked: one picture as the
+                                // Overview opens (a space not shown keeps its last
+                                // frame, from before you left it), never live here
+                                if self.capturing {
+                                    self.thumbs.ask(st, NAME, &mi.address, ((w4 * scale).ceil() as u32, (h4 * scale).ceil() as u32));
+                                }
+                                let pic = self.thumbs.images.get(&mi.address).cloned();
+                                ui::OvMini {
+                                    x: mi.rect.x,
+                                    y: mi.rect.y,
+                                    w: w4,
+                                    h: h4,
+                                    has_icon: icon.is_some(),
+                                    icon: icon.unwrap_or_default(),
+                                    address: mi.address.as_str().into(),
+                                    has_picture: pic.is_some(),
+                                    picture: pic.unwrap_or_default(),
+                                }
                             })
                             .collect();
                         minis.insert(t.id, list);
@@ -824,6 +848,14 @@ impl Overview {
         ui.set_drag_dy(w.drag_d.1);
         ui.set_drop_on(w.drop_on);
         ui.set_drop_cell(w.drop_cell);
+        ui.set_new_plus(w.new_drop.as_ref().filter(|d| d.gap.is_none()).map(|d| d.row as i32).unwrap_or(-1));
+        let gap = w.new_drop.as_ref().and_then(|d| d.gap);
+        ui.set_new_gap_shown(gap.is_some());
+        if let Some(g) = gap {
+            ui.set_new_gap_x(g.x);
+            ui.set_new_gap_y(g.y);
+            ui.set_new_gap_h(g.h);
+        }
         let edge = if w.edge_zone.is_empty() { w.space_zone.clone() } else { w.edge_zone.clone() };
         ui.set_edge_hot(w.edge_zone.as_str().into());
         ui.set_edge_cell(if edge.is_empty() { 0 } else { snap.active.get(&edge).copied().unwrap_or(0) });
@@ -1216,6 +1248,12 @@ impl Overview {
                     w.drop_cell = Self::hit(w, results, mac, px, py).map(|h| h.0).unwrap_or(0);
                     self.icons.flush(send(st));
                     self.track_zone(st, i, px, py);
+                    let w = &mut self.wins[i];
+                    w.new_drop = if w.drop_cell == 0 && w.edge_zone.is_empty() && w.zone_hot.is_empty() && w.chip_hot == 0 {
+                        layout::new_space_drop(&w.cells, &w.plus, w.bar_h, px, py)
+                    } else {
+                        None
+                    };
                 } else {
                     // the space, along the strip (and off it toward a zone)
                     let dx = px.clamp(0.0, w.w - 1.0) - from.0;
@@ -1443,6 +1481,14 @@ impl Overview {
                             self.move_window_to_display(a, &edge);
                         } else if target > 0 && target != ws_of {
                             self.move_window(a, target);
+                        } else if let Some(d) = w.new_drop.clone() {
+                            // a new space with it: after the last, or in front of `before`
+                            let (name, order) = w.rows.get(d.row).cloned().unwrap_or_default();
+                            if !name.is_empty() {
+                                wm::ask("spaces.sendWindowNew", serde_json::json!([a, name, order, d.before]));
+                                self.gone_win = a.clone();
+                                self.arm_ungone(st);
+                            }
                         }
                     }
                     let w = &mut self.wins[i];

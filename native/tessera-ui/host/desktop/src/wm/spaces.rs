@@ -96,10 +96,54 @@ impl Spaces {
             hx::dispatch(format!("hl.dsp.focus({{ workspace = {id} }})"));
         }
     }
-    /// A new empty space on a display, and go there
+    /// A new empty space on a display (after its last), and go there
     pub fn new_space(&mut self, h: &Host, name: &str) {
-        let id = self.next_free_on(h, name);
+        let id = self.after_last_on(h, name);
         self.go(h, id);
+    }
+    fn after_last_on(&self, h: &Host, name: &str) -> i32 {
+        let ids: Vec<i32> = Self::workspaces(h).iter().map(|w| w.0).collect();
+        map::after_last(self.base_of(name), &ids)
+    }
+    /// A window dragged off the Overview's spaces: onto a new space on a
+    /// display, after its last (`before` 0), or in front of `before` in
+    /// `order` (the display's spaces as shown), which moves that space and
+    /// the ones after it one along. You stay with what you were looking at.
+    pub fn send_window_new(&mut self, h: &Host, address: &str, name: &str, order: &[i32], before: i32) {
+        if !self.bases.contains_key(name) {
+            return;
+        }
+        let new_id = self.after_last_on(h, name);
+        let list: Vec<i32> = order.iter().copied().filter(|i| *i > 0).collect();
+        let pos = list.iter().position(|i| *i == before).filter(|_| before > 0);
+        let Some(pos) = pos else {
+            self.send_window(h, address, new_id);
+            return;
+        };
+        let Some(win) = h.st.shell.get::<tessera_core::services::clients::Windows>() else { return };
+        let all: Vec<(String, i32)> = win.clients.iter().map(|c| (c.address.clone(), c.workspace.id)).collect();
+        let moves = map::insert_moves(&list, pos, new_id, &all, address);
+        let step = |a: &str, ws: &str| format!("hl.dispatch(hl.dsp.window.move({{ workspace = {ws}, follow = false, window = \"address:{}\" }}))\n", hx::addr(a));
+        let mut lua = String::new();
+        for (a, _) in &moves {
+            lua += &step(a, "\"special:tessera-reorder\"");
+        }
+        for (a, ws) in &moves {
+            lua += &step(a, &ws.to_string());
+        }
+        if moves.iter().any(|(_, ws)| *ws == new_id) {
+            lua += &format!("hl.dispatch(hl.dsp.workspace.move({{ workspace = {new_id}, monitor = {} }}))\n", q(name));
+        }
+        // the space you were on moved along: go with it
+        let here = win.monitor(name).map(|m| m.active.id).unwrap_or(0);
+        if let Some(k) = list.iter().position(|x| *x == here).filter(|k| *k >= pos) {
+            let had = all.iter().any(|(a, ws)| *ws == here && a != address);
+            if had {
+                lua += &format!("hl.dispatch(hl.dsp.focus({{ workspace = {} }}))\n", list.get(k + 1).copied().unwrap_or(new_id));
+            }
+        }
+        let lua = self.keeping(&lua);
+        hx::eval(lua);
     }
     /// A window to a space (on that space's own display, even if it doesn't exist yet)
     pub fn send_window(&mut self, h: &Host, address: &str, id: i32) {

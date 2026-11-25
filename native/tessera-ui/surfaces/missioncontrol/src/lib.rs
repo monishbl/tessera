@@ -286,8 +286,16 @@ impl MissionControl {
                     .filter(|c| c.workspace.id == id && c.size.0 > 0)
                     .map(|c| {
                         let h = c.size.1 as f32 * s;
+                        let w = c.size.0 as f32 * s;
                         let icon = self.icons.get(st, &c.class, 20f32.min(h * 0.6), scale, false);
-                        ui::McMini { x: (c.at.0 - mon.x) as f32 * s, y: (c.at.1 - mon.y) as f32 * s, w: c.size.0 as f32 * s, h, has_icon: icon.is_some(), icon: icon.unwrap_or_default() }
+                        // the window as it last looked (taken once as it opens; a
+                        // space not shown keeps its last frame). The current
+                        // space's are asked below, larger, for the stage.
+                        if self.expose.is_empty() && id != active {
+                            self.thumbs.ask(st, NAME, &c.address, ((w * scale).ceil().max(1.0) as u32, (h * scale).ceil().max(1.0) as u32));
+                        }
+                        let pic = self.thumbs.images.get(&c.address).cloned();
+                        ui::McMini { x: (c.at.0 - mon.x) as f32 * s, y: (c.at.1 - mon.y) as f32 * s, w, h, has_icon: icon.is_some(), icon: icon.unwrap_or_default(), has_picture: pic.is_some(), picture: pic.unwrap_or_default() }
                     })
                     .collect();
                 card_minis.push((id, minis));

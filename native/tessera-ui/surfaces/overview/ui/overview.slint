@@ -53,6 +53,9 @@ export struct OvMini {
     icon: image,
     has-icon: bool,
     address: string,
+    // the window as it last looked (taken as the Overview opens, not live)
+    picture: image,
+    has-picture: bool,
 }
 
 export struct OvTile {
@@ -150,6 +153,13 @@ export component OverviewPanel inherits Window {
     in property <bool> any-drag;
     in property <string> gone-win; // dropped elsewhere, hidden until it lands
     in property <int> space-gone;
+    // macOS: a window dragged to make a new space: onto a + (its row), or
+    // between two spaces (a bar in the gap there)
+    in property <int> new-plus: -1;
+    in property <bool> new-gap-shown;
+    in property <length> new-gap-x;
+    in property <length> new-gap-y;
+    in property <length> new-gap-h;
     in property <bool> proxy-shown; // macOS: the app's icon follows the pointer
     in property <length> proxy-x;
     in property <length> proxy-y;
@@ -324,7 +334,15 @@ export component OverviewPanel inherits Window {
                             background: Theme.material ? Theme.m3-surface-container-low : Theme.dark ? #2C2C31 : #FFFFFF;
                             border-width: 1px;
                             border-color: Theme.material ? Theme.m3-outline-variant : Theme.dark ? #36363C : #E4E4E7;
-                            if m.has-icon: Image {
+                            clip: true;
+                            if m.has-picture: Image {
+                                width: 100%;
+                                height: 100%;
+                                source: m.picture;
+                                image-fit: cover;
+                                accessible-role: none;
+                            }
+                            if m.has-icon && !m.has-picture: Image {
                                 width: min(18px, parent.height * 0.6);
                                 height: self.width;
                                 source: m.icon;
@@ -353,12 +371,13 @@ export component OverviewPanel inherits Window {
                 height: p.size;
                 border-radius: Theme.material && plus-pressed == i ? 12px : self.width / 2;
                 animate border-radius { duration: 100ms; }
-                transform-scale: Theme.material && plus-pressed == i ? 0.94 : 1;
                 animate transform-scale { duration: 200ms; easing: spring(0.5); }
-                background: Theme.material ? Theme.m3-secondary-container.mix(Theme.m3-on-secondary-container, plus-pressed == i ? 0.9 : plus-hover == i ? 0.92 : 1)
-                    : plus-pressed == i ? Theme.fill-hover : plus-hover == i ? Theme.fill : transparent;
-                border-width: Theme.material ? 0 : 1px;
-                border-color: Theme.separator;
+                property <bool> hot: new-plus == i;
+                background: Theme.material ? Theme.m3-secondary-container.mix(Theme.m3-on-secondary-container, plus-pressed == i || self.hot ? 0.9 : plus-hover == i ? 0.92 : 1)
+                    : plus-pressed == i || self.hot ? Theme.fill-hover : plus-hover == i ? Theme.fill : transparent;
+                border-width: self.hot ? 3px : Theme.material ? 0 : 1px;
+                border-color: self.hot ? Theme.accent : Theme.separator;
+                transform-scale: self.hot ? 1.15 : Theme.material && plus-pressed == i ? 0.94 : 1;
                 accessible-role: button;
                 accessible-label: "New space";
                 WIcon {
@@ -366,6 +385,15 @@ export component OverviewPanel inherits Window {
                     size: Theme.material ? 20px : 18px;
                     tint: Theme.material ? Theme.m3-on-secondary-container : Theme.label;
                 }
+            }
+            // a window dropped here makes a new space between these two
+            if new-gap-shown: Rectangle {
+                x: new-gap-x - 2px;
+                y: new-gap-y;
+                width: 4px;
+                height: new-gap-h;
+                border-radius: 2px;
+                background: Theme.accent;
             }
         }
 

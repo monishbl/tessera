@@ -164,6 +164,37 @@ pub fn plan(c: &Plan) -> Vec<Op> {
     ops
 }
 
+/// A new space after a display's last (`ids`: every id in use), so it shows
+/// at the end of its strip (the first free number could be a gap in the middle)
+pub fn after_last(base: i32, ids: &[i32]) -> i32 {
+    let top = ids.iter().filter(|i| **i > base && base_of_id(**i) == base).map(|i| number_of(*i)).max().unwrap_or(0);
+    let mut n = top + 1;
+    while n < STRIDE - 1 && ids.contains(&(base + n)) {
+        n += 1;
+    }
+    if n < STRIDE - 1 { base + n } else { next_free(base, ids) }
+}
+
+/// A window put on a new space in front of `order[pos]`: that space and the
+/// ones after it move one along (the last onto `new_id`), and the window
+/// takes `order[pos]`. `windows`: every window's (address, space); returns
+/// each move (address, to), the window's last.
+pub fn insert_moves(order: &[i32], pos: usize, new_id: i32, windows: &[(String, i32)], address: &str) -> Vec<(String, i32)> {
+    let mut out = Vec::new();
+    for k in pos..order.len() {
+        let to = order.get(k + 1).copied().unwrap_or(new_id);
+        for (a, ws) in windows {
+            if *ws == order[k] && a != address {
+                out.push((a.clone(), to));
+            }
+        }
+    }
+    if let Some(at) = order.get(pos) {
+        out.push((address.to_string(), *at));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,5 +227,25 @@ mod tests {
         let active: BTreeMap<String, i32> = [("DP-1".to_string(), 5)].into();
         let ops = plan(&Plan { bases: &bases, workspaces: &ws, active: &active, known: &[], migrated: true, returns: false });
         assert_eq!(ops, vec![Op::Renumber { from: 5, to: 101 }]);
+    }
+
+    #[test]
+    fn a_new_space_goes_after_the_last() {
+        // 1, 2 and 5 in use: the new one is 6, not the gap at 3
+        assert_eq!(after_last(0, &[1, 2, 5, 101]), 6);
+        assert_eq!(after_last(100, &[1, 2, 5, 101]), 102);
+        assert_eq!(after_last(0, &[]), 1);
+        // the block's end: the first free number instead
+        assert_eq!(after_last(0, &[1, 98]), 2);
+    }
+
+    #[test]
+    fn inserting_a_space_moves_the_ones_after_it_along() {
+        let w = |a: &str, ws: i32| (a.to_string(), ws);
+        let wins = vec![w("a", 1), w("b", 2), w("c", 3), w("d", 3), w("x", 1)];
+        // x dropped between 1 and 2: 2's windows to 3, 3's to the new 4, x to 2
+        assert_eq!(insert_moves(&[1, 2, 3], 1, 4, &wins, "x"), vec![w("b", 3), w("c", 4), w("d", 4), w("x", 2)]);
+        // in front of its own space: the rest of that space moves along, x stays
+        assert_eq!(insert_moves(&[1, 2, 3], 0, 4, &wins, "x"), vec![w("a", 2), w("b", 3), w("c", 4), w("d", 4), w("x", 1)]);
     }
 }

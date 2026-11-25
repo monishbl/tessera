@@ -17,6 +17,9 @@ export struct McMini {
     h: length,
     icon: image,
     has-icon: bool,
+    // the window as it last looked (taken as it opens)
+    picture: image,
+    has-picture: bool,
 }
 
 export struct McCard {
@@ -203,7 +206,15 @@ export component MissionControlPanel inherits Window {
                     background: Theme.material ? Theme.m3-surface-container-low : Theme.dark ? #2C2C31 : #FFFFFF;
                     border-width: 1px;
                     border-color: Theme.material ? Theme.m3-outline-variant : Theme.dark ? #36363C : #E4E4E7;
-                    if m.has-icon: Image {
+                    clip: true;
+                    if m.has-picture: Image {
+                        width: 100%;
+                        height: 100%;
+                        source: m.picture;
+                        image-fit: cover;
+                        accessible-role: none;
+                    }
+                    if m.has-icon && !m.has-picture: Image {
                         width: min(20px, parent.height * 0.6);
                         height: self.width;
                         source: m.icon;

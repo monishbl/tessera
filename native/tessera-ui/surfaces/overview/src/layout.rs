@@ -258,6 +258,63 @@ pub fn step(ids: &[i32], picked: i32, n: i32) -> i32 {
     ids[(i + n).clamp(0, ids.len() as i32 - 1) as usize]
 }
 
+/// A window dragged on the macOS strip makes a new space there (its row and
+/// the space it goes in front of; 0 = after the last): over a row's +, in the
+/// gap between two spaces, or anywhere else on the bar that isn't a space.
+/// Below the bar it's nothing (letting go there cancels the drag).
+pub fn new_space_drop(cells: &[CellBox], plus: &[Rect], bar_h: f32, px: f32, py: f32) -> Option<NewDrop> {
+    if py < 0.0 || py >= bar_h {
+        return None;
+    }
+    // a space (its picture or its title) is a move onto that space
+    if cells.iter().any(|c| c.rect.has(px, py) || Rect { y: c.rect.y, h: c.title.y + c.title.h - c.rect.y, ..c.rect }.has(px, py)) {
+        return None;
+    }
+    let slack = |r: &Rect| Rect { x: r.x - 8.0, y: r.y - 8.0, w: r.w + 16.0, h: r.h + 16.0 };
+    if let Some(row) = plus.iter().position(|r| slack(r).has(px, py)) {
+        return Some(NewDrop { row, before: 0, gap: None });
+    }
+    // the row: the one whose strip this is level with, else the nearest
+    let band = |row: usize| -> Option<(f32, f32)> {
+        let mut it = cells.iter().filter(|c| c.row == row);
+        let first = it.next()?;
+        Some(it.fold((first.rect.y, first.title.y + first.title.h), |(a, b), c| (a.min(c.rect.y), b.max(c.title.y + c.title.h))))
+    };
+    let rows = plus.len().max(cells.iter().map(|c| c.row + 1).max().unwrap_or(0));
+    let row = (0..rows)
+        .filter_map(|r| band(r).map(|b| (r, b)))
+        .min_by(|a, b| {
+            let d = |(lo, hi): (f32, f32)| if py < lo { lo - py } else if py > hi { py - hi } else { 0.0 };
+            d(a.1).total_cmp(&d(b.1))
+        })
+        .map(|(r, _)| r)
+        .unwrap_or(0);
+    let mut line: Vec<&CellBox> = cells.iter().filter(|c| c.row == row).collect();
+    line.sort_by(|a, b| a.rect.x.total_cmp(&b.rect.x));
+    if let Some((lo, hi)) = band(row) {
+        if py >= lo - 12.0 && py <= hi + 12.0 {
+            for pair in line.windows(2) {
+                let (a, b) = (pair[0], pair[1]);
+                let (l, r) = (a.rect.x + a.rect.w, b.rect.x);
+                if px >= l && px < r {
+                    return Some(NewDrop { row, before: b.id, gap: Some(Rect { x: (l + r) / 2.0, y: a.rect.y, w: 0.0, h: a.rect.h }) });
+                }
+            }
+        }
+    }
+    Some(NewDrop { row, before: 0, gap: None })
+}
+
+/// Where a dragged window would make a new space (new_space_drop)
+#[derive(Clone, Debug, PartialEq)]
+pub struct NewDrop {
+    pub row: usize,
+    /// the space it goes in front of (0: after the last)
+    pub before: i32,
+    /// the gap's marker: x is its middle, y and h the spaces' pictures
+    pub gap: Option<Rect>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,5 +408,46 @@ mod tests {
         assert_eq!(step(&[1, 2, 3], 3, 5), 3);
         assert_eq!(step(&[1, 2, 3], 1, -5), 1);
         assert_eq!(step(&[], 4, 1), 4);
+    }
+
+    #[test]
+    fn a_window_dropped_off_the_spaces_makes_a_new_one() {
+        // three spaces on one display, the + after them
+        let m = mac(1920.0, 1080.0, &[("eDP-1".into(), vec![1, 2, 3], 1080.0 / 1920.0)], false, false);
+        let cells: Vec<CellBox> = m.rows[0].tiles.clone();
+        let plus = vec![m.rows[0].plus];
+        let (a, b) = (&cells[0], &cells[1]);
+        let mid_y = a.rect.y + a.rect.h / 2.0;
+        // onto a space: that's a move there, not a new one
+        assert_eq!(new_space_drop(&cells, &plus, m.bar_h, a.rect.x + 5.0, mid_y), None);
+        // onto its title too
+        assert_eq!(new_space_drop(&cells, &plus, m.bar_h, a.rect.x + 5.0, a.title.y + 2.0), None);
+        // the +: a new one after the last
+        let (px, py) = plus[0].center();
+        assert_eq!(new_space_drop(&cells, &plus, m.bar_h, px, py).map(|d| (d.row, d.before)), Some((0, 0)));
+        // between 1 and 2: in front of 2, with the marker in the gap's middle
+        let gx = (a.rect.x + a.rect.w + b.rect.x) / 2.0;
+        let d = new_space_drop(&cells, &plus, m.bar_h, gx, mid_y).unwrap();
+        assert_eq!((d.row, d.before), (0, 2));
+        assert_eq!(d.gap.map(|g| g.x), Some(gx));
+        // elsewhere on the bar (left of everything, above the strip): after the last
+        assert_eq!(new_space_drop(&cells, &plus, m.bar_h, 10.0, mid_y).map(|d| d.before), Some(0));
+        assert_eq!(new_space_drop(&cells, &plus, m.bar_h, gx, 2.0).map(|d| d.before), Some(0));
+        // below the bar: nothing (the drag is cancelled)
+        assert_eq!(new_space_drop(&cells, &plus, m.bar_h, gx, m.bar_h + 40.0), None);
+    }
+
+    #[test]
+    fn a_new_space_goes_on_the_row_it_was_dropped_by() {
+        let rows = vec![("A".to_string(), vec![1, 2], 0.5625), ("B".to_string(), vec![101, 102], 0.5625)];
+        let m = mac(1920.0, 1080.0, &rows, true, false);
+        let cells: Vec<CellBox> = m.rows.iter().flat_map(|r| r.tiles.clone()).collect();
+        let plus: Vec<Rect> = m.rows.iter().map(|r| r.plus).collect();
+        let b = &m.rows[1].tiles;
+        let gx = (b[0].rect.x + b[0].rect.w + b[1].rect.x) / 2.0;
+        let d = new_space_drop(&cells, &plus, m.bar_h, gx, b[0].rect.y + 4.0).unwrap();
+        assert_eq!((d.row, d.before), (1, 102));
+        let (px, py) = plus[1].center();
+        assert_eq!(new_space_drop(&cells, &plus, m.bar_h, px, py).map(|d| (d.row, d.before)), Some((1, 0)));
     }
 }
