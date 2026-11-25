@@ -505,7 +505,7 @@ impl Power {
     }
 
     fn write_idle(&mut self, h: &mut Host) {
-        let mut lines: Vec<String> = policy::idle_listeners(&self.cfg).into_iter().map(|(s, a, t)| format!("{s} {a} {t}")).collect();
+        let lines: Vec<String> = policy::idle_listeners(&self.cfg).into_iter().map(|(s, a, t)| format!("{s} {a} {t}")).collect();
         // (no "grace" line: the lock always comes before sleep, audit #97)
         let idle_file = tessera_core::theme::config_path().parent().map(|p| p.join("idle-listeners")).unwrap_or_default();
         let user_hypridle = tessera_core::util::xdg("XDG_CONFIG_HOME", ".config").join("hypr/hypridle.conf");
