@@ -145,13 +145,21 @@ if [[ ! -f "$CHECKOUT/tools/tessera-update.py" ]]; then
     [[ -n "$src" && -f "$src/tools/tessera-update.py" ]] && CHECKOUT="$src"
 fi
 UPSTATE="${XDG_STATE_HOME:-$HOME/.local/state}/tessera"
+# Your own runtime folder, never a fixed name under /tmp (another local user
+# could plant a link there): empty when there's no private one, and then the
+# update result goes to a fresh temporary file and the shell starts without
+# its named link
+RUNDIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+[[ -d "$RUNDIR" && -O "$RUNDIR" && ! -L "$RUNDIR" ]] || RUNDIR=""
 if [[ ( -s "$UPSTATE/update-staged/staged.json" || -s "$UPSTATE/update-journal.json" ) && -f "$CHECKOUT/tools/tessera-update.py" ]]; then
+    result="${RUNDIR:+$RUNDIR/tessera-update-result.json}"
+    [[ -n "$result" ]] || result="$(mktemp 2>/dev/null || echo /dev/null)"
     python3 -I "$CHECKOUT/tools/tessera-update.py" finish --if-ready --config "${XDG_CONFIG_HOME:-$HOME/.config}/tessera" \
-        >"${XDG_RUNTIME_DIR:-/tmp}/tessera-update-result.json" 2>>"$(dirname "$STARTS")/update-at-login.log" || true
+        >"$result" 2>>"$(dirname "$STARTS")/update-at-login.log" || true
     # (the update merged new Hyprland files into ~/.config/hypr, which
     # Hyprland read before this: read again; update-run.sh does the same)
     if python3 -I -c 'import json, sys; sys.exit(0 if (json.load(open(sys.argv[1])).get("config") or {}).get("hypr") else 1)' \
-        "${XDG_RUNTIME_DIR:-/tmp}/tessera-update-result.json" 2>/dev/null; then
+        "$result" 2>/dev/null; then
         hyprctl reload config-only >/dev/null 2>&1 || true
     fi
 fi
@@ -376,9 +384,9 @@ shell_name() {
     echo tessera-shell
 }
 QSPATH="$(command -v "$QS" 2>/dev/null || true)"
-LINKS="${XDG_RUNTIME_DIR:-/tmp}/tessera-bin"
+LINKS="${RUNDIR:+$RUNDIR/tessera-bin}"
 name="$(shell_name)"
-if [[ -n "$QSPATH" && -n "$name" ]] && mkdir -p -m 700 "$LINKS" 2>/dev/null && ln -sfn "$QSPATH" "$LINKS/$name" 2>/dev/null; then
+if [[ -n "$QSPATH" && -n "$name" && -n "$LINKS" ]] && mkdir -p -m 700 "$LINKS" 2>/dev/null && ln -sfn "$QSPATH" "$LINKS/$name" 2>/dev/null; then
     QS="$LINKS/$name"
 fi
 exec "$QS" "${args[@]}"

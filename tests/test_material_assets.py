@@ -154,6 +154,15 @@ class Launch(unittest.TestCase):
         self.assertEqual(Path(self.env["QS_CALL"] + ".name").read_text().strip(), "tessera-shell")
         self.assertEqual(os.readlink(Path(self.tmp.name) / "tessera-bin/tessera-shell"), str(Path(self.tmp.name) / "bin/qs"))
 
+    def test_no_private_runtime_folder_still_starts(self):
+        # (audit #790: never a fixed name under /tmp; a runtime folder that
+        # isn't plainly yours gets no link, and the shell still starts)
+        link = Path(self.tmp.name) / "runtime-link"
+        link.symlink_to(self.tmp.name)
+        self.env["XDG_RUNTIME_DIR"] = str(link)
+        self.assertEqual(self.launch("glass", "-c", "tessera"), ["-c", "tessera"])
+        self.assertFalse((Path(self.tmp.name) / "tessera-bin").exists())
+
     def name_while(self, script, args, text, env=None):
         import subprocess
         f = Path(self.tmp.name) / script
