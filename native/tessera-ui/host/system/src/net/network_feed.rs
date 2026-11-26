@@ -35,6 +35,8 @@ pub struct Ap {
     pub connected: bool,
     pub open: bool,
     pub enterprise: bool,
+    /// WEP (its keys are 5, 10, 13 or 26 characters, not WPA's 8 to 63)
+    pub wep: bool,
 }
 
 /// One `nmcli -t` line's fields: split on ':' that aren't escaped, and every
@@ -70,6 +72,7 @@ pub fn parse_list(text: &str) -> Vec<Ap> {
             connected: f[0] == "*",
             open: sec.trim().is_empty() || sec.trim() == "--",
             enterprise: sec.contains("802.1X") || sec.contains("EAP"),
+            wep: sec.contains("WEP"),
         };
         // (one row per network: its strongest access point; the connected one wins)
         match out.iter_mut().find(|a| a.name == ap.name) {
@@ -371,7 +374,7 @@ impl NetworkFeed {
             let known = self.known.contains(&n.name);
             let connecting = self.connecting == n.name || joining;
             json!({
-                "name": n.name, "signal": n.signal, "known": known, "connected": n.connected, "open": n.open, "secured": !n.open, "enterprise": n.enterprise,
+                "name": n.name, "signal": n.signal, "known": known, "connected": n.connected, "open": n.open, "secured": !n.open, "enterprise": n.enterprise, "wep": n.wep,
                 "status": if n.connected { "Connected" } else if connecting { "Connecting…" } else if self.failed == n.name || !failed.is_empty() { "Couldn't connect" } else if known { "Known network" } else { "" },
                 "busy": connecting, "failed": failed,
             })

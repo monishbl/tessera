@@ -10,7 +10,7 @@
 
 import { Theme } from "@tessera/theme.slint";
 import { Busy } from "@tessera/widgets.slint";
-import { SIc, SOpt, SetRow, SBlock, SBus, SG, SM, SIcon, SFocusRing, SSwitch, SSlider, SSegmented, SChoice, SButton, SField, SChip, SSwatch, SFilled, SWavy } from "settings-kit.slint";
+import { SIc, SOpt, SetRow, SBlock, SBus, SG, SM, SIcon, SFocusRing, SSwitch, SSlider, SSegmented, SChoice, SButton, SField, SChip, SSwatch, SFilled, SWavy, SWrap } from "settings-kit.slint";
 
 // Glyphs drawn here (phosphor.js / material-symbols.js codes)
 global DG {
@@ -79,6 +79,17 @@ component ListItem inherits Rectangle {
     in property <bool> last;
     // the list's keys are on it (DevList): a ring
     in property <bool> keyed;
+    // (the Menu key asks the keyed row: it knows where it is)
+    in property <int> menu-ask;
+    changed menu-ask => { if root.keyed { root.open-menu(); } }
+    // (the keyed row is scrolled into view, the least the page can)
+    changed keyed => {
+        if root.keyed {
+            SBus.ensure-y = root.absolute-position.y;
+            SBus.ensure-h = root.height;
+            SBus.ensure-seq += 1;
+        }
+    }
     callback clicked();
     callback action();
     callback menu(length, length, length, length);
@@ -228,7 +239,10 @@ component DevList inherits Rectangle {
     // the row the keys are on (-1: none; shown while the list has focus)
     property <int> keyed: -1;
     property <bool> keys-on: fs.has-focus;
+    property <int> menu-ask;
+    // (an empty list is no Tab stop: nothing in it to show as focused)
     fs := FocusScope {
+        enabled: r.data.length > 0;
         // (a click goes to what's under it: keys only; it covered link rows and choices, which then took two clicks or none)
         focus-on-click: false;
         key-pressed(e) => {
@@ -238,7 +252,7 @@ component DevList inherits Rectangle {
             if e.text == Key.UpArrow { keyed = max(0, keyed - 1); return accept; }
             if keyed >= 0 && keyed < n && (e.text == " " || e.text == Key.Return) { SBus.act(r.id, keyed, 0, "click"); return accept; }
             if keyed >= 0 && keyed < n && (e.text == Key.Menu || (e.modifiers.shift && e.text == Key.F10)) {
-                if r.data[keyed].id != "" { SBus.menu(r.data[keyed].id, root.absolute-position.x + 32px, root.absolute-position.y + 8px + keyed * 50px, 1px, 0px); }
+                root.menu-ask += 1;
                 return accept;
             }
             reject
@@ -266,6 +280,7 @@ component DevList inherits Rectangle {
         first: i == 0;
         last: i == r.data.length - 1;
         keyed: root.keys-on && root.keyed == i;
+        menu-ask: root.menu-ask;
         clicked => {
             root.keyed = i;
             SBus.act(r.id, i, 0, "click");
@@ -396,15 +411,17 @@ component SpeedCard inherits VerticalLayout {
             }
         }
     }
-    if r.detail != "": Text {
+    // (SWrap: a wrapped Text here was measured at one line and ran into
+    // what follows)
+    if r.detail != "": SWrap {
         text: r.detail;
-        wrap: word-wrap;
+        avail: root.width - 2 * (Theme.material ? 20px : 14px);
         color: Theme.secondary;
         font-size: Theme.small;
     }
-    if r.placeholder != "": Text {
+    if r.placeholder != "": SWrap {
         text: r.placeholder;
-        wrap: word-wrap;
+        avail: root.width - 2 * (Theme.material ? 20px : 14px);
         color: Theme.label;
         font-size: Theme.small;
     }
@@ -414,9 +431,9 @@ component SpeedCard inherits VerticalLayout {
         color: Theme.tertiary;
         font-size: Theme.caption;
     }
-    if r.high != "": Text {
+    if r.high != "": SWrap {
         text: r.high;
-        wrap: word-wrap;
+        avail: root.width - 2 * (Theme.material ? 20px : 14px);
         color: Theme.danger;
         font-size: Theme.small;
     }
@@ -448,7 +465,7 @@ component ShareCard inherits VerticalLayout {
             font-weight: 600;
         }
     }
-    Rectangle {
+    if r.text != "error": Rectangle {
         height: 196px;
         if r.text == "ready": Rectangle {
             width: 188px;
@@ -468,25 +485,27 @@ component ShareCard inherits VerticalLayout {
             }
         }
         if r.text == "loading": Busy {}
-        if r.text == "error": VerticalLayout {
-            padding: 12px;
-            spacing: 10px;
+    }
+    // (the error: at least the code's height, taller when its message
+    // needs it, instead of spilling over the header and the row below)
+    if r.text == "error": VerticalLayout {
+        min-height: 196px;
+        padding: 12px;
+        spacing: 10px;
+        alignment: center;
+        SWrap {
+            text: r.high;
+            avail: root.width - 2 * 8px - 2 * 12px;
+            color: Theme.danger;
+            font-size: Theme.small;
+        }
+        if r.from == 1: HorizontalLayout {
             alignment: center;
-            Text {
-                text: r.high;
-                wrap: word-wrap;
-                horizontal-alignment: center;
-                color: Theme.danger;
-                font-size: Theme.small;
-            }
-            if r.from == 1: HorizontalLayout {
-                alignment: center;
-                SButton {
-                    text: r.busy ? "Installing…" : "Install qrencode";
-                    busy: r.busy;
-                    enabled: r.enabled;
-                    clicked => { SBus.act(r.id, 0, 0, "install"); }
-                }
+            SButton {
+                text: r.busy ? "Installing…" : "Install qrencode";
+                busy: r.busy;
+                enabled: r.enabled;
+                clicked => { SBus.act(r.id, 0, 0, "install"); }
             }
         }
     }
@@ -735,12 +754,11 @@ export component DevicesBlock inherits VerticalLayout {
         if b.footer != "": HorizontalLayout {
             padding-left: Theme.material ? 16px : 4px;
             padding-right: Theme.material ? 16px : 4px;
-            Text {
+            SWrap {
                 text: b.footer;
-                wrap: word-wrap;
+                avail: SBus.page-width - 2 * (Theme.material ? 16px : 4px);
                 color: Theme.material ? Theme.m3-on-surface-variant : Theme.tertiary;
                 font-size: Theme.material ? 12px : Theme.caption;
-                letter-spacing: Theme.material ? 0.4px : 0;
             }
         }
     }
@@ -816,6 +834,8 @@ export component DevicesCtl inherits VerticalLayout {
     if r.sub == "join": join := Rectangle {
         Tile { place: 0; }
         property <bool> told;
+        // (the password shown while typing, as the share card can)
+        property <bool> show-pw;
         // (once laid out: scrolled into view, WifiList.revealAsking 120–129)
         Timer {
             interval: 30ms;
@@ -828,7 +848,9 @@ export component DevicesCtl inherits VerticalLayout {
             }
         }
         VerticalLayout {
-            padding-left: 52px;
+            // (under the network's name: Glass's badge 6 + 28 + 10, plus the
+            // row's inset; Material's name starts at 10 + 36 + 14)
+            padding-left: Theme.material ? 60px : 52px;
             padding-right: 14px;
             padding-top: 4px;
             padding-bottom: 8px;
@@ -856,7 +878,7 @@ export component DevicesCtl inherits VerticalLayout {
                             text: r.text;
                             vertical-alignment: center;
                             single-line: true;
-                            input-type: InputType.password;
+                            input-type: join.show-pw ? InputType.text : InputType.password;
                             color: Theme.label;
                             font-size: 13px;
                             accessible-label: "Password";
@@ -881,6 +903,14 @@ export component DevicesCtl inherits VerticalLayout {
                 }
                 VerticalLayout {
                     alignment: center;
+                    GhostIcon {
+                        g: join.show-pw ? DG.eye-off : DG.eye;
+                        label: join.show-pw ? "Hide the password" : "Show the password";
+                        clicked => { join.show-pw = !join.show-pw; }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
                     SButton {
                         text: "Join";
                         style: r.style;
@@ -888,8 +918,10 @@ export component DevicesCtl inherits VerticalLayout {
                     }
                 }
             }
-            if r.high != "": Text {
+            // (a long reason from NetworkManager wraps instead of running out of the card)
+            if r.high != "": SWrap {
                 text: r.high;
+                avail: join.width - (Theme.material ? 60px : 52px) - 14px;
                 color: Theme.danger;
                 font-size: Theme.small;
             }
