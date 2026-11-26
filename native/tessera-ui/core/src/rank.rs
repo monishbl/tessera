@@ -1272,7 +1272,19 @@ mod tests {
         for c in g["cases"].as_array().unwrap() {
             let (rows, _) = query(&s(&c["q"]), &k);
             let got: Vec<Vec<String>> = rows.iter().map(|r| vec![r.section.clone(), r.title.clone(), r.subtitle.clone()]).collect();
-            let want: Vec<Vec<String>> = c["rows"].as_array().unwrap().iter().map(|r| r.as_array().unwrap().iter().map(s).collect()).collect();
+            // the QML's rows, with Actions titles as the UI now shows them (sentence case, `shown`)
+            let want: Vec<Vec<String>> = c["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| {
+                    let mut row: Vec<String> = r.as_array().unwrap().iter().map(s).collect();
+                    if row[0] == "Actions" {
+                        row[1] = shown(&row[1]);
+                    }
+                    row
+                })
+                .collect();
             assert_eq!(got, want, "query({})", c["q"]);
         }
     }
