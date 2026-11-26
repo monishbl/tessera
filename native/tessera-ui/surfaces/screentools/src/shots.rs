@@ -111,7 +111,9 @@ fn trash(file: String) {
 }
 
 fn runtime_dir() -> String {
-    std::env::var("XDG_RUNTIME_DIR").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/tmp".into())
+    // (no runtime folder: one of your own under the cache, not /tmp's
+    // shared names another user could take first)
+    std::env::var("XDG_RUNTIME_DIR").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| tessera_core::util::xdg("XDG_CACHE_HOME", ".cache").join("tessera/run").to_string_lossy().into_owned())
 }
 
 /// The editor's and the thumbnail's state, shared with their callbacks

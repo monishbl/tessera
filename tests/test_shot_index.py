@@ -83,11 +83,23 @@ class Index(unittest.TestCase):
 
     def test_a_changed_shot_is_read_again_an_unreadable_one_later(self):
         a = self.shot("Screenshot a.png")
-        self.shot("broken.png")
+        broken = self.shot("broken.png")
         self.assertEqual(self.run_index()["total"], 1)
         os.utime(a, (self.old + 60, self.old + 60))
         self.assertEqual(self.run_index()["added"], 1)
+        # (the failure is remembered: not read again while unchanged)
+        self.assertEqual(sum("broken.png" in c for c in self.calls()), 1)
+        self.assertEqual(json.loads(self.index.read_text())["shots"][str(broken)]["e"], 1)
+        # changed: tried again
+        os.utime(broken, (self.old + 60, self.old + 60))
+        self.assertEqual(self.run_index()["total"], 1)
         self.assertEqual(sum("broken.png" in c for c in self.calls()), 2)
+        # a day on: tried again too
+        shots = json.loads(self.index.read_text())["shots"]
+        shots[str(broken)]["f"] -= si.RETRY + 1
+        self.index.write_text(json.dumps({"v": 1, "shots": shots}))
+        self.run_index()
+        self.assertEqual(sum("broken.png" in c for c in self.calls()), 3)
 
     def test_a_shot_still_being_written_waits(self):
         p = self.shots / "Screenshot now.png"

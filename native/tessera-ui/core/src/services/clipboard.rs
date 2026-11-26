@@ -57,7 +57,12 @@ pub fn db_path() -> String {
 }
 
 pub fn preview_dir() -> PathBuf {
-    PathBuf::from(std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into())).join("tessera-clip")
+    // (no runtime folder: one of your own under the cache, not a fixed name
+    // in /tmp that another user could take first)
+    match std::env::var("XDG_RUNTIME_DIR").ok().filter(|s| !s.is_empty()) {
+        Some(run) => PathBuf::from(run).join("tessera-clip"),
+        None => crate::util::xdg("XDG_CACHE_HOME", ".cache").join("tessera/clip"),
+    }
 }
 
 /// `cliphist list`'s lines: "id\ttext", newest first; a picture reads
