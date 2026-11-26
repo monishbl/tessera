@@ -161,10 +161,12 @@ class RealPamOnStandIns(unittest.TestCase):
         for name in ("greetd", "sudo"):
             for fp, pk, kr in itertools.product((False, True), repeat=3):
                 text = helper_text(BASE, fp, pk, kr, name)
-                for finger, key, gate in itertools.product(("pam_deny.so", MISSING, "pam_permit.so"), ("pam_deny.so", MISSING),
-                                                           ("/bin/true", "/bin/false")):
-                    t = stand_in(text, finger=finger, key=key, keyring=MISSING, gate=gate)
-                    with self.subTest(name=name, fingerprint=fp, passkeys=pk, keyring=kr, finger=finger, key=key, gate=gate):
+                # (the keyring's module installed too, succeeding or failing:
+                # it never lets anyone in, nor stops the password; audit #781)
+                for finger, key, gate, ring in itertools.product(("pam_deny.so", MISSING, "pam_permit.so"), ("pam_deny.so", MISSING),
+                                                                 ("/bin/true", "/bin/false"), (MISSING, "pam_permit.so", "pam_deny.so")):
+                    t = stand_in(text, finger=finger, key=key, keyring=ring, gate=gate)
+                    with self.subTest(name=name, fingerprint=fp, passkeys=pk, keyring=kr, finger=finger, key=key, gate=gate, ring=ring):
                         if name == "greetd":
                             self.assertTrue(self.starts(t.replace("required     pam_deny.so", "required     pam_permit.so")))
                         self.assertEqual(R.password_path_problem(self.etc, name, t, vendor=self.vendor), "")
