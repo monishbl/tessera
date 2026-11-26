@@ -6,7 +6,7 @@ one, signs it here, checks the signatures, publishes it to GitHub with this
 machine's gh and tells server1 it's out. Light work only: ssh, scp,
 checksums, minisign and gh. Installed as ~/tessera-verify/publish-release.sh
 (tools/release-builder/install-publisher.sh), run by a systemd user timer every
-10 minutes (docs/releases.md, "The release builder").
+2 minutes (docs/releases.md, "The release builder").
 
     publish-release              sign and publish every ready set
     publish-release --dry-run    fetch, check and sign them in the staging folder; publish nothing
@@ -18,7 +18,8 @@ never written or logged anywhere else), minisign, and gh logged in to an
 account that can publish to monishbl/tessera. Without one of them it stops
 before fetching anything, says what to do, and the sets stay waiting.
 
-For each set server1 lists (`tessera-release --list-ready`, over ssh):
+For each set server1 lists (`tessera-release --health`, over ssh; an older
+builder without it: `--list-ready`):
   1. copied here with scp into ~/.cache/tessera-publish/<tag>/<tree>/;
   2. checked: exactly the three files a set has (both archives and the
      manifest); each file's size and sha256 as server1 listed them; the
@@ -264,6 +265,12 @@ def preflight(publish=True):
     """What signing and publishing need, before anything is fetched."""
     if not os.path.exists(KEY):
         raise Refused(f"there's no signing key at {KEY}")
+    # (the key as private as its password: minisign makes it 600; its folder
+    # never writable by others, who could swap the key or the password)
+    if os.stat(KEY).st_mode & 0o077:
+        raise Refused(f"{KEY} can be read by others: chmod 600 {KEY}")
+    if os.stat(os.path.dirname(os.path.abspath(KEY))).st_mode & 0o022:
+        raise Refused(f"{os.path.dirname(os.path.abspath(KEY))} can be written by others: chmod go-w it")
     if not shutil.which("minisign"):
         raise Refused("minisign isn't installed here (sudo pacman -S minisign)")
     read_password()
@@ -541,6 +548,31 @@ def retry(what, fn, waits=(5, 20, 60)):
             time.sleep(waits[i])
 
 
+def mark_published(s):
+    """Tells server1 the set is out (tried again on a network failure). When
+    it still can't be told, the set is remembered here as out: the next run
+    only marks it, never signs and uploads it all again. True: marked"""
+    key = f"{s.get('tag')}/{set_key(s)}"
+    try:
+        retry("marking it published on server1",
+              lambda: run(SSH + [HOST, f"bin/tessera-release --mark-published {s['tag']} {set_key(s)}"],
+                          "marking it published on server1", timeout=120))
+    except (Refused, OSError) as e:
+        STATE.setdefault("unmarked", {})[key] = {"tree": s.get("tree"), "commit": s.get("commit"), "at": now(), "why": str(e)[:300]}
+        status()
+        log(f"{key}: published, but server1 couldn't be told ({e}); it's told on the next run")
+        return False
+    if STATE.get("unmarked", {}).pop(key, None) is not None:
+        status()
+    return True
+
+
+def published_unmarked(s):
+    """Is this set out already, only server1 not told yet (mark_published)?"""
+    r = STATE.get("unmarked", {}).get(f"{s.get('tag')}/{set_key(s)}")
+    return isinstance(r, dict) and r.get("tree") == s.get("tree") and r.get("commit") == s.get("commit")
+
+
 def gh(*args, what=None):
     env = dict(os.environ, GH_REPO=GH_REPO, GH_PROMPT_DISABLED="1", NO_COLOR="1", GH_NO_UPDATE_NOTIFIER="1")
     w = what or f"gh {' '.join(args[:2])}"
@@ -554,6 +586,26 @@ def can_publish():
                       f"(gh auth switch to an account that can)")
 
 
+def pointer_is_newer(tag, commit, fetch=None):
+    """The commit a rolling release's pointer names now, when it's newer
+    than COMMIT (COMMIT one of its ancestors, by the checkout here): then
+    COMMIT's bundle goes out without moving the pointer back. None when the
+    pointer is COMMIT's, older, missing, or the checkout can't tell."""
+    def get():
+        url = f"https://github.com/{GH_REPO}/releases/download/{tag}/{LATEST}"
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "tessera-publish"}), timeout=30) as r:
+            return json.loads(r.read().decode("utf-8"))
+    try:
+        cur = (fetch or get)()
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    now_at = cur.get("commit") if isinstance(cur, dict) else None
+    if not isinstance(now_at, str) or not re.fullmatch(r"[0-9a-f]{40}", now_at) or now_at == commit:
+        return None
+    r = subprocess.run(["git", "-C", REPO, "merge-base", "--is-ancestor", commit, now_at], capture_output=True, timeout=60)
+    return now_at if r.returncode == 0 else None
+
+
 def publish_bundle_github(s, dest, m):
     """A bundle set to its release: the archives, then the manifest, then
     the pointer (a rolling release's), each with its signature; a rolling
@@ -565,6 +617,13 @@ def publish_bundle_github(s, dest, m):
     if subprocess.run(["gh", "release", "view", tag], capture_output=True,
                       env=dict(os.environ, GH_REPO=GH_REPO, GH_PROMPT_DISABLED="1")).returncode != 0:
         raise Refused(f"there's no release {tag} yet (its program set goes first)")
+    # (an older set published after a newer one: its bundle goes out, the
+    # pointer stays on the newer one)
+    newer = pointer_is_newer(tag, commit) if tag in ROLLING else None
+    if newer:
+        s["pointer_kept"] = newer  # (publish_gitlab leaves it too)
+        names = [n for n in names if not n.startswith(LATEST)]
+        log(f"{tag}: bundle {commit[:12]} is older than {newer[:12]}, which the pointer names: the pointer stays")
     order = [n for n in names if ".tar.zst" in n] + [n for n in names if BUNDLE_MANIFEST_RE.match(n.replace(".minisig", ""))] + \
         [n for n in names if n.startswith(LATEST)]
     for group in (order[:4], order[4:6], order[6:]):
@@ -582,7 +641,7 @@ def publish_bundle_github(s, dest, m):
                     gh("release", "delete-asset", tag, b["name"], "--yes")
             log(f"{tag}: removed the older bundle {old[:12]}")
     base = f"https://github.com/{GH_REPO}/releases/download/{tag}"
-    back = LATEST if tag in ROLLING else f"tessera-{commit}.bundle.json"
+    back = LATEST if tag in ROLLING and not newer else f"tessera-{commit}.bundle.json"
     got = os.path.join(dest, ".downloaded")
     retry("downloading the manifest back", lambda: run(["curl", "-fsSL", "--retry", "3", "--proto", "=https", "-o", got, f"{base}/{back}"], "downloading the manifest back"))
     if sha256_of(got) != sha256_of(os.path.join(dest, back)):
@@ -650,12 +709,37 @@ def gitlab(method, url, token, data=None):
     return json.loads(body) if body[:1] in (b"[", b"{") else None
 
 
+def gitlab_pruned(files, tree, commit=None):
+    """The ids of the GitLab package files to delete: program sets beyond the
+    KEEP newest trees, bundles beyond the KEEP newest commits (as GitHub
+    keeps them; the one just published stays either way), and older copies
+    of a file uploaded again"""
+    files = sorted(files, key=lambda x: x["created_at"], reverse=True)
+    trees, commits = [], []
+    for x in files:
+        mm, mb = MANIFEST_RE.match(x["file_name"]), BUNDLE_MANIFEST_RE.match(x["file_name"])
+        if mm and mm[1] not in trees:
+            trees.append(mm[1])
+        if mb and mb[1] not in commits:
+            commits.append(mb[1])
+    keep_trees = set(trees[:KEEP]) | {tree}
+    keep_commits = set(commits[:KEEP]) | ({commit} if commit else set())
+    out, seen = [], set()
+    for x in files:
+        n = x["file_name"]
+        mm, mb = re.match(r"^tessera-ui-([0-9a-f]{40})", n), re.match(r"^tessera-([0-9a-f]{40})", n)
+        if (mm and mm[1] not in keep_trees) or (mb and mb[1] not in keep_commits) or n in seen:
+            out.append(x["id"])
+        seen.add(n)
+    return out
+
+
 def publish_gitlab(s, dest):
     """Like the workflow's Mirror step: skipped quietly without a token;
     a failure is a warning (GitHub's release is already out)."""
     if not os.path.exists(GITLAB_TOKEN_FILE):
         return
-    tag, tree = s["tag"], s["tree"]
+    tag, tree = s["tag"], s.get("tree")
     with open(GITLAB_TOKEN_FILE) as f:
         token = f.read().strip()
     project = "monishbl/tessera"
@@ -663,7 +747,7 @@ def publish_gitlab(s, dest):
         with open(GITLAB_PROJECT_FILE) as f:
             project = f.read().strip() or project
     api = "https://gitlab.com/api/v4/projects/" + urllib.parse.quote(project, safe="")
-    names = published_names(s)
+    names = [n for n in published_names(s) if not (s.get("pointer_kept") and n.startswith(LATEST))]
     try:
         for n in [n for n in names if ".manifest.json" not in n] + [n for n in names if ".manifest.json" in n]:
             with open(os.path.join(dest, n), "rb") as f:
@@ -673,19 +757,8 @@ def publish_gitlab(s, dest):
             pkg = next((p["id"] for p in pkgs if p.get("version") == tag), None)
             if pkg:
                 files = gitlab("GET", f"{api}/packages/{pkg}/package_files?per_page=100", token) or []
-                files.sort(key=lambda x: x["created_at"], reverse=True)
-                keep = []
-                for x in files:
-                    mm = MANIFEST_RE.match(x["file_name"])
-                    if mm and mm[1] not in keep:
-                        keep.append(mm[1])
-                keep = set(keep[:KEEP]) | {tree}
-                seen = set()
-                for x in files:
-                    mm = re.match(r"^tessera-ui-([0-9a-f]{40})", x["file_name"])
-                    if (mm and mm[1] not in keep) or x["file_name"] in seen:
-                        gitlab("DELETE", f"{api}/packages/{pkg}/package_files/{x['id']}", token)
-                    seen.add(x["file_name"])
+                for fid in gitlab_pruned(files, tree, s.get("commit") if is_bundle(s) else None):
+                    gitlab("DELETE", f"{api}/packages/{pkg}/package_files/{fid}", token)
         log(f"{tag}: mirrored to GitLab ({project}, tessera-ui/{tag})")
     except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
         log(f"{tag}: warning: the GitLab mirror failed ({e}); GitHub's release is out")
@@ -751,6 +824,11 @@ def main(argv=None):
         t0 = time.time()
         key = f"{s.get('tag')}/{set_key(s)}"
         try:
+            if published_unmarked(s) and not a.dry_run:
+                # (out on GitHub already: only server1 to tell)
+                if mark_published(s):
+                    log(f"{key}: server1 told it's published")
+                continue
             dest, m = fetch_and_check(s)
             sign(dest, s)
             if a.dry_run:
@@ -758,8 +836,7 @@ def main(argv=None):
                 continue
             urls = publish_github(s, dest, m)
             publish_gitlab(s, dest)
-            run(SSH + [HOST, f"bin/tessera-release --mark-published {s['tag']} {set_key(s)}"], "marking it published on server1",
-                timeout=120)
+            mark_published(s)
             sizes = {os.path.basename(u): os.path.getsize(os.path.join(dest, os.path.basename(u)))
                      for u in urls if u.endswith(".tar.zst")}
             secs = int(time.time() - t0)

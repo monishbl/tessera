@@ -155,6 +155,16 @@ class Stream(unittest.TestCase):
         self.assertEqual(m.steps[0]["state"], "fail")
         self.assertIn("partial", list(m.tail))
 
+    def test_a_stop_then_quit_marks_the_step_it_stopped_in(self):
+        # (Ctrl+C: install.sh's INT trap says so, then its EXIT trap quits)
+        m = self.m
+        m.feed(ctl("plan", "A", "1", "B", "1") + ctl("step", "1") + ctl("done", "1") + ctl("step", "2")
+               + ctl("error", "Stopped (Ctrl+C).") + ctl("quit"))
+        self.assertEqual([s["state"] for s in m.steps], ["ok", "fail"])
+        head = progress.render(m, 100, 40, color=False)[0]
+        self.assertIn("Stopped", head)
+        self.assertNotIn("finished", head)
+
     def test_fits_the_terminal(self):
         m = self.failed()
         for w, h in ((40, 12), (80, 24), (200, 60)):
@@ -289,6 +299,20 @@ echo "NOT REACHED"
             self.assertIn("RAW-FAILURE happened", text)
             self.assertIn("Stopped at: Second.", text)
             self.assertIn("Full log: ", text)
+            self.assertNotIn("NOT REACHED", text)
+
+    def test_ctrl_c_says_stopped_not_finished(self):
+        with tempfile.TemporaryDirectory() as t:
+            code, out = in_pty(harness(NOISY + """
+screen_start "First" 1 "Second" 1
+step "First" true
+kill -INT $$
+echo "NOT REACHED"
+""", 1), t)
+            text = ANSI.sub("", out)
+            self.assertEqual(code, 130, text)
+            self.assertIn("Stopped (Ctrl+C", text)
+            self.assertNotIn("Install finished", text)
             self.assertNotIn("NOT REACHED", text)
 
     def test_plain_prints_everything(self):

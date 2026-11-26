@@ -16,7 +16,8 @@
 #     which does Arch's list and its own; else reflector), the old lists kept
 #     as *.tessera-backup, and once more
 #  A signature from an unknown key: archlinux-keyring (and cachyos-keyring
-#  where there is one) updated, then again. A locked database: says so.
+#  where there is one) updated, then again (an install as -Syu: the package
+#  lists are fresh by then). A locked database: says so.
 #
 # Uses, when the caller has them: DRY (1: only say), warn, say, DIM, R.
 
@@ -94,7 +95,11 @@ pac() {
         _pac_warn "A package's signature didn't check out (often an old keyring): updating the keyring and trying again…"
         local keys=(archlinux-keyring)
         pacman -Si cachyos-keyring >/dev/null 2>&1 && keys+=(cachyos-keyring)
-        sudo pacman -Sy --needed --noconfirm "${keys[@]}" && { sudo pacman "$@" 2>&1 | tee "$out"; rc=${PIPESTATUS[0]}; }
+        # (the lists are fresh now: an install from them is with the whole
+        # upgrade, -Syu, never a partial upgrade; other commands as they were)
+        local again=("$@")
+        [[ ${1:-} == -S* ]] && again=(-Syu "${rest[@]}")
+        sudo pacman -Sy --needed --noconfirm "${keys[@]}" && { sudo pacman "${again[@]}" 2>&1 | tee "$out"; rc=${PIPESTATUS[0]}; }
     fi
     rm -f "$out"
     return "$rc"

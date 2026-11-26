@@ -85,6 +85,22 @@ class History(unittest.TestCase):
         self.assertEqual(h["skip"], {})
         self.assertEqual(self.su.last_update(h)["at"], 102)
 
+    def test_held_and_later_locked_packages_stay(self):
+        # (audit #708: going back moved Hyprland off Tessera's tested,
+        # held version, and the glass plugin no longer loaded)
+        self.update({"mesa": "1-1", "hyprland": "0.55-1", "aquamarine": "0.9-1"},
+                    {"mesa": "2-1", "hyprland": "0.56-1", "aquamarine": "0.10-1"}, at=100)
+        self.update({"hyprutils": "0.8-1"}, {"hyprutils": "0.9-1"}, kind="lock", at=101)
+        self.update({"aquamarine": "0.10-1"}, {"aquamarine": "0.10-2"}, kind="lock", at=102)
+        plan = self.su.undo_plan(installed={"mesa": "2-1", "hyprland": "0.56-1", "aquamarine": "0.10-2"},
+                                 files={("mesa", "1-1"): "/x"}, archive=lambda n, v: "", held={"hyprland"})
+        self.assertEqual([p["name"] for p in plan["packages"]], ["mesa"])
+        self.assertEqual({k["name"]: k["why"] for k in plan["kept"]},
+                         {"hyprland": "held by Tessera at its tested version", "aquamarine": "moved again by a Tessera update since"})
+        hold = Path(self.dir.name) / "hold.conf"
+        hold.write_text("# tessera\n[options]\nIgnorePkg = hyprland hyprutils\n")
+        self.assertEqual(self.su.held_packages(str(hold)), {"hyprland", "hyprutils"})
+
     def test_installs_alone_are_not_updates(self):
         self.update({}, {"whisper-cpp": "1-1"}, kind="install")
         self.assertEqual(self.su.undo_plan(installed={}, files={}, archive=lambda n, v: ""), {})

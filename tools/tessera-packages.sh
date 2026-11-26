@@ -108,7 +108,12 @@ reasons=""
 if [[ ${#missing[@]} -gt 0 ]]; then
     want=" ${missing[*]} "
     while IFS=$'\t' read -r p why; do
-        [[ "$want" == *" $p "* ]] && reasons+="${reasons:+,}\"$p\":\"${why//\"/\\\"}\""
+        # (as JSON text: control characters as spaces, then \ and " escaped:
+        # a comment with a path or a tab never breaks the whole answer)
+        why=${why//[[:cntrl:]]/ }
+        why=${why//\\/\\\\}
+        why=${why//\"/\\\"}
+        [[ "$want" == *" $p "* ]] && reasons+="${reasons:+,}\"$p\":\"$why\""
     done < <(awk '/^PACKAGES=\(/ { on = 1; next } on && /^\)/ { on = 0 }
         on && /^[[:space:]]*#/ { c = $0; sub(/^[[:space:]]*#[[:space:]]*/, "", c); next }
         on { for (i = 1; i <= NF; i++) { if ($i ~ /^#/) break; printf "%s\t%s\n", $i, c } }' "$list")

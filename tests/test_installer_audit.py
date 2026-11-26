@@ -175,6 +175,26 @@ class Uninstall(Temp):
         p = self.run_uninstall("--yes")
         self.assertEqual((self.c / "hypr/hyprland.lua").read_text(), "-- mine\n")
 
+    def test_uninstall_twice_keeps_both_set_aside_and_takes_the_backup_back(self):
+        # (audit #732: the first set-aside one kept by its date; the backup
+        # from before Tessera moved back, so the next install takes a fresh one)
+        self.write(self.c / "hypr.pre-tessera/hyprland.lua", "-- before\n")
+        self.write(self.c / "hypr/hyprland.lua", "-- tessera one, with my edit\n")
+        self.write(self.c / "hypr/tessera/execs.lua", "--\n")
+        self.assertEqual(self.run_uninstall("--yes").returncode, 0)
+        self.assertEqual((self.c / "hypr/hyprland.lua").read_text(), "-- before\n")
+        self.assertFalse((self.c / "hypr.pre-tessera").exists())
+        self.write(self.c / "hypr.pre-tessera/hyprland.lua", "-- before, edited\n")
+        self.write(self.c / "hypr/hyprland.lua", "-- tessera two\n")
+        self.write(self.c / "hypr/tessera/execs.lua", "--\n")
+        p = self.run_uninstall("--yes")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual((self.c / "hypr/hyprland.lua").read_text(), "-- before, edited\n")
+        self.assertEqual((self.c / "hypr.tessera-removed/hyprland.lua").read_text(), "-- tessera two\n")
+        older = [d for d in os.listdir(self.c) if d.startswith("hypr.tessera-removed-")]
+        self.assertEqual(len(older), 1, os.listdir(self.c))
+        self.assertEqual((self.c / older[0] / "hyprland.lua").read_text(), "-- tessera one, with my edit\n")
+
     def big_parts(self):
         return [self.write(self.data / "tessera/repo/install.sh"), self.write(self.data / "tessera/bin/tessera-ui", "", 0o755),
                 self.write(self.data / "tessera/quickshell/bin/qs"), self.write(self.data / "tessera/build/quickshell/x"),
@@ -516,6 +536,45 @@ class SetupAgain(Temp):
         self.assertEqual((repo / "README").read_text(), "one\n")
         self.assertIn("your edits before it updated", self.git(repo, "stash", "list"))
         self.assertEqual(self.git(repo, "show", "stash@{0}:README"), "my edit")
+
+    def test_a_beta_copy_stays_on_beta_and_your_commits_are_kept(self):
+        good, seed = self.d / "good.git", self.d / "seed"
+        ident = ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"]
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(good)], env=self.env, check=True)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(seed)], env=self.env, check=True)
+        self.write(seed / "install.sh", "#!/bin/sh\necho installer ran\n", 0o755)
+        self.write(seed / "README", "main\n")
+        self.git(seed, "add", "-A")
+        self.git(seed, *ident, "commit", "-qm", "main")
+        self.git(seed, "push", "-q", str(good), "main")
+        self.git(seed, "checkout", "-qb", "beta")
+        self.write(seed / "README", "beta\n")
+        self.git(seed, *ident, "commit", "-qam", "beta")
+        self.git(seed, "push", "-q", str(good), "beta")
+        repo = self.home / ".local/share/tessera/repo"
+        subprocess.run(["git", "clone", "-q", "--branch", "beta", str(good), str(repo)], env=self.env, check=True)
+        self.write(repo / "MINE", "mine\n")
+        self.git(repo, "add", "MINE")
+        self.git(repo, *ident, "commit", "-qm", "my own commit")
+        mine = self.git(repo, "rev-parse", "HEAD")
+        self.fake("pacman", "exit 0\n")
+        env = dict(self.env, TESSERA_MIRRORS=str(good))
+        env.pop("TESSERA_SYSTEM_ROOT")
+        env.pop("TESSERA_BRANCH", None)
+        p = subprocess.run(["bash", str(ROOT / "setup.sh")], env=env, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        self.assertIn("kept on the branch", p.stdout, p.stdout + p.stderr)
+        self.assertEqual((repo / "README").read_text(), "beta\n", "still Beta, not reset to main")
+        self.assertEqual(self.git(repo, "symbolic-ref", "--short", "HEAD"), "beta")
+        kept = [b for b in self.git(repo, "branch", "--format=%(refname:short)").split() if b.startswith("tessera-setup-kept-")]
+        self.assertEqual(len(kept), 1, p.stdout)
+        self.assertEqual(self.git(repo, "rev-parse", kept[0]), mine)
+
+    def test_setup_runs_only_once_whole(self):
+        # (streamed into bash: everything is in main, called on the last line)
+        text = (ROOT / "setup.sh").read_text()
+        self.assertEqual(text.rstrip().splitlines()[-1], 'main "$@"')
+        body = text[:text.index("\nmain() {")]
+        self.assertNotIn("rm -rf", "\n".join(l for l in body.splitlines() if not l.startswith((" ", "\t", "#"))))
 
 
 if __name__ == "__main__":

@@ -65,8 +65,16 @@ class Parsing(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.hw = load(self.tmp.name)
+        # (the shell scripts it loads, fingerprint.py among them, read the
+        # root when they run: kept on the fixture, never this machine's pacman)
+        self.old_root = os.environ.get("TESSERA_SYSTEM_ROOT")
+        os.environ["TESSERA_SYSTEM_ROOT"] = self.tmp.name
 
     def tearDown(self):
+        if self.old_root is None:
+            os.environ.pop("TESSERA_SYSTEM_ROOT", None)
+        else:
+            os.environ["TESSERA_SYSTEM_ROOT"] = self.old_root
         self.tmp.cleanup()
 
     def test_lspci(self):
@@ -106,6 +114,18 @@ class Parsing(unittest.TestCase):
     def test_kernel_headers(self):
         self.assertEqual(self.hw.kernel_headers({"linux", "linux-zen", "linux-firmware", "linux-headers", "linux-api-headers"}),
                          ["linux-headers", "linux-zen-headers"])
+        # (the kernels' own packages, from /usr/lib/modules/*/pkgbase: module
+        # packages named linux-* get no made-up -headers)
+        for ver, base in (("6.17.1-1-cachyos", "linux-cachyos"), ("6.12.5-1-lts", "linux-lts")):
+            d = Path(self.tmp.name, "usr/lib/modules", ver)
+            d.mkdir(parents=True)
+            (d / "pkgbase").write_text(base + "\n")
+        Path(self.tmp.name, "usr/lib/modules/6.17.1-1-cachyos-extra").mkdir()
+        kernels = self.hw.installed_kernels()
+        self.assertEqual(kernels, ["linux-cachyos", "linux-lts"])
+        have = {"linux-cachyos", "linux-cachyos-nvidia-open", "linux-cachyos-zfs", "linux-atm", "linux-lts"}
+        self.assertEqual(self.hw.kernel_headers(have, kernels), ["linux-cachyos-headers", "linux-lts-headers"])
+        self.assertIn("linux-atm-headers", self.hw.kernel_headers(have))  # (the old guess, when none is known)
 
 
 def facts(**over):

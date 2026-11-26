@@ -138,6 +138,10 @@ class Backup(unittest.TestCase):
         self.assertEqual(wp["lightPath"], str(self.root / "install/material/assets/wallpapers/material-dark.jpg"))
         self.assertEqual(wp["darkPath"], str(pics / "m 2.jpg"))
         self.assertEqual((pics / "m 2.jpg").read_bytes(), b"picture")
+        # Restored again: that same picture, no third copy (audit #707)
+        self.sb.restore(b, str(self.config), str(self.shell), str(pics))
+        self.assertEqual(self.read("config.json")["wallpaper"]["darkPath"], str(pics / "m 2.jpg"))
+        self.assertEqual(sorted(p.name for p in pics.iterdir()), ["m 2.jpg", "m.jpg"])
 
     def test_undo_copy_comes_first(self):
         self.write("config.json", {"appearance": {"look": "glass", "mode": "dark"}})

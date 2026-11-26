@@ -82,6 +82,7 @@ import platform
 import re
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
@@ -759,7 +760,47 @@ def _keep(src, dst):
         os.link(src, tmp)
     except OSError:
         shutil.copy2(src, tmp)
-    os.replace(tmp, dst)
+    _rename(tmp, dst)
+
+
+def _rename(src, dst):
+    """os.replace, and SRC gone after it: when both names are already the
+    same file, rename(2) does nothing and would leave SRC behind."""
+    os.replace(src, dst)
+    if os.path.lexists(src) and os.path.lexists(dst) and os.path.samefile(src, dst):
+        _remove(src)
+
+
+STALE = re.compile(r"^(\.built-[0-9a-f]{8}|.+\.tmp-[0-9a-f]{8}|.+\.swap)$")
+
+
+def sweep(dest):
+    """(with the lock held) What a killed or cancelled install left in DEST:
+    its build folders and half-made names. A download folder (.incoming-*)
+    only when a day old: `fetch` makes one without the lock."""
+    try:
+        names = os.listdir(dest)
+    except OSError:
+        return []
+    gone = []
+    for n in names:
+        p = os.path.join(dest, n)
+        old_download = False
+        if n.startswith(".incoming-"):
+            try:
+                old_download = time.time() - os.lstat(p).st_mtime > 86400
+            except OSError:
+                continue
+        if STALE.match(n) or old_download:
+            try:
+                if os.path.isdir(p) and not os.path.islink(p):
+                    shutil.rmtree(p, ignore_errors=True)
+                else:
+                    os.unlink(p)
+                gone.append(n)
+            except OSError:
+                pass
+    return gone
 
 
 def read_info(dest, name, prev=False):
@@ -881,18 +922,18 @@ def _restore(dest, names):
         hold = final + ".swap"
         if os.path.exists(final):
             _keep(final, hold)
-        os.replace(prev, final)
+        _rename(prev, final)
         if os.path.exists(hold):
-            os.replace(hold, prev)
+            _rename(hold, prev)
         jhold = ji + ".swap"
         if os.path.exists(ji):
             _keep(ji, jhold)
         if os.path.exists(jp):
-            os.replace(jp, ji)
+            _rename(jp, ji)
         else:
             _remove(ji)
         if os.path.exists(jhold):
-            os.replace(jhold, jp)
+            _rename(jhold, jp)
         done.append(name)
     _fsync_dir(dest)
     return done
@@ -1286,6 +1327,7 @@ def install(mode=None, ui=False, offline=False, only_prev=False, dest=None, repo
     try:
         # (one install at a time, from the check to the swap)
         with Lock(dest):
+            sweep(dest)
             return _install(out, mode, tree, commit, edited, build_ui, names, offline, only_prev, dest, repo, say, builder, fetcher)
     except Failed as e:
         cur = read_info(dest, "tessera-ui") or read_info(dest, "tessera-events")
@@ -1506,6 +1548,7 @@ def stage(ref, mode=None, ui=False, source=None, dest=None, repo=None, say=None,
     keys = part_keys(ref, repo)
     try:
         with Lock(dest):
+            sweep(dest)
             sdir = staged_dir(dest)
             shutil.rmtree(sdir, ignore_errors=True)
             extra = optional_todo(mode, tree, keys, False, dest)
@@ -1757,5 +1800,12 @@ def health_record(r):
         pass
 
 
+def _terminated(*_):
+    # (Cancel in Software Update: SIGTERM to the process group. As SystemExit
+    # the `finally`s run and the build and download folders go with them)
+    raise SystemExit(143)
+
+
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, _terminated)
     sys.exit(main())

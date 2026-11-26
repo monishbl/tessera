@@ -205,21 +205,31 @@ import threading
 _LOCK = threading.Lock()  # (the two variants build at once)
 
 
-def status(**kw):
+def status(_target=None, **kw):
+    """KW (and one target's result) into the status file. Read again and
+    written under one lock: a build and --mark-published (another process,
+    its STATE loaded long before) never undo each other's changes, and
+    each writes its own temp file."""
     with _LOCK:
-        STATE.update(kw)
-        STATE["updated"] = now()
         os.makedirs(CACHE, exist_ok=True)
-        tmp = STATUS + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(STATE, f, indent=2)
-            f.write("\n")
-        os.replace(tmp, STATUS)
+        with open(STATUS + ".lock", "w") as lk:
+            fcntl.flock(lk, fcntl.LOCK_EX)
+            cur = load_status()
+            cur.update(kw)
+            if _target:
+                cur.setdefault("targets", {})[_target[0]] = _target[1]
+            cur["updated"] = now()
+            STATE.clear()
+            STATE.update(cur)
+            tmp = f"{STATUS}.tmp-{os.getpid()}"
+            with open(tmp, "w") as f:
+                json.dump(STATE, f, indent=2)
+                f.write("\n")
+            os.replace(tmp, STATUS)
 
 
 def target_result(name, **kw):
-    STATE.setdefault("targets", {})[name] = dict(kw, at=now())
-    status()
+    status(_target=(name, dict(kw, at=now())))
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────

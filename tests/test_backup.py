@@ -253,6 +253,21 @@ class Inventory(Base):
         self.assertEqual(BK.parse_crates2("not json"), [])
         self.assertEqual(BK.parse_pipx("{}"), [])
 
+    def test_nvms_default_is_one_version(self):
+        # (audit #701: "20" marked every v20.x, "2" also v20 and v22)
+        vs = ["v2.0.0", "v20.1.0", "v20.11.1", "v22.3.0"]
+        self.assertEqual(BK.nvm_default(vs, "20"), "v20.11.1")
+        self.assertEqual(BK.nvm_default(vs, "2"), "v2.0.0")
+        self.assertEqual(BK.nvm_default(vs, "v20.1.0"), "v20.1.0")
+        self.assertEqual(BK.nvm_default(vs, "node"), "v22.3.0")
+        self.assertIsNone(BK.nvm_default(vs, "18"))
+        self.assertIsNone(BK.nvm_default(vs, ""))
+        nd = self.home / ".nvm-aliases"
+        (nd / "alias/lts").mkdir(parents=True)
+        (nd / "alias/lts/iron").write_text("v20.1.0\n")
+        self.assertEqual(BK.nvm_default(vs, "lts/iron", str(nd)), "v20.1.0")
+        self.assertIsNone(BK.nvm_default(vs, "lts/jod", str(nd)))
+
 
 class NeverIncluded(Base):
     def test_nothing_secret_goes_in(self):
@@ -428,6 +443,20 @@ class RoundTrip(Base):
             t.addfile(info, io.BytesIO(data))
         out, _ = self.run_bk("inspect", str(newer), ok=False)
         self.assertIn("newer Tessera", out["error"])
+        # A damaged one of odd shapes: an answer, never a traceback (audit #705)
+        odd = self.home / "odd.tar.gz"
+        with tarfile.open(odd, "w:gz") as t:
+            data = json.dumps({"app": "Tessera", "kind": "backup", "format": 1, "parts": 5,
+                               "contents": {"settings": {"settings": [1]}}}).encode()
+            info = tarfile.TarInfo("manifest.json")
+            info.size = len(data)
+            import io
+            t.addfile(info, io.BytesIO(data))
+        for cmd in ("inspect", "restore-plan"):
+            p = subprocess.run([sys.executable, "-I", str(SCRIPT), cmd, str(odd), "--shell", str(self.shell)], env=self.env,
+                               capture_output=True, text=True, timeout=120)
+            self.assertNotIn("Traceback", p.stderr)
+            self.assertFalse(json.loads(p.stdout.strip().splitlines()[-1])["ok"], p.stdout)
 
 
 class AppsBack(Base):
@@ -449,6 +478,13 @@ class AppsBack(Base):
         self.assertIsNone(steps({"group": "flatpak", "name": "org.x.App", "remote": "evil", "url": "http://insecure/repo"}, set()))
         self.assertEqual(steps({"group": "flatpak", "name": "org.x.App", "remote": "flathub", "url": ""}, set())[0],
                          ["flatpak", "remote-add", "--if-not-exists", "--system", "flathub", BK.FLATHUB])
+        # (audit #703: flathub-beta to its own repo, not stable Flathub; any
+        # other remote only from a .flatpakrepo, which carries its key)
+        self.assertEqual(steps({"group": "flatpak", "name": "org.x.App", "remote": "flathub-beta", "url": "https://dl.flathub.org/beta-repo/"},
+                               set())[0][-1], "https://dl.flathub.org/beta-repo/flathub-beta.flatpakrepo")
+        self.assertIsNone(steps({"group": "flatpak", "name": "org.x.App", "remote": "mine", "url": "https://dl.flathub.org/other/"}, set()))
+        self.assertEqual(steps({"group": "flatpak", "name": "org.x.App", "remote": "mine", "url": "https://x.example/mine.flatpakrepo"},
+                               set())[0][-1], "https://x.example/mine.flatpakrepo")
         self.assertIsNone(steps({"group": "cargo", "name": "tool", "git": "ssh://git@host/x"}, set()))
         self.assertIsNone(steps({"group": "cargo", "name": "../x"}, set()))
         self.assertIsNone(steps({"group": "npm", "name": "-g"}, set()))

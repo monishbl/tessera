@@ -318,6 +318,79 @@ class PackagesForSoftwareUpdate(Fakes):
         self.assertIn("upower", missing)  # (the rest still comes)
         self.assertNotIn("power-profiles-daemon", self.status(installed="auto-cpufreq"))
 
+    def test_two_screens_both_get_their_scale(self):
+        # (install.sh's write_scale: the second screen's line goes beside the
+        # first's; a file Settings → Displays saved is left alone: audit #692)
+        import re
+        text = (ROOT / "install.sh").read_text()
+        fn = re.search(r"^write_scale\(\) \{.*?^\}\n", text, re.M | re.S).group(0)
+        cfg = self.d / "cfg"
+        script = f'CONFIG={cfg}; DRY=0; note() {{ echo "$*"; }}\n{fn}write_scale eDP-1 1.5\nwrite_scale DP-2 2\nwrite_scale eDP-1 1.25\n'
+        subprocess.run(["bash", "-c", script], check=True, capture_output=True, text=True, timeout=30)
+        lines = (cfg / "tessera/monitors.lua").read_text().splitlines()
+        self.assertTrue(lines[0].startswith("-- Written by the Tessera installer"))
+        self.assertEqual(lines[1:], ['hl.monitor({ output = "DP-2", mode = "preferred", position = "auto", scale = 2 })',
+                                     'hl.monitor({ output = "eDP-1", mode = "preferred", position = "auto", scale = 1.25 })'])
+        hw = self.load_hardware()
+        self.assertFalse(hw.monitors_set(str(cfg / "tessera/monitors.lua")))
+        (cfg / "tessera/monitors.lua").write_text("-- Settings → Displays\nhl.monitor({ output = \"eDP-1\", scale = 1 })\n")
+        self.assertTrue(hw.monitors_set(str(cfg / "tessera/monitors.lua")))
+        p = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
+        self.assertIn("left to it", p.stdout)
+        self.assertIn("Settings → Displays", (cfg / "tessera/monitors.lua").read_text().splitlines()[0])
+
+    def test_online_needs_any_one_site_not_archlinux_org(self):
+        import re
+        text = (ROOT / "install.sh").read_text()
+        fn = re.search(r"^online\(\) \{.*?^\}\n", text, re.M | re.S).group(0)
+        for up, want in (("github.com", 0), ("archlinux.org", 0), ("nothing", 1)):
+            self.fake("curl", f'for a; do u=$a; done\ncase "$u" in *{up}*) exit 0 ;; esac\nexit 7\n')
+            p = subprocess.run(["bash", "-c", fn + "online"], env=self.env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(p.returncode, want, up)
+
+    def load_hardware(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tessera_hw_scale", ROOT / "tools/installer/hardware.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_after_a_keyring_refresh_an_install_is_a_full_upgrade(self):
+        # (pac: a bad signature, the keyring updated with -Sy, then the
+        # install again as -Syu, not -S against fresh lists: audit #718)
+        log = self.d / "pacman.log"
+        self.fake("sudo", '"$@"\n')
+        self.fake("pacman", f'''
+            echo "$*" >> {log}
+            case "$*" in
+                "-S --needed --noconfirm foo") echo "error: foo: signature from X is invalid"; exit 1 ;;
+                -Si*) exit 1 ;;
+            esac
+            exit 0
+        ''')
+        p = subprocess.run(["bash", "-c", f'source {ROOT / "tools/pac.sh"}; pac -S --needed --noconfirm foo'], env=self.env,
+                           capture_output=True, text=True, timeout=30)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(log.read_text().splitlines()[-2:], ["-Sy --needed --noconfirm archlinux-keyring", "-Syu --needed --noconfirm foo"])
+
+    def test_a_backslash_or_tab_in_a_comment_keeps_the_answer_json(self):
+        import json
+        ver = self.d / "ver"
+        (ver / "tools").mkdir(parents=True)
+        (ver / "tools/packages.sh").write_text('PACKAGES=(\n    # Paths like C:\\dir\\n,\ta "tab" and \\\\ too\n    foo-pkg\n)\nDROPPED=()\n')
+        self.fake("pacman", '''
+            case "$1" in
+                -T) shift; [ "$1" = -- ] && shift; for p; do echo "$p"; done ;;
+                -Si|-Sg) exit 0 ;;
+                -Qq) exit 1 ;;
+            esac
+        ''')
+        self.fake("systemctl", "exit 3\n")
+        p = subprocess.run([str(ROOT / "tools/tessera-packages.sh"), "status", str(ver)], env=self.env, capture_output=True, text=True, timeout=30)
+        out = json.loads(p.stdout)
+        self.assertEqual(out["missing"], ["foo-pkg"])
+        self.assertEqual(out["reasons"]["foo-pkg"], 'Paths like C:\\dir\\n, a "tab" and \\\\ too')
+
 
 if __name__ == "__main__":
     unittest.main()

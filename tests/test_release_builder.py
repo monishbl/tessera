@@ -342,6 +342,79 @@ class Health(unittest.TestCase):
         with self.assertRaises(self.pr.Refused), mock.patch.object(self.pr.time, "sleep", lambda s: None):
             self.pr.retry("check", lambda: (_ for _ in ()).throw(self.pr.Refused("the manifest names another build")))
 
+    def test_a_key_others_can_read_or_swap_is_refused(self):
+        # (audit #720: only the password's mode was checked)
+        d = Path(self.tmp.name) / "minisign"
+        d.mkdir(mode=0o700)
+        key = d / "tessera-ui.key"
+        key.write_text("x")
+        key.chmod(0o644)
+        with mock.patch.object(self.pr, "KEY", str(key)):
+            self.assertRaisesRegex(self.pr.Refused, "chmod 600", self.pr.preflight)
+            key.chmod(0o600)
+            d.chmod(0o777)
+            self.assertRaisesRegex(self.pr.Refused, "written by others", self.pr.preflight)
+            d.chmod(0o700)
+            try:
+                self.pr.preflight()
+            except self.pr.Refused as e:
+                self.assertNotIn("others", str(e))  # (on to the next need: minisign, gh)
+
+    def test_an_older_bundle_never_moves_the_pointer_back(self):
+        # (audit #317: published after a newer one, its pointer named the older commit)
+        self.p.stop()
+        try:
+            repo = Path(self.tmp.name) / "repo"
+            ident = ["-c", "user.name=T", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"]
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            shas = []
+            for i in range(2):
+                (repo / "f").write_text(str(i))
+                subprocess.run(["git", "-C", str(repo), "add", "f"], check=True)
+                subprocess.run(["git", "-C", str(repo), *ident, "commit", "-qm", str(i)], check=True)
+                shas.append(subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip())
+            old, new = shas
+            with mock.patch.object(self.pr, "REPO", str(repo)):
+                self.assertEqual(self.pr.pointer_is_newer("tessera-ui-beta", old, fetch=lambda: {"commit": new}), new)
+                self.assertIsNone(self.pr.pointer_is_newer("tessera-ui-beta", new, fetch=lambda: {"commit": old}))
+                self.assertIsNone(self.pr.pointer_is_newer("tessera-ui-beta", new, fetch=lambda: {"commit": new}))
+                self.assertIsNone(self.pr.pointer_is_newer("tessera-ui-beta", old, fetch=lambda: {"commit": "f" * 40}), "unknown here: as before")
+
+                def gone():
+                    raise OSError("404")
+                self.assertIsNone(self.pr.pointer_is_newer("tessera-ui-beta", old, fetch=gone))
+        finally:
+            self.p.start()
+
+    def test_the_gitlab_mirror_prunes_bundles_too(self):
+        # (audit #721: only program sets were pruned; bundles piled up)
+        f, n = [], [0]
+
+        def add(name, t):
+            n[0] += 1
+            f.append({"id": n[0], "file_name": name, "created_at": f"2026-11-{t:02d}T00:00:00Z"})
+        for day, c in enumerate("abcde", 1):
+            add(f"tessera-{c * 40}.bundle.json", day)
+            add(f"tessera-{c * 40}-x86-64-v3.bundle.tar.zst", day)
+        add("tessera-latest.bundle.json", 5)
+        add(f"tessera-ui-{'1' * 40}.manifest.json", 1)
+        add(f"tessera-ui-{'1' * 40}-generic.tar.zst", 1)
+        gone = {x["file_name"] for x in f if x["id"] in self.pr.gitlab_pruned(f, "1" * 40, "a" * 40)}
+        self.assertEqual(gone, {f"tessera-{c * 40}{s}" for c in "b" for s in (".bundle.json", "-x86-64-v3.bundle.tar.zst")})
+
+    def test_a_set_out_but_not_marked_is_only_marked_next_time(self):
+        # (audit #722: one ssh failing after the uploads made it "not
+        # published" and re-uploaded every 2 minutes)
+        s = {"tag": "tessera-ui-beta", "tree": "a" * 40, "commit": "b" * 40}
+        down = mock.patch.object(self.pr, "run", side_effect=self.pr.Refused("ssh: connect to host server1: No route to host"))
+        with down, mock.patch.object(self.pr.time, "sleep", lambda s: None):
+            self.assertFalse(self.pr.mark_published(s))
+        self.assertTrue(self.pr.published_unmarked(s))
+        self.assertFalse(self.pr.published_unmarked(dict(s, tree="c" * 40)), "another build of that tag is published as usual")
+        with mock.patch.object(self.pr, "run", return_value=""):
+            self.assertTrue(self.pr.mark_published(s))
+        self.assertFalse(self.pr.published_unmarked(s))
+
     def test_the_timer_looks_often_and_after_login(self):
         t = (ROOT / "tools/release-builder/tessera-publish.timer").read_text()
         self.assertIn("OnUnitActiveSec=2min", t)
@@ -417,6 +490,20 @@ class BuildEnv(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_two_writers_of_the_status_keep_each_others_changes(self):
+        # (audit #724: --mark-published wrote its stale copy over a build's)
+        rb = self.rb
+        rb.status(state="building", tree="t1")
+        other = json.loads(Path(rb.STATUS).read_text())
+        other["targets"] = {"beta": {"result": "published"}}
+        Path(rb.STATUS).write_text(json.dumps(other))  # (the other process's write)
+        rb.target_result("main", result="ready")
+        got = json.loads(Path(rb.STATUS).read_text())
+        self.assertEqual(got["state"], "building")
+        self.assertEqual(got["targets"]["beta"], {"result": "published"})
+        self.assertEqual(got["targets"]["main"]["result"], "ready")
+        self.assertFalse([n for n in os.listdir(self.tmp.name) if ".tmp" in n])
 
     def test_channel_variant_kind_commit_and_date(self):
         for channel in ("stable", "beta", "release"):

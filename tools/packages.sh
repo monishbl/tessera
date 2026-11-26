@@ -1,8 +1,8 @@
 # Packages Tessera needs, shared by install.sh and tools/setup-tty.sh (sourced).
 # shellcheck disable=SC2034
 PACKAGES=(
-    # Compositor, shell, portals
-    hyprland hypridle hyprpicker hyprsunset quickshell xdg-desktop-portal-hyprland xdg-desktop-portal-gtk
+    # Compositor, shell, portals; lua's luac checks each merge of your Hyprland files (tools/config-sync.py)
+    hyprland hypridle hyprpicker hyprsunset quickshell xdg-desktop-portal-hyprland xdg-desktop-portal-gtk lua
     # Building the glass plugin, shaders and tessera-events (Rust)
     base-devel git pkgconf qt6-shadertools cmake ninja rust
     qt6-declarative qt6-svg qt6-imageformats qt6-multimedia qt6-multimedia-ffmpeg ffmpeg qt6-wayland plasma-integration

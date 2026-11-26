@@ -734,23 +734,50 @@ def in_archive(name, ver, opener=None):
     return ""
 
 
-def undo_plan(h=None, installed=None, files=None, archive=in_archive):
+def held_packages(path=None):
+    """The packages Tessera holds at its tested versions (IgnorePkg in
+    /etc/pacman.d/tessera-hold.conf, tessera-root update --lock)"""
+    try:
+        with open(path or os.environ.get("TESSERA_HOLD_CONF") or "/etc/pacman.d/tessera-hold.conf") as f:
+            text = f.read()
+    except OSError:
+        return set()
+    out = set()
+    for line in text.splitlines():
+        k, _, v = line.partition("=")
+        if k.strip() == "IgnorePkg":
+            out |= set(v.split())
+    return out
+
+
+def undo_plan(h=None, installed=None, files=None, archive=in_archive, held=None):
     """What going back would do: {"at", "packages": [{name, from, to}],
-    "files", "missing"}; {} when there's nothing to go back from."""
+    "files", "missing", "kept": [{name, why}]}; {} when there's nothing to
+    go back from. Never a package Tessera holds, nor one a later Tessera
+    update moved again (its package lock): its tested version stays."""
     h = h or history()
     u = last_update(h)
     if not u:
         return {}
+    held = held_packages() if held is None else set(held)
+    later = set()
+    for e in h["updates"][h["updates"].index(u) + 1:]:
+        if e.get("kind") in ("lock", "install"):
+            later |= {c[0] for c in e.get("changes") or [] if c}
     installed = installed if installed is not None else (query() or {})
     files = files if files is not None else package_files(cache_dirs())
     # (a repository package's file never from your own folders: the root
     # helper refuses it, audit #74; pacman's cache or Arch's archive instead)
     home = os.path.expanduser("~").rstrip("/") + "/"
     foreign = foreign_packages() if any(str(v).startswith(home) for v in files.values()) else set()
-    out = {"at": u["at"], "packages": [], "files": [], "missing": []}
+    out = {"at": u["at"], "packages": [], "files": [], "missing": [], "kept": []}
     for name, frm, to in u["changes"]:
         if frm is None or installed.get(name) == frm:
             continue  # (added by the update: stays; or already back)
+        if name in held or name in later:
+            out["kept"].append({"name": name, "why": "held by Tessera at its tested version" if name in held else
+                                "moved again by a Tessera update since"})
+            continue
         out["packages"].append({"name": name, "from": frm, "to": to})
         path = files.get((name, frm))
         if path and path.startswith(home) and name not in foreign:
@@ -797,12 +824,15 @@ def undo_terminal():
             print("  " + m)
         return 1
     if not plan["packages"]:
-        print("They're already back as they were.")
+        print("They're already back as they were." if not plan.get("kept") else
+              "Nothing to go back: the packages it changed are held at Tessera's tested versions.")
         return 0
     for p in plan["packages"][:20]:
         print(f"  {p['name']}: {p['to'] or '(removed)'} -> {p['from']}")
     if len(plan["packages"]) > 20:
         print(f"  … and {len(plan['packages']) - 20} more")
+    for k in plan.get("kept", [])[:20]:
+        print(f"  {k['name']}: stays ({k['why']})")
     try:
         if input("Go back to the earlier versions? [y/N] ").strip().lower() not in ("y", "yes"):
             return 1

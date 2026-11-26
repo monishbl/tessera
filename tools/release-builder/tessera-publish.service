@@ -12,4 +12,6 @@ ExecStart=%h/tessera-verify/publish-release.sh
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
 Nice=10
 IOSchedulingClass=idle
-TimeoutStartSec=1h
+# (longer than a bundle's copy, 1 h, and its uploads, up to 30 min each with
+# retries, can take on a slow link: never cut off halfway through the uploads)
+TimeoutStartSec=4h

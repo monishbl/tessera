@@ -122,12 +122,43 @@ def nvidia_open_drives(d):
         return False
 
 
-def kernel_headers(installed):
-    """The headers of each installed kernel (what DKMS drivers build against)."""
+def kernel_headers(installed, kernels=None):
+    """The headers of each installed kernel (what DKMS drivers build against).
+    kernels: the packages that own the installed kernels (installed_kernels());
+    without them, guessed from the package names (which also takes module
+    packages such as linux-cachyos-nvidia-open for kernels)."""
+    if kernels:
+        return sorted({k + "-headers" for k in kernels if not installed or k in installed})
     kernels = [p for p in installed if re.fullmatch(r"linux(-[a-z0-9]+)*", p)
                and not p.endswith(("-headers", "-docs", "-api-headers", "-firmware", "-tools"))
                and not p.startswith("linux-firmware")]
     return sorted(k + "-headers" for k in kernels)
+
+
+SCALE_MARK = "-- Written by the Tessera installer"
+
+
+def monitors_set(f):
+    """Settings → Displays has saved the displays (monitors.lua is its): not
+    when the file is the one the installer wrote for the scales (install.sh's
+    write_scale, one line a screen)"""
+    try:
+        with open(f) as fh:
+            return not fh.readline().startswith(SCALE_MARK)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+
+
+def installed_kernels():
+    """The package of each installed kernel: /usr/lib/modules/*/pkgbase names it."""
+    out = set()
+    for f in glob.glob(path("/usr/lib/modules/*/pkgbase")):
+        name = read(f).strip()
+        if re.fullmatch(r"linux[a-z0-9._+-]*", name):
+            out.add(name)
+    return sorted(out)
 
 
 # ── The plan ────────────────────────────────────────────────────────────
@@ -154,7 +185,7 @@ def plan(f):
         out.append(item("sof", G[0], "Sound firmware (SOF)",
                         "This laptop's sound (" + sof[0]["name"] + ") needs Sound Open Firmware, or the speakers and mic stay silent",
                         miss(["sof-firmware", "alsa-ucm-conf"])))
-    headers = kernel_headers(have)
+    headers = kernel_headers(have, f.get("kernels"))
     wifi = [d for d in pci if d["cls"] == "0280"]
     for d in wifi:
         # (no driver of its own in the kernel, bcma being only its bus: the
@@ -335,12 +366,13 @@ def collect(run=subprocess.run):
         "pci": pci,
         "laptop": laptop,
         "installed": have,
+        "kernels": installed_kernels(),
         "power_manager": next((p for p in POWER_MANAGERS if p in have), ""),
         "fingerprint": fp,
         "ir_camera": cam,
         "screens": screens(),
-        "monitors_set": os.path.exists(os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
-                                                    "tessera", "monitors.lua")),
+        "monitors_set": monitors_set(os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+                                                  "tessera", "monitors.lua")),
         "hyprland": hv,
         "pulseaudio": "pulseaudio" in have,
         "network": network,

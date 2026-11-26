@@ -6,7 +6,11 @@
 # release publisher on the user's laptop (tools/release-builder/
 # publish-release; formerly tessera-ui.yml's publish job). While the account's Actions are locked
 # (billing) this workflow just fails to start, and the mirror's git copy
-# stands still; nothing else depends on it.
+# stands still. That copy is depended on: setup.sh and Software Update clone
+# and fetch from it when GitHub doesn't answer (a clone isn't signature-
+# checked), so a stale mirror hands those installs an older Tessera: push it
+# by hand meanwhile (the same push as below). A tag deleted here is deleted
+# there too (--prune, tags only).
 #
 # Secrets: GITLAB_TOKEN, a GitLab project access token with write_repository
 # and api; GITLAB_PROJECT (or the repository variable of that name), the
@@ -43,7 +47,7 @@ jobs:
           else
             echo "ready=yes" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: steps.token.outputs.ready == 'yes'
         with:
           fetch-depth: 0
@@ -60,4 +64,4 @@ jobs:
             git rev-parse --verify --quiet "refs/remotes/origin/$b" >/dev/null && refs+=("+refs/remotes/origin/$b:refs/heads/$b")
           done
           git -c credential.helper= -c "http.extraHeader=Authorization: Basic $auth" \
-            push --force "$url" "${refs[@]}" '+refs/tags/*:refs/tags/*'
+            push --force --prune "$url" "${refs[@]}" '+refs/tags/*:refs/tags/*'
