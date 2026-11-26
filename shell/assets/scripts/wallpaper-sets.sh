@@ -11,7 +11,10 @@ tab="$(printf '\t')"
 find -L "$d" -maxdepth 2 -type f \( -iname '* light.jpg' -o -iname '* light.jpeg' -o -iname '* light.png' -o -iname '* light.webp' \) | sort | while IFS= read -r f; do
     case "$f" in *"$tab"*) continue ;; esac
     b="$(printf '%s\n' "$f" | sed 's/ [Ll][Ii][Gg][Hh][Tt]\.[^.]*$//')"
-    dk="$(find -L "$(dirname "$f")" -maxdepth 1 -type f -iname "$(basename "$b") dark.*" | sort | head -1)"
+    # (the name as a pattern with its own [ ] * ? \ taken literally: "Sunset
+    # [4k]" was a character class and its dark half was never found)
+    pat="$(basename "$b" | sed 's/[][*?\\]/\\&/g')"
+    dk="$(find -L "$(dirname "$f")" -maxdepth 1 -type f -iname "$pat dark.*" | sort | head -1)"
     [ -n "$dk" ] && printf 'pair\t%s\t%s\t%s\n' "$(basename "$b")" "$f" "$dk"
 done
 find -L "$d" -mindepth 1 -maxdepth 2 -type d | sort | while IFS= read -r sub; do
