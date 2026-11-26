@@ -253,7 +253,8 @@ component GRow inherits Rectangle {
     }
     HorizontalLayout {
         x: 46px;
-        width: parent.width - 46px - 12px;
+        // (a file's row leaves room for the Quick Preview button, as MRow does)
+        width: parent.width - 46px - 12px - (r.has-path ? 34px : 0px);
         spacing: 8px;
         title := Text {
             horizontal-stretch: 0;

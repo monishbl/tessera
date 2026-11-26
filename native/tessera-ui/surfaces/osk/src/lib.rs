@@ -138,13 +138,24 @@ impl Osk {
             w.surface.hide(); // (unmapped now: dropping the window alone leaves it on screen)
             st.drop_surface(&w.surface);
         }
+        // (a modifier latched and forgotten must not ride on the first key of
+        // the next opening; Caps is a lock, kept as it is)
+        self.mods = Mods::default();
     }
 
     fn press(&mut self, r: i32, c: i32) {
         let Some(key) = usize::try_from(r).ok().and_then(|r| ROWS.get(r)).and_then(|row| usize::try_from(c).ok().and_then(|c| row.get(c))) else { return };
         let (stroke, mods, caps) = keys::press(key, self.mods, self.caps);
-        if let (Some(s), Some(t)) = (stroke, &self.typist) {
-            t.type_stroke(s);
+        if let Some(s) = stroke {
+            if self.typist.is_none() {
+                self.typist = Some(vkbd::Typist::spawn());
+            }
+            // (a typist whose thread ended types nothing: drop it, so the next
+            // key starts a new one instead of typing into the void for good)
+            if self.typist.as_ref().is_some_and(|t| !t.type_stroke(s)) {
+                eprintln!("tessera-ui: osk: the typing thread is gone; a new one starts with the next key");
+                self.typist = None;
+            }
         }
         if (mods, caps) != (self.mods, self.caps) {
             self.mods = mods;

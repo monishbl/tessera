@@ -90,7 +90,9 @@ pub fn parse(body: &str) -> Result<(Vec<Gif>, bool), Status> {
 pub fn get(url: &str) -> std::io::Result<(u16, Vec<u8>)> {
     use std::io::Write;
     let mut child = Command::new("curl")
-        .args(["--silent", "--location", "--max-time", "12", "--config", "-", "--write-out", "\n%{http_code}"])
+        // (https only, redirects too, and no body over 5 MB: the stills' URLs
+        // come from the API's answer)
+        .args(["--silent", "--location", "--proto", "=https", "--proto-redir", "=https", "--max-filesize", "5000000", "--max-time", "12", "--config", "-", "--write-out", "\n%{http_code}"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -118,6 +120,9 @@ pub fn fetch(url: &str) -> Result<(Vec<Gif>, bool), Status> {
 
 /// A still for the grid (fetched, made cell-sized)
 pub fn preview(url: &str) -> Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>> {
+    if !url.starts_with("https://") {
+        return None;
+    }
     let (code, body) = get(url).ok()?;
     if code != 200 {
         return None;

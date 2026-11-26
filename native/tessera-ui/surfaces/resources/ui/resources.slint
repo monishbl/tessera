@@ -162,9 +162,11 @@ export component ResourcePopover inherits Window {
         background: on-glass ? (Theme.dark ? #1c1c218c : #f7f7fc9e) : Theme.material ? Theme.glass-solid : Theme.panel;
         border-width: Theme.material || on-glass ? 0 : 0.5px;
         border-color: Theme.separator;
-        drop-shadow-blur: 20px;
-        drop-shadow-offset-y: 6px;
-        drop-shadow-color: Theme.dark ? #00000040 : #0000001a;
+        // (none on the glass: Slint's shadow is a filled box under the
+        // see-through glass, as the cheatsheet and keyboard found)
+        drop-shadow-blur: on-glass ? 0 : 20px;
+        drop-shadow-offset-y: on-glass ? 0 : 6px;
+        drop-shadow-color: on-glass ? transparent : Theme.dark ? #00000040 : #0000001a;
         VerticalLayout {
             x: pad;
             y: pad;

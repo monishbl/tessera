@@ -1,6 +1,7 @@
 """clipboard-previews.py: previews of entries no longer listed are removed
 (the folder is in RAM, and every image copied used to stay there)."""
 import importlib.util
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,6 +20,19 @@ class Prune(unittest.TestCase):
                 (d / name).write_bytes(b"x")
             cp.prune(d, {str(d / "11.png")})
             self.assertEqual(sorted(p.name for p in d.iterdir()), ["11.png", "tmpabc"])  # (a decode in progress stays)
+
+    def test_a_linked_folder_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            mine = d / "Documents"
+            mine.mkdir()
+            (mine / "letter.txt").write_bytes(b"x")
+            link = d / "tessera-clip"
+            os.symlink(mine, link)
+            cp.previews("/nonexistent.db", str(link), [])
+            self.assertEqual([p.name for p in mine.iterdir()], ["letter.txt"])
+            self.assertFalse(cp.own_folder(link))
+            self.assertTrue(cp.own_folder(mine))
 
     def test_nothing_listed_empties_it(self):
         with tempfile.TemporaryDirectory() as d:

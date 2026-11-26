@@ -46,7 +46,9 @@ pub(crate) enum Sm {
     ThumbDragOut,
     ThumbHover(bool),
     EdClosed,
-    Flattened(&'static str, Option<String>),
+    /// (the action, the file written, and the picture it was made from:
+    /// a result for a picture no longer open is dropped)
+    Flattened(&'static str, Option<String>, String),
     Copied(bool),
     SaidGone,
     LiveSaidGone,
@@ -109,7 +111,9 @@ fn trash(file: String) {
 }
 
 fn runtime_dir() -> String {
-    std::env::var("XDG_RUNTIME_DIR").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/tmp".into())
+    // (no runtime folder: one of your own under the cache, not /tmp's
+    // shared names another user could take first)
+    std::env::var("XDG_RUNTIME_DIR").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| tessera_core::util::xdg("XDG_CACHE_HOME", ".cache").join("tessera/run").to_string_lossy().into_owned())
 }
 
 /// The editor's and the thumbnail's state, shared with their callbacks
@@ -907,7 +911,7 @@ impl Core {
             }
             let font: Option<LabelFont> = if items.iter().any(|a| matches!(a, Ann::Text { .. })) { draw::label_font(material) } else { None };
             let ok = draw::flatten(&base, &items, crop, font.as_ref()).is_some_and(|img| draw::write_png(&img, &target));
-            to_msg(&tx, Sm::Flattened(action, ok.then_some(target)));
+            to_msg(&tx, Sm::Flattened(action, ok.then_some(target), path));
         });
     }
 
@@ -1664,7 +1668,13 @@ impl Shots {
                     let thumbs = Self::thumbnails(st);
                     c.editor_closed(thumbs);
                 }
-                Sm::Flattened(action, file) => c.flattened(action, file, &screen),
+                Sm::Flattened(action, file, from) => {
+                    // (its editor session ended meanwhile: not applied to
+                    // whatever is open now)
+                    if from == c.s.path {
+                        c.flattened(action, file, &screen);
+                    }
+                }
                 Sm::Copied(ok) => {
                     if c.busy == "copy" {
                         c.copied(ok);

@@ -12,10 +12,11 @@ import { Theme } from "@tessera/theme.slint";
 component WavyBar inherits Rectangle {
     in property <float> value;
     property <float> shown: max(0, min(1, value));
-    property <duration> t: animation-tick();
+    // (Reduce motion or battery saver: the wave holds still, flat)
+    property <duration> t: Theme.still ? 0ms : animation-tick();
     property <float> phase: mod(t / 1000ms, 1);
     property <length> end: root.width * shown;
-    property <float> amplitude: shown <= 0.1 || shown >= 0.95 ? 0 : 3;
+    property <float> amplitude: Theme.still || shown <= 0.1 || shown >= 0.95 ? 0 : 3;
     animate amplitude { duration: 300ms; }
     height: 10px;
     accessible-role: progress-indicator;
@@ -35,7 +36,8 @@ component WavyBar inherits Rectangle {
             background: Theme.m3-primary;
         }
     }
-    for i in 100: Rectangle {
+    // (dots for the whole width: 100 covered only the first 200 px)
+    for i in 400: Rectangle {
         property <length> at: i * 2px;
         visible: at <= end - 2px || (i == 0 && end > 1px);
         x: at;

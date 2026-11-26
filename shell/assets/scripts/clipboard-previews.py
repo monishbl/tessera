@@ -2,6 +2,7 @@
 """Decode missing cliphist previews once and publish complete, stable paths."""
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import tempfile
@@ -18,10 +19,22 @@ def prune(directory, keep):
                 pass
 
 
+def own_folder(directory):
+    """A real folder (not a link to one) that is yours: else another user
+    could point the name at one of your folders, and prune would empty it."""
+    try:
+        st = os.lstat(directory)
+    except OSError:
+        return False
+    return stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid()
+
+
 def previews(db, directory, pairs):
     pairs = list(pairs)
     directory = Path(directory)
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not own_folder(directory):
+        return
     os.chmod(directory, 0o700)
     prune(directory, {str(Path(t)) for _, t in pairs})
     for identifier, target in pairs:

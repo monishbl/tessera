@@ -146,7 +146,9 @@ export component LaunchpadPanel inherits Window {
     out property <length> view-h: grid.height;
     out property <length> grid-x: sheet.x + 24px + grid.x;
     out property <length> grid-y: sheet.y + 24px + grid.y;
-    out property <length> content-h: ceil(cells.length / cols) * cell-h;
+    // (Material: room under the last row for the More button floating over
+    // the grid's corner, which covered the last app)
+    out property <length> content-h: ceil(cells.length / cols) * cell-h + (Theme.material ? 80px : 0px);
     out property <bool> has-text: field.text != "";
     property <duration> intro-t0;
     property <int> top-row: floor(-scroll-y / cell-h + 0.5) * cols;

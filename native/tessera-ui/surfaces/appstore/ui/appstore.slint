@@ -230,8 +230,11 @@ component AsIconButton inherits FocusScope {
 component GlassSearch inherits Rectangle {
     in-out property <string> text;
     in property <bool> active: true; // (the other look's field: never focused)
+    in property <AsGlyphs> g;
     callback edited(string);
     callback entered();
+    // Esc or Backspace in an empty field, or Alt+Left: back (from an app's page)
+    callback go-back();
     public function focus-input() {
         input.focus();
     }
@@ -243,7 +246,7 @@ component GlassSearch inherits Rectangle {
     clip: true;
     input := TextInput {
         x: 10px;
-        width: parent.width - 20px;
+        width: parent.width - 20px - (input.text != "" ? 20px : 0px);
         height: 100%;
         text <=> root.text;
         enabled: root.active;
@@ -257,6 +260,10 @@ component GlassSearch inherits Rectangle {
         edited => { root.edited(self.text); }
         accepted => { root.entered(); }
         key-pressed(e) => {
+            if (e.text == Key.LeftArrow && e.modifiers.alt) || ((e.text == Key.Escape || e.text == Key.Backspace) && self.text == "") {
+                root.go-back();
+                return accept;
+            }
             if e.text == Key.Escape {
                 self.text = "";
                 root.edited("");
@@ -265,7 +272,9 @@ component GlassSearch inherits Rectangle {
             reject
         }
     }
-    if input.text == "" && !input.has-focus: Text {
+    // (shown while empty, focused or not: the window focuses the field as
+    // it opens, and an empty box said nothing)
+    if input.text == "": Text {
         x: 10px;
         width: parent.width - 20px;
         height: 100%;
@@ -276,6 +285,21 @@ component GlassSearch inherits Rectangle {
         overflow: elide;
         accessible-role: none;
     }
+    // (a clear button, as the other search fields have)
+    if input.text != "": AsIconButton {
+        x: parent.width - self.width - 4px;
+        y: (parent.height - self.height) / 2;
+        width: 20px;
+        height: 20px;
+        icon: g.x;
+        icon-size: 12px;
+        label: "Clear search";
+        clicked => {
+            input.text = "";
+            root.edited("");
+            input.focus();
+        }
+    }
 }
 
 // Material: the Play Store's pill search bar (56 high)
@@ -285,6 +309,8 @@ component PillSearch inherits Rectangle {
     in property <AsGlyphs> g;
     callback edited(string);
     callback entered();
+    // Esc or Backspace in an empty field, or Alt+Left: back (from an app's page)
+    callback go-back();
     public function focus-input() {
         input.focus();
     }
@@ -322,6 +348,10 @@ component PillSearch inherits Rectangle {
             edited => { root.edited(self.text); }
             accepted => { root.entered(); }
             key-pressed(e) => {
+                if (e.text == Key.LeftArrow && e.modifiers.alt) || ((e.text == Key.Escape || e.text == Key.Backspace) && self.text == "") {
+                    root.go-back();
+                    return accept;
+                }
                 if e.text == Key.Escape {
                     self.text = "";
                     root.edited("");
@@ -738,7 +768,8 @@ component AboutRow inherits Rectangle {
     border-top-right-radius: first ? 24px : 4px;
     border-bottom-left-radius: last ? 24px : 4px;
     border-bottom-right-radius: last ? 24px : 4px;
-    background: hover.has-hover ? Theme.m3-surface-container-high.mix(Theme.m3-on-surface, 0.92) : Theme.m3-surface-container-high;
+    // (lit under the pointer only when it does something: a row with a button)
+    background: hover.has-hover && button != "" ? Theme.m3-surface-container-high.mix(Theme.m3-on-surface, 0.92) : Theme.m3-surface-container-high;
     animate background { duration: Theme.hover; }
     accessible-role: groupbox;
     accessible-label: label;
@@ -881,9 +912,11 @@ export component AppStoreWindow inherits Window {
             x: 10px;
             y: 14px;
             width: parent.width - 20px;
+            g: g;
             text <=> root.search-text;
             edited(t) => { root.typed(t); }
             entered => { root.entered(); }
+            go-back => { if root.detail { root.back(); } }
         }
         pill := PillSearch {
             visible: Theme.material;
@@ -895,11 +928,20 @@ export component AppStoreWindow inherits Window {
             text <=> root.search-text;
             edited(t) => { root.typed(t); }
             entered => { root.entered(); }
+            go-back => { if root.detail { root.back(); } }
         }
 
-        VerticalLayout {
-            x: Theme.material ? 12px : 10px;
+        // (scrolls when the window is shorter than the places: Installed,
+        // last, was cut off with no way to it)
+        Flickable {
+            x: 0;
             y: Theme.material ? 16px + 56px + 12px : 14px + 28px + 14px;
+            width: parent.width;
+            height: parent.height - self.y;
+            viewport-height: places-col.preferred-height + 12px;
+        places-col := VerticalLayout {
+            x: Theme.material ? 12px : 10px;
+            y: 0;
             width: parent.width - 2 * self.x;
             height: self.preferred-height;
             spacing: Theme.material ? 0px : 2px;
@@ -929,6 +971,7 @@ export component AppStoreWindow inherits Window {
                 place: places[10];
                 activated => { root.pick(10); }
             }
+        }
         }
     }
 
@@ -1115,6 +1158,14 @@ export component AppStoreWindow inherits Window {
             content-height: pcol.preferred-height + 48px;
             content-y <=> root.page-y;
             property <length> pw: min(content.width - 64px, 720px);
+            // (the mouse's Back button, on the page around its parts)
+            TouchArea {
+                width: parent.width;
+                height: max(parent.height, pcol.preferred-height + 48px);
+                pointer-event(e) => {
+                    if e.kind == PointerEventKind.down && e.button == PointerEventButton.back { root.back(); }
+                }
+            }
             pcol := VerticalLayout {
                 x: 32px;
                 y: 16px;

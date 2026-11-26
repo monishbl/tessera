@@ -43,8 +43,14 @@ pub struct FindPointer {
     ring: bool,
     x: f64,
     y: f64,
+    /// the ring has played out (and its window gone) before the host said
+    /// show:false: no new ring until it does
+    ended: bool,
     tick: tessera_core::pacing::FrameTimer,
 }
+
+/// The ring's own end: its animation (frame) is over at 1300 ms
+const RING_END_MS: f32 = 1400.0;
 
 /// The ring's scale and opacity `ms` into the animation (None: it is over)
 pub fn frame(ms: f32) -> (f32, f32) {
@@ -108,6 +114,7 @@ impl FindPointer {
 
     fn start(&mut self, st: &mut State, style: &str) {
         self.active = true;
+        self.ended = false;
         self.x = 0.0;
         self.y = 0.0; // (until it has been read: no ring in the corner)
         self.ring = style != "grow";
@@ -120,15 +127,27 @@ impl FindPointer {
 
     fn stop(&mut self, st: &mut State) {
         self.active = false;
+        self.ended = false;
         self.tick.stop();
         if let Some(w) = self.win.take() {
             retire(st, &w.surface);
         }
     }
 
-    fn step(&mut self) {
+    fn step(&mut self, st: &mut State) {
         let Some(w) = &self.win else { return };
-        let (s, o) = frame(w.started.elapsed().as_secs_f32() * 1000.0);
+        let ms = w.started.elapsed().as_secs_f32() * 1000.0;
+        // (played out: the window goes now, not when the host says so; if
+        // that line is lost, no invisible overlay stays, ticking every frame)
+        if ms >= RING_END_MS {
+            self.tick.stop();
+            self.ended = true;
+            if let Some(w) = self.win.take() {
+                retire(st, &w.surface);
+            }
+            return;
+        }
+        let (s, o) = frame(ms);
         w.ui.set_ring_scale(s);
         w.ui.set_ring_opacity(o);
     }
@@ -152,7 +171,7 @@ impl Part for FindPointer {
                         }
                         if let (Some(x), Some(y)) = (v["x"].as_f64(), v["y"].as_f64()) {
                             // (the first line, at 0, 0, only says it began)
-                            if self.active && self.ring && (x != 0.0 || y != 0.0 || self.win.is_none()) {
+                            if self.active && self.ring && !self.ended && (x != 0.0 || y != 0.0 || self.win.is_none()) {
                                 self.x = x;
                                 self.y = y;
                                 self.ensure(st);
@@ -168,7 +187,7 @@ impl Part for FindPointer {
         };
         if let Ok(m) = msg.downcast::<Msg>() {
             match *m {
-                Msg::Tick => self.step(),
+                Msg::Tick => self.step(st),
             }
         }
     }

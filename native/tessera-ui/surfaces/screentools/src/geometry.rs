@@ -114,22 +114,37 @@ pub fn windows_on(monitors: &Value, clients: &Value, monitor: &str) -> Vec<Rect>
     let Some(m) = monitors.as_array().and_then(|a| a.iter().find(|m| m["name"].as_str() == Some(monitor))) else { return Vec::new() };
     let (mx, my) = (m["x"].as_f64().unwrap_or(0.0) as f32, m["y"].as_f64().unwrap_or(0.0) as f32);
     let ws = m["activeWorkspace"]["id"].as_i64();
-    let mut list: Vec<(i64, Rect)> = clients
+    // (a special workspace (scratchpad) shown over it: id 0 when none)
+    let special = m["specialWorkspace"]["id"].as_i64().filter(|&id| id != 0);
+    let mon_id = m["id"].as_i64();
+    let mut list: Vec<((u8, u8, i64), Rect)> = clients
         .as_array()
         .map(|a| {
             a.iter()
-                .filter(|c| c["workspace"]["id"].as_i64() == ws && ws.is_some() && c["mapped"].as_bool() != Some(false) && c["hidden"].as_bool() != Some(true))
+                .filter(|c| c["mapped"].as_bool() != Some(false) && c["hidden"].as_bool() != Some(true))
                 .filter_map(|c| {
+                    let on = c["workspace"]["id"].as_i64();
+                    let pinned = c["pinned"].as_bool() == Some(true) && mon_id.is_some() && c["monitor"].as_i64() == mon_id;
+                    // (the special workspace's windows are over the others)
+                    let layer = if special.is_some() && on == special {
+                        0
+                    } else if (ws.is_some() && on == ws) || pinned {
+                        1
+                    } else {
+                        return None;
+                    };
                     let at = c["at"].as_array()?;
                     let size = c["size"].as_array()?;
                     let f = |v: &Value| v.as_f64().unwrap_or(0.0) as f32;
-                    Some((c["focusHistoryID"].as_i64().unwrap_or(i64::MAX), Rect::new(f(&at[0]) - mx, f(&at[1]) - my, f(&size[0]), f(&size[1]))))
+                    let floating = c["floating"].as_bool() == Some(true) || pinned;
+                    Some(((layer, u8::from(!floating), c["focusHistoryID"].as_i64().unwrap_or(i64::MAX)), Rect::new(f(&at[0]) - mx, f(&at[1]) - my, f(&size[0]), f(&size[1]))))
                 })
                 .collect()
         })
         .unwrap_or_default();
-    // (the most recently focused first: on top where windows overlap)
-    list.sort_by_key(|(f, _)| *f);
+    // (on top first where windows overlap: the special workspace's, then
+    // floating over tiled, then the most recently focused)
+    list.sort_by_key(|(k, _)| *k);
     list.into_iter().map(|(_, r)| r).collect()
 }
 
@@ -328,6 +343,20 @@ mod tests {
         let w = windows_on(&mons, &clients, "DP-1");
         assert_eq!(w, vec![Rect::new(80.0, 100.0, 400.0, 300.0), Rect::new(20.0, 50.0, 800.0, 600.0)]);
         assert!(windows_on(&mons, &clients, "HDMI-A-1").is_empty());
+    }
+
+    #[test]
+    fn special_floating_and_pinned_windows_come_first() {
+        let mons = json!([{"name": "DP-1", "id": 0, "x": 0, "y": 0, "activeWorkspace": {"id": 2}, "specialWorkspace": {"id": -98}}]);
+        let clients = json!([
+            {"at": [0, 0], "size": [10, 10], "workspace": {"id": 2}, "focusHistoryID": 0},
+            {"at": [1, 1], "size": [10, 10], "workspace": {"id": 2}, "floating": true, "focusHistoryID": 3},
+            {"at": [2, 2], "size": [10, 10], "workspace": {"id": -98}, "focusHistoryID": 4},
+            {"at": [3, 3], "size": [10, 10], "workspace": {"id": 5}, "pinned": true, "floating": true, "monitor": 0, "focusHistoryID": 5},
+            {"at": [4, 4], "size": [10, 10], "workspace": {"id": 5}, "focusHistoryID": 1}
+        ]);
+        let xs: Vec<f32> = windows_on(&mons, &clients, "DP-1").iter().map(|r| r.x).collect();
+        assert_eq!(xs, vec![2.0, 1.0, 3.0, 0.0]);
     }
 
     #[test]

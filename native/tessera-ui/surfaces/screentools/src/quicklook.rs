@@ -43,6 +43,17 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// A PDF's first page in the cache ($1: the file); prints the PNG's path
+const PDF_PAGE: &str = r#"command -v pdftoppm >/dev/null || exit 1
+d="${XDG_CACHE_HOME:-$HOME/.cache}/tessera/quicklook"
+mkdir -p "$d"
+o="$d/$(printf '%s %s' "$1" "$(stat -Lc '%Y %s' -- "$1" 2>/dev/null)" | md5sum | cut -c1-16)"
+if [ ! -f "$o.png" ]; then
+  find "$d" -maxdepth 1 -type f -name '*.png' -mtime +30 -delete 2>/dev/null
+  pdftoppm -png -r 110 -f 1 -l 1 -singlefile -- "$1" "$o" 2>/dev/null
+fi
+echo "$o.png""#;
+
 const NAME: &str = "quicklook";
 const NS: &str = "tessera:quicklook";
 /// Material's paused play button (MaterialShape's "square": corners a quarter round)
@@ -534,9 +545,12 @@ impl QuickLook {
             }
             "pdf" => {
                 std::thread::spawn(move || {
-                    // (the first page, rendered once into the cache, as the QML's)
+                    // (the first page, rendered once into the cache, as the QML's;
+                    // keyed by the path and the file's mtime and size, so an
+                    // edited PDF is drawn again, and pages over 30 days old
+                    // go when a new one is written)
                     let out = std::process::Command::new("sh")
-                        .args(["-c", "command -v pdftoppm >/dev/null || exit 1; d=\"${XDG_CACHE_HOME:-$HOME/.cache}/tessera/quicklook\"; mkdir -p \"$d\"; o=\"$d/$(printf '%s' \"$1\" | md5sum | cut -c1-16)\"; [ -f \"$o.png\" ] || pdftoppm -png -r 110 -f 1 -l 1 -singlefile -- \"$1\" \"$o\" 2>/dev/null; echo \"$o.png\"", "sh", &p])
+                        .args(["-c", PDF_PAGE, "sh", &p])
                         .output()
                         .ok()
                         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -591,7 +605,7 @@ impl QuickLook {
                 // off the UI thread)
                 std::thread::spawn(move || {
                     let out = std::process::Command::new("ffprobe")
-                        .args(["-v", "error", "-select_streams", "v:0", "-show_entries", "format=duration:stream=width,height", "-of", "default=nw=1", "--", &p])
+                        .args(["-v", "error", "-protocol_whitelist", "file", "-select_streams", "v:0", "-show_entries", "format=duration:stream=width,height", "-of", "default=nw=1", "--", &p])
                         .output()
                         .ok()
                         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
@@ -622,7 +636,7 @@ impl QuickLook {
             let k = (1280.0 / vw as f32).min(720.0 / vh as f32).min(1.0);
             let (w, h) = (((vw as f32 * k) as u32 / 2 * 2).max(2), ((vh as f32 * k) as u32 / 2 * 2).max(2));
             let child = std::process::Command::new("ffmpeg")
-                .args(["-loglevel", "quiet", "-re", "-i", &p, "-an", "-vf", &format!("scale={w}:{h}"), "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"])
+                .args(["-loglevel", "quiet", "-protocol_whitelist", "file", "-re", "-i", &p, "-an", "-vf", &format!("scale={w}:{h}"), "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"])
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
@@ -653,12 +667,12 @@ impl QuickLook {
                 }
                 self.player.kids.push((c, false));
             }
-            if let Ok(c) = std::process::Command::new("ffplay").args(["-nodisp", "-autoexit", "-vn", "-loglevel", "quiet", "--", &p]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+            if let Ok(c) = std::process::Command::new("ffplay").args(["-nodisp", "-autoexit", "-vn", "-loglevel", "quiet", "-protocol_whitelist", "file", "--", &p]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
                 self.player.kids.push((c, false));
             }
         } else {
             // (its end: the clock's tick sees the process gone)
-            if let Ok(c) = std::process::Command::new("ffplay").args(["-nodisp", "-autoexit", "-loglevel", "quiet", "--", &p]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+            if let Ok(c) = std::process::Command::new("ffplay").args(["-nodisp", "-autoexit", "-loglevel", "quiet", "-protocol_whitelist", "file", "--", &p]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
                 self.player.kids.push((c, false));
             }
         }
@@ -895,7 +909,7 @@ $b
 " in *"
 $x
 "*) x= ;; esac
-a=$(timeout 600 notify-send -a Files -i user-trash -t 8000 -A undo=Undo 'Moved to Trash' "$2")
+a=$(timeout 600 notify-send -a Files -i user-trash -t 8000 -A undo=Undo -- 'Moved to Trash' "$2")
 [ "$a" = undo ] || exit 0
 f="$T/files/${x%.trashinfo}"
 if [ -n "$x" ] && { [ -e "$f" ] || [ -L "$f" ]; } && ! { [ -e "$1" ] || [ -L "$1" ]; }; then

@@ -11,6 +11,8 @@ nothing is uploaded.
                                          Prints {"ok", "added", "total"}
 
 The index is JSON {"v": 1, "shots": {path: {"m": modified, "t": text}}},
+(a shot tesseract failed on: {"m", "t": "", "e": 1, "f": when}, tried again
+only once it changes or a day on, not first in every run),
 owner-only (0600), written whole to a new file and renamed into place every
 few shots: stopping it (on battery, in power saver) keeps what was read, and
 Search never sees half a file. The shell starts it at the lowest priority
@@ -28,6 +30,7 @@ MAX_TEXT = 20000  # characters kept per shot
 MAX_SIZE = 40 * 1024 * 1024  # bigger files aren't screenshots
 SETTLE = 5  # seconds a new file is left alone (it may still be being written)
 SAVE_EVERY = 5
+RETRY = 86400  # seconds before a shot tesseract failed on is tried again
 
 
 def load(index):
@@ -101,10 +104,15 @@ def run(folder, index, langs):
     for path, mtime in present:
         e = shots.get(path)
         if isinstance(e, dict) and e.get("m") == mtime:
-            continue
+            if not e.get("e") or time.time() - e.get("f", 0) < RETRY:
+                continue
         text = read(path, langs)
         if text is None:
-            continue  # (unreadable now: tried again next time)
+            # (failed: remembered, so one bad picture doesn't cost a long OCR
+            # first thing every run; tried again when it changes or a day on)
+            shots[path] = {"m": mtime, "t": "", "e": 1, "f": int(time.time())}
+            changed += 1
+            continue
         shots[path] = {"m": mtime, "t": text}
         added += 1
         changed += 1
@@ -113,7 +121,7 @@ def run(folder, index, langs):
             changed = 0
     if changed or gone or not os.path.exists(index):
         save(index, shots)
-    return {"ok": True, "added": added, "total": len(shots)}
+    return {"ok": True, "added": added, "total": sum(1 for e in shots.values() if not (isinstance(e, dict) and e.get("e")))}
 
 
 def main(argv):

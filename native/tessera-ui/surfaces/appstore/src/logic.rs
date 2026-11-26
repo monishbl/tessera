@@ -301,15 +301,60 @@ pub fn card_act(app: &Value) -> CardAct {
     }
 }
 
+/// A stable 64-bit hash (FNV-1a): std's DefaultHasher may change with the
+/// compiler, and would orphan the whole cache at a toolchain update
+pub fn stable_hash(s: &str) -> u64 {
+    s.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3))
+}
+
 /// Where a logo fetched by URL is kept ($XDG_CACHE_HOME/tessera/appstore-icons,
 /// named by the URL's hash, its extension kept for the decoder)
 pub fn cached_icon(url: &str) -> std::path::PathBuf {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    url.hash(&mut h);
     let ext = url.rsplit('/').next().and_then(|f| f.rsplit_once('.')).map(|(_, e)| e.to_ascii_lowercase()).filter(|e| ["png", "svg", "jpg", "jpeg", "webp"].contains(&e.as_str())).unwrap_or_else(|| "png".into());
     let base = std::env::var("XDG_CACHE_HOME").ok().filter(|s| !s.is_empty()).map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".cache"));
-    base.join("tessera/appstore-icons").join(format!("{:016x}.{ext}", h.finish()))
+    base.join("tessera/appstore-icons").join(format!("{:016x}.{ext}", stable_hash(url)))
+}
+
+/// Logos not fetched again for this long go (when the store closes)
+pub const ICON_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(30 * 86_400);
+
+/// The logo cache without what's older than `max_age` (fetched again when
+/// shown); `dir` is cached_icon's folder
+pub fn prune_icons(dir: &std::path::Path, max_age: std::time::Duration) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        let old = e.metadata().ok().filter(|m| m.is_file()).and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).is_some_and(|age| age > max_age);
+        if old {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+}
+
+/// One of the few logo fetches allowed at once (held while it lives)
+pub struct FetchSlot;
+
+static SLOTS: (std::sync::Mutex<usize>, std::sync::Condvar) = (std::sync::Mutex::new(0), std::sync::Condvar::new());
+const MAX_FETCHES: usize = 4;
+
+impl FetchSlot {
+    pub fn take() -> Self {
+        let (m, cv) = &SLOTS;
+        let mut n = m.lock().unwrap_or_else(|e| e.into_inner());
+        while *n >= MAX_FETCHES {
+            n = cv.wait(n).unwrap_or_else(|e| e.into_inner());
+        }
+        *n += 1;
+        FetchSlot
+    }
+}
+
+impl Drop for FetchSlot {
+    fn drop(&mut self) {
+        let (m, cv) = &SLOTS;
+        let mut n = m.lock().unwrap_or_else(|e| e.into_inner());
+        *n = n.saturating_sub(1);
+        cv.notify_one();
+    }
 }
 
 /// Fetch a logo once (curl, 15 s, 2 MB at most), into `to` (whole or not at all)
@@ -466,5 +511,30 @@ mod tests {
         assert!(a.to_string_lossy().ends_with(".png") && a.to_string_lossy().contains("tessera/appstore-icons/"));
         assert!(cached_icon("https://dl.example.org/x/icon.svg").to_string_lossy().ends_with(".svg"));
         assert!(cached_icon("https://dl.example.org/x/icon").to_string_lossy().ends_with(".png"));
+        // (named by a hash that stays the same across compilers: FNV-1a's
+        // published values)
+        assert_eq!(stable_hash(""), 0xcbf29ce484222325);
+        assert_eq!(stable_hash("a"), 0xaf63dc4c8601ec8c);
+    }
+
+    #[test]
+    fn old_logos_go() {
+        let d = std::env::temp_dir().join(format!("tessera-icons-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("a.png"), b"x").unwrap();
+        prune_icons(&d, std::time::Duration::from_secs(3600));
+        assert!(d.join("a.png").exists());
+        prune_icons(&d, std::time::Duration::ZERO);
+        assert!(!d.join("a.png").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn logo_fetches_take_turns() {
+        let held: Vec<FetchSlot> = (0..MAX_FETCHES).map(|_| FetchSlot::take()).collect();
+        assert_eq!(*SLOTS.0.lock().unwrap(), MAX_FETCHES);
+        drop(held);
+        assert_eq!(*SLOTS.0.lock().unwrap(), 0);
     }
 }

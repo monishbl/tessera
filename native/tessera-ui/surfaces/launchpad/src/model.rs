@@ -36,10 +36,18 @@ pub struct Folder {
     pub apps: Vec<usize>,
 }
 
-/// Every app that shows, A–Z (case aside: "mpv" goes with the M's)
+/// Every app that shows, A–Z (case aside: "mpv" goes with the M's); the
+/// names that don't start with A–Z ("2048", "Éditeur", "微信") all first, in
+/// one "#" group, not split before A and after Z
 pub fn sorted(mut apps: Vec<App>) -> Vec<App> {
-    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then(a.name.cmp(&b.name)));
+    apps.sort_by(|a, b| (letter_of(&b.name) == "#").cmp(&(letter_of(&a.name) == "#")).then(a.name.to_lowercase().cmp(&b.name.to_lowercase())).then(a.name.cmp(&b.name)));
     apps
+}
+
+/// A name's letter in the A–Z index: its first letter, "#" if not A–Z
+pub fn letter_of(name: &str) -> String {
+    let c = name.chars().next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default();
+    if c.len() == 1 && c.chars().all(|c| c.is_ascii_uppercase()) { c } else { "#".into() }
 }
 
 pub fn folders(apps: &[App]) -> Vec<Folder> {
@@ -70,8 +78,7 @@ pub fn search(apps: &[App], query: &str) -> Vec<usize> {
 pub fn letters(apps: &[App]) -> Vec<(String, usize)> {
     let mut out: Vec<(String, usize)> = Vec::new();
     for (i, a) in apps.iter().enumerate() {
-        let c = a.name.chars().next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default();
-        let l = if c.len() == 1 && c.chars().all(|c| c.is_ascii_uppercase()) { c } else { "#".into() };
+        let l = letter_of(&a.name);
         if out.last().map(|x| x.0 != l).unwrap_or(true) {
             out.push((l, i));
         }
@@ -107,12 +114,13 @@ pub enum Activated {
 
 impl Lib {
     pub fn set_apps(&mut self, apps: Vec<App>) {
+        // (the open folder by its name: a category before it coming or going
+        // must not turn it into another)
+        let open = self.folder.and_then(|f| self.folders.get(f)).map(|f| f.name.clone());
         self.apps = sorted(apps);
         self.folders = folders(&self.apps);
         self.letters = letters(&self.apps);
-        if self.folder.is_some_and(|f| f >= self.folders.len()) {
-            self.folder = None;
-        }
+        self.folder = open.and_then(|n| self.folders.iter().position(|f| f.name == n));
         self.clamp();
     }
 
@@ -329,6 +337,29 @@ mod tests {
         let lt: Vec<(&str, usize)> = l.letters.iter().map(|(a, b)| (a.as_str(), *b)).collect();
         assert_eq!(lt, vec![("#", 0), ("A", 1), ("F", 2), ("M", 4), ("Z", 5)]);
         assert_eq!(letter_at(&l.letters, 3), "F");
+    }
+
+    #[test]
+    fn every_name_outside_a_to_z_goes_in_one_group() {
+        let mut l = Lib::default();
+        l.set_apps(vec![app("Zed", &[]), app("Éditeur", &[]), app("Ark", &[]), app("2048", &[]), app("微信", &[])]);
+        let names: Vec<&str> = l.apps.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, vec!["2048", "Éditeur", "微信", "Ark", "Zed"]);
+        let lt: Vec<&str> = l.letters.iter().map(|(a, _)| a.as_str()).collect();
+        assert_eq!(lt, vec!["#", "A", "Z"]);
+    }
+
+    #[test]
+    fn an_open_folder_stays_itself_when_the_apps_change() {
+        let mut l = lib();
+        let games = l.folders.iter().position(|f| f.name == "Games").unwrap();
+        l.folder = Some(games);
+        // (Development, before it, goes)
+        l.set_apps(vec![app("mpv", &["AudioVideo", "Player"]), app("2048", &["Game"])]);
+        assert_eq!(l.folder.map(|f| l.folders[f].name.as_str()), Some("Games"));
+        // (and Games itself goes: closed)
+        l.set_apps(vec![app("mpv", &["AudioVideo", "Player"])]);
+        assert_eq!(l.folder, None);
     }
 
     #[test]

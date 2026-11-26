@@ -64,6 +64,9 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
+/// A logo that couldn't be had is asked again after this
+const MISS_RETRY: Duration = Duration::from_secs(30);
+
 const NAME: &str = "appstore";
 const NS: &str = "tessera:appstore";
 
@@ -88,6 +91,8 @@ enum M {
     MenuDismiss,
     Catalogue,
     Image(String, Option<Pixels>),
+    /// the logos that came in this frame, drawn in one go
+    Flush,
 }
 
 /// What the shell's feed says
@@ -123,6 +128,11 @@ pub struct AppStore {
     debounce: slint::Timer,
     images: HashMap<String, Option<slint::Image>>,
     pending: HashSet<String>,
+    /// logos that couldn't be had, and when: asked again after MISS_RETRY
+    /// (a second offline must not leave letter tiles for the window's life)
+    misses: HashMap<String, std::time::Instant>,
+    /// logos arriving are drawn together, once a frame, not a rebuild each
+    flush: slint::Timer,
     /// the split button's menu, its own popup (SplitButton.qml's Popup)
     menu: Option<(Rc<Surface>, ui::AsMenu)>,
     menu_rows: tessera_core::rows::Rows<ui::AsMenuItem>,
@@ -322,6 +332,12 @@ impl AppStore {
         }
         self.images.clear();
         self.pending.clear();
+        self.misses.clear();
+        self.flush.stop();
+        // (the logo cache keeps only what was fetched in the last 30 days)
+        if let Some(dir) = logic::cached_icon("https://x/").parent().map(|d| d.to_path_buf()) {
+            std::thread::spawn(move || logic::prune_icons(&dir, logic::ICON_MAX_AGE));
+        }
         self.apps.clear();
         self.sections.clear();
         self.detail = None;
@@ -427,13 +443,21 @@ impl AppStore {
         let px = (size * w.ui.window().scale_factor().max(1.0)).ceil() as u32;
         let key = format!("{path}@{px}");
         if let Some(i) = self.images.get(&key) {
-            return i.clone();
+            let stale = i.is_none() && self.misses.get(&key).is_some_and(|t| t.elapsed() >= MISS_RETRY);
+            if !stale {
+                return i.clone();
+            }
+            self.images.remove(&key);
+            self.misses.remove(&key);
         }
         if self.pending.insert(key.clone()) {
             let style = Self::style(st, &w.ui.global::<ui::Theme>());
             let to = st.shell.sender(NAME);
             std::thread::spawn(move || {
                 if let Some(u) = url {
+                    // (a few at a time: Discover's dozens of cards started a
+                    // curl each at once)
+                    let _slot = logic::FetchSlot::take();
                     logic::fetch(&u, std::path::Path::new(&path));
                 }
                 let px_buf = appicon::render(std::path::Path::new(&path), px, &style, None);
@@ -771,9 +795,16 @@ impl Part for AppStore {
             M::Catalogue => crate::shell::ask(NAME, json!(["catalogue"])),
             M::Image(key, px) => {
                 self.pending.remove(&key);
+                if px.is_none() {
+                    self.misses.insert(key.clone(), std::time::Instant::now());
+                }
                 self.images.insert(key, px.map(slint::Image::from_rgba8));
-                self.push(st);
+                if !self.flush.running() {
+                    let to = st.shell.sender(NAME);
+                    self.flush.start(slint::TimerMode::SingleShot, Duration::from_millis(16), move || to(Box::new(M::Flush)));
+                }
             }
+            M::Flush => self.push(st),
         }
     }
 

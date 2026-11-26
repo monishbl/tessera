@@ -350,7 +350,8 @@ export component ShotThumbnail inherits Window {
         opacity: fade ? progress : 1;
         // (Material: a card, corner 16; deleted, a snackbar's corner 4)
         border-radius: Theme.material ? (deleted ? 4px : 16px) : deleted ? 22px : 14px;
-        background: Theme.material ? (deleted ? Theme.m3-inverse-surface : Theme.m3-surface-container) : Theme.panel;
+        // (Glass on the plugin: only its glass; Theme.panel over it made it darker than the other Glass panels)
+        background: Theme.material ? (deleted ? Theme.m3-inverse-surface : Theme.m3-surface-container) : Theme.plugin ? transparent : Theme.panel;
         drop-shadow-blur: Theme.material ? 16px : 0;
         drop-shadow-offset-y: Theme.material ? 4px : 0;
         drop-shadow-color: Theme.material ? Theme.m3-shadow.with-alpha(Theme.dark ? 0.4 : 0.16) : transparent;
@@ -727,7 +728,8 @@ export component ShotEditor inherits Window {
         opacity: progress;
         transform-scale: 0.97 + 0.03 * progress;
         border-radius: Theme.radius-module;
-        background: Theme.material ? Theme.m3-surface-container : Theme.panel;
+        // (Glass on the plugin: only its glass; Theme.panel over it made it darker than the other Glass panels)
+        background: Theme.material ? Theme.m3-surface-container : Theme.plugin ? transparent : Theme.panel;
         drop-shadow-blur: Theme.material ? 24px : 0;
         drop-shadow-offset-y: Theme.material ? 6px : 0;
         drop-shadow-color: Theme.material ? Theme.m3-shadow.with-alpha(Theme.dark ? 0.4 : 0.16) : transparent;
@@ -1245,6 +1247,7 @@ export component ShotEditor inherits Window {
                         variant: 1;
                         icon: ic-files;
                         tip-below: false;
+                        tip-end: true;
                         tooltip: "Save as a copy";
                         shortcut: "Ctrl+Shift+S";
                         enabled: status == 1 && (root.busy == "" || root.busy == "saveCopy");
@@ -1398,6 +1401,7 @@ export component ShotEditor inherits Window {
                 EditorButton {
                     icon: ic-redo;
                     tooltip: "Redo";
+                    tip-end: true;
                     shortcut: "Ctrl+Shift+Z";
                     enabled: can-redo && !busy-any;
                     clicked => { root.redo(); }
@@ -1436,6 +1440,11 @@ export component ShotEditor inherits Window {
                     background: mt.has-hover ? Theme.m3-on-surface.with-alpha(mt.pressed ? 0.1 : 0.08) : transparent;
                     accessible-role: AccessibleRole.list-item;
                     accessible-label: it.text;
+                    // (a screen reader can choose it, as the toolbar's twin)
+                    accessible-action-default => {
+                        menu-open = false;
+                        if i == 0 { root.save-copy(); } else if i == 1 { root.copy(); } else { root.share(); }
+                    }
                     HorizontalLayout {
                         padding-left: 16px;
                         spacing: 12px;

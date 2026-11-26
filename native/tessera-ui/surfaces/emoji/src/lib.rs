@@ -641,7 +641,24 @@ impl Emoji {
         // (kept: its first frame draws every emoji anew, 1.3-1.9 s with the
         // UI thread held (live, 16 Nov), so an open after a retire froze the
         // whole shell; the hidden layer costs nothing while closed)
-        if KEEP_WINDOW || self.open || n != self.opening {
+        if self.open || n != self.opening {
+            return;
+        }
+        // (closed a while: the GIFs' stills go, ~200 KB each and a page of 24
+        // at a time, held for the session otherwise; it opens on the first
+        // tab, and the GIF tab fetches again)
+        let g = &mut self.gifs;
+        g.serial += 1;
+        g.gen += 1;
+        g.list.clear();
+        g.model.set_vec(Vec::new());
+        g.query = None;
+        g.status = klipy::Status::Idle;
+        g.page = 0;
+        g.loading_more = false;
+        g.has_next = false;
+        g.sel = 0;
+        if KEEP_WINDOW {
             return;
         }
         if let Some(w) = self.win.take() {
