@@ -159,6 +159,9 @@ pub struct Wm {
     locked_sent: Option<bool>,
     /// The panel open when last looked (Edit Widgets ends when another opens)
     open_seen: String,
+    /// The glass plugin answering when last looked (its controls style is
+    /// sent again when it comes up after the shell)
+    plugin_seen: bool,
     /// what Settings' "notify" group was last told (`settings.feed`)
     settings_sent: String,
 }
@@ -189,6 +192,7 @@ impl Wm {
             screentime: Default::default(),
             locked_sent: None,
             open_seen: String::new(),
+            plugin_seen: false,
             settings_sent: String::new(),
         }
     }
@@ -266,6 +270,13 @@ impl Wm {
                 self.feed.stop_editing(h);
             }
             self.open_seen = open;
+        }
+        let plugin = h.st.shell.plugin;
+        if plugin != self.plugin_seen {
+            self.plugin_seen = plugin;
+            if plugin {
+                self.apptheme.plugin_ready(&self.io);
+            }
         }
     }
 

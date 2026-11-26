@@ -21,7 +21,14 @@ pub struct AppTheme {
     controls_style: String,
     cursor: String,
     last_radius: Value,
+    /// Material's window border, shadow and blur were set (put back to
+    /// Glass's when the look changes back)
+    material_windows: bool,
 }
+
+/// Glass's window border, shadow and blur: hypr/tessera/look.lua's values
+/// (Material's are set with eval and stayed until Hyprland reloaded)
+const GLASS_WINDOWS: &str = "hl.config({ general = { col = { active_border = \"rgba(ffffff38)\", inactive_border = \"rgba(ffffff10)\" } }, decoration = { rounding_power = 4.0, shadow = { range = 24, render_power = 3, offset = { 0, 6 }, color = \"rgba(00000045)\" }, blur = { size = 8, passes = 3 } } })";
 
 fn roles_map(look: &Look) -> std::collections::HashMap<String, String> {
     theme::look_roles(look).into_iter().collect()
@@ -158,9 +165,16 @@ impl AppTheme {
     /// login and after a reload; this follows a moment later.
     pub fn tick_windows(&mut self, h: &Host) {
         let look = &h.st.shell.look;
-        if !look.material || h.cfg().is_null() {
+        if h.cfg().is_null() {
             return;
         }
+        if !look.material {
+            if std::mem::take(&mut self.material_windows) {
+                hx::eval(GLASS_WINDOWS.to_string());
+            }
+            return;
+        }
+        self.material_windows = true;
         let roles = roles_map(look);
         let hex = |n: &str| hex6(roles.get(n).map(String::as_str).unwrap_or("000000"));
         // (CoolDown's lighter blur is the shell's state: not known here, so the blur is always set)
@@ -204,8 +218,12 @@ impl AppTheme {
     }
 
     pub fn event(&mut self, h: &Host, io: &mut Io, name: &str) {
-        if name == "configreloaded" && h.st.shell.look.material {
-            io.arm("apptheme.windows", 250);
+        if name == "configreloaded" {
+            if h.st.shell.look.material {
+                io.arm("apptheme.windows", 250);
+            }
+            // (a reload can load the glass plugin afresh: its controls style again)
+            self.plugin_ready(io);
         }
     }
 }
