@@ -225,6 +225,30 @@ class LoginLook(unittest.TestCase):
             R.login_look(json.dumps(self.GOOD), dest=str(self.d / "link/greeter.json"))
 
 
+class WriteTree(unittest.TestCase):
+    def test_whole_files_synced_and_swapped_in(self):
+        # (audit #801: each file fsynced before the swap; whole even when big)
+        with tempfile.TemporaryDirectory() as d:
+            dest = os.path.join(d, "shell")
+            os.makedirs(dest)
+            Path(dest, "old.txt").write_text("old")
+            synced = []
+            real = os.fsync
+            def fsync(fd):
+                synced.append(fd)
+                return real(fd)
+            big = os.urandom(3 << 20)
+            from unittest import mock
+            with mock.patch.object(R.os, "fsync", fsync):
+                R.write_tree({"a/b.qml": (b"x", 0o644), "run.sh": (big, 0o755)}, dest)
+            self.assertEqual(Path(dest, "a/b.qml").read_bytes(), b"x")
+            self.assertEqual(Path(dest, "run.sh").read_bytes(), big)
+            self.assertEqual(os.stat(os.path.join(dest, "run.sh")).st_mode & 0o777, 0o755)
+            self.assertFalse(Path(dest, "old.txt").exists())
+            self.assertFalse(Path(dest + ".new").exists() or Path(dest + ".old").exists())
+            self.assertGreaterEqual(len(synced), 2 + 3)  # (two files, three folders, and the parent)
+
+
 class LoginCopy(unittest.TestCase):
     """setup refreshes the login screen's copy of Tessera (./install.sh
     --greeter's /usr/share/tessera) from the checkout, only where there is one."""

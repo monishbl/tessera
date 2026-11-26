@@ -2130,15 +2130,37 @@ def write_tree(files, dest):
         fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, mode)
         try:
             os.fchmod(fd, mode)
-            os.write(fd, data)
+            view = memoryview(data)
+            while view:
+                view = view[os.write(fd, view):]
+            # (on disk before the swap: a power cut just after an update
+            # mustn't leave the login screen's files empty)
+            os.fsync(fd)
         finally:
             os.close(fd)
+    for d, _, _ in os.walk(new):
+        _fsync_dir(d)
     if os.path.islink(dest):
         os.unlink(dest)
     elif os.path.exists(dest):
         os.rename(dest, old)
     os.rename(new, dest)
+    _fsync_dir(os.path.dirname(dest) or ".")
     shutil.rmtree(old, ignore_errors=True)
+
+
+def _fsync_dir(path):
+    """The folder's entries (a rename) on disk; never fails the caller"""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 # The login screen's keyboard layout: the system's (localectl writes it to
