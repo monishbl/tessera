@@ -3362,8 +3362,14 @@ def rescue(args, prefix=None, run=subprocess.run, which=shutil.which, say=print)
     for d in did:
         say(d)
     if current_dm(prefix) == "greetd":
-        restart_greetd(run)
-        say("greetd started again: the login is on tty1 (Ctrl+Alt+F1)")
+        # (run from a terminal inside a desktop greetd started, a restart
+        # would end that session and every unsaved document in it: the
+        # repairs stay, the restart waits for the next login)
+        if greetd_session(run):
+            say("Someone is logged in through the login screen, so greetd wasn't restarted: log out or restart to use the repaired login")
+        else:
+            restart_greetd(run)
+            say("greetd started again: the login is on tty1 (Ctrl+Alt+F1)")
     say("Nothing of Tessera's to undo" if not did else "Once you're in, Tessera offers to put it back (or run: sudo /usr/lib/tessera/tessera-root rescue undo)")
     return 0
 

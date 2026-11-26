@@ -416,6 +416,15 @@ class LoginRescue(Machine):
         with self.assertRaises(R.Refused):
             R.rescue(["now"], self.root, self.run, say=out.append)
 
+    def test_from_inside_a_desktop_it_doesnt_end_the_session(self):
+        # (audit #806: a restart of greetd would end the desktop it started)
+        self.run.answers["loginctl"] = (0, "3 1000 me seat0 tty2\nService=greetd\nClass=user\n")
+        said = []
+        self.assertEqual(R.rescue([], self.root, self.run, which_with("Hyprland", "agreety", "greetd"), said.append), 0)
+        self.assertFalse(self.run.ran("systemctl", "restart", "--no-block", "greetd.service"))
+        self.assertTrue(any("log out or restart" in s for s in said))
+        self.assertTrue(self.p(R.TEXT_DROPIN).exists())  # (the repairs still made)
+
     def test_the_units(self):
         unit = R.RESCUE_UNITS["/etc/systemd/system/tessera-login-rescue.service"]
         self.assertIn("ExecStart=/usr/lib/tessera/tessera-root login-rescue", unit)
