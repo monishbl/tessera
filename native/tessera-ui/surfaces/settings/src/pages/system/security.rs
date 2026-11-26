@@ -309,7 +309,7 @@ pub fn biometrics(cx: &mut Ctx, p: &mut Page) {
             } else if !fix_error.is_empty() {
                 fix_error.clone()
             } else if slow {
-                "Found. Its driver updates the reader's firmware the first time, which takes about a minute, and the system stops it after 15 seconds. Set Up gives it the time it needs.".into()
+                "Found. Its driver updates the reader's firmware the first time, which takes about a minute, and the system stops it after 15 seconds. Set up gives it the time it needs.".into()
             } else {
                 "Found, but fprintd can't use it yet. Restart, then open this page again.".into()
             };

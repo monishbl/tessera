@@ -76,7 +76,7 @@ pub fn desktop(cx: &mut Ctx, p: &mut Page) {
         }
     });
     p.group("Widgets")
-        .footer("Drag a widget to move it; it snaps to the grid. Right-click a widget to change its size, set what it shows (Widget Options) or remove it, or right-click the desktop.")
+        .footer("Drag a widget to move it; it snaps to the grid. Right-click a widget to change its size, set what it shows (Widget options) or remove it, or right-click the desktop.")
         .row(Row::new("Edit widgets").detail(format!("{} on the desktop", count(widgets, "widget", "widgets"))).button("Edit…", edit).primary())
         .row(Row::new("Files app")
             .detail(if none_installed { format!("No file manager installed (e.g. {})", tessera_core::util::install_hint("nautilus", "", "")) } else { "Opens folders, Downloads and the Trash".to_string() })
