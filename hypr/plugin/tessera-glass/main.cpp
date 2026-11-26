@@ -105,8 +105,10 @@ struct SCopyTarget {
     GLuint fb = 0, tex = 0;
     // the frost's two half-size passes
     GLuint blurFB[2] = {0, 0}, blurTex[2] = {0, 0};
+    unsigned long used = 0; // (g_copyUses when last needed)
 };
 static std::map<std::pair<int, int>, SCopyTarget> g_copyTargets;
+static unsigned long g_copyUses = 0;
 static GLuint g_shadowProg = 0;
 static GLint  us_rect, us_radius, us_margin, us_strength, us_view;
 static GLint  u_sharp, u_blurred, u_fbSize, u_rect, u_copyRect, u_radius, u_mode, u_refraction, u_depth, u_bevel, u_frost, u_chroma, u_rim, u_tint, u_saturation,
@@ -415,8 +417,11 @@ static bool ensureProgram() {
 static void ensureCopyTarget(int w, int h) {
     auto it = g_copyTargets.find({w, h});
     if (it == g_copyTargets.end()) {
-        if (g_copyTargets.size() >= 4) { // drop one we haven't needed lately
+        if (g_copyTargets.size() >= 6) { // drop the one needed longest ago
             auto old = g_copyTargets.begin();
+            for (auto c = g_copyTargets.begin(); c != g_copyTargets.end(); ++c)
+                if (c->second.used < old->second.used)
+                    old = c;
             glDeleteFramebuffers(1, &old->second.fb);
             glDeleteTextures(1, &old->second.tex);
             glDeleteFramebuffers(2, old->second.blurFB);
@@ -448,6 +453,7 @@ static void ensureCopyTarget(int w, int h) {
         }
         it = g_copyTargets.emplace(std::make_pair(w, h), t).first;
     }
+    it->second.used = ++g_copyUses;
     g_copyFB     = it->second.fb;
     g_copyTex    = it->second.tex;
     g_blurFB[0]  = it->second.blurFB[0];
@@ -832,7 +838,12 @@ static void dragUpdate() {
     auto        tgt = dc && dc->mode() == MBIND_MOVE ? dc->target() : nullptr;
     auto        w   = tgt ? tgt->window() : nullptr;
     if (!w) { // (the drag threshold only applies to tiled windows; a still click reports "none")
+        // A drag that ended without a button release (the window closed,
+        // a keybind drag, the lock): take the shell's preview down
+        if (g_dragging && g_dragZone != "none")
+            tgPostEvent("tessera-drag", "zone," + g_dragMon + ",none," + g_dragWin);
         g_dragging = false;
+        g_dragZone = "none";
         return;
     }
     const Vector2D pos = g_pInputManager->getMouseCoordsInternal();
@@ -1100,6 +1111,8 @@ APICALL EXPORT void PLUGIN_EXIT() {
     for (auto& [size, t] : g_copyTargets) {
         glDeleteFramebuffers(1, &t.fb);
         glDeleteTextures(1, &t.tex);
+        glDeleteFramebuffers(2, t.blurFB);
+        glDeleteTextures(2, t.blurTex);
     }
     g_copyTargets.clear();
     if (g_vao)
@@ -1108,6 +1121,8 @@ APICALL EXPORT void PLUGIN_EXIT() {
         glDeleteProgram(g_prog);
     if (g_shadowProg)
         glDeleteProgram(g_shadowProg);
-    g_vao = g_prog = g_shadowProg = 0;
+    if (g_blurProg)
+        glDeleteProgram(g_blurProg);
+    g_vao = g_prog = g_shadowProg = g_blurProg = 0;
     // The hook itself is removed by Hyprland
 }

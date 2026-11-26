@@ -281,7 +281,7 @@ class CTesseraControls : public IHyprWindowDecoration {
     CHyprSignalListener                   m_move, m_button;
     SP<CEventLoopTimer>                   m_tileTimer;
     bool                                  m_hovered = false, m_pressedHere = false;
-    int                                   m_hot = -1;
+    int                                   m_hot = -1, m_pressedButton = -1;
     float                                 m_t   = 0;
     std::chrono::steady_clock::time_point m_lastFrame = std::chrono::steady_clock::now();
 
@@ -334,21 +334,29 @@ class CTesseraControls : public IHyprWindowDecoration {
     void onButton(IPointer::SButtonEvent e, Event::SCallbackInfo& info) {
         if (e.button != 272) // BTN_LEFT; right/middle clicks must not close a window
             return;
+        // A button acts on release, when pressed and let go on it (moved off
+        // first, nothing happens); the press is the app's until the pill is
+        // fully shown, so a quick click at the window's top centre reaches it
         if (e.state != WL_POINTER_BUTTON_STATE_PRESSED) {
-            if (m_pressedHere)
-                info.cancelled = true;
-            m_pressedHere = false;
+            if (!m_pressedHere)
+                return;
+            info.cancelled = true;
+            m_pressedHere  = false;
+            const int i    = m_pressedButton;
+            m_pressedButton = -1;
+            if (i >= 0 && m_hovered && pointerOnUs() && buttonAt(g_pInputManager->getMouseCoordsInternal()) == i)
+                act(i);
             return;
         }
-        if (!m_hovered || !pointerOnUs())
+        if (!m_hovered || m_t < 1.f || !pointerOnUs())
             return;
         const int i = buttonAt(g_pInputManager->getMouseCoordsInternal());
         if (i < 0)
             return; // the pill itself: let the click through to the window
-        info.cancelled = true;
-        m_pressedHere  = true;
+        info.cancelled  = true;
+        m_pressedHere   = true;
+        m_pressedButton = i;
         disarmTile();
-        act(i);
     }
 
     void act(int i) {
