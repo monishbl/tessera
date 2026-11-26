@@ -83,8 +83,8 @@ Ported: partial downloads (inotify on the Downloads folder, `find` for sizes eve
 Differs: the QML's FolderListModel is inotify here.
 Check: start a browser download: `transfers.items` has it (the island shows it); finish: "Downloaded ..." with Open / Show in Folder.
 
-### shell/services/SseParser.qml -> `src/sse.rs`
-Ported with tests. Not used by the sharing services (the Rust AI service has its own streaming); kept as a helper for the others.
+### shell/services/SseParser.qml -> `core/src/services/ai/sse.rs`
+Replaced by the AI service's own parser (audit 23 Nov: this crate's unused copy, `src/sse.rs`, was removed so the two can't drift).
 
 ### shell/services/AppStore.qml + modules/appstore/AppStoreFeed.qml -> `src/appstore.rs`
 Ported: `appstore.py --serve` kept while the window is open (+2 min), queued requests, status, load (discover/category/installed/search with the `aur:` prefix stripped), enrich (`_icon`, `_source`), install/remove (Software Update for repos and AUR, flatpak for Flathub incl. installing flatpak first), done alerts, catalogue install, Spotlight's quick lookup (350 ms debounce), open (desktop entry via `gtk-launch`).
@@ -97,4 +97,4 @@ Differs: `motion` (CoolDown) isn't sent.
 Check: Files/Shelf "Share" opens the sheet with nearby devices.
 
 ## Tests
-`cargo test -p tessera-host-sharing` (run by the user): devices, download tracker, shelf logic, SSE, transfers' size text, Cast's TXT parser, AirPlay's helpers, FastPair batteries, App Store icons.
+`cargo test -p tessera-host-sharing` (run by the user): devices, download tracker, shelf logic, transfers' size text, Cast's TXT parser, AirPlay's helpers, FastPair batteries, App Store icons.
