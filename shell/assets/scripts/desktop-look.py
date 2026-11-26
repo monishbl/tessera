@@ -56,6 +56,7 @@ gsettings command), TESSERA_SYSTEM_ROOT (where /usr is), TESSERA_FONT_FILE
 TESSERA_FONT_SHA256 (where the original comes from).
 """
 import argparse
+import fcntl
 import hashlib
 import shlex
 import urllib.request
@@ -146,7 +147,7 @@ def load_state(p):
 
 def save_state(p, s):
     os.makedirs(p.state_dir, exist_ok=True)
-    tmp = p.state + ".tmp"
+    tmp = p.state + ".tmp-" + str(os.getpid())
     with open(tmp, "w") as f:
         json.dump(s, f, indent=1, sort_keys=True)
     os.replace(tmp, p.state)
@@ -215,9 +216,16 @@ def bundled_font():
             return os.path.normpath(f)
     return None
 
+# (a block: BEGIN, then lines with no second BEGIN, then END. A pair whose
+# END was lost doesn't reach to the next block's END over your own lines:
+# its lone BEGIN line, or a lone END, goes by itself)
+BLOCK = re.compile(r"\n?" + re.escape(BEGIN) + r"(?:(?!" + re.escape(BEGIN) + r").)*?" + re.escape(END) + r"[^\n]*\n?", re.S)
+LONE = re.compile(r"^(?:" + re.escape(BEGIN) + r"|" + re.escape(END) + r")[^\n]*\n?", re.M)
+
+
 def strip_block(text):
     """The text without the marked lines (and the blank line before them)"""
-    out = re.sub(r"\n?" + re.escape(BEGIN) + r".*?" + re.escape(END) + r"[^\n]*\n?", "\n", text, flags=re.S)
+    out = LONE.sub("", BLOCK.sub("\n", text))
     return out.lstrip("\n") if text.startswith(BEGIN) else out
 
 
@@ -563,12 +571,40 @@ def keyring_ready():
     return which("gnome-keyring-daemon") or which("kwalletd6") or which("keepassxc")
 
 
+# (whose flags file it is: one is written only when its app is installed,
+# or the file is there already)
+FLAG_APPS = {"code-flags.conf": ("code",), "chrome-flags.conf": ("google-chrome-stable", "google-chrome"),
+             "chromium-flags.conf": ("chromium",), "brave-flags.conf": ("brave", "brave-browser"),
+             "thorium-flags.conf": ("thorium-browser",), "discord-flags.conf": ("discord",)}
+
+
+def has_electron():
+    """Arch's electron (electron, electron36…), which reads electron-flags.conf"""
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        try:
+            if any(n == "electron" or (n.startswith("electron") and n[8:].isdigit()) for n in os.listdir(d or ".")):
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def flags_wanted(path, name):
+    if read(path) is not None:
+        return True
+    if name == "electron-flags.conf":
+        return has_electron()
+    return any(which(b) for b in FLAG_APPS.get(name, ()))
+
+
 def apply_keyring(p, d, created):
     notes = []
     if not keyring_ready():
         return ["! No keyring is installed, so apps can't keep sign-ins (sudo pacman -S gnome-keyring)"]
     for name in FLAG_FILES:
         path = os.path.join(p.cfg, name)
+        if not flags_wanted(path, name):
+            continue
         cur = read(path) or ""
         # (a --password-store of your own wins)
         if "--password-store" in strip_block(cur):
@@ -596,12 +632,17 @@ LAUNCHER_APPS = ("discord.desktop", "discord-ptb.desktop", "discord-canary.deskt
 DESKTOP_MARK = "# Tessera's desktop look: sign-ins kept in the keyring (Settings → Appearance)\n"
 
 
-def keyring_launchers(p, d):
+def keyring_launchers(p, d, ours_only=False):
+    """(ours_only: only Tessera's copies made before are brought up to date
+    with the system's entry, at every refresh, so a changed Exec path
+    doesn't leave the menu launching an old one)"""
     for name in LAUNCHER_APPS:
         mine = os.path.join(p.apps, name)
         cur = read(mine)
         if cur is not None and not cur.startswith(DESKTOP_MARK):
             continue  # (your own entry: left alone)
+        if ours_only and cur is None:
+            continue
         system = next((t for t in (read(os.path.join(SYS + base, name)) for base in ("/usr/share/applications", "/usr/local/share/applications")) if t), None)
         if system is None:
             if cur is not None:
@@ -867,9 +908,30 @@ def apply_apps(p, state, d, mode):
     set_kde(p, state, d, kde_wanted(mode))
     if not darkly():
         notes.append("! Darkly isn't installed, so Qt apps keep their style (yay -S darkly-bin)")
-    d.write(p.fontconfig, GRAYSCALE, "wrote " + home(p.fontconfig))
-    notes.append("apps: " + (fam or "their own font") + ", grayscale font smoothing" + (", Darkly and Breeze Plus for Qt apps" if darkly() else ""))
+    # (your own fontconfig choice of smoothing wins: ours loads after it)
+    own = own_rgba(p)
+    if own:
+        notes.append("fonts: your own smoothing in " + home(own) + " is kept")
+    else:
+        d.write(p.fontconfig, GRAYSCALE, "wrote " + home(p.fontconfig))
+    notes.append("apps: " + (fam or "their own font") + ("" if own else ", grayscale font smoothing") + (", Darkly and Breeze Plus for Qt apps" if darkly() else ""))
     return notes
+
+
+def own_rgba(p):
+    """A fontconfig file of yours that sets the subpixel order (rgba), or None"""
+    base = os.path.join(p.cfg, "fontconfig")
+    files = [os.path.join(base, "fonts.conf")]
+    try:
+        files += sorted(os.path.join(base, "conf.d", n) for n in os.listdir(os.path.join(base, "conf.d")) if n.endswith(".conf"))
+    except OSError:
+        pass
+    for f in files:
+        if os.path.abspath(f) == os.path.abspath(p.fontconfig):
+            continue
+        if re.search(r"""name\s*=\s*["']rgba["']""", read(f) or ""):
+            return f
+    return None
 
 
 def restore_apps(p, state, d):
@@ -1010,6 +1072,16 @@ def main(argv=None):
     ap.add_argument("--accent")
     a = ap.parse_args(argv)
     p = Paths()
+    # (one run at a time: a refresh racing the set-up read the state before
+    # it was saved and wrote the old one back; status only reads)
+    lock = None
+    if a.command != "status" and not a.dry_run:
+        try:
+            os.makedirs(p.state_dir, exist_ok=True)
+            lock = open(p.state + ".lock", "a")
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        except OSError:
+            lock = None
     state = load_state(p)
     d = Doer(a.dry_run)
     out = {}
@@ -1035,6 +1107,10 @@ def main(argv=None):
             state["starship"] = sha(text)
         if state.get("on", True) is not False:
             write_plain(p, d, current_mode(p, state), state.get("accent", ""), nerd_font())
+            try:
+                keyring_launchers(p, d, ours_only=True)
+            except OSError:
+                pass
         if state.get("on", True) is not False and "Icons/Theme" in state.get("kde", {}):
             icons = breeze_plus(current_mode(p, state))
             if icons:

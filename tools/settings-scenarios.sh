@@ -20,7 +20,7 @@ export TESSERA_ARENA=${ARENA:-${TESSERA_ARENA:-8}}
 OUT=${OUT:-$HOME/tessera-verify/settings-a$TESSERA_ARENA}; mkdir -p "$OUT"
 CFG="$HOMEDIR/.config/tessera/config.json"
 USERCFG=${USERCFG:-$HOME/tessera/.sandbox/home/.config/tessera/config.json}
-LOG=/tmp/tessera-ui-a$TESSERA_ARENA.log
+LOG=${XDG_RUNTIME_DIR:-/tmp}/tessera-ui-a$TESSERA_ARENA.log
 step=${1:-help}; shift || true
 case $step in
 setup)
