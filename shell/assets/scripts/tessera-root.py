@@ -89,9 +89,10 @@ With the password:
       login screen, where it sees every password typed: its sha256 kept in
       root's /var/lib/tessera/login-ui-trust.json (the newest few), then the
       login screen's copy refreshed. install.sh runs it after a build here;
-      after a build of your own, run it with sudo. Routine root steps
-      (updates, login-switch) take a build of yours only when it's listed
-      there; Tessera's signed builds need none of this.
+      after a build of your own, run it with sudo. An update that built it
+      here records it itself (update --trust-built, the update's password
+      the consent). Other root steps (setup, login-switch) take a build of
+      yours only when it's listed there; signed builds need none of this.
   boot-check [--repair]
       will the next login work? (the end of every update runs it, and
       Settings → Health's Fix, as fix login): the login screen's PAM files
@@ -115,7 +116,7 @@ With the password:
 With the password, once, at the start:
   update [--snapshot snapper|timeshift] [--system] [--ignore a,b]
          [--install a,b] [--remove a,b] [--downgrade f,g] [--mirrors l,m] [--setup <shell folder>]
-         [--lock <file>] [--broker]
+         [--lock <file>] [--trust-built <sha256>] [--broker]
       the whole system part of an update (sysupdate.py starts it): snapshot,
       this helper's own files (--setup), pacman -Syu, Tessera's packages,
       dropped ones. --mirrors: these mirror lists are behind (sysupdate.py
@@ -2743,6 +2744,27 @@ def login_ui_keep_last(ui, prefix=None):
         return False
 
 
+def login_ui_trust_built(uid, want, prefix=None, home=None):
+    """update --trust-built WANT: the tessera-ui an update built here (the
+    sha256 sysupdate.py named on the command line the admin authenticated)
+    recorded in root's record, only when your installed one is that very
+    program, built here and passing read_login_ui's checks (ELF, owners,
+    modes, its own record's sha256). One swapped in later isn't WANT, so
+    it stays untrusted. Returns what to say; Refused otherwise."""
+    if not isinstance(want, str) or not SHA_HEX.match(want):
+        raise Refused("not a sha256")
+    try:
+        data, how = read_login_ui(uid, home, prefix=prefix, check_root=False)
+    except FileNotFoundError:
+        raise Refused("there's no tessera-ui of yours") from None
+    if how != "built":
+        raise Refused("tessera-ui isn't one built on this computer")
+    if hashlib.sha256(data).hexdigest() != want:
+        raise Refused("tessera-ui isn't the program this update built (it changed since)")
+    write_login_trust(prefix, built=[want])
+    return f"The tessera-ui this update built ({want[:12]}) is trusted for the login screen"
+
+
 def login_ui_trust(uid, prefix=None, home=None):
     """login-ui-trust: your installed tessera-ui, built here (and matching
     its own record), trusted for the login screen in root's record; the
@@ -4016,7 +4038,7 @@ def user_cache_packages_foreign(files, uid, run=subprocess.run):
 def parse_update(args, dirs=None):
     """update's arguments, strictly: known flags only, package names checked."""
     p = {"snapshot": "", "system": False, "ignore": [], "install": [], "remove": [], "downgrade": [], "mirrors": [], "setup": "",
-         "broker": False, "features": None, "lock": ""}
+         "broker": False, "features": None, "lock": "", "trust_built": ""}
     feat = []
     i = 0
     while i < len(args):
@@ -4038,7 +4060,8 @@ def parse_update(args, dirs=None):
                 feat += [a, args[i + 1]]
             i += 2
             continue
-        if a not in ("--snapshot", "--ignore", "--install", "--remove", "--downgrade", "--mirrors", "--setup", "--lock") or i + 1 >= len(args):
+        if a not in ("--snapshot", "--ignore", "--install", "--remove", "--downgrade", "--mirrors", "--setup", "--lock",
+                     "--trust-built") or i + 1 >= len(args):
             raise Refused(f"unknown argument: {a}")
         v = args[i + 1]
         i += 2
@@ -4048,6 +4071,10 @@ def parse_update(args, dirs=None):
             p["snapshot"] = v
         elif a == "--setup":
             p["setup"] = check_folder(v)
+        elif a == "--trust-built":
+            if not SHA_HEX.match(v):
+                raise Refused("--trust-built: a sha256")
+            p["trust_built"] = v
         elif a == "--lock":
             if not v.startswith("/") or "\0" in v:
                 raise Refused("--lock: a file's full path")
@@ -4236,6 +4263,14 @@ def _update(args, uid, out=sys.stdout):
     if p["setup"]:
         # Never a reason to stop the update: the old behaviour carries on
         say("@@step setup")
+        # (the tessera-ui this update built here, trusted for the login
+        # screen first: the password for the update is the consent; only
+        # the very program it names, checked as login-ui-trust does)
+        if p["trust_built"]:
+            try:
+                say(login_ui_trust_built(uid, p["trust_built"]))
+            except (OSError, Refused) as e:
+                say(f"The login screen keeps the tessera-ui it had: {e}")
         try:
             done = setup(p["setup"], uid)
             say("Installed " + ", ".join(done) if done else "Tessera's system helper is up to date")

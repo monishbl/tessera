@@ -303,6 +303,43 @@ class RootsRecord(unittest.TestCase):
         with self.assertRaisesRegex(R.Refused, "no tessera-ui"):
             R.login_ui_trust(os.getuid(), prefix=str(self.prefix))
 
+    def test_the_updates_root_step_records_the_build_it_names(self):
+        self.put()
+        self.share.mkdir(parents=True)
+        self.record([])
+        with self.assertRaisesRegex(R.Refused, "login-ui-trust"):
+            self.read()
+        said = R.login_ui_trust_built(os.getuid(), sha(PROGRAM), prefix=str(self.prefix))
+        self.assertIn("this update built", said)
+        self.assertEqual(R.read_login_trust(str(self.prefix))["built"], [sha(PROGRAM)])
+        self.assertEqual(self.read(), (PROGRAM, "built"))  # (the refresh after takes it)
+
+    def test_the_updates_root_step_refuses_anything_else(self):
+        self.put(b"\x7fELF swapped in")  # (its record at home matches it, as a planted one's would)
+        self.record([])
+        with self.assertRaisesRegex(R.Refused, "isn't the program this update built"):
+            R.login_ui_trust_built(os.getuid(), sha(PROGRAM), prefix=str(self.prefix))
+        self.put()
+        (self.bin / "tessera-ui").write_bytes(PROGRAM + b"!")  # (changed after its build)
+        with self.assertRaisesRegex(R.Refused, "changed after it was built"):
+            R.login_ui_trust_built(os.getuid(), sha(PROGRAM + b"!"), prefix=str(self.prefix))
+        self.put(source="ready-made")
+        with self.assertRaises(R.Refused):
+            R.login_ui_trust_built(os.getuid(), sha(PROGRAM), prefix=str(self.prefix))
+        with self.assertRaisesRegex(R.Refused, "sha256"):
+            R.login_ui_trust_built(os.getuid(), "not a hash", prefix=str(self.prefix))
+        self.assertEqual(R.read_login_trust(str(self.prefix))["built"], [])
+
+    def test_update_takes_trust_built_only_as_a_sha256(self):
+        self.assertEqual(R.parse_update(["--setup", str(ROOT / "shell"), "--trust-built", "b" * 64])["trust_built"], "b" * 64)
+        self.assertEqual(R.parse_update([])["trust_built"], "")
+        for bad in ("B" * 64, "b" * 63, "../x"):
+            with self.assertRaises(R.Refused):
+                R.parse_update(["--trust-built", bad])
+        text = (SCRIPTS / "tessera-root.py").read_text()
+        # (recorded before setup's refresh, and never a reason to stop the update)
+        self.assertLess(text.index('say(login_ui_trust_built(uid, p["trust_built"]))'), text.index('done = setup(p["setup"], uid)'))
+
     def test_login_ui_trust_without_tesseras_login_screen_only_records(self):
         self.put()
         self.assertIn("is trusted", R.login_ui_trust(os.getuid(), prefix=str(self.prefix)))
@@ -376,16 +413,35 @@ class Stale(unittest.TestCase):
         (self.share / "tessera-ui").unlink()
         self.assertTrue(self.stale())
 
-    def test_a_build_roots_record_doesnt_list_asks_for_nothing(self):
+    def test_a_build_here_the_update_trusts_on_its_root_step(self):
+        # (an update with --how build: its root step records the build it
+        # names, the update's password the consent; lead's call, audit #95)
         self.share.mkdir(parents=True)
         (self.share / "tessera-ui").write_bytes(b"\x7fELF older")
         self.put(PROGRAM, {"source": "built", "sha256": sha(PROGRAM)})
         trust = self.system / "var/lib/tessera/login-ui-trust.json"
         trust.parent.mkdir(parents=True)
         trust.write_text(json.dumps({"built": [sha(b"other")]}))
-        self.assertFalse(self.stale())
-        trust.write_text(json.dumps({"built": [sha(PROGRAM)]}))
         self.assertTrue(self.stale())
+        self.assertEqual(self.su.login_ui_build(str(self.home)), sha(PROGRAM))
+        trust.write_text(json.dumps({"built": [sha(PROGRAM)]}))
+        self.assertEqual(self.su.login_ui_build(str(self.home)), "")  # (listed already)
+        trust.unlink()
+        self.assertEqual(self.su.login_ui_build(str(self.home)), sha(PROGRAM))  # (no record yet)
+        # (not built here, or changed since its build: nothing to trust)
+        self.put(PROGRAM, {"source": "built", "sha256": sha(b"another")})
+        self.assertEqual(self.su.login_ui_build(str(self.home)), "")
+        self.put(PROGRAM, {"source": "ready-made"})
+        self.assertEqual(self.su.login_ui_build(str(self.home)), "")
+
+    def test_the_root_command_names_the_build_only_with_this_folders_helper(self):
+        plan = {"snapshot": "", "system": False, "setup": True, "setup_dir": "/x/shell", "trust_built": "a" * 64}
+        cmd = self.su.root_command(plan, False)
+        self.assertEqual(cmd[1:3], ["-I", self.su.SOURCE])
+        self.assertEqual(cmd[cmd.index("--trust-built") + 1], "a" * 64)
+        # (the installed helper may be older and refuse an argument it doesn't know)
+        self.assertNotIn("--trust-built", self.su.root_command(dict(plan, setup=False), False))
+        self.assertNotIn("--trust-built", self.su.root_command(dict(plan, trust_built=""), False))
 
     def test_one_root_would_refuse_asks_for_nothing(self):
         self.share.mkdir(parents=True)
