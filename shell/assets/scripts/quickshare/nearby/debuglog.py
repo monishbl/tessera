@@ -24,6 +24,7 @@ def _private_dir():
     return d
 
 
+MAX_LOG = 8 * 1000 * 1000  # bytes
 _dir = _private_dir()
 _path = None
 # (or `touch $XDG_RUNTIME_DIR/tessera-quickshare.debug`: the shell starts the
@@ -42,6 +43,11 @@ def log(where, what):
     try:
         fd = os.open(_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
         with os.fdopen(fd, "a") as f:
+            # (the runtime folder is memory: a big transfer logs a line per
+            # frame, so past MAX_LOG the log starts over)
+            if os.fstat(fd).st_size > MAX_LOG:
+                os.ftruncate(fd, 0)
+                f.write(f"(the log passed {MAX_LOG // 1000000} MB and started over)\n")
             f.write(f"{time.strftime('%H:%M:%S')}.{int(time.time() * 1000) % 1000:03d} {where}: {what}\n")
     except OSError:
         pass

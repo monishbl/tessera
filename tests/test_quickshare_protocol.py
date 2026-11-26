@@ -179,5 +179,37 @@ class FileNames(unittest.TestCase):
             self.assertEqual(free_name(d, "noext"), "noext (2)")
 
 
+
+class OpenPayloads(unittest.IsolatedAsyncioTestCase):
+    """Message payloads a stranger starts and never ends are capped"""
+
+    def frame(self, pid, body, kind=None, offset=0, last=False):
+        from nearby import connection as c
+        p = c.PT(packet_type=c.PT.DATA)
+        p.payload_header.id = pid
+        p.payload_header.type = kind if kind is not None else c.PT.PayloadHeader.BYTES
+        p.payload_header.total_size = len(body) + offset
+        p.payload_chunk.offset = offset
+        p.payload_chunk.body = body
+        p.payload_chunk.flags = c.LAST_CHUNK if last else 0
+        return p
+
+    async def test_at_most_a_few_open_at_once(self):
+        from nearby import connection as c
+        conn = object.__new__(c.Connection)
+        conn._incoming, conn._sinks = {}, {}
+        for pid in range(c.MAX_OPEN_BYTES_PAYLOADS):
+            await conn._payload(self.frame(pid, b"x"))
+        with self.assertRaises(c.ProtocolError):
+            await conn._payload(self.frame(99, b"x"))
+
+    async def test_file_bytes_for_a_message_payload_are_refused(self):
+        from nearby import connection as c
+        conn = object.__new__(c.Connection)
+        conn._incoming, conn._sinks = {}, {}
+        await conn._payload(self.frame(5, b"x"))
+        with self.assertRaises(c.ProtocolError):
+            await conn._payload(self.frame(5, b"y", kind=c.PT.PayloadHeader.FILE, offset=1))
+
 if __name__ == "__main__":
     unittest.main()

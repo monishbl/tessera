@@ -178,9 +178,11 @@ class QuickShareFiles(unittest.TestCase):
         from nearby.files import FileSink
         with tempfile.TemporaryDirectory() as d:
             sink = FileSink(d, "../evil.sh", 4)
+            self.assertEqual(os.listdir(d), [])  # (made at the first chunk)
+            sink.write(0, b"ec")
             part = sink._part
             self.assertEqual(os.stat(part).st_mode & 0o777, 0o600)
-            sink.write(0, b"echo")
+            sink.write(2, b"ho")
             sink.finish()
             self.assertEqual(os.path.dirname(sink.path), d)
             self.assertEqual(os.path.basename(sink.path), "evil.sh")
