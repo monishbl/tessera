@@ -181,6 +181,156 @@ class FromYourHome(unittest.TestCase):
             R.read_login_ui(os.getuid(), str(self.home))
 
 
+class RootsRecord(unittest.TestCase):
+    """Audit #95: a build of yours reaches the login screen only when root's
+    own record (/var/lib/tessera/login-ui-trust.json, written by root:
+    login-ui-trust, or once by the first root step of this version) lists
+    its sha256; a refused one gives way to the one root last put there, else
+    the QML login screen (bin/tessera-ui missing: greeter-start.sh starts
+    the QML one). Never no login screen."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        d = Path(self.tmp.name)
+        self.prefix, self.home = d / "root", d / "home"
+        self.bin = self.home / ".local/share/tessera/bin"
+        self.bin.mkdir(parents=True)
+        self.bin.chmod(0o755)
+        self.trust = self.prefix / R.LOGIN_UI_TRUST.lstrip("/")
+        self.share = self.prefix / R.LOGIN_SHARE.lstrip("/") / "bin"
+        self.home_patch = mock.patch.object(R, "caller_home", lambda uid: str(self.home))
+        self.home_patch.start()
+
+    def tearDown(self):
+        self.home_patch.stop()
+        self.tmp.cleanup()
+
+    def put(self, data=PROGRAM, source="built"):
+        (self.bin / "tessera-ui").write_bytes(data)
+        (self.bin / "tessera-ui").chmod(0o755)
+        (self.bin / "tessera-ui.json").write_text(json.dumps({"source": source, "sha256": sha(data)}))
+        (self.bin / "tessera-ui.json").chmod(0o644)
+
+    def read(self):
+        return R.read_login_ui(os.getuid(), str(self.home), prefix=str(self.prefix))
+
+    def record(self, built=(), installed=None):
+        self.trust.parent.mkdir(parents=True, exist_ok=True)
+        self.trust.write_text(json.dumps({"built": list(built), "installed": installed}))
+        self.trust.chmod(0o644)
+        self.trust.parent.chmod(0o755)
+
+    def test_no_record_yet_keeps_the_old_rule(self):
+        # (an install from before: nobody is locked out of the Rust login
+        # screen until a root step of this version writes the record)
+        self.put()
+        self.assertEqual(self.read(), (PROGRAM, "built"))
+
+    def test_a_listed_build_is_taken(self):
+        self.put()
+        self.record([sha(PROGRAM)])
+        self.assertEqual(self.read(), (PROGRAM, "built"))
+
+    def test_an_unlisted_build_is_refused_even_with_a_matching_record_at_home(self):
+        self.put(b"\x7fELF planted")  # (its record in your home rewritten to match)
+        self.record([sha(PROGRAM)])
+        with self.assertRaisesRegex(R.Refused, "login-ui-trust"):
+            self.read()
+        self.record([])
+        with self.assertRaisesRegex(R.Refused, "login-ui-trust"):
+            self.read()
+
+    def test_a_record_root_didnt_write_alone_trusts_nothing(self):
+        self.put()
+        self.record([sha(PROGRAM)])
+        self.trust.chmod(0o666)
+        with self.assertRaisesRegex(R.Refused, "root's alone"):
+            self.read()
+        self.trust.chmod(0o644)
+        self.trust.parent.chmod(0o777)
+        with self.assertRaisesRegex(R.Refused, "root's alone"):
+            self.read()
+        self.trust.parent.chmod(0o755)
+        self.trust.write_text("not json")
+        with self.assertRaisesRegex(R.Refused, "can't be read"):
+            self.read()
+        self.trust.unlink()
+        self.trust.symlink_to(self.prefix / "elsewhere.json")
+        (self.prefix / "elsewhere.json").write_text(json.dumps({"built": [sha(PROGRAM)]}))
+        with self.assertRaisesRegex(R.Refused, "root.s alone|isn.t a file"):
+            self.read()
+        with mock.patch.object(R.os, "geteuid", lambda: os.getuid() + 1):  # (owned by someone else than root)
+            self.trust.unlink()
+            self.record([sha(PROGRAM)])
+            with self.assertRaisesRegex(R.Refused, "root's alone"):
+                self.read()
+
+    def test_its_entries_are_checked(self):
+        self.record(["nothex", sha(PROGRAM), 5], {"sha256": "x"})
+        self.assertEqual(R.read_login_trust(str(self.prefix)), {"built": [sha(PROGRAM)], "installed": None})
+
+    def test_signed_builds_need_no_record(self):
+        self.record([])
+        self.assertIsNone(R.login_ui_trusted_here(PROGRAM, "signed", str(self.prefix)))
+
+    def test_login_ui_trust_records_and_installs(self):
+        self.put()
+        self.share.mkdir(parents=True)
+        self.record([])
+        said = R.login_ui_trust(os.getuid(), prefix=str(self.prefix))
+        self.assertIn("now uses", said)
+        self.assertEqual((self.share / "tessera-ui").read_bytes(), PROGRAM)
+        rec = R.read_login_trust(str(self.prefix))
+        self.assertEqual(rec, {"built": [sha(PROGRAM)], "installed": {"sha256": sha(PROGRAM), "how": "built"}})
+        self.assertEqual(self.read(), (PROGRAM, "built"))
+        self.assertEqual(self.trust.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(self.trust.parent.stat().st_mode & 0o777, 0o755)
+
+    def test_login_ui_trust_keeps_the_newest_few(self):
+        for i in range(5):
+            self.put(b"\x7fELF build %d" % i)
+            R.login_ui_trust(os.getuid(), prefix=str(self.prefix))
+        built = R.read_login_trust(str(self.prefix))["built"]
+        self.assertEqual(built, [sha(b"\x7fELF build %d" % i) for i in (2, 3, 4)])
+
+    def test_login_ui_trust_refuses_what_root_would_refuse(self):
+        self.put()
+        (self.bin / "tessera-ui").write_bytes(PROGRAM + b"tampered")  # (not what its record says)
+        with self.assertRaisesRegex(R.Refused, "changed after it was built"):
+            R.login_ui_trust(os.getuid(), prefix=str(self.prefix))
+        self.assertFalse(self.trust.exists())
+        (self.bin / "tessera-ui").unlink()
+        with self.assertRaisesRegex(R.Refused, "no tessera-ui"):
+            R.login_ui_trust(os.getuid(), prefix=str(self.prefix))
+
+    def test_login_ui_trust_without_tesseras_login_screen_only_records(self):
+        self.put()
+        self.assertIn("is trusted", R.login_ui_trust(os.getuid(), prefix=str(self.prefix)))
+        self.assertFalse(self.share.exists())
+        self.assertEqual(R.read_login_trust(str(self.prefix))["installed"], None)
+
+    def test_the_last_one_root_put_there_is_kept(self):
+        self.share.mkdir(parents=True)
+        ui = self.share / "tessera-ui"
+        ui.write_bytes(PROGRAM)
+        self.assertFalse(R.login_ui_keep_last(str(ui), str(self.prefix)))  # (no record: nothing vouches for it)
+        self.record([], {"sha256": sha(PROGRAM), "how": "signed"})
+        self.assertTrue(R.login_ui_keep_last(str(ui), str(self.prefix)))
+        ui.write_bytes(PROGRAM + b"!")
+        self.assertFalse(R.login_ui_keep_last(str(ui), str(self.prefix)))
+        ui.unlink()
+        self.assertFalse(R.login_ui_keep_last(str(ui), str(self.prefix)))
+
+    def test_the_command_and_its_polkit_action(self):
+        text = (SCRIPTS / "tessera-root.py").read_text()
+        self.assertIn('if cmd == "login-ui-trust" and not args:', text)
+        policy = (ROOT / "shell/assets/polkit/org.tessera.root.policy").read_text()
+        self.assertIn('<annotate key="org.freedesktop.policykit.exec.argv1">login-ui-trust</annotate>', policy)
+        rules = (ROOT / "shell/assets/polkit/49-tessera.rules").read_text()
+        self.assertNotIn("login-ui-trust", rules)  # (always the password)
+        self.assertIn("login-ui-trust", (ROOT / "install.sh").read_text())
+
+
 class Stale(unittest.TestCase):
     """sysupdate.py login_ui_stale: the root step refreshes the login
     screen's tessera-ui only when yours is another program root would take"""
@@ -224,6 +374,17 @@ class Stale(unittest.TestCase):
         self.assertTrue(self.stale())
         # (fallen back to the QML one: its bin/ is still there)
         (self.share / "tessera-ui").unlink()
+        self.assertTrue(self.stale())
+
+    def test_a_build_roots_record_doesnt_list_asks_for_nothing(self):
+        self.share.mkdir(parents=True)
+        (self.share / "tessera-ui").write_bytes(b"\x7fELF older")
+        self.put(PROGRAM, {"source": "built", "sha256": sha(PROGRAM)})
+        trust = self.system / "var/lib/tessera/login-ui-trust.json"
+        trust.parent.mkdir(parents=True)
+        trust.write_text(json.dumps({"built": [sha(b"other")]}))
+        self.assertFalse(self.stale())
+        trust.write_text(json.dumps({"built": [sha(PROGRAM)]}))
         self.assertTrue(self.stale())
 
     def test_one_root_would_refuse_asks_for_nothing(self):

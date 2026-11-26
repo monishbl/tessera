@@ -924,6 +924,7 @@ def helper_current(folder=None):
 
 
 LOGIN_UI = "/usr/share/tessera/bin"  # (the login screen's tessera-ui, where the switch put one)
+LOGIN_UI_TRUST = "/var/lib/tessera/login-ui-trust.json"  # (root's record of builds trusted for it: tessera-root.py)
 
 
 def _sha256(path):
@@ -958,6 +959,17 @@ def login_ui_stale(home=None):
         return False
     if rec.get("source") in ("built", "built-tuned", "bundle-built"):
         if rec.get("sha256") != sha:
+            return False
+        # (root takes a build of yours only once its own record lists it,
+        # tessera-root login-ui-trust; none yet: an install from before)
+        try:
+            with open(os.path.join(SYSTEM, LOGIN_UI_TRUST.lstrip("/"))) as f:
+                trusted = json.load(f).get("built")
+            if not isinstance(trusted, list) or sha not in trusted:
+                return False
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, AttributeError):
             return False
     elif rec.get("source") in ("ready-made", "bundle"):
         try:

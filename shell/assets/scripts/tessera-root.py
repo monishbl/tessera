@@ -84,6 +84,14 @@ With the password:
       back by itself (login-fallback, login-check: systemd runs them). off:
       the one before again (<before>: the one install.sh noted, when there's
       no record). See "login-switch" below.
+  login-ui-trust
+      the tessera-ui built on this computer (in your home) trusted for the
+      login screen, where it sees every password typed: its sha256 kept in
+      root's /var/lib/tessera/login-ui-trust.json (the newest few), then the
+      login screen's copy refreshed. install.sh runs it after a build here;
+      after a build of your own, run it with sudo. Routine root steps
+      (updates, login-switch) take a build of yours only when it's listed
+      there; Tessera's signed builds need none of this.
   boot-check [--repair]
       will the next login work? (the end of every update runs it, and
       Settings → Health's Fix, as fix login): the login screen's PAM files
@@ -196,6 +204,7 @@ import re
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -2238,14 +2247,19 @@ def refresh_login(src, uid, prefix=None):
     ui = os.path.join(bindir, "tessera-ui")
     if os.path.isdir(bindir) and not os.path.islink(bindir) and not os.path.islink(ui):
         try:
-            data, how = read_login_ui(uid)
+            data, how = read_login_ui(uid, prefix=prefix)
         except (OSError, Refused) as e:
             data, how = None, None
-            if os.path.lexists(ui):
+            # (refused: the one root last put there stays while it's still
+            # that program; else the QML login screen)
+            keep = not isinstance(e, FileNotFoundError) and login_ui_keep_last(ui, prefix)
+            if os.path.lexists(ui) and not keep:
                 os.unlink(ui)
                 written.append(ui)
+                with contextlib.suppress(OSError, Refused):
+                    write_login_trust(prefix, installed=None)
             if not isinstance(e, FileNotFoundError):  # (none of yours at all: nothing to say)
-                login_ui_refused(e)
+                login_ui_refused(e, keep)
         if data is not None:
             try:
                 with open(ui, "rb") as f:
@@ -2256,6 +2270,11 @@ def refresh_login(src, uid, prefix=None):
                 write_root(ui, data, 0o755)
                 written.append(ui)
                 login_ui_said(how)
+            # (root's record of it; the first root step of this version also
+            # records a build of yours taken by the old rule)
+            sha = hashlib.sha256(data).hexdigest()
+            with contextlib.suppress(OSError, Refused):
+                write_login_trust(prefix, built=[sha] if how == "built" else [], installed={"sha256": sha, "how": how})
     return written
 
 
@@ -2569,14 +2588,16 @@ def resolve_in_home(path, home):
     return real
 
 
-def read_login_ui(uid, home=None, key=None):
+def read_login_ui(uid, home=None, key=None, prefix=None, check_root=True):
     """The Rust login screen to copy for greetd: your installed tessera-ui,
     read as you, and how it's vouched for (login_ui_vouched: "signed" or
     "built"). Refused unless it's a program (ELF) that only you (or root)
     could have written: it, its record and their folder owned by you or
     root, not writable by the group or others; so another account can't
     plant the program that reads every password at the login screen. And
-    refused unless it's Tessera's signed build or yours, as its record says."""
+    refused unless it's Tessera's signed build or yours, as its record says,
+    and (CHECK_ROOT) a build of yours only as root's record says
+    (login_ui_trusted_here)."""
     home = caller_home(uid) if home is None else home
     if not home:
         raise Refused("there's no home folder to take the login screen from")
@@ -2603,16 +2624,145 @@ def read_login_ui(uid, home=None, key=None):
         record = json.loads(read_as(uid, rec_path, MAX_RECORD))
     except ValueError:
         raise Refused("tessera-ui's record isn't JSON") from None
-    return data, login_ui_vouched(data, record, key)
+    how = login_ui_vouched(data, record, key)
+    if check_root:
+        login_ui_trusted_here(data, how, prefix)
+    return data, how
 
 
-def login_ui_refused(why):
+def login_ui_refused(why, kept=False):
     """What's said when the login screen can't have your tessera-ui"""
-    print(f"tessera-root: the login screen uses the QML login screen: tessera-ui wasn't accepted ({why})", file=sys.stderr)
+    where = "keeps the tessera-ui it had" if kept else "uses the QML login screen"
+    print(f"tessera-root: the login screen {where}: tessera-ui wasn't accepted ({why})", file=sys.stderr)
 
 
 def login_ui_said(how):
     print(f"tessera-root: the login screen's tessera-ui is {LOGIN_UI_HOW.get(how, how)}", file=sys.stderr)
+
+
+# ── The login screen's tessera-ui: root's own record (audit #95) ─────────
+# A build of yours is vouched for by root, not by a file in your home: its
+# sha256 must be in LOGIN_UI_TRUST, which only root writes (login-ui-trust,
+# the explicit step after a build here; and once, as below). Also kept:
+# the program root last put in the login screen's copy and how it was
+# vouched for, so a refused one gives way to that one (else the QML login
+# screen: greeter-start.sh starts it whenever bin/tessera-ui is missing).
+# Migration: an install from before has no record at all; until a root step
+# of this version writes one, a build of yours is taken as before (its own
+# record's sha256), and that root step records it. setup (every update's
+# root step) writes the record, so the old rule lasts until the next update.
+LOGIN_UI_TRUST = "/var/lib/tessera/login-ui-trust.json"
+LOGIN_UI_TRUST_KEEP = 3  # (builds of yours remembered: the newest few)
+SHA_HEX = re.compile(r"^[0-9a-f]{64}$")
+
+
+def read_login_trust(prefix=None):
+    """Root's record, or None when there's none yet (an install from before
+    it). Refused when it's there but root didn't (or couldn't alone) have
+    written it: a link, owned by someone else, writable by others, in such
+    a folder, or not the record's format. Never trusts more than it says."""
+    prefix = PREFIX if prefix is None else prefix
+    path = _at(prefix, LOGIN_UI_TRUST)
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    dst = os.lstat(os.path.dirname(path))
+    for what, x in (("its folder", dst), ("it", st)):
+        if x.st_uid != os.geteuid() or x.st_mode & 0o022:  # (root, as this runs; tests: their own account)
+            raise Refused(f"root's record of trusted login screens isn't root's alone ({what})")
+    if not stat.S_ISREG(st.st_mode):
+        raise Refused("root's record of trusted login screens isn't a file")
+    try:
+        with open(path, "rb") as f:
+            rec = json.loads(f.read(MAX_RECORD))
+    except (OSError, ValueError):
+        raise Refused("root's record of trusted login screens can't be read") from None
+    if not isinstance(rec, dict):
+        raise Refused("root's record of trusted login screens isn't its format")
+    built = [h for h in rec.get("built", []) if isinstance(h, str) and SHA_HEX.match(h)] \
+        if isinstance(rec.get("built"), list) else []
+    inst = rec.get("installed") if isinstance(rec.get("installed"), dict) else {}
+    installed = {"sha256": inst["sha256"], "how": inst.get("how") if inst.get("how") in LOGIN_UI_HOW else "signed"} \
+        if isinstance(inst.get("sha256"), str) and SHA_HEX.match(inst["sha256"]) else None
+    return {"built": built, "installed": installed}
+
+
+def write_login_trust(prefix=None, built=None, installed=""):
+    """Root's record written (root:root 0644, its folder 0755): the builds of
+    yours BUILT adds (the newest LOGIN_UI_TRUST_KEEP kept), and INSTALLED,
+    {"sha256", "how"} of what the login screen's copy has now ("" keeps the
+    one recorded, None says there's none). A record that isn't root's own is
+    written anew with only what's given. Returns the path."""
+    prefix = PREFIX if prefix is None else prefix
+    try:
+        rec = read_login_trust(prefix) or {"built": [], "installed": None}
+    except (OSError, Refused):
+        rec = {"built": [], "installed": None}
+    path = _at(prefix, LOGIN_UI_TRUST)
+    d = os.path.dirname(path)
+    if os.path.islink(d) or os.path.islink(path):
+        raise Refused(f"{LOGIN_UI_TRUST} or its folder is a link")
+    os.makedirs(d, mode=0o755, exist_ok=True)
+    if os.geteuid() == 0:
+        os.chown(d, 0, 0)
+    os.chmod(d, 0o755)
+    new = [h for h in (built or []) if isinstance(h, str) and SHA_HEX.match(h)]
+    keep = list(dict.fromkeys([h for h in rec["built"] if h not in new] + new))[-LOGIN_UI_TRUST_KEEP:]
+    if installed != "":
+        rec["installed"] = installed
+    data = json.dumps({"built": keep, "installed": rec["installed"]}, sort_keys=True, indent=1) + "\n"
+    write_root(path, data.encode(), 0o644)
+    return path
+
+
+def login_ui_trusted_here(data, how, prefix=None):
+    """A build of yours (HOW "built", its own record already checked) only
+    when root's record lists its sha256; with no record yet (an install
+    from before), as before. Refused otherwise, and when root's record
+    isn't root's own."""
+    if how != "built":
+        return
+    rec = read_login_trust(prefix)
+    if rec is not None and hashlib.sha256(data).hexdigest() not in rec["built"]:
+        raise Refused("tessera-ui was built here since an administrator last trusted a build for the login screen: "
+                      "run sudo /usr/lib/tessera/tessera-root login-ui-trust to use it there")
+
+
+def login_ui_keep_last(ui, prefix=None):
+    """When yours is refused: True when the login screen's copy UI is still
+    the program root last put there (its record says so), which then stays;
+    False and it's to be removed (the QML login screen instead)."""
+    try:
+        rec = read_login_trust(prefix)
+        if not rec or not rec["installed"] or os.path.islink(ui) or not os.path.isfile(ui):
+            return False
+        with open(ui, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest() == rec["installed"]["sha256"]
+    except (OSError, Refused):
+        return False
+
+
+def login_ui_trust(uid, prefix=None, home=None):
+    """login-ui-trust: your installed tessera-ui, built here (and matching
+    its own record), trusted for the login screen in root's record; the
+    login screen's copy refreshed when there is one. Returns what to say."""
+    prefix = PREFIX if prefix is None else prefix
+    try:
+        data, how = read_login_ui(uid, home, prefix=prefix, check_root=False)
+    except FileNotFoundError:
+        raise Refused("there's no tessera-ui of yours to trust") from None
+    if how != "built":
+        return "tessera-ui is Tessera's signed build: it needs nothing more"
+    sha = hashlib.sha256(data).hexdigest()
+    write_login_trust(prefix, built=[sha])
+    ui = os.path.join(_at(prefix, LOGIN_SHARE), "bin", "tessera-ui")
+    bindir = os.path.dirname(ui)
+    if os.path.isdir(bindir) and not os.path.islink(bindir) and not os.path.islink(ui):
+        write_root(ui, data, 0o755)
+        write_login_trust(prefix, installed={"sha256": sha, "how": how})
+        return f"The login screen now uses the tessera-ui built on this computer ({sha[:12]})"
+    return f"The tessera-ui built on this computer ({sha[:12]}) is trusted for Tessera's login screen"
 
 
 def login_wallpaper_from(uid, home, repo):
@@ -2661,23 +2811,36 @@ def install_login_copy(repo, look, uid, prefix, run, chown=os.chown):
     # the QML one without it (its bin/ folder is made either way: a refresh
     # puts in one that's accepted later)
     os.makedirs(os.path.join(share, "bin"), mode=0o755, exist_ok=True)
+    trust = None
     try:
-        data, how = read_login_ui(uid)
+        data, how = read_login_ui(uid, prefix=prefix)
         files.append(("bin/tessera-ui", data, 0o755))
+        sha = hashlib.sha256(data).hexdigest()
+        trust = {"built": [sha] if how == "built" else [], "installed": {"sha256": sha, "how": how}}
         LOGIN_UI_LAST.update(ui=how, why="")
         login_ui_said(how)
     except (OSError, Refused) as e:
-        # (none of yours at all: the QML one, nothing to say)
+        # (none of yours at all: the QML one, nothing to say; refused: the
+        # one root last put there stays while it's still that program)
         missing = isinstance(e, FileNotFoundError)
-        LOGIN_UI_LAST.update(ui="", why="" if missing else str(e))
         old_ui = os.path.join(share, "bin", "tessera-ui")
-        if os.path.lexists(old_ui) and not os.path.isdir(old_ui):
+        keep = not missing and login_ui_keep_last(old_ui, prefix)
+        kept_how = ""
+        if keep:
+            with contextlib.suppress(OSError, Refused):
+                kept_how = ((read_login_trust(prefix) or {}).get("installed") or {}).get("how", "")
+        LOGIN_UI_LAST.update(ui=kept_how, why="" if missing else str(e))
+        if os.path.lexists(old_ui) and not os.path.isdir(old_ui) and not keep:
             os.unlink(old_ui)
+            trust = {"built": [], "installed": None}
         if not missing:
-            login_ui_refused(e)
+            login_ui_refused(e, keep)
     for rel, data, mode in files:
         write_root(os.path.join(share, rel), data, mode)
         done.append(os.path.join(share, rel))
+    if trust is not None:
+        with contextlib.suppress(OSError, Refused):
+            write_login_trust(prefix, **trust)
     done += write_greeter_keyboard(share, prefix)
     # Where the login screen says it showed (greeter-start.sh, as greeter)
     seen = os.path.dirname(_at(prefix, GREETER_SEEN))
@@ -3478,6 +3641,12 @@ def setup(src, uid, prefix=None, run=subprocess.run):
             written.append(rule)
     written += install_themes(src, uid, prefix)
     written += refresh_login(src, uid, prefix)
+    # (root's record of trusted login screens, from this version on: a build
+    # of yours is then taken for the login screen only once login-ui-trust
+    # or the root step above recorded it)
+    if not os.path.lexists(_at(prefix, LOGIN_UI_TRUST)):
+        with contextlib.suppress(OSError, Refused):
+            written.append(write_login_trust(prefix))
     written += migrate_old_names(prefix, run, src)
     # (Passkeys are gone: an older Tessera's pam_u2f lines, gate, key list and udev rule out)
     written += [os.path.join(prefix, d.lstrip("/")) for d in passkeys_retire(prefix, run)]
@@ -4348,6 +4517,9 @@ def main(argv):
             # this computer), or "" and why not: the QML login screen then)
             ui = {"ui": LOGIN_UI_LAST["ui"], "uiWords": LOGIN_UI_HOW.get(LOGIN_UI_LAST["ui"], ""), "uiWhy": LOGIN_UI_LAST["why"]}
             print(json.dumps(dict(rec, **ui), sort_keys=True))
+            return 0
+        if cmd == "login-ui-trust" and not args:
+            print(login_ui_trust(uid))
             return 0
         if cmd == "login-switch" and len(args) in (1, 2) and args[0] == "off":
             print(json.dumps(login_switch_off(args[1] if len(args) == 2 else None), sort_keys=True))

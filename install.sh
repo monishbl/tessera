@@ -1625,7 +1625,21 @@ services() {
 # at the start. Software Update keeps it in step with this folder.
 root_helper() {
     command -v pkexec >/dev/null || { warn "polkit isn't installed: Tessera will ask for your password for each fix"; return 0; }
+    trust_built_ui
     run sudo /usr/bin/python3 -I "$ROOT/shell/assets/scripts/tessera-root.py" setup "$ROOT/shell" || warn "Tessera's root helper wasn't installed: Software Update installs it next time"
+    return 0
+}
+
+# A tessera-ui built here (Building Tessera, just before) trusted for the login
+# screen in root's own record (tessera-root login-ui-trust, audit #95): routine
+# root steps take a build of yours only once it's listed there. Ready-made
+# (signed) builds need nothing; refused or skipped, the login screen keeps the
+# one it had, or the QML one: it always starts
+trust_built_ui() {
+    local rec="$DATA/tessera/bin/tessera-ui.json"
+    [[ -f $rec ]] && grep -q '"source": *"\(built\|built-tuned\|bundle-built\)"' "$rec" 2>/dev/null || return 0
+    run sudo /usr/bin/python3 -I "$ROOT/shell/assets/scripts/tessera-root.py" login-ui-trust ||
+        warn "The tessera-ui built here isn't trusted for the login screen yet: sudo /usr/lib/tessera/tessera-root login-ui-trust"
     return 0
 }
 
