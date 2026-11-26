@@ -458,7 +458,7 @@ export component AboutCtl {
                     alignment: start;
                     Text {
                         text: l.text;
-                        color: Theme.accent;
+                        color: Theme.accent-ink;
                         font-size: Theme.small;
                         accessible-role: AccessibleRole.button;
                         accessible-label: self.text;
@@ -709,6 +709,18 @@ export component AboutCtl {
                             // (the label's colour while its menu is open: about-loginitems.qml 218–225)
                             property <bool> shown: SBus.menu-shown == r.text && r.text != "";
                             SIcon { g: SG.dots; size: 16px; color: menu-btn.shown ? Theme.label : Theme.tertiary; }
+                            // (keyboard: a Tab stop; Return, Space or Menu open it)
+                            mfs := FocusScope {
+                                focus-on-click: false;
+                                key-pressed(e) => {
+                                    if !e.repeat && (e.text == Key.Return || e.text == " " || e.text == Key.Menu) {
+                                        SBus.menu(r.text, menu-btn.absolute-position.x, menu-btn.absolute-position.y, menu-btn.width, menu-btn.height);
+                                        return accept;
+                                    }
+                                    reject
+                                }
+                            }
+                            SFocusRing { shown: mfs.has-focus; radius: menu-btn.border-radius; }
                             mta := TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => { SBus.menu(r.text, menu-btn.absolute-position.x, menu-btn.absolute-position.y, menu-btn.width, menu-btn.height); }

@@ -93,7 +93,7 @@ component Choice inherits Rectangle {
     in property <length> frame-h: 112px;
     callback chosen();
     height: frame-h + 8px + 24px;
-    accessible-role: button;
+    accessible-role: radio-button;
     accessible-label: label;
     accessible-checkable: true;
     accessible-checked: selected;
@@ -174,7 +174,7 @@ component LookMini inherits Rectangle {
     property <color> ink: Theme.dark ? #ffffff : #1C1C1E;
     property <color> soft: Theme.dark ? #ffffff1f : #ffffff80;
     property <color> softer: Theme.dark ? #ffffff24 : #ffffff73;
-    accessible-role: button;
+    accessible-role: radio-button;
     accessible-label: mat ? "Material" : "Glass";
     accessible-checkable: true;
     accessible-checked: selected;
@@ -811,6 +811,13 @@ export component Welcome inherits Window {
                                         source: w.image;
                                         image-fit: cover;
                                         accessible-role: none;
+                                    }
+                                    // (until its picture is read, or when it can't be: the
+                                    // picture glyph, as "Choose a picture…", not a blank box)
+                                    if w.image.width == 0: GIcon {
+                                        g: image-icon;
+                                        size: 24px;
+                                        color: Theme.tertiary;
                                     }
                                 }
                                 // A picture of your own

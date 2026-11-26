@@ -225,7 +225,7 @@ export component AccountsCtl inherits VerticalLayout {
                 mouse-cursor: MouseCursor.text;
                 clicked => { note.focus(); }
             }
-            Flickable {
+            note-scroll := Flickable {
                 x: 10px;
                 y: 8px;
                 width: parent.width - 20px;
@@ -234,6 +234,15 @@ export component AccountsCtl inherits VerticalLayout {
                 note := TextInput {
                     width: parent.width;
                     init => { self.text = root.r.text; }
+                    // (longer than the box: it scrolls, following the caret,
+                    // as the bug report's boxes)
+                    cursor-position-changed(p) => {
+                        if p.y + 22px > -note-scroll.content-y + note-scroll.height {
+                            note-scroll.content-y = -(p.y + 22px - note-scroll.height);
+                        } else if p.y < -note-scroll.content-y {
+                            note-scroll.content-y = -p.y;
+                        }
+                    }
                     single-line: false;
                     wrap: word-wrap;
                     color: Theme.label;

@@ -946,7 +946,7 @@ export component SettingsWindow inherits Window {
                     }
                     Rectangle {
                         x: Theme.material ? 50px : 10px;
-                        width: parent.width - self.x - (clear.visible ? 48px : Theme.material ? 20px : 10px);
+                        width: parent.width - self.x - (clear.visible ? (Theme.material ? 48px : 28px) : Theme.material ? 20px : 10px);
                         clip: true;
                         search-input := TextInput {
                             width: 100%;
@@ -1004,18 +1004,19 @@ export component SettingsWindow inherits Window {
                             accessible-role: AccessibleRole.none;
                         }
                     }
+                    // (both looks, as the shared SearchField's)
                     clear := Rectangle {
-                        visible: Theme.material && search-input.text != "";
-                        x: parent.width - 48px;
-                        y: (parent.height - 40px) / 2;
-                        width: 40px;
-                        height: 40px;
-                        border-radius: 20px;
-                        background: Theme.m3-on-surface-variant.with-alpha(clear-ta.has-hover ? 0.08 : 0);
+                        visible: search-input.text != "";
+                        x: parent.width - (Theme.material ? 48px : 24px);
+                        y: (parent.height - self.height) / 2;
+                        width: Theme.material ? 40px : 20px;
+                        height: self.width;
+                        border-radius: self.width / 2;
+                        background: Theme.material ? Theme.m3-on-surface-variant.with-alpha(clear-ta.has-hover ? 0.08 : 0) : clear-ta.has-hover ? Theme.fill-hover : transparent;
                         accessible-role: AccessibleRole.button;
                         accessible-label: "Clear search";
                         accessible-action-default => { search-input.text = ""; root.query(""); }
-                        SIcon { g: SG.x; size: 20px; color: Theme.m3-on-surface-variant; }
+                        SIcon { g: SG.x; size: Theme.material ? 20px : 12px; color: Theme.material ? Theme.m3-on-surface-variant : Theme.secondary; }
                         clear-ta := TouchArea {
                             clicked => {
                                 search-input.text = "";
@@ -1205,6 +1206,17 @@ export component SettingsWindow inherits Window {
                             spacing: 2px;
                             for res[ri] in results: Rectangle {
                                 property <bool> keyed: ri == root.res-cur && search-input.has-focus;
+                                // (the row the keys are on is scrolled into view)
+                                changed keyed => {
+                                    if self.keyed {
+                                        let top = self.absolute-position.y - side-list.absolute-position.y;
+                                        if top < -side-scroll.content-y {
+                                            side-scroll.content-y = -top;
+                                        } else if top + self.height > -side-scroll.content-y + side-scroll.height {
+                                            side-scroll.content-y = -(top + self.height - side-scroll.height);
+                                        }
+                                    }
+                                }
                                 min-height: Theme.material ? 56px : 36px;
                                 border-radius: Theme.material ? min(28px, self.height / 2) : 8px;
                                 background: Theme.material ? Theme.m3-on-surface.with-alpha(rta.pressed ? 0.1 : rta.has-hover || self.keyed ? 0.08 : 0) : rta.has-hover || self.keyed ? Theme.fill : transparent;
@@ -1437,6 +1449,8 @@ export component SettingsWindow inherits Window {
                     Text {
                         vertical-alignment: center;
                         text: is-sub ? crumb : page-title;
+                        // (a narrow window: cut with "…", not mid-letter)
+                        overflow: elide;
                         color: is-sub ? (cta.has-hover ? Theme.label : Theme.secondary) : Theme.label;
                         font-size: Theme.title;
                         font-weight: 600;
@@ -1459,6 +1473,8 @@ export component SettingsWindow inherits Window {
                     if is-sub: Text {
                         vertical-alignment: center;
                         text: page-title;
+                        overflow: elide;
+                        horizontal-stretch: 1;
                         color: Theme.label;
                         font-size: Theme.title;
                         font-weight: 600;

@@ -215,6 +215,12 @@ impl Welcome {
         f.pick_look(&look);
         self.flow = Some(f);
         self.walls = flow::walls(v["tahoeDir"].as_str().unwrap_or(""), v["materialDir"].as_str().unwrap_or(""), st.shell.look.dark);
+        self.show_on(st, output);
+    }
+
+    /// The window on `output`, showing the flow as it is (made anew there
+    /// when it was on another output)
+    fn show_on(&mut self, st: &mut State, output: String) {
         if self.win.as_ref().is_some_and(|w| w.output != output) {
             let w = self.win.take().unwrap();
             w.surface.hide(); // (unmapped now: dropping the window alone leaves it on screen)
@@ -449,8 +455,17 @@ impl Part for Welcome {
     fn output_removed(&mut self, st: &mut State, name: &str) {
         if self.win.as_ref().is_some_and(|w| w.output == name) {
             let w = self.win.take().unwrap();
+            let was_shown = w.shown;
             w.surface.hide(); // (unmapped now: dropping the window alone leaves it on screen)
             st.drop_surface(&w.surface);
+            self.clock = None;
+            // (its display unplugged or asleep mid-way: on to another one,
+            // at the same step, so the welcome isn't gone for the session)
+            if was_shown && self.flow.is_some() {
+                if let Some(other) = st.outputs_now().into_iter().map(|o| o.1).find(|n| n != name) {
+                    self.show_on(st, other);
+                }
+            }
         }
     }
 

@@ -34,6 +34,8 @@ component Ghost inherits Rectangle {
     in property <color> ink: Theme.secondary;
     in property <length> size: 16px;
     in property <string> label;
+    // (at a limit: no hover, press or action, and dimmed)
+    in property <bool> enabled: true;
     callback clicked();
     width: 28px;
     height: self.width;
@@ -43,18 +45,20 @@ component Ghost inherits Rectangle {
     animate background { duration: SM.hover; }
     accessible-role: AccessibleRole.button;
     accessible-label: label;
-    accessible-action-default => { clicked(); }
+    accessible-enabled: enabled;
+    accessible-action-default => { if enabled { clicked(); } }
     SIcon { g: icon; fill: root.fill; size: root.size; color: ink; }
     // Keyboard: a Tab stop; Space or Enter press it (audit #118)
     fs := FocusScope {
         focus-on-click: false;
         key-pressed(e) => {
-            if !e.repeat && (e.text == " " || e.text == Key.Return) { root.clicked(); return accept; }
+            if root.enabled && !e.repeat && (e.text == " " || e.text == Key.Return) { root.clicked(); return accept; }
             reject
         }
     }
     SFocusRing { shown: fs.has-focus; radius: root.border-radius; }
     ta := TouchArea {
+        enabled: root.enabled;
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
@@ -217,7 +221,8 @@ component ItemRow {
         background: ta.has-hover ? Theme.m3-surface-container-high.mix(Theme.m3-on-surface, 0.92) : Theme.m3-surface-container-high;
         animate background { duration: SM.hover; }
     }
-    if !Theme.material && r.text == "chevron": Rectangle {
+    // (the whole row is clickable: every one shows it under the pointer)
+    if !Theme.material: Rectangle {
         background: ta.pressed ? Theme.fill-pressed : ta.has-hover ? Theme.fill : transparent;
         animate background { duration: SM.hover; }
     }
@@ -278,7 +283,7 @@ component ItemRow {
                     g: r.icon;
                     fill: r.on;
                     size: 18px;
-                    color: r.on ? Theme.accent : Theme.secondary;
+                    color: r.on ? (Theme.material ? Theme.m3-primary : Theme.accent) : Theme.secondary;
                 }
             }
             if r.icon.p == "" && r.text == "chevron": VerticalLayout {
@@ -345,7 +350,7 @@ export component NotifyCtl inherits VerticalLayout {
                     width: parent.width - 2px;
                     icon: o.icon;
                     fill: o.on;
-                    ink: o.on ? Theme.accent : Theme.secondary;
+                    ink: o.on ? (Theme.material ? Theme.m3-primary : Theme.accent) : Theme.secondary;
                     label: o.text;
                     clicked => { SBus.act(r.id, i, 0, ""); }
                 }
@@ -366,7 +371,7 @@ export component NotifyCtl inherits VerticalLayout {
                     width: parent.width - 2px;
                     icon: o.icon;
                     fill: o.on;
-                    ink: o.on ? Theme.accent : Theme.secondary;
+                    ink: o.on ? (Theme.material ? Theme.m3-primary : Theme.accent) : Theme.secondary;
                     label: o.text;
                     clicked => { SBus.act(r.id, i, 0, ""); }
                 }
@@ -389,6 +394,7 @@ export component NotifyCtl inherits VerticalLayout {
         Ghost {
             icon: SG.minus;
             ink: r.opts.length > 0 && r.opts[0].off ? Theme.tertiary : Theme.label;
+            enabled: !(r.opts.length > 0 && r.opts[0].off);
             label: "Previous space";
             clicked => { SBus.act(r.id, -1, 0, ""); }
         }
@@ -403,6 +409,7 @@ export component NotifyCtl inherits VerticalLayout {
         Ghost {
             icon: SG.plus;
             ink: r.opts.length > 1 && r.opts[1].off ? Theme.tertiary : Theme.label;
+            enabled: !(r.opts.length > 1 && r.opts[1].off);
             label: "Next space";
             clicked => { SBus.act(r.id, 1, 0, ""); }
         }
@@ -483,7 +490,8 @@ export component NotifyBlock inherits VerticalLayout {
         }
     }
     if b.sub == "listhead": HorizontalLayout {
-        height: 28px;
+        // (Material's button is 40 px tall)
+        height: Theme.material ? 40px : 28px;
         spacing: 12px;
         padding-left: Theme.material ? 16px : 4px;
         Text {

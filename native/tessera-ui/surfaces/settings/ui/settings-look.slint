@@ -582,6 +582,15 @@ component ClockFaces inherits Rectangle {
             reject
         }
     }
+    // (the keyboard is here: a ring round the centred card)
+    SFocusRing {
+        x: (parent.width - 176px) / 2;
+        y: 12px;
+        width: 176px;
+        height: parent.height - 24px;
+        shown: fs.has-focus;
+        radius: Theme.material ? 16px : Theme.radius-control;
+    }
     for f[i] in r.data: card := Rectangle {
         // (smaller and fainter the further from the centre, as it slides)
         property <float> off: abs(i - root.shown);
@@ -721,7 +730,8 @@ component BootCards inherits Rectangle {
         accessible-role: AccessibleRole.radio-button;
         accessible-label: c.text;
         accessible-checked: c.on;
-        accessible-action-default => { SBus.act(r.id, i, 0, ""); }
+        accessible-enabled: usable;
+        accessible-action-default => { if usable { SBus.act(r.id, i, 0, ""); } }
         // Keyboard: a Tab stop each; Space or Return choose it (BootAnimations.qml 37–42)
         cfs := FocusScope {
             // (a click goes to what's under it: keys only; it covered link rows and choices, which then took two clicks or none)
@@ -806,6 +816,8 @@ component BootCards inherits Rectangle {
             font-weight: c.on ? 500 : 400;
         }
         ta := TouchArea {
+            // (dimmed, blocked or one being set: a click does nothing, as the keys)
+            enabled: usable;
             mouse-cursor: usable ? MouseCursor.pointer : MouseCursor.default;
             clicked => {
                 cfs.focus();
@@ -857,7 +869,7 @@ component Sets inherits Rectangle {
             Rectangle {
                 border-radius: parent.border-radius;
                 border-width: s.on ? 3px : 0;
-                border-color: Theme.accent;
+                border-color: Theme.material ? Theme.m3-primary : Theme.accent;
             }
             sfs := FocusScope {
                 focus-on-click: false;
@@ -1054,7 +1066,7 @@ component Grid inherits Rectangle {
         Rectangle {
             border-radius: parent.border-radius;
             border-width: t.on ? 3px : 0;
-            border-color: Theme.accent;
+            border-color: Theme.material ? Theme.m3-primary : Theme.accent;
         }
         // Keyboard: a Tab stop, Space or Enter choose it; the ring sits
         // inside (the tile clips)
@@ -1222,7 +1234,7 @@ export component LookCtl inherits VerticalLayout {
             border-radius: Theme.radius-control;
             background: o.on ? Theme.accent-tint : ita.has-hover ? Theme.fill-hover : Theme.fill;
             border-width: o.on ? 2px : 0;
-            border-color: Theme.accent;
+            border-color: Theme.material ? Theme.m3-primary : Theme.accent;
             accessible-role: AccessibleRole.radio-button;
             accessible-label: o.text;
             accessible-checked: o.on;
