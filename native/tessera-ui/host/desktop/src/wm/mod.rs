@@ -407,6 +407,7 @@ impl Service for Wm {
         self.stage.begin(h, &mut io);
         self.rules.begin(h, &mut io);
         self.deco.begin(h, &mut io);
+        self.desk.recover();
         self.modes.begin(h, &mut io);
         self.spaces.reconcile(&mut io, 250);
         self.apptheme.config_changed(h, &mut io);
