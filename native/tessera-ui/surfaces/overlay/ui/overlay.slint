@@ -98,12 +98,15 @@ component Frame inherits Rectangle {
     callback moved(float, float, float, float);
     callback saved();
     callback flag(string);
+    // (the screen's size: a component can't read its parent's)
+    in property <length> area-w: 100000px;
+    in property <length> area-h: 100000px;
     property <length> m: 18px;
     visible: st.shown;
     // (kept on the screen: after a monitor or scale change at least its
     // title bar stays reachable to drag it back)
-    x: max(0px, min(st.x * 1px, parent.width - 80px)) - m;
-    y: max(0px, min(st.y * 1px, parent.height - 40px)) - m;
+    x: max(0px, min(st.x * 1px, area-w - 80px)) - m;
+    y: max(0px, min(st.y * 1px, area-h - 40px)) - m;
     width: st.w * 1px + 2 * m;
     height: st.h * 1px + 2 * m;
     opacity: !OvG.open && st.clickthrough ? 0.55 : 1;
@@ -622,6 +625,8 @@ export component OverlayUi inherits Window {
 
     // ── The widgets ──
     Frame {
+        area-w: root.width;
+        area-h: root.height;
         st: notes;
         title: "Notes";
         icon: icons[0];
@@ -653,6 +658,8 @@ export component OverlayUi inherits Window {
     }
 
     Frame {
+        area-w: root.width;
+        area-h: root.height;
         st: resources;
         title: "Resources";
         icon: icons[1];
@@ -710,6 +717,8 @@ export component OverlayUi inherits Window {
     }
 
     Frame {
+        area-w: root.width;
+        area-h: root.height;
         st: recorder;
         title: "Recorder";
         icon: icons[2];
@@ -754,6 +763,8 @@ export component OverlayUi inherits Window {
     }
 
     Frame {
+        area-w: root.width;
+        area-h: root.height;
         st: mixer-w;
         title: "Volume Mixer";
         icon: icons[3];
@@ -775,6 +786,8 @@ export component OverlayUi inherits Window {
     }
 
     if gaming: Frame {
+        area-w: root.width;
+        area-h: root.height;
         st: image-w;
         title: "Floating Image";
         icon: icons[4];
@@ -807,6 +820,8 @@ export component OverlayUi inherits Window {
     }
 
     if gaming: Frame {
+        area-w: root.width;
+        area-h: root.height;
         st: crosshair-w;
         title: "Crosshair";
         icon: icons[5];
@@ -874,6 +889,8 @@ export component OverlayUi inherits Window {
     }
 
     if gaming: Frame {
+        area-w: root.width;
+        area-h: root.height;
         st: fps-w;
         title: "FPS Limit";
         icon: icons[6];

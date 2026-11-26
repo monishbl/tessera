@@ -260,11 +260,11 @@ pub fn set(v: f64) {
 
 /// A level (0..1) as the device's raw value: never 0 (on a backlight of a
 /// few steps 1 % would round to off, a black screen) unless it has no steps
-fn raw_level(v: f64, max: u32) -> u32 {
+fn raw_level(v: f64, max: u64) -> u64 {
     if max == 0 {
         return 0;
     }
-    ((v * max as f64).round() as u32).clamp(1, max)
+    ((v * max as f64).round() as u64).clamp(1, max)
 }
 
 #[cfg(test)]
