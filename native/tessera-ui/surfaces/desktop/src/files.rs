@@ -4,13 +4,13 @@
 use super::grid::Entry;
 use std::path::PathBuf;
 
-/// Your Desktop folder (xdg-user-dir DESKTOP, else ~/Desktop), made if it
-/// doesn't exist yet
+/// Your Desktop folder (user-dirs.dirs' DESKTOP, else ~/Desktop), made if
+/// it doesn't exist yet. (Read by core, as xdg-user-dir reads it: that
+/// script was started every 3 s while the desktop's files showed)
 pub fn desktop_dir() -> PathBuf {
     let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
-    let out = std::process::Command::new("xdg-user-dir").arg("DESKTOP").stderr(std::process::Stdio::null()).output().ok();
-    let d = out.and_then(|o| String::from_utf8(o.stdout).ok()).map(|s| s.trim().trim_end_matches('/').to_string()).filter(|s| !s.is_empty() && PathBuf::from(s) != home);
-    let d = d.map(PathBuf::from).unwrap_or_else(|| home.join("Desktop"));
+    let d = tessera_core::util::user_dir("DESKTOP", "Desktop");
+    let d = if d == home { home.join("Desktop") } else { d };
     let _ = std::fs::create_dir_all(&d);
     d
 }
@@ -79,11 +79,15 @@ if best:
     print("trash:///" + urllib.parse.quote(best[1]))
 "#;
 
-/// trash()'s script: $1 the file, $2 its name, $3 TRASHED_AS
-const TRASH_SH: &str = "e=$(gio trash -- \"$1\" 2>&1) || { notify-send -a Files -i dialog-error \"Couldn't move “$2” to the Trash\" \"${e##*: }\"; exit 1; }; \
-a=$(timeout 600 notify-send -a Files -i user-trash -t 8000 -A undo=Undo 'Moved to Trash' \"$2\"); [ \"$a\" = undo ] || exit 0; \
-u=$(python3 -I -c \"$3\" \"$1\"); [ -n \"$u\" ] || u=\"trash:///$(basename \"$1\")\"; \
-e=$(gio trash --restore \"$u\" 2>&1) || notify-send -a Files -i dialog-error \"Couldn't put “$2” back\" \"${e##*: }\"";
+/// trash()'s script: $1 the file, $2 its name, $3 TRASHED_AS. (`--` before
+/// the texts: a name such as "-notes.txt" was read as an option and nothing
+/// was shown; the body is markup to the notification server, so & < > are
+/// escaped; the fallback trash:// URI is percent-encoded)
+const TRASH_SH: &str = "m=$(printf '%s' \"$2\" | sed 's/&/\\&amp;/g; s/</\\&lt;/g; s/>/\\&gt;/g'); \
+e=$(gio trash -- \"$1\" 2>&1) || { notify-send -a Files -i dialog-error -- \"Couldn't move “$m” to the Trash\" \"${e##*: }\"; exit 1; }; \
+a=$(timeout 600 notify-send -a Files -i user-trash -t 8000 -A undo=Undo -- 'Moved to Trash' \"$m\"); [ \"$a\" = undo ] || exit 0; \
+u=$(python3 -I -c \"$3\" \"$1\"); [ -n \"$u\" ] || u=\"trash:///$(python3 -I -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' \"$(basename -- \"$1\")\")\"; \
+e=$(gio trash --restore \"$u\" 2>&1) || notify-send -a Files -i dialog-error -- \"Couldn't put “$m” back\" \"${e##*: }\"";
 
 /// Move to Trash, with the notification's Undo (as the QML: gio, then
 /// notify-send with an action that restores it). gio's failure is said (a
