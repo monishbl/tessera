@@ -244,8 +244,7 @@ pub fn spawn(tx: Sender<Msg>) {
 /// A file of the shell's (scripts): $TESSERA_ROOT's, else this checkout's
 pub fn shell_file(rel: &str) -> Option<PathBuf> {
     // (crate::env::root: $TESSERA_ROOT, else the checkout the shell was started from, 17 Nov)
-    let roots = [crate::env::root(), PathBuf::from(crate::env::BUILT_ROOT)];
-    roots.into_iter().map(|r| r.join(rel)).find(|p| p.exists())
+    std::iter::once(crate::env::root()).chain(crate::env::built_root()).map(|r| r.join(rel)).find(|p| p.exists())
 }
 
 /// In the tty test session the shell runs with sandbox folders; apps get the

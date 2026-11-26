@@ -26,6 +26,25 @@ pub fn sandboxed() -> bool {
 /// The tree this was built from (CARGO_MANIFEST_DIR is core's: three up)
 pub const BUILT_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
 
+/// The tree this was built from, when it's there and yours: a ready-made
+/// binary carries the release builder's path, which another account on this
+/// computer could create, so a tree someone else owns is never used
+pub fn built_root() -> Option<std::path::PathBuf> {
+    let p = std::path::PathBuf::from(BUILT_ROOT);
+    ours(&p).then_some(p)
+}
+
+/// The folder exists and belongs to whoever runs this
+fn ours(p: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(p).is_ok_and(|m| m.uid() == unsafe { libc::getuid() })
+}
+
+/// It exists and belongs to someone else
+fn foreign(p: &std::path::Path) -> bool {
+    std::fs::metadata(p).is_ok() && !ours(p)
+}
+
 /// The Tessera checkout whose files the shell uses (shell/assets/scripts,
 /// fonts, sounds, pictures; material/assets): $TESSERA_ROOT; else the one
 /// launch-shell.sh started this shell from (TESSERA_QML_FALLBACK names that
@@ -67,10 +86,17 @@ fn pick_root(env: Option<std::path::PathBuf>, launched: Option<std::path::PathBu
             return parent.to_path_buf();
         }
     }
-    if checkout(&built) {
+    if checkout(&built) && ours(&built) && ours(&built.join("shell")) {
         return built;
     }
-    sources.iter().find(|s| checkout(s)).cloned().unwrap_or(built)
+    sources.iter().find(|s| checkout(s)).cloned().unwrap_or_else(|| {
+        // (never another account's tree, even as the last resort)
+        if foreign(&built) {
+            std::path::PathBuf::from("/usr/share/tessera")
+        } else {
+            built
+        }
+    })
 }
 
 #[cfg(test)]

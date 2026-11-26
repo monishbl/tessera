@@ -103,6 +103,9 @@ thread_local! {
     static BUCKET: Cell<(i64, Option<Instant>)> = const { Cell::new((0, None)) };
     /// the process's CPU time (µs) at the bucket's start
     static CPU_AT: Cell<i64> = const { Cell::new(0) };
+    /// when the bucket began on the monotonic clock (which stops while the
+    /// computer sleeps), and how far into it that was (s)
+    static AWAKE_FROM: Cell<(Option<Instant>, i64)> = const { Cell::new((None, 0)) };
     /// the memory pressure's `some total` (µs) at the bucket's start
     static PSI_AT: Cell<Option<u64>> = const { Cell::new(None) };
 }
@@ -154,6 +157,7 @@ fn begin_bucket(now_secs: i64) {
     let start = now_secs - now_secs.rem_euclid(BUCKET_SECS);
     let left = (start + BUCKET_SECS - now_secs).max(1) as u64;
     BUCKET.with(|b| b.set((start, Some(Instant::now() + Duration::from_secs(left)))));
+    AWAKE_FROM.with(|a| a.set((Some(Instant::now()), now_secs - start)));
     CPU_AT.with(|c| c.set(cpu_us()));
     PSI_AT.with(|c| c.set(memory_stall_us()));
 }
@@ -222,6 +226,17 @@ pub fn frames(shown: u32, missed: u32) {
     }
 }
 
+/// The seconds a bucket recorded: its wall-clock span, but not the time
+/// asleep in it (the monotonic clock's time since it began, plus how far into
+/// the bucket that was); at least one
+fn recorded_secs(wall: i64, awake_since_begin: Option<i64>, offset: i64) -> i64 {
+    let d = match awake_since_begin {
+        Some(a) => wall.min(a + offset),
+        None => wall,
+    };
+    d.max(1)
+}
+
 /// A part panicked (and is made again: contain.rs)
 pub fn part_crashed() {
     if on() {
@@ -237,12 +252,14 @@ fn close_bucket(now: bool) {
     let cpu_ms = (cpu_us() - CPU_AT.with(Cell::get)).max(0) / 1000;
     let psi_at = PSI_AT.with(Cell::get);
     let end = crate::util::now_ms() / 1000;
+    let awake = AWAKE_FROM.with(Cell::get);
+    let d = recorded_secs(end - start, awake.0.map(|t| t.elapsed().as_secs() as i64), awake.1);
     begin_bucket(end);
     let job = move || {
         let mut counts = counts;
-        counts.pressure = pressure_pct(psi_at, memory_stall_us(), (end - start).max(1));
+        counts.pressure = pressure_pct(psi_at, memory_stall_us(), d);
         let (rss, pss) = memory();
-        append(&path(), &sample_line(start, (end - start).max(1), rss, pss, cpu_ms, &counts));
+        append(&path(), &sample_line(start, d, rss, pss, cpu_ms, &counts));
     };
     if now {
         job();
@@ -329,7 +346,9 @@ pub fn append(path: &Path, line: &str) {
 /// Cut to the newest `KEEP_BYTES` of whole lines: samples none older than
 /// `KEEP_DAYS`, events none older than `EVENT_DAYS`
 fn trim(path: &Path, now_secs: i64) {
-    let Ok(text) = std::fs::read_to_string(path) else { return };
+    // (bytes, read lossily: one bad line must not stop the trimming for good)
+    let Ok(bytes) = std::fs::read(path) else { return };
+    let text = String::from_utf8_lossy(&bytes);
     let kept = ring_events(&text, KEEP_BYTES, now_secs - KEEP_DAYS * 86400, now_secs - EVENT_DAYS * 86400);
     let tmp = path.with_extension("jsonl.tmp");
     if std::fs::write(&tmp, kept).is_ok() {
@@ -494,7 +513,7 @@ impl Sample {
 
 /// The record read: its samples and its events, oldest first
 pub fn read_all() -> (Vec<Sample>, Vec<Value>) {
-    split(&parse_lines(&std::fs::read_to_string(path()).unwrap_or_default()))
+    split(&parse_lines(&String::from_utf8_lossy(&std::fs::read(path()).unwrap_or_default())))
 }
 
 pub fn split(lines: &[Value]) -> (Vec<Sample>, Vec<Value>) {
@@ -758,6 +777,15 @@ impl calloop::EventSource for Woke {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn time_asleep_isnt_recorded() {
+        // (audit #823) a bucket begun 100 s in, awake 200 s, 8 h asleep
+        assert_eq!(recorded_secs(28_800 + 300, Some(200), 100), 300);
+        // no suspend: the wall clock's span
+        assert_eq!(recorded_secs(300, Some(250), 50), 300);
+        assert_eq!(recorded_secs(0, None, 0), 1);
+    }
 
     #[test]
     fn turns_count_as_stalls_over_a_frame() {

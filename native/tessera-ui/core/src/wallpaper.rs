@@ -212,7 +212,7 @@ pub fn shell_dir() -> PathBuf {
     let candidates = [
         // ($TESSERA_ROOT, else the checkout the shell was started from: crate::env::root, 17 Nov)
         Some(crate::env::root().join("shell")),
-        Some(PathBuf::from(crate::env::BUILT_ROOT).join("shell")),
+        crate::env::built_root().map(|r| r.join("shell")),
         Some(PathBuf::from("/usr/share/tessera/shell")),
     ];
     candidates.into_iter().flatten().find(|d| d.join("shell.qml").exists()).unwrap_or_else(|| PathBuf::from("/usr/share/tessera/shell"))

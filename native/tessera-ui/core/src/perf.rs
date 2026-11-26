@@ -61,6 +61,25 @@ fn worth_logging(ms: f64, inner_ms: f64, inner_logged: bool, outermost: bool) ->
     ms > STEP_MS && (!inner_logged || ms - inner_ms > STEP_MS || (outermost && ms > STALL_MS))
 }
 
+/// The bookkeeping as a time() found it: put back when what it ran panicked
+/// (contain.rs catches that further up; the stack would keep its steps, and
+/// every later path and outermost test would be wrong)
+struct Unwound {
+    what: usize,
+    depth: usize,
+}
+
+impl Drop for Unwound {
+    fn drop(&mut self) {
+        let _ = WHAT.try_with(|w| {
+            if let Ok(mut w) = w.try_borrow_mut() {
+                w.truncate(self.what);
+            }
+        });
+        let _ = DEPTH.try_with(|d| d.set(self.depth));
+    }
+}
+
 /// Run `f` as the named piece of work; logged when it holds the UI thread
 /// longer than the tripwire (`STEP_MS`)
 #[inline]
@@ -69,10 +88,13 @@ pub fn time<R>(what: impl FnOnce() -> String, f: impl FnOnce() -> R) -> R {
     if !on() && !acc {
         return f();
     }
+    let entry = Unwound { what: WHAT.with(|w| w.borrow().len()), depth: DEPTH.with(Cell::get) };
     WHAT.with(|w| w.borrow_mut().push(Step { label: what(), inner_ms: 0.0, inner_logged: false }));
     DEPTH.with(|d| d.set(d.get() + 1));
     let t = Instant::now();
     let r = f();
+    // (returned: the bookkeeping below balances it)
+    std::mem::forget(entry);
     let ms = t.elapsed().as_secs_f64() * 1000.0;
     DEPTH.with(|d| d.set(d.get() - 1));
     let path = WHAT.with(|w| {

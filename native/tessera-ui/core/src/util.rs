@@ -233,8 +233,8 @@ pub fn link_target(path: &std::path::Path) -> PathBuf {
 /// from (crate::env::root), else the source tree (17 Nov: the source tree
 /// came first, and it's the build machine's path in a ready-made binary)
 pub fn asset(rel: &str) -> Option<PathBuf> {
-    [crate::env::root(), PathBuf::from(crate::env::BUILT_ROOT)]
-        .into_iter()
+    std::iter::once(crate::env::root())
+        .chain(crate::env::built_root())
         .map(|r| r.join(rel))
         .find(|p| p.exists())
 }
