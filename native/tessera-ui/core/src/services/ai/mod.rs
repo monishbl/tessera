@@ -389,7 +389,16 @@ impl Chat {
     // ── The conversation ────────────────────────────────────────────────
 
     pub fn note(&mut self, text: &str) {
-        self.rows.push(Row::new("note", text, "done"));
+        let row = Row::new("note", text, "done");
+        // (while an answer streams, the note goes above it: update, finish
+        // and fail_with write into the last row, which must stay the answer)
+        match self.rows.last() {
+            Some(r) if self.busy() && r.role == "assistant" && r.status == "streaming" => {
+                let at = self.rows.len() - 1;
+                self.rows.insert(at, row);
+            }
+            _ => self.rows.push(row),
+        }
     }
 
     /// attach(picture): one more, while there's room
@@ -473,7 +482,12 @@ impl Chat {
             self.note("Add a model and provider in Settings → AI first.");
             return Submitted::Nothing;
         }
-        if let Some(key) = t.strip_prefix("/key ") {
+        if let Some(key) = key_command(&t) {
+            if key.is_empty() {
+                let note = format!("Type /key followed by your {} {}.", self.provider_name(), self.credential_label().to_lowercase());
+                self.note(&note);
+                return Submitted::Nothing;
+            }
             self.save_credential(key);
             let p = self.provider_name();
             self.note(&format!("{p} credential saved."));
@@ -696,6 +710,24 @@ pub fn stream(req: Request, protocol: String, gen: u64, cancel: Arc<AtomicU64>, 
     });
 }
 
+/// "/key <credential>": any case, any whitespace (a tab, a line break)
+/// after it, so a mistyped command never goes to the model with the secret
+fn key_command(t: &str) -> Option<&str> {
+    let head = t.get(..4)?;
+    if !head.eq_ignore_ascii_case("/key") {
+        return None;
+    }
+    let rest = &t[4..];
+    if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    Some(rest.trim())
+}
+
+/// The most text an answer may stream (a looping model or a broken endpoint
+/// would otherwise grow it, and each update's copy, without end)
+const MAX_ANSWER: usize = 4 * 1024 * 1024;
+
 fn short(s: &str) -> String {
     s.chars().take(200).collect()
 }
@@ -744,6 +776,9 @@ fn run(req: &Request, parser: &mut sse::Parser, live: &dyn Fn() -> bool, send: &
             return Ok((status, String::new()));
         }
         dirty |= parser.feed(&buf[..n]);
+        if parser.text.len() + parser.thinking.len() > MAX_ANSWER {
+            break;
+        }
         if dirty && last.elapsed() >= Duration::from_millis(50) {
             send(Event::Update { gen, text: parser.text.clone(), thinking: parser.thinking.clone() });
             last = Instant::now();
@@ -846,6 +881,32 @@ mod tests {
     }
 
     #[test]
+    fn key_command_any_case_and_whitespace() {
+        assert_eq!(key_command("/key sk-1"), Some("sk-1"));
+        assert_eq!(key_command("/Key\tsk-1"), Some("sk-1"));
+        assert_eq!(key_command("/KEY\nsk-1 "), Some("sk-1"));
+        assert_eq!(key_command("/key"), Some(""));
+        assert_eq!(key_command("/keyboard"), None);
+        assert_eq!(key_command("/ke"), None);
+        assert_eq!(key_command("hello"), None);
+    }
+
+    #[test]
+    fn a_note_while_streaming_goes_above_the_answer() {
+        let mut c = chat(None);
+        let Submitted::Request(_, _, gen, _) = c.submit("hi") else { panic!() };
+        c.note_full();
+        assert_eq!(c.rows.last().unwrap().role, "assistant");
+        assert!(c.update(gen, "hello".into(), String::new()));
+        let mut p = sse::Parser::new("custom");
+        p.feed(b"data: {\"choices\":[{\"delta\":{\"content\":\"hello there\"}}]}\n");
+        assert!(c.done(gen, 200, &p, ""));
+        let last = c.rows.last().unwrap();
+        assert_eq!((last.role.as_str(), last.status.as_str(), last.text.as_str()), ("assistant", "done", "hello there"));
+        assert_eq!(c.rows[c.rows.len() - 2].role, "note");
+    }
+
+    #[test]
     fn commands_pictures_and_notes() {
         let mut c = chat(None);
         assert!(matches!(c.submit("/model Text"), Submitted::Model(k) if k.contains("text-only")));
@@ -904,13 +965,15 @@ mod tests {
         let mut c = chat(None);
         let Submitted::Request(_, _, gen, _) = c.submit("hi") else { panic!() };
         c.note("Couldn't add x.jpg.");
+        // (the note goes above the streaming answer, and the answer's row is
+        // found as the streaming one wherever it is)
         assert!(c.update(gen, "partial".into(), String::new()));
-        assert_eq!(c.rows[1].text, "partial");
+        assert_eq!(c.rows[2].text, "partial");
         let mut p = sse::Parser::new("custom");
         p.text = "the answer".into();
         assert!(c.done(gen, 200, &p, ""));
-        assert_eq!((c.rows[1].role.as_str(), c.rows[1].status.as_str(), c.rows[1].text.as_str()), ("assistant", "done", "the answer"));
-        assert_eq!((c.rows[2].role.as_str(), c.rows[2].text.as_str()), ("note", "Couldn't add x.jpg."));
+        assert_eq!((c.rows[2].role.as_str(), c.rows[2].status.as_str(), c.rows[2].text.as_str()), ("assistant", "done", "the answer"));
+        assert_eq!((c.rows[1].role.as_str(), c.rows[1].text.as_str()), ("note", "Couldn't add x.jpg."));
         // stopped before anything came: the empty answer goes, the note stays
         let Submitted::Request(_, _, _, _) = c.submit("again") else { panic!() };
         c.note("A note");

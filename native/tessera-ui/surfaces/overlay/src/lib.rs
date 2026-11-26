@@ -83,6 +83,23 @@ struct Win {
     sliders: tessera_core::rows::Rows<ui::OvSlider>,
 }
 
+/// Where the recorder writes (the screen service's folder: Videos in the
+/// user's language, then Screen Recordings), home shortened to ~
+fn rec_dir() -> String {
+    static D: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    D.get_or_init(rec_dir_now).clone()
+}
+
+fn rec_dir_now() -> String {
+    let p = tessera_core::util::user_dir("VIDEOS", "Videos").join("Screen Recordings");
+    let s = p.to_string_lossy().into_owned();
+    let home = std::env::var("HOME").unwrap_or_default();
+    match s.strip_prefix(home.as_str()) {
+        Some(rest) if !home.is_empty() => format!("~{rest}"),
+        _ => s,
+    }
+}
+
 #[derive(Default)]
 pub struct Overlay {
     /// the window's logical size (widgets are kept on it), (0, 0) until shown
@@ -100,9 +117,18 @@ pub struct Overlay {
     recording: bool,
     notes_path: String,
     notes_loaded: bool,
+    /// the notes file's time when read (read again on open if it changed)
+    notes_stamp: Option<std::time::SystemTime>,
+    /// the file couldn't be read (not missing): never written over
+    notes_blocked: bool,
     notes_text: String,
+    /// the floating image path last found missing (or "" cleared): the
+    /// picture was blanked once, no decode thread per push
+    image_missing: Option<String>,
     notes_timer: Option<slint::Timer>,
     fps_status: String,
+    /// the FPS limit last chosen here (none yet: no chip filled)
+    fps_current: Option<i32>,
     sampler: Sampler,
     sampling: Option<slint::Timer>,
     started: Option<std::time::Instant>,
@@ -266,6 +292,8 @@ impl Overlay {
         ui.set_recording(self.recording);
         ui.set_has_image(!self.image.is_empty());
         ui.set_fps_status(self.fps_status.clone().into());
+        ui.set_fps_current(self.fps_current.unwrap_or(-1));
+        ui.set_rec_dir(rec_dir().into());
         if ui.get_notes_text().as_str() != self.notes_text && !ui.get_notes_focused() {
             ui.set_notes_text(self.notes_text.clone().into());
         }
@@ -298,10 +326,16 @@ impl Overlay {
         self.picture(st);
     }
 
+    /// The apps in the mixer: not the shell's own sound effects (each one
+    /// came and went for a moment and shifted the rows under a drag)
+    fn mixer_streams(s: &Sound) -> Vec<&audio::Stream> {
+        s.streams.iter().filter(|x| !audio::EVENT_PLAYERS.contains(&x.binary.as_str())).collect()
+    }
+
     fn sliders(&self, st: &State) -> Vec<ui::OvSlider> {
         let Some(s) = st.shell.get::<Sound>() else { return vec![ui::OvSlider { label: "Output".into(), icon: gl("speaker-high"), value: 0.0 }] };
         let mut out = vec![ui::OvSlider { label: "Output".into(), icon: gl(model::volume_icon(s.volume(), s.muted())), value: if s.muted() { 0.0 } else { s.volume() as f32 } }];
-        for x in &s.streams {
+        for x in Self::mixer_streams(s) {
             out.push(ui::OvSlider { label: x.name.clone().into(), icon: gl(if x.muted { "speaker-x" } else { "speaker-high" }), value: if x.muted { 0.0 } else { x.volume as f32 } });
         }
         out
@@ -325,11 +359,21 @@ impl Overlay {
 
     /// The floating image, decoded again when its file changes
     fn picture(&mut self, st: &State) {
-        if self.image.is_empty() || self.win.is_none() {
+        let Some(w) = &self.win else { return };
+        let stamp = if self.image.is_empty() { None } else { std::fs::metadata(&self.image).and_then(|m| m.modified()).ok() };
+        // (cleared, or its file gone: the picture goes, once, with no
+        // thread per push to fail on it)
+        if stamp.is_none() {
+            if self.image_missing.as_deref() != Some(self.image.as_str()) {
+                self.image_missing = Some(self.image.clone());
+                self.image_stamp = None;
+                self.image_gen += 1;
+                w.ui.set_picture(slint::Image::default());
+            }
             return;
         }
-        let stamp = std::fs::metadata(&self.image).and_then(|m| m.modified()).ok();
-        if stamp == self.image_stamp && stamp.is_some() {
+        self.image_missing = None;
+        if stamp == self.image_stamp {
             return;
         }
         self.image_stamp = stamp;
@@ -346,21 +390,54 @@ impl Overlay {
         });
     }
 
+    fn notes_file(&self) -> std::path::PathBuf {
+        if self.notes_path.is_empty() { crate::util::state_dir().join("notes.md") } else { std::path::PathBuf::from(&self.notes_path) }
+    }
+
+    /// The notes: read once, and again when the file changed elsewhere (an
+    /// editor, a backup, the QML shell) and no save of ours is pending
     fn load_notes(&mut self) {
-        if self.notes_loaded {
+        let path = self.notes_file();
+        let stamp = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        let pending = self.notes_timer.as_ref().is_some_and(|t| t.running());
+        if self.notes_loaded && (pending || stamp == self.notes_stamp) {
             return;
         }
-        let path = if self.notes_path.is_empty() { crate::util::state_dir().join("notes.md").to_string_lossy().into_owned() } else { self.notes_path.clone() };
-        self.notes_text = std::fs::read_to_string(&path).unwrap_or_default();
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                self.notes_blocked = false;
+                self.notes_text = match String::from_utf8(bytes) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        // (not UTF-8: shown as well as it reads, and the file
+                        // kept beside it before anything is written over it)
+                        let bytes = e.into_bytes();
+                        let _ = std::fs::write(path.with_extension("md.bak"), &bytes);
+                        String::from_utf8_lossy(&bytes).into_owned()
+                    }
+                };
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                self.notes_blocked = false;
+                self.notes_text.clear();
+            }
+            // (unreadable for now: never replaced by an empty note)
+            Err(_) => self.notes_blocked = true,
+        }
+        self.notes_stamp = stamp;
         self.notes_loaded = true;
     }
 
-    fn save_notes(&self) {
-        let path = if self.notes_path.is_empty() { crate::util::state_dir().join("notes.md") } else { std::path::PathBuf::from(&self.notes_path) };
+    fn save_notes(&mut self) {
+        if self.notes_blocked {
+            return;
+        }
+        let path = self.notes_file();
         if let Some(d) = path.parent() {
             let _ = std::fs::create_dir_all(d);
         }
         let _ = crate::util::write_atomic(&path, self.notes_text.as_bytes());
+        self.notes_stamp = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
     }
 
     fn told(&mut self, st: &mut State, v: &Value) {
@@ -420,6 +497,7 @@ impl Part for Overlay {
                     self.output = cmd.screen.clone();
                 }
                 self.open = true;
+                self.load_notes();
                 self.ensure(st);
                 if let Some(w) = &self.win {
                     w.ui.invoke_focus_keys();
@@ -491,6 +569,7 @@ impl Part for Overlay {
                 if [0, 30, 60, 90, 120].contains(&n) {
                     shell::ask("overlay.fps", json!([n]));
                     self.fps_status = model::fps_status(n as u32);
+                    self.fps_current = Some(n);
                     self.push(st);
                 }
             }
@@ -523,7 +602,7 @@ impl Part for Overlay {
                         audio::send(audio::Cmd::SinkMute { index: d.index, muted: false });
                         audio::send(audio::Cmd::SinkVolume { index: d.index, channels: d.channels, volume: v });
                     }
-                } else if let Some(x) = usize::try_from(i - 1).ok().and_then(|i| s.streams.get(i)) {
+                } else if let Some(x) = usize::try_from(i - 1).ok().and_then(|i| Self::mixer_streams(s).get(i).copied()) {
                     audio::send(audio::Cmd::StreamMute { index: x.index, muted: false });
                     audio::send(audio::Cmd::StreamVolume { index: x.index, channels: x.channels, volume: v });
                 }

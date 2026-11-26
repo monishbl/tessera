@@ -434,7 +434,7 @@ export component StatusMenus inherits Window {
                             Text {
                                 text: "Sound";
                                 color: Theme.label;
-                                font-size: Theme.body;
+                                font-size: Theme.title;
                                 font-weight: 600;
                             }
                             Block {
@@ -450,7 +450,9 @@ export component StatusMenus inherits Window {
                             blocks: sound-blocks;
                             g: g;
                             accent-glyph: accent-glyph;
-                            cap: 4000px;
+                            // (scrolls once it would pass the screen's foot: the
+                            // panel starts 34 px down, its title and slider ~120 px)
+                            cap: max(120px, min(4000px, root.height - 34px - 180px));
                             block(i, what, text) => { sound-block(i, what, text); }
                             block-slide(i, v) => { sound-slide(i, v); }
                         }
@@ -474,7 +476,6 @@ export component StatusMenus inherits Window {
                         }
                         for u in in-use: HorizontalLayout {
                             spacing: 10px;
-                            alignment: start;
                             Rectangle {
                                 width: 28px;
                                 height: 28px;
@@ -490,14 +491,17 @@ export component StatusMenus inherits Window {
                             }
                             VerticalLayout {
                                 alignment: center;
+                                horizontal-stretch: 1;
                                 Text {
                                     text: u.app;
+                                    overflow: elide;
                                     color: Theme.label;
                                     font-size: Theme.body;
                                     font-weight: 500;
                                 }
                                 Text {
                                     text: u.what;
+                                    overflow: elide;
                                     color: Theme.secondary;
                                     font-size: Theme.small;
                                 }
@@ -682,6 +686,7 @@ export component StatusMenus inherits Window {
                         spacing: 8px;
                         Text {
                             text: wx-place;
+                            overflow: elide;
                             color: Theme.label;
                             font-size: Theme.title;
                             font-weight: 600;
@@ -694,7 +699,6 @@ export component StatusMenus inherits Window {
                         }
                         if wx-note == "": HorizontalLayout {
                             spacing: 10px;
-                            alignment: start;
                             SymIcon {
                                 text: wx-icon;
                                 fill: true;
@@ -709,14 +713,17 @@ export component StatusMenus inherits Window {
                             }
                             VerticalLayout {
                                 alignment: center;
+                                horizontal-stretch: 1;
                                 Text {
                                     text: wx-cond;
+                                    overflow: elide;
                                     color: Theme.label;
                                     font-size: Theme.small;
                                     font-weight: 500;
                                 }
                                 Text {
                                     text: wx-feels;
+                                    overflow: elide;
                                     color: Theme.secondary;
                                     font-size: Theme.small;
                                 }
@@ -830,6 +837,9 @@ export component StatusMenus inherits Window {
                                 height: 32px;
                                 track: 16px;
                                 value: np.progress;
+                                // (one seek on release, as GlassSeek: not one per pointer move)
+                                seek-on-release: true;
+                                released(v) => { np-seek(v); }
                                 moved(v) => { np-seek(v); }
                             }
                             Rectangle {

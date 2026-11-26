@@ -126,6 +126,22 @@ fn image_key(path: &str, picture: bool) -> String {
 
 /// A card's icon or picture from its file, small (shown at 40 px; off the
 /// UI thread: a full-size photo as a message's picture held the banner up)
+/// The largest picture file a notification may name
+const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+
+/// The history holds every message body: only its owner may read it
+fn write_private(p: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir);
+    }
+    // (a tmp left by an older build may be 0644: made anew, so the mode holds)
+    let _ = std::fs::remove_file(p);
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(p)?;
+    f.write_all(data)
+}
+
 fn decode_image(path: &str, picture: bool) -> Option<Decoded> {
     let p = std::path::Path::new(path);
     let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
@@ -247,8 +263,27 @@ fn data_dirs() -> Vec<String> {
     std::iter::once(home).chain(dirs.split(':').map(str::to_string)).filter(|d| !d.is_empty()).collect()
 }
 
-/// An app's icon name from its desktop entry (by id)
+/// An app's icon name from its desktop entry (by id): read once per entry,
+/// misses too (cards are made on the UI thread at every refresh)
 fn desktop_icon(entry: &str) -> Option<String> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static SEEN: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(v) = seen.lock().ok().and_then(|m| m.get(entry).cloned()) {
+        return v;
+    }
+    let v = read_desktop_icon(entry);
+    if let Ok(mut m) = seen.lock() {
+        if m.len() > 512 {
+            m.clear();
+        }
+        m.insert(entry.to_string(), v.clone());
+    }
+    v
+}
+
+fn read_desktop_icon(entry: &str) -> Option<String> {
     let id = entry.trim_end_matches(".desktop");
     for d in data_dirs() {
         let Ok(text) = std::fs::read_to_string(format!("{d}/applications/{id}.desktop")) else { continue };
@@ -491,11 +526,8 @@ impl Notifications {
             let json = json.clone();
             std::thread::spawn(move || {
                 let p = notify::history_path();
-                if let Some(dir) = p.parent() {
-                    let _ = std::fs::create_dir_all(dir);
-                }
                 let tmp = p.with_extension("json.tmp");
-                if std::fs::write(&tmp, json).is_ok() {
+                if write_private(&tmp, json.as_bytes()).is_ok() {
                     let _ = std::fs::rename(&tmp, &p);
                 }
             });
@@ -680,7 +712,10 @@ impl Notifications {
             let to = st.shell.sender(NAME);
             let p = path.to_string();
             std::thread::spawn(move || {
-                let px = decode_image(&p, picture);
+                // (an app may name any path: only a regular file, and not a
+                // huge one; a FIFO would hold this thread for ever)
+                let ok = std::fs::metadata(&p).is_ok_and(|m| m.is_file() && m.len() <= MAX_IMAGE_BYTES);
+                let px = if ok { decode_image(&p, picture) } else { None };
                 to(Box::new(M::Image(key, px)));
             });
         }
@@ -1258,7 +1293,15 @@ impl Part for Notifications {
                 match p.as_str() {
                     "expand" => self.expanded = self.banners.len() > 1,
                     "collapse" => self.expanded = false,
-                    "clear" => return self.clear_all(st),
+                    // (the stack's Clear all takes the banners off the screen;
+                    // they stay in Notification Center, as a banner's own X)
+                    "clear" => {
+                        let ids: Vec<u32> = self.banners.iter().filter(|s| !s.leaving).map(|s| s.id).collect();
+                        self.expanded = false;
+                        for id in ids {
+                            self.leave(st, id);
+                        }
+                    }
                     _ => {}
                 }
                 self.refresh(st);
@@ -1331,11 +1374,8 @@ impl Part for Notifications {
         let json = model::history_json(&self.bus_id(), &self.store);
         if self.restored {
             let p = notify::history_path();
-            if let Some(dir) = p.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
             let tmp = p.with_extension("json.tmp");
-            if std::fs::write(&tmp, json).is_ok() {
+            if write_private(&tmp, json.as_bytes()).is_ok() {
                 let _ = std::fs::rename(&tmp, &p);
             }
         }

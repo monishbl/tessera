@@ -267,10 +267,10 @@ fn s(v: &Value) -> String {
     v.as_str().unwrap_or_default().to_string()
 }
 
-/// Material's big time (TimeFormat.hmShort: Qt's "h:mm" without AM/PM
-/// reads the hours 0-23, so it's never a 12-hour clock)
+/// Material's big time: the chosen clock (the QML's Qt "h:mm" read the
+/// hours 0-23 even with the 12-hour clock: the bar beside it said 3:42 PM)
 fn clock_short(h24: bool) -> String {
-    crate::util::now(if h24 { "%H:%M" } else { "%-H:%M" })
+    crate::util::now(if h24 { "%H:%M" } else { "%-I:%M" })
 }
 
 impl Notifications {
@@ -898,7 +898,11 @@ impl Notifications {
             if a < 0 || b < 0 {
                 return fail("Use times like 9:30 or 5pm.");
             }
-            (a, b.max(a))
+            // (not saved as a zero-length event with the typed end dropped)
+            if b < a {
+                return fail("The end is before the start.");
+            }
+            (a, b)
         };
         if !d.todo && !d.key.is_empty() && self.nc_recurring(&d.key) && every < 0 {
             w.ui.invoke_cal_ask(1, "".into());

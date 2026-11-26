@@ -531,12 +531,22 @@ pub fn spawn(tx: Sender<Msg>) {
 
 /// Left click: Activate (an item that's only a menu answers with its menu instead)
 pub fn activate(key: &str, x: i32, y: i32) {
+    call_at(key, "Activate", x, y);
+}
+
+/// An item with no dbusmenu of its own draws its menu itself, here
+pub fn context_menu(key: &str, x: i32, y: i32) {
+    call_at(key, "ContextMenu", x, y);
+}
+
+/// The item's (x, y) method: Activate, ContextMenu or SecondaryActivate
+fn call_at(key: &str, method: &'static str, x: i32, y: i32) {
     let key = key.to_string();
     std::thread::spawn(move || {
         let Some(c) = conn() else { return };
         let (svc, path) = parse_address(&key, "");
         if let Ok(p) = proxy(&c, &svc, &path, ITEM) {
-            let _: zbus::Result<()> = p.call("Activate", &(x, y));
+            let _: zbus::Result<()> = p.call(method, &(x, y));
         };
     });
 }

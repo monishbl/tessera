@@ -100,8 +100,10 @@ component Frame inherits Rectangle {
     callback flag(string);
     property <length> m: 18px;
     visible: st.shown;
-    x: st.x * 1px - m;
-    y: st.y * 1px - m;
+    // (kept on the screen: after a monitor or scale change at least its
+    // title bar stays reachable to drag it back)
+    x: max(0px, min(st.x * 1px, parent.width - 80px)) - m;
+    y: max(0px, min(st.y * 1px, parent.height - 40px)) - m;
     width: st.w * 1px + 2 * m;
     height: st.h * 1px + 2 * m;
     opacity: !OvG.open && st.clickthrough ? 0.55 : 1;
@@ -291,13 +293,16 @@ component Level inherits Rectangle {
                 background: Theme.m3-secondary-container;
             }
         }
+        // (Material: on the filled part while it fits there, else past the
+        // handle in the track's ink, as Control Center's QsSlider)
+        property <bool> icon-inside: clamp(s.value, 0, 1) * (self.width - 4px) - 6px >= 12px + 16px + 4px;
         GIcon {
-            x: Theme.material ? 12px : 8px;
+            x: Theme.material ? (icon-inside ? 12px : clamp(s.value, 0, 1) * (parent.width - 4px) + 14px) : 8px;
             width: 16px;
             g: s.icon;
             fill: true;
             size: Theme.material ? 18px : 14px;
-            color: Theme.material ? Theme.m3-on-primary : #00000099;
+            color: Theme.material ? (icon-inside ? Theme.m3-on-primary : Theme.m3-on-secondary-container) : #00000099;
         }
         ta := TouchArea {
             mouse-cursor: pointer;
@@ -486,6 +491,8 @@ export component OverlayUi inherits Window {
     in property <bool> has-image;
     in property <image> picture;
     in property <string> fps-status;
+    in property <int> fps-current: -1; // the limit last chosen here (-1 none yet)
+    in property <string> rec-dir: "~/Videos/Screen Recordings"; // where recordings go
     in property <[OvSlider]> sliders;
     in property <OvRes> res;
     in-out property <string> notes-text;
@@ -739,7 +746,7 @@ export component OverlayUi inherits Window {
                 }
             }
             Text {
-                text: "Saved to ~/Videos";
+                text: "Saved to " + rec-dir;
                 color: Theme.tertiary;
                 font-size: Theme.caption;
             }
@@ -828,12 +835,23 @@ export component OverlayUi inherits Window {
                     height: 20px;
                     border-radius: 10px;
                     background: swatches[c.i];
-                    border-width: cross.hex == c.hex ? 2px : 0;
-                    border-color: Theme.label;
+                    // (the choice: a ring 2 px outside the swatch, which shows
+                    // on the white one in the dark theme too)
+                    if cross.hex == c.hex: Rectangle {
+                        x: -4px;
+                        y: -4px;
+                        width: parent.width + 8px;
+                        height: parent.height + 8px;
+                        border-radius: self.height / 2;
+                        border-width: 2px;
+                        border-color: Theme.accent;
+                    }
                     accessible-role: button;
-                    accessible-label: c.hex;
+                    accessible-label: ["Green", "Red", "Blue", "Yellow", "White", "Pink"][c.i];
+                    accessible-checked: cross.hex == c.hex;
                     accessible-action-default => { root.cross-color(c.hex); }
                     TouchArea {
+                        mouse-cursor: pointer;
                         clicked => { root.cross-color(c.hex); }
                     }
                 }
@@ -873,20 +891,24 @@ export component OverlayUi inherits Window {
                     width: chip.preferred-width + (Theme.material ? 32px : 20px);
                     height: Theme.material ? 32px : 28px;
                     border-radius: Theme.material ? 8px : 14px;
-                    background: Theme.material ? Theme.m3-on-surface-variant.with-alpha(ft.pressed ? 0.1 : ft.has-hover ? 0.08 : 0) : Theme.fill;
-                    border-width: Theme.material ? 1px : 0;
+                    // (the active limit filled: accent / secondary container)
+                    property <bool> on: fps-current == n;
+                    background: on ? (Theme.material ? Theme.m3-secondary-container : Theme.accent) : Theme.material ? Theme.m3-on-surface-variant.with-alpha(ft.pressed ? 0.1 : ft.has-hover ? 0.08 : 0) : ft.pressed ? Theme.fill-pressed : ft.has-hover ? Theme.fill-hover : Theme.fill;
+                    border-width: Theme.material && !on ? 1px : 0;
                     border-color: Theme.m3-outline-variant;
                     accessible-role: button;
+                    accessible-checked: on;
                     accessible-label: n == 0 ? "Off" : n + " fps";
                     accessible-action-default => { root.fps(n); }
                     chip := Text {
                         text: n == 0 ? "Off" : "\{n}";
-                        color: Theme.label;
+                        color: parent.on ? (Theme.material ? Theme.m3-on-secondary-container : #ffffff) : Theme.label;
                         font-size: Theme.material ? 14px : Theme.small;
                         font-weight: 500;
                         accessible-role: none;
                     }
                     ft := TouchArea {
+                        mouse-cursor: pointer;
                         clicked => { root.fps(n); }
                     }
                 }

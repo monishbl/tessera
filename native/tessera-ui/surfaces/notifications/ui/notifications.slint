@@ -389,6 +389,25 @@ export component GlassCard {
             opacity: 0.85;
             link-clicked(url) => { root.link(url); }
         }
+        // the app's progress (the "value" hint), as Material's card has it
+        if b.progress >= 0: Rectangle {
+            width: root.width - 70px;
+            height: 12px;
+            Rectangle {
+                y: (parent.height - self.height) / 2;
+                height: 4px;
+                border-radius: 2px;
+                background: Theme.fill;
+            }
+            Rectangle {
+                x: 0;
+                y: (parent.height - self.height) / 2;
+                width: parent.width * max(0, min(1, b.progress));
+                height: 4px;
+                border-radius: 2px;
+                background: Theme.accent;
+            }
+        }
         if b.history.length > 1: History {
             lines: b.history;
         }
@@ -952,7 +971,9 @@ export component Banners inherits Window {
                     width: grow.preferred-width + 20px;
                     height: pill-h;
                     border-radius: 13px;
-                    background: gtouch.pressed ? Theme.fill-pressed : gtouch.has-hover ? Theme.fill-hover : (Theme.dark ? #242429e6 : #ffffffe6);
+                    // (the opaque base kept, the state tinted over it: the
+                    // panel's see-through fills over the wallpaper read badly)
+                    background: (Theme.dark ? #242429e6 : #ffffffe6).mix(Theme.label, gtouch.pressed ? 0.84 : gtouch.has-hover ? 0.9 : 1);
                     border-width: 1px;
                     border-color: Theme.separator;
                     accessible-role: button;

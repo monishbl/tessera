@@ -75,7 +75,7 @@ const BAR_H: u32 = 30;
 /// with the island: room for it to open below the bar (MenuBar.qml's 420)
 const ISLAND_H: u32 = 420;
 /// without: room for the hover tips
-const TIP_H: u32 = 64;
+const TIP_H: u32 = 100; // (a hover tip of up to three lines under the bar)
 /// MenuPopover's autoClose: the pointer away from the menu for 5 s
 const MENU_AUTO_CLOSE_MS: u64 = 5000;
 /// a wheel notch, as Island.scroll counts it (Qt's angleDelta)
@@ -179,6 +179,9 @@ struct BarEntry {
     fs_open: bool,
     /// the window over its own spaces (Workspaces.start)
     start: i32,
+    /// the current space when the strip was last made (pulled into view
+    /// only when it changes: the arrows can page away from it)
+    last_active: i32,
     /// its lists, changed in place (a new model rebuilt every element: a
     /// press on a button lost when the row was made again under it)
     chips: Rows<ui::Chip>,
@@ -305,6 +308,14 @@ pub struct Menubar {
     drag: Option<(String, bool)>,
     /// Caffeine: the bar keeps the screen awake (MenuBar.qml's IdleInhibitor)
     inhibitor: Option<smithay_client_toolkit::reexports::protocols::wp::idle_inhibit::zv1::client::zwp_idle_inhibitor_v1::ZwpIdleInhibitorV1>,
+    /// the output whose bar carries the inhibitor (remade on another bar
+    /// when that one goes)
+    inhibitor_on: String,
+}
+
+/// A ticking figure with every digit a 0: its width, measured, stays put
+fn zeros(s: &str) -> String {
+    s.chars().map(|c| if c.is_ascii_digit() { '0' } else { c }).collect()
 }
 
 fn ms_now() -> f64 {
@@ -526,9 +537,15 @@ impl Menubar {
         let img = match &item.icon {
             tray::Icon::File(p) => load(p).unwrap_or_default(),
             tray::Icon::Pixels(w, h, rgba) => {
-                let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(*w, *h);
-                buf.make_mut_bytes().copy_from_slice(&rgba[..(*w * *h * 4) as usize]);
-                slint::Image::from_rgba8(buf)
+                // (the size checked in usize again here: a wrong one draws nothing, never panics)
+                let need = (*w as usize).checked_mul(*h as usize).and_then(|n| n.checked_mul(4));
+                if *w == 0 || *h == 0 || *w > tray::MAX_PIXMAP as u32 || *h > tray::MAX_PIXMAP as u32 || !need.is_some_and(|n| rgba.len() >= n) {
+                    slint::Image::default()
+                } else {
+                    let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(*w, *h);
+                    buf.make_mut_bytes().copy_from_slice(&rgba[..need.unwrap_or(0)]);
+                    slint::Image::from_rgba8(buf)
+                }
             }
             tray::Icon::None => slint::Image::default(),
         };
@@ -652,12 +669,17 @@ impl Menubar {
                 show_title: cfg.shows("music", "title"),
                 show_time: false,
                 show_bars: cfg.shows("music", "bars"),
-                show_scroll: cfg.shows("music", "scroll"),
+                // (the title's glide reads the animation tick every frame:
+                // none under Reduce motion, the battery saver, or the low
+                // battery hold that stops the dancing bars)
+                show_scroll: cfg.shows("music", "scroll") && !spring::still(&st.shell.cfg, tessera_core::saver::on()) && !st.shell.get::<Battery>().is_some_and(|b| b.present && !b.charging && b.state != 1 && b.state != 4 && b.percent / 100.0 < 0.3),
                 controls,
                 seekable: p.track.length > 0,
                 progress: if p.track.length > 0 { (self.position_now(p) / (p.track.length as f64 / 1e6)).clamp(0.0, 1.0) as f32 } else { 0.0 },
                 pos: mmss(self.position_now(p)).into(),
                 rem: format!("-{}", mmss((p.track.length as f64 / 1e6 - self.position_now(p)).max(0.0))).into(),
+                pos_shape: zeros(&mmss(self.position_now(p))).into(),
+                rem_shape: zeros(&format!("-{}", mmss((p.track.length as f64 / 1e6 - self.position_now(p)).max(0.0)))).into(),
                 volume: self.volume_now(st) as f32,
                 muted: self.muted_now(st),
                 app_name: desktop_name(&p.identity).unwrap_or_else(|| p.identity.clone()).into(),
@@ -695,7 +717,7 @@ impl Menubar {
             artist: SharedString::new(),
             // (the open card's second line: LiveInfo.detail, else the time)
             time: a.time.as_str().into(),
-            time_shape: a.time.chars().map(|c| if c.is_ascii_digit() { '0' } else { c }).collect::<String>().into(),
+            time_shape: zeros(&a.time).into(),
             art: slint::Image::default(),
             has_art: false,
             playing: false,
@@ -819,6 +841,7 @@ impl Menubar {
                     has_app_icon: app_icon.is_some(),
                     app_icon: app_icon.unwrap_or_default(),
                     hud: kind == "hud",
+                    hud_of: e["hud"].as_str().unwrap_or("volume").into(),
                     hud_value: value.unwrap_or(0.0) as f32,
                     device: s("device").into(),
                     leaving: al.leaving,
@@ -893,6 +916,7 @@ impl Menubar {
         let awake = shell.bool("caffeine.on");
         if awake && self.inhibitor.is_none() {
             self.inhibitor = self.bars.first().and_then(|b| st.inhibit_idle(&b.surface));
+            self.inhibitor_on = self.bars.first().map(|b| b.output.clone()).unwrap_or_default();
         } else if !awake {
             if let Some(i) = self.inhibitor.take() {
                 i.destroy();
@@ -1008,7 +1032,10 @@ impl Menubar {
                     own.ids = tessera_core::wm::spaces::only_open(std::mem::take(&mut own.ids), snapshot.active.get(&b.output).copied(), &snapshot);
                 }
             }
-            let strip = spaces::strip(&b.output, &groups, &snapshot, cfg.workspace_count, cfg.workspace_overflow == "dynamic", b.start);
+            let active = snapshot.active.get(&b.output).copied().unwrap_or(0);
+            let keep = active != b.last_active;
+            b.last_active = active;
+            let strip = spaces::strip(&b.output, &groups, &snapshot, cfg.workspace_count, cfg.workspace_overflow == "dynamic", b.start, keep);
             b.start = strip.start;
             let icons = cfg.workspaces == "icons";
             let mut x = 0.0f32;
@@ -1092,7 +1119,7 @@ impl Menubar {
             ui.set_layout(cfg.activity_layout.as_str().into());
             ui.set_playing(playing);
             // (the dancing bars hold still on battery under 30 %: IslandLive's barClock)
-            ui.set_bars_hold(bat.present && !bat.charging && bat.state != 1 && bat.state != 4 && (if bat.percent > 1.0 { bat.percent / 100.0 } else { bat.percent }) < 0.3);
+            ui.set_bars_hold(bat.present && !bat.charging && bat.state != 1 && bat.state != 4 && bat.percent / 100.0 < 0.3);
             ui.set_live_count(live_count);
             ui.set_live_index(live_index);
             ui.set_stats(stats.clone());
@@ -1252,6 +1279,7 @@ impl Menubar {
         // the Recent list (the host's history, newest first; eight lines)
         let list = shell.get("island.list").as_array().cloned().unwrap_or_default();
         let now_s = ms_now();
+        let h24 = st.shell.cfg["appearance"]["clock24"].as_bool().unwrap_or(false);
         let rows: Vec<ui::RecentRow> = list
             .iter()
             .take(8)
@@ -1274,7 +1302,7 @@ impl Menubar {
                     tint: island::color(&s("color")).unwrap_or(slint::Color::from_rgb_u8(255, 255, 255)),
                     title: s("title").into(),
                     detail: detail.join(" · ").into(),
-                    ago: island::ago(l["at"].as_f64().unwrap_or(now_s), now_s).into(),
+                    ago: island::ago(l["at"].as_f64().unwrap_or(now_s), now_s, h24).into(),
                     has_act: l["act"].as_bool().unwrap_or(false),
                     has_picture: picture.is_some(),
                     picture: picture.unwrap_or_default(),
@@ -1312,7 +1340,10 @@ impl Menubar {
         self.refresh(st);
         let every_second = st.shell.cfg["menubar"]["showSeconds"].as_bool().unwrap_or(false) || Self::shell_state(st).bool("recording.on");
         let secs = now("%S").parse::<u64>().unwrap_or(0);
-        let wait = if every_second { 1000 } else { (60 - secs.min(59)) * 1000 + 50 };
+        // (at most 10 s: Slint's timers run on the monotonic clock, which
+        // stands still in suspend, and a clock or time-zone change moves the
+        // minute's boundary; the bar must not show a stale time for a minute)
+        let wait = if every_second { 1000 } else { ((60 - secs.min(59)) * 1000 + 50).min(10_000) };
         let tx = st.tx.clone();
         self.clock.start(slint::TimerMode::SingleShot, std::time::Duration::from_millis(wait), move || {
             let _ = tx.send(crate::Msg::Part(NAME, Box::new(M::Tick)));
@@ -1380,7 +1411,12 @@ impl Menubar {
                 let entry = desktop_entry(&class).and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())).unwrap_or_default();
                 menus::app(&name, &entry, &class)
             }
-            MenuKind::Window => menus::window(&snapshot.window, style),
+            MenuKind::Window => {
+                // (the display's block of spaces: spaces.bases, else the window's own)
+                let ws = snapshot.window.workspace.id;
+                let base = Self::shell_state(st).get("spaces.bases")[output].as_i64().map(|b| b as i32).unwrap_or(if ws > 0 { spaces::base_of(ws) } else { 0 });
+                menus::window(&snapshot.window, style, base)
+            }
             MenuKind::Space(id) => {
                 let shell = Self::shell_state(st);
                 let labels = shell.get("spaces.labels");
@@ -1658,10 +1694,15 @@ impl Menubar {
                 return;
             }
             let Some(item) = st.shell.get::<Tray>().and_then(|t| t.items.iter().find(|i| i.key == key).cloned()) else { return };
+            // (where to put a popup an app draws itself: under the item,
+            // not the screen's top-left corner)
+            let (ax, ay) = (x.round() as i32, BAR_H as i32);
             if !right && !item.item_is_menu {
-                tray::activate(key, 0, 0);
+                tray::activate(key, ax, ay);
             } else if !item.menu.is_empty() {
                 self.open_menu(st, output, MenuKind::Tray(item.key.clone(), item.menu.clone()), x);
+            } else if right {
+                tray::context_menu(key, ax, ay);
             }
             return;
         }
@@ -1735,7 +1776,11 @@ impl Menubar {
             }
         } else {
             let now = st.shell.get::<tessera_core::services::audio::Sound>().and_then(|s| s.sink().map(|d| d.volume)).unwrap_or(0.0);
-            set_level(st, false, (now + step).clamp(0.0, 1.0), false);
+            // (up never lowers: a sink past 100 % set elsewhere stays there)
+            let v = if step > 0.0 { (now + step).min(1.0).max(now) } else { (now + step).clamp(0.0, 1.0) };
+            if (v - now).abs() > 1e-9 {
+                set_level(st, false, v, false);
+            }
         }
     }
 
@@ -2621,7 +2666,7 @@ fn entry_struct(e: &items::Entry, tray_images: &HashMap<String, slint::Image>) -
         indicator: e.indicator.as_str().into(),
         unread: e.unread,
         // (the clock: its width with every digit a 0, as the island's time)
-        text_shape: if e.id == "clock" { e.text.chars().map(|c| if c.is_ascii_digit() { '0' } else { c }).collect::<String>().into() } else { Default::default() },
+        text_shape: if e.id == "clock" { zeros(&e.text).into() } else { Default::default() },
         ..Default::default()
     };
     match &e.glyph {
@@ -2838,6 +2883,7 @@ impl Part for Menubar {
             had_event: false,
             fs_open: false,
             start: 0,
+            last_active: 0,
             chips,
             entries,
             chips_key: String::new(),
@@ -2854,8 +2900,20 @@ impl Part for Menubar {
 
     fn output_removed(&mut self, st: &mut State, name: &str) {
         if let Some(i) = self.bars.iter().position(|b| b.output == name) {
+            // (Caffeine's inhibitor lives on a bar's surface: it goes with
+            // it, and is made again on a bar that's still there)
+            let moved = self.inhibitor_on == name && self.inhibitor.is_some();
+            if moved {
+                if let Some(x) = self.inhibitor.take() {
+                    x.destroy();
+                }
+            }
             let b = self.bars.remove(i);
             st.drop_surface(&b.surface);
+            if moved {
+                self.inhibitor = self.bars.first().and_then(|b| st.inhibit_idle(&b.surface));
+                self.inhibitor_on = self.bars.first().map(|b| b.output.clone()).unwrap_or_default();
+            }
         }
         if self.menu.as_ref().is_some_and(|m| m.output == name) {
             let m = self.menu.take().unwrap();
