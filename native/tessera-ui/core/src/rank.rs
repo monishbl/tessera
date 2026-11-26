@@ -677,6 +677,59 @@ pub fn actions() -> Vec<Action> {
     ACTIONS.iter().map(|(t, g, k)| Action { title: (*t).into(), glyph: (*g).into(), keywords: (*k).into() }).collect()
 }
 
+/// Names that keep their capitals inside an action's label (Tessera's own
+/// features and places), longest first where one starts another
+const SHOWN_NAMES: &[&str] = &["Quick Share", "Quick Settings", "Notification Center", "System Settings", "App Drawer", "All Windows", "Today", "Software", "Stages", "Settings", "Downloads", "Trash", "Dock"];
+
+/// An action's title as the UI shows it: sentence case ("Take Screenshot" ->
+/// "Take screenshot", "Ask AI About the Screen" -> "Ask AI about the
+/// screen"), feature names and acronyms kept. The Title Case title stays the
+/// key: search.action runs it and a Shortcuts widget saves it in the config.
+pub fn shown(title: &str) -> String {
+    if SHOWN_NAMES.contains(&title) {
+        return title.to_string();
+    }
+    let words: Vec<&str> = title.split(' ').collect();
+    let mut out: Vec<String> = Vec::with_capacity(words.len());
+    let mut i = 0;
+    while i < words.len() {
+        let rest = words[i..].join(" ");
+        if i > 0 {
+            if let Some(name) = SHOWN_NAMES.iter().find(|n| rest.starts_with(**n) && rest[n.len()..].chars().next().is_none_or(|c| !c.is_alphanumeric())) {
+                let n = name.split(' ').count();
+                out.extend(words[i..i + n].iter().map(|w| w.to_string()));
+                i += n;
+                continue;
+            }
+        }
+        let w = words[i];
+        // acronyms (AI) as they are; the first word keeps its capital, the
+        // rest of a hyphenated one goes down ("On-Screen" -> "On-screen")
+        let letters: String = w.chars().filter(|c| c.is_alphabetic()).collect();
+        let shown = if letters.len() > 1 && letters.chars().all(|c| c.is_uppercase()) {
+            w.to_string()
+        } else {
+            w.split('-')
+                .enumerate()
+                .map(|(k, part)| {
+                    if i == 0 && k == 0 {
+                        return part.to_string();
+                    }
+                    let mut c = part.chars();
+                    match c.next() {
+                        Some(f) => f.to_lowercase().chain(c).collect(),
+                        None => String::new(),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("-")
+        };
+        out.push(shown);
+        i += 1;
+    }
+    out.join(" ")
+}
+
 /// Search.aiRow
 pub fn ai_row(question: &str, ai: Option<&AiMeta>) -> Row {
     let configured = ai.is_some_and(|a| a.configured);
@@ -874,7 +927,7 @@ pub fn query(text: &str, k: &Known) -> (Vec<Row>, Wants) {
     acts.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     acts.truncate(4);
     for (a, s) in &acts {
-        out.push(Row { section: "Actions".into(), title: a.title.clone(), glyph: a.glyph.clone(), run: Run::Action(a.title.clone()), score: *s, ..Default::default() });
+        out.push(Row { section: "Actions".into(), title: shown(&a.title), glyph: a.glyph.clone(), run: Run::Action(a.title.clone()), score: *s, ..Default::default() });
     }
 
     // An app you don't have, from the App Store: only when nothing here
@@ -969,6 +1022,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn actions_show_in_sentence_case() {
+        let cases = [
+            ("Lock Screen", "Lock screen"),
+            ("Shut Down…", "Shut down…"),
+            ("Log Out…", "Log out…"),
+            ("Send Files…", "Send files…"),
+            ("Toggle Dark Mode", "Toggle dark mode"),
+            ("Ask AI About the Screen", "Ask AI about the screen"),
+            ("Take Screenshot", "Take screenshot"),
+            ("Copy Text from Screen", "Copy text from screen"),
+            ("On-Screen Keyboard", "On-screen keyboard"),
+            ("Run Health Check", "Run health check"),
+            ("Report a Bug…", "Report a bug…"),
+            ("Screen Recording Options", "Screen recording options"),
+            // feature names and acronyms keep their capitals
+            ("Receive with Quick Share", "Receive with Quick Share"),
+            ("Quick Settings", "Quick Settings"),
+            ("Notification Center", "Notification Center"),
+            ("System Settings", "System Settings"),
+            ("Show Today", "Show Today"),
+            ("App Drawer", "App Drawer"),
+            ("All Windows", "All Windows"),
+            ("Ask AI", "Ask AI"),
+            ("Sleep…", "Sleep…"),
+            ("", ""),
+        ];
+        for (key, label) in cases {
+            assert_eq!(shown(key), label, "{key}");
+        }
+        // every action has a label, and no two share one
+        let mut labels: Vec<String> = ACTIONS.iter().map(|a| shown(a.0)).collect();
+        labels.sort();
+        labels.dedup();
+        assert_eq!(labels.len(), ACTIONS.len());
+    }
+
+    #[test]
     fn home_is_shortened_only_at_the_start() {
         assert_eq!(home_short("/home/alex/notes", "/home/alex"), "~/notes");
         assert_eq!(home_short("/home/alex", "/home/alex"), "~");
@@ -1059,7 +1149,8 @@ mod tests {
         assert_eq!(t[t.len() - 1], ("Web".into(), "Search the web for “browser”".into()));
         // an action named for it beats an app found only by keywords
         let (r, _) = query("lock", &k);
-        assert_eq!(titles(&r[..1]), vec![("Top Hit".into(), "Lock Screen".into())]);
+        assert_eq!(titles(&r[..1]), vec![("Top Hit".into(), "Lock screen".into())]);
+        assert_eq!(r[0].run, Run::Action("Lock Screen".into()));
         // letters merely in order: no top hit
         let (r, _) = query("krt", &k);
         assert!(r.iter().all(|r| r.section != "Top Hit"));

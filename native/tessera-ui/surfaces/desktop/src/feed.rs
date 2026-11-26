@@ -199,7 +199,8 @@ pub fn short_name(title: &str) -> String {
         "Check for Updates" => "Updates",
         "Change Wallpaper" => "Wallpaper",
         "Overlay Widgets" => "Overlay",
-        t => return t.trim_end_matches('…').to_string(),
+        // (the rest in sentence case, as Search shows them)
+        t => return tessera_core::rank::shown(t.trim_end_matches('…')),
     };
     s.to_string()
 }
@@ -248,5 +249,8 @@ mod tests {
     fn short_names() {
         assert_eq!(short_name("Lock Screen"), "Lock");
         assert_eq!(short_name("Open Downloads…"), "Open Downloads");
+        assert_eq!(short_name("Identify Song"), "Identify song");
+        assert_eq!(short_name("Report a Bug…"), "Report a bug");
+        assert_eq!(short_name("App Drawer"), "App Drawer");
     }
 }
