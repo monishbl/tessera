@@ -1586,13 +1586,29 @@ def firewall_kind(run=subprocess.run):
     return None
 
 
-def _ports_ufw(wanted, run, did):
+# The permanent fix before this tagged its 5353/udp rule just "mDNS", a
+# natural comment for a rule of your own too: taken out once (the first
+# close that doesn't want mDNS), then never again
+UFW_OLD_MDNS_DONE = "/var/lib/tessera/ufw-old-mdns-done"
+
+
+def _ports_ufw(wanted, run, did, prefix="/"):
     want = {f"{lo}:{hi}/{p}" if hi != lo else f"{lo}/{p}" for p, lo, hi in wanted}
     rules = [(int(m[1]), m[2], m[3] or "") for m in map(UFW_RULE.match, _cmd(run, "ufw", "status", "numbered")[1].splitlines()) if m]
+    done_mark = os.path.join(prefix, UFW_OLD_MDNS_DONE.lstrip("/"))
+    old_mdns = not os.path.exists(done_mark) and "5353/udp" not in want
+    ok = True
     # Ours that aren't wanted, last first (the numbers after one move up)
     for n, to, note in sorted(rules, reverse=True):
-        if (note in (UFW_TAG,) + UFW_OLD or (note == "mDNS" and to == "5353/udp")) and to not in want:
-            did(f"closed {to}", "ufw", "--force", "delete", str(n))
+        if (note in (UFW_TAG,) + UFW_OLD or (old_mdns and note == "mDNS" and to == "5353/udp")) and to not in want:
+            ok = did(f"closed {to}", "ufw", "--force", "delete", str(n)) and ok
+    if old_mdns and ok:
+        try:
+            os.makedirs(os.path.dirname(done_mark), mode=0o755, exist_ok=True)
+            with open(done_mark, "w") as f:
+                f.write("1\n")
+        except OSError:
+            pass
     # (a port someone allowed already is left to them)
     for to in sorted(want - {to for _n, to, _note in rules}):
         did(f"opened {to}", "ufw", "allow", to, "comment", UFW_TAG)
@@ -1706,7 +1722,7 @@ def sharing_ports(sets, run=subprocess.run, prefix=None):
             done.append(f"removed {old}")
     kind = firewall_kind(run)
     if kind == "ufw":
-        _ports_ufw(wanted, run, did)
+        _ports_ufw(wanted, run, did, prefix)
     elif kind == "firewalld":
         _ports_firewalld(wanted, run, did, prefix)
     elif kind == "nftables":
