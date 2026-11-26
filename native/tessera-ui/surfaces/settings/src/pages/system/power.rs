@@ -24,6 +24,18 @@ pub fn seconds_options(never: bool) -> Vec<(i64, String)> {
     out
 }
 
+/// A timer from the file that isn't one of the list's: said with its unit
+/// ("45 seconds", "7.5 minutes"), not a bare "450"
+pub fn odd_seconds(v: i64) -> String {
+    if v < 60 {
+        format!("{v} {}", if v == 1 { "second" } else { "seconds" })
+    } else if v % 60 == 0 {
+        format!("{} minutes", v / 60)
+    } else {
+        format!("{:.1} minutes", v as f64 / 60.0)
+    }
+}
+
 /// "12 min of CPU" or "40 s of CPU"
 pub fn cpu_time(seconds: f64) -> String {
     let min = (seconds / 60.0).round();
@@ -45,7 +57,7 @@ fn seconds_row(cx: &mut Ctx, label: &str, detail: &str, key: &str) -> Row {
     let index = match opts.iter().position(|o| o.0 == v) {
         Some(i) => i as i32,
         None => {
-            labels.push(v.to_string());
+            labels.push(odd_seconds(v));
             values.push(Value::from(v));
             labels.len() as i32 - 1
         }
@@ -424,6 +436,13 @@ fn gpu_detail(choice: &str, desktop: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn odd_timers_say_their_unit() {
+        assert_eq!(odd_seconds(45), "45 seconds");
+        assert_eq!(odd_seconds(450), "7.5 minutes");
+        assert_eq!(odd_seconds(1200), "20 minutes");
+    }
 
     #[test]
     fn graphics_choice_warns_off_the_desktops_gpu() {

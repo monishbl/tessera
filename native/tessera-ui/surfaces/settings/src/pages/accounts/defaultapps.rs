@@ -16,11 +16,14 @@ pub fn on_path(name: &str) -> bool {
 }
 
 /// The choices a list offers: Automatic, then the installed ones (a
-/// command's last word is the program: "kitty -e btop" needs btop)
+/// command's first and last words are programs: "kitty -e btop" needs both
+/// kitty and btop)
 pub fn choices(auto: &str, all: &[&str], has: impl Fn(&str) -> bool) -> Vec<(String, String)> {
     let mut out = vec![(String::new(), auto.to_string())];
     for c in all {
-        if has(c.split(' ').next_back().unwrap_or(c)) {
+        let first = c.split(' ').next().unwrap_or(c);
+        let last = c.split(' ').next_back().unwrap_or(c);
+        if has(first) && has(last) {
             out.push((c.to_string(), c.to_string()));
         }
     }
@@ -79,6 +82,9 @@ mod tests {
     fn only_installed_ones_are_offered() {
         let c = choices("Automatic", &["kitty", "foot", "kitty -e btop"], |p| p == "kitty" || p == "btop");
         assert_eq!(c.iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), ["", "kitty", "kitty -e btop"]);
+        // (btop without kitty: not offered)
+        let c = choices("Automatic", &["foot", "kitty -e btop"], |p| p == "foot" || p == "btop");
+        assert_eq!(c.iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), ["", "foot"]);
         assert_eq!(c[0].1, "Automatic");
     }
 }

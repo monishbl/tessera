@@ -155,7 +155,7 @@ pub fn appearance(cx: &mut Ctx, p: &mut Page) {
     } else {
         (vec!["default", "dark", "clear", "tinted", "auto"], vec!["Default", "Dark", "Clear", "Tinted", "Auto"], 340.0)
     };
-    let shown = if style == "look" { if cx.material { "themed" } else { "clear" } } else { style.as_str() };
+    let shown = effective_icon_style(&style, cx.material);
     let detail = match style.as_str() {
         "look" => if cx.material { "Your apps' own logos in your colours, like Android's themed icons" } else { "Your apps' own logos, frosted, like iOS's clear icons" },
         "themed" => if cx.material { "In your colours, like Android's themed icons" } else { "" },
@@ -296,7 +296,8 @@ pub fn appearance(cx: &mut Ctx, p: &mut Page) {
     // ── More options ──
     p.more(cx);
     {
-        let istyle = cx.s("appearance.iconStyle");
+        // (the style drawn: "look", the default, is Clear in Glass)
+        let istyle = effective_icon_style(&cx.s("appearance.iconStyle"), cx.material).to_string();
         let ic = cx.num("appearance.iconContrast", 0.01);
         let icv = cx.f("appearance.iconContrast");
         // Emoji: the font, and Install when it's missing
@@ -427,15 +428,14 @@ pub fn advanced_value(key: &str, v: f32) -> String {
     }
 }
 
-/// Frost over windows: the nearest of its four steps
-pub fn nearest(values: &[f32], v: f32) -> i32 {
-    let mut best = 0;
-    for (i, x) in values.iter().enumerate() {
-        if (x - v).abs() < (values[best] - v).abs() {
-            best = i;
-        }
+/// The icon style drawn: the look's own ("look") is Themed in Material and
+/// Clear in Glass
+pub fn effective_icon_style(style: &str, material: bool) -> &str {
+    if style == "look" {
+        if material { "themed" } else { "clear" }
+    } else {
+        style
     }
-    best as i32
 }
 
 pub fn glass(cx: &mut Ctx, p: &mut Page) {
@@ -607,13 +607,6 @@ pub fn glass(cx: &mut Ctx, p: &mut Page) {
         let glass_row = super::glassplugin::compositor_row(cx).visible(tier != "solid");
         let tint = cx.b("appearance.wallpaperTint");
         let tt = cx.toggle("appearance.wallpaperTint");
-        let frost_values = [0.0f32, 0.5, 0.75, 0.95];
-        let fp = cx.on(move |cx, a| {
-            if let Some(v) = frost_values.get(a.i.max(0) as usize) {
-                cx.set_num("appearance.glassWindowFrost", *v as f64);
-            }
-        });
-        let wf = cx.f("appearance.glassWindowFrost");
         p.group("Glass")
             .row(Row::new("Lens").visible(lens > 0.4 && solid < 0.9).segmented(&["Thin", "Depth", "Auto"], idx(&dv, &depth), dp).width(260.0))
             .row(glass_row)
@@ -640,8 +633,9 @@ mod tests {
         assert_eq!(advanced_value("glassDispersion", 0.0), "None");
         assert_eq!(advanced_value("glassTint", 0.75), "75%");
         assert_eq!(advanced_value("glassBlur", 6.2), "6 px");
-        assert_eq!(nearest(&[0.0, 0.5, 0.75, 0.95], 0.8), 2);
-        assert_eq!(nearest(&[0.0, 0.5, 0.75, 0.95], 0.0), 0);
+        assert_eq!(effective_icon_style("look", false), "clear");
+        assert_eq!(effective_icon_style("look", true), "themed");
+        assert_eq!(effective_icon_style("tinted", false), "tinted");
     }
 
     #[test]

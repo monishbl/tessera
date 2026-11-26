@@ -10,11 +10,18 @@ use serde_json::{json, Value};
 
 const ICONS: [&str; 12] = ["moon", "briefcase", "user", "bed", "book-open", "barbell", "car", "game-controller", "heart", "music-notes", "code", "coffee"];
 const DAYS: [&str; 7] = ["S", "M", "T", "W", "T", "F", "S"];
+const DAY_NAMES: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-/// "22:30" or "7:05": a time Focus takes (/^\d{1,2}:\d{2}$/)
+/// "22:30" or "7:05": a time Focus takes (/^\d{1,2}:\d{2}$/, and a real
+/// time of day: 29:75 isn't)
 pub fn is_time(t: &str) -> bool {
     let Some((h, m)) = t.split_once(':') else { return false };
-    (1..=2).contains(&h.len()) && m.len() == 2 && h.chars().all(|c| c.is_ascii_digit()) && m.chars().all(|c| c.is_ascii_digit())
+    (1..=2).contains(&h.len())
+        && m.len() == 2
+        && h.chars().all(|c| c.is_ascii_digit())
+        && m.chars().all(|c| c.is_ascii_digit())
+        && h.parse::<u32>().is_ok_and(|h| h < 24)
+        && m.parse::<u32>().is_ok_and(|m| m < 60)
 }
 
 /// The days with `d` switched, in order
@@ -197,7 +204,7 @@ pub fn focus(cx: &mut Ctx, p: &mut Page) {
     let from = time_at(cx, "from");
     let to = time_at(cx, "to");
     let days: Vec<i64> = sch["days"].as_array().map(|a| a.iter().filter_map(Value::as_i64).collect()).unwrap_or_default();
-    let day_chips: Vec<Opt> = DAYS.iter().enumerate().map(|(i, d)| Opt::new(*d).on(days.contains(&(i as i64)))).collect();
+    let day_chips: Vec<Opt> = DAYS.iter().enumerate().map(|(i, d)| Opt::new(*d).detail(DAY_NAMES[i]).on(days.contains(&(i as i64)))).collect();
     let day = {
         let (id, s, days) = (mid.clone(), sch.clone(), days.clone());
         cx.on(move |cx, a| sched(cx, &id, &s, json!({ "days": toggle_day(&days, a.i as i64) })))
@@ -245,6 +252,8 @@ mod tests {
     fn times_days_and_apps() {
         assert!(is_time("22:30") && is_time("7:05"));
         assert!(!is_time("7:5") && !is_time("123:00") && !is_time("ab:cd") && !is_time("22"));
+        assert!(!is_time("29:75") && !is_time("99:99") && !is_time("24:00") && !is_time("12:60"));
+        assert!(is_time("0:00") && is_time("23:59"));
         assert_eq!(toggle_day(&[1, 3], 2), vec![1, 2, 3]);
         assert_eq!(toggle_day(&[1, 2, 3], 2), vec![1, 3]);
         assert_eq!(app_list(" Calendar, ,Slack "), vec!["Calendar".to_string(), "Slack".to_string()]);

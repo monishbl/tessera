@@ -497,9 +497,11 @@ pub fn network(cx: &mut Ctx, p: &mut Page) {
             }
         });
         let mut r = Row::new("Wi-Fi").detail(detail).ctl("devices", "btn-switch", id);
-        r.text = if enabled { "Scan again".into() } else { String::new() };
+        r.text = if enabled && device { "Scan again".into() } else { String::new() };
         r.data = vec![Opt::new("").icon("arrow-clockwise")];
         r.on = enabled;
+        // (no adapter: nothing to turn on, as Bluetooth's row)
+        r.enabled = device;
         r.from = 1.0;
         rows.push(r);
     }

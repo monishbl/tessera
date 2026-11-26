@@ -206,7 +206,7 @@ pub fn dock(cx: &mut Ctx, p: &mut Page) {
     let hp = cx.pick("dock.autoHide", &hide_values);
     p.group("")
         .dim(!on)
-        .row(Row::new("Size").detail(format!("{} px", shown.round())).slider(size, lo, hi, 2.0, n).width(220.0))
+        .row(Row::new("Size").detail(format!("{} px", shown.round())).slider(shown, lo, hi, 2.0, n).width(220.0))
         .row(Row::new("Apps button").detail("Opens the App Drawer (also Super+Ctrl+Space)").switch(apps, at))
         .row(Row::new("Automatically hide")
             .detail(match hide.as_str() {

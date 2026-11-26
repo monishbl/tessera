@@ -64,6 +64,8 @@ component Ghost inherits Rectangle {
 // One letter, at a fixed width (focus.qml's days: Chip, tick off, solid)
 component DayChip inherits Rectangle {
     in property <string> text;
+    // (the day's whole name: what a screen reader says, and the tip)
+    in property <string> name;
     in property <bool> on;
     callback clicked();
     property <float> layer: ta.pressed ? 0.1 : ta.has-hover ? 0.08 : 0;
@@ -76,7 +78,7 @@ component DayChip inherits Rectangle {
     border-color: Theme.m3-outline-variant;
     animate background { duration: SM.hover; }
     accessible-role: AccessibleRole.checkbox;
-    accessible-label: text;
+    accessible-label: name != "" ? name : text;
     accessible-checked: on;
     accessible-action-default => { clicked(); }
     Text {
@@ -99,6 +101,7 @@ component DayChip inherits Rectangle {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
+    STip { text: root.name; hovered: ta.has-hover && root.name != ""; }
 }
 
 // A width or height field (windowrules.qml's Default size): commits on
@@ -375,6 +378,7 @@ export component NotifyCtl inherits VerticalLayout {
         alignment: end;
         for o[i] in r.opts: DayChip {
             text: o.text;
+            name: o.detail;
             on: o.on;
             clicked => { SBus.act(r.id, i, 0, ""); }
         }
