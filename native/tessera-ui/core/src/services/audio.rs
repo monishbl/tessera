@@ -13,7 +13,7 @@ use super::pulse::{self, Conn, Reader, Tags};
 use crate::Msg;
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
 use std::sync::{mpsc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// An output (sink) or input (source)
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -225,6 +225,9 @@ pub fn spawn(tx: Sender<Msg>) {
                 let mut c = Conn::open("Tessera")?;
                 c.subscribe(MASK)?;
                 let mut last = read(&mut c)?;
+                // (outputs that went, and when: one back within RECREATED is
+                // the same device made again, not one just connected)
+                let mut gone_at: std::collections::HashMap<String, Instant> = std::collections::HashMap::new();
                 up = true;
                 tx.send(Msg::Data(Box::new(last.clone()))).map_err(|_| gone())?;
                 loop {
@@ -241,7 +244,15 @@ pub fn spawn(tx: Sender<Msg>) {
                     // A Bluetooth output that just appeared (headphones
                     // connected) becomes the default, as a phone does; not
                     // ones already there when the shell started
-                    if let Some(new) = new_bluetooth_sink(&last, &now) {
+                    // (its profile switched, or it dropped and came back: a sink
+                    // made again, which mustn't undo the output the user chose)
+                    for b in &last.sinks {
+                        if !now.sinks.iter().any(|d| d.name == b.name) {
+                            gone_at.insert(b.name.clone(), Instant::now());
+                        }
+                    }
+                    gone_at.retain(|_, t| t.elapsed() < RECREATED);
+                    if let Some(new) = new_bluetooth_sink(&last, &now).filter(|n| !gone_at.contains_key(n)) {
                         send(Cmd::DefaultSink(new));
                     }
                     if now != last {
@@ -269,6 +280,10 @@ pub fn spawn(tx: Sender<Msg>) {
         }
     });
 }
+
+/// A Bluetooth output back this soon after it went was made again (a
+/// profile switch, a short drop), not newly connected
+const RECREATED: Duration = Duration::from_secs(30);
 
 /// A Bluetooth output in `now` that `before` didn't have, unless it's
 /// already the default

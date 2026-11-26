@@ -467,6 +467,11 @@ pub fn expand(ev: &IcsEvent, from: i64, to: i64) -> Vec<(i64, i64)> {
     let byday: Option<Vec<ByDay>> = get("BYDAY").map(|v| {
         v.split(',')
             .map(|s| {
+                // (written as the file says: a non-ASCII item is no weekday,
+                // and mustn't be split inside a character)
+                if !s.is_ascii() {
+                    return ByDay { n: 99, d: -1 };
+                }
                 let (num, day) = s.split_at(s.len().saturating_sub(2));
                 let d = DAYS.iter().position(|x| *x == day).map_or(-1, |i| i as i32);
                 let n_ok = num.is_empty() || (num.trim_start_matches(['+', '-']).len() <= 2 && num.trim_start_matches(['+', '-']).chars().all(|c| c.is_ascii_digit()) && !num.trim_start_matches(['+', '-']).is_empty());
@@ -717,7 +722,8 @@ fn read_all() -> (Calendar, Vec<(PathBuf, Option<SystemTime>)>) {
     for s in cal.sources.iter().filter(|s| s.enabled) {
         // (a link: its copy fetched into the cache; audit #126, links were
         // listed and never fetched)
-        let path = if s.is_file() { PathBuf::from(s.url.strip_prefix("file://").unwrap_or(&s.url)) } else { link_cache(&s.url) };
+        // (a file:// address as a file manager copies it: %20 and the like decoded)
+        let path = if s.is_file() { file_path(&s.url) } else { link_cache(&s.url) };
         watched.push((path.clone(), mtime(&path)));
         if let Ok(t) = std::fs::read_to_string(&path) {
             if t.contains("BEGIN:VCALENDAR") {
@@ -726,6 +732,14 @@ fn read_all() -> (Calendar, Vec<(PathBuf, Option<SystemTime>)>) {
         }
     }
     (cal, watched)
+}
+
+/// A file calendar's path: "/…" as it is, "file://…" percent-decoded
+fn file_path(url: &str) -> PathBuf {
+    match url.strip_prefix("file://") {
+        Some(p) => PathBuf::from(super::mpris::percent_decode(p)),
+        None => PathBuf::from(url),
+    }
 }
 
 pub fn spawn(tx: Sender<Msg>) {
@@ -912,6 +926,10 @@ BEGIN:VEVENT\r\nUID:d\r\nSUMMARY:Long\r\n  title\r\nDTSTART:20261105T150000\r\nD
         assert_eq!(days(&expand(&ev(s, e, "FREQ=MONTHLY;BYDAY=2TU"), a, b)), vec![(2026, 1, 13), (2026, 2, 10), (2026, 3, 10)]);
         // the last weekday of the month (BYSETPOS); the 31st only where there is one
         assert_eq!(days(&expand(&ev(s, e, "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1"), a, b)), vec![(2026, 1, 30), (2026, 2, 27), (2026, 3, 31)]);
+        // (audit #838: a non-ASCII item is no weekday, and no panic)
+        let _ = expand(&ev(s, e, "FREQ=WEEKLY;BYDAY=日,éx"), a, b);
+        assert_eq!(file_path("file:///home/u/My%20Calendars/work.ics"), PathBuf::from("/home/u/My Calendars/work.ics"));
+        assert_eq!(file_path("/home/u/a%20b.ics"), PathBuf::from("/home/u/a%20b.ics"));
         assert_eq!(days(&expand(&ev(s, e, "FREQ=MONTHLY;BYMONTHDAY=31"), a, b)), vec![(2026, 1, 31), (2026, 3, 31)]);
         // yearly, far from its start (jumps close to the window)
         let bday = make(1990, 10, 5, 0, 0, 0);

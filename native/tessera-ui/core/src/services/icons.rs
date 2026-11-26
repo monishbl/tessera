@@ -321,12 +321,16 @@ impl Icons {
     /// (IconLookup.path). A name that's a file path is that file.
     pub fn path(&self, names: &[&str], fallbacks: &[&str]) -> Option<PathBuf> {
         let names: Vec<&str> = names.iter().copied().filter(|n| !n.is_empty()).collect();
+        // (a file only when it's there: a stale Icon=/opt/… goes on to the
+        // fallbacks and the generic icon; file:// addresses percent-decoded)
         for n in &names {
-            if n.starts_with('/') {
-                return Some(PathBuf::from(n));
-            }
-            if let Some(p) = n.strip_prefix("file://") {
-                return Some(PathBuf::from(p));
+            let file = if n.starts_with('/') {
+                Some(PathBuf::from(n))
+            } else {
+                n.strip_prefix("file://").map(|p| PathBuf::from(super::mpris::percent_decode(p)))
+            };
+            if let Some(f) = file.filter(|f| f.is_file()) {
+                return Some(f);
             }
         }
         for n in &names {
@@ -407,8 +411,15 @@ mod tests {
         assert_eq!(i.path(&["nothing"], &["user-trash"]), Some(icons.join("Papirus-Dark/64x64/places/user-trash.svg")));
         assert_eq!(i.path(&["nothing"], &[]), Some(icons.join("hicolor/48x48/apps/application-x-executable.png")));
         assert_eq!(i.exact("nothing"), None);
-        // a path is itself
-        assert_eq!(i.path(&["/opt/app/icon.png"], &[]), Some(PathBuf::from("/opt/app/icon.png")));
+        // a path is itself, when it's there; a file:// address decoded; a
+        // path that's gone goes on to the generic icon (audit #847)
+        let own = d.join("My Apps/icon.png");
+        put(own.clone());
+        let own_s = own.to_string_lossy().into_owned();
+        assert_eq!(i.path(&[own_s.as_str()], &[]), Some(own.clone()));
+        let url = format!("file://{}", own_s.replace(' ', "%20"));
+        assert_eq!(i.path(&[url.as_str()], &[]), Some(own));
+        assert_eq!(i.path(&["/opt/gone-app/icon.png"], &[]), Some(icons.join("hicolor/48x48/apps/application-x-executable.png")));
         let _ = std::fs::remove_dir_all(&d);
     }
 }

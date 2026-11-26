@@ -288,7 +288,8 @@ pub enum SeekTo {
 }
 
 pub fn seek_plan(track: &Track, target: i64, now: i64) -> SeekTo {
-    let target = target.clamp(0, track.length.max(0));
+    // (a length the player doesn't give, a stream: only never before the start)
+    let target = if track.length > 0 { target.clamp(0, track.length) } else { target.max(0) };
     if !track.id.is_empty() && track.id.starts_with('/') && !track.id.ends_with("/NoTrack") {
         SeekTo::At(track.id.clone(), target)
     } else {
@@ -443,7 +444,14 @@ fn art_path(url: &str) -> Option<std::path::PathBuf> {
         }
         let _ = std::fs::create_dir_all(&dir);
         let tmp = file.with_extension("part");
-        let ok = std::process::Command::new("curl").args(["-sfL", "--max-time", "8", "-o"]).arg(&tmp).arg(url).status().is_ok_and(|s| s.success());
+        // (a picture, not whatever a player names: capped in size, web
+        // addresses only, a few redirects)
+        let ok = std::process::Command::new("curl")
+            .args(["-sfL", "--max-time", "8", "--max-filesize", "8M", "--proto", "=https,http", "--proto-redir", "=https,http", "--max-redirs", "3", "-o"])
+            .arg(&tmp)
+            .arg(url)
+            .status()
+            .is_ok_and(|s| s.success());
         if !ok || std::fs::rename(&tmp, &file).is_err() {
             let _ = std::fs::remove_file(&tmp);
             return None;
@@ -488,6 +496,10 @@ mod tests {
         assert_eq!(super::seek_plan(&n, 30_000_000, 90_000_000), super::SeekTo::By(-60_000_000));
         let none = super::Track { length: 200_000_000, ..Default::default() };
         assert_eq!(super::seek_plan(&none, 50_000_000, 10_000_000), super::SeekTo::By(40_000_000));
+        // (no length given, a stream: the target kept, not the start; audit #848)
+        let stream = super::Track { length: 0, id: "/org/x/1".into(), ..Default::default() };
+        assert_eq!(super::seek_plan(&stream, 50_000_000, 10_000_000), super::SeekTo::At("/org/x/1".into(), 50_000_000));
+        assert_eq!(super::seek_plan(&stream, -5, 10_000_000), super::SeekTo::At("/org/x/1".into(), 0));
     }
 
     #[test]

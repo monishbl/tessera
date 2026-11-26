@@ -405,6 +405,8 @@ impl crate::shell::Part for HostPart {
     fn quit(&mut self, st: &mut State) {
         self.second.stop();
         self.each(st, |s, h| s.quit(h));
+        // (discovery runs end with the shell, not at their timeout)
+        crate::services::bluez::stop_scans();
     }
 }
 
