@@ -48,7 +48,9 @@ impl Keys {
         let var = ENV.iter().find(|e| e.0 == provider).and_then(|e| env(e.1)).filter(|v| !v.is_empty());
         let google = if provider == "aistudio" || provider == "vertex" { env("GOOGLE_API_KEY").filter(|v| !v.is_empty()) } else { None };
         let k = |s: &str| self.keys.get(s).filter(|v| !v.is_empty()).cloned();
-        var.or(google).or_else(|| k(slot)).or_else(|| k(provider)).or_else(|| if provider == "aistudio" { k("gemini") } else { None }).unwrap_or_default()
+        // (a key typed for this very model wins over the environment's: an
+        // old exported key must not silently override a new one)
+        k(slot).or(var).or(google).or_else(|| k(provider)).or_else(|| if provider == "aistudio" { k("gemini") } else { None }).unwrap_or_default()
     }
     pub fn get(&self, provider: &str, slot: &str) -> String {
         self.get_with(provider, slot, |v| std::env::var(v).ok())
@@ -145,6 +147,8 @@ mod tests {
         assert_eq!(k.get_with("openai", "openai|x", |v| (v == "OPENAI_API_KEY").then(|| "env".into())), "env");
         assert_eq!(k.get_with("vertex", "v", |v| (v == "GOOGLE_API_KEY").then(|| "g".into())), "g");
         assert_eq!(k.get_with("anthropic", "a", none), "");
+        // the model's own key beats an exported variable
+        assert_eq!(k.get_with("custom", "custom|m", |_| Some("env".into())), "slot-key");
         assert!(k.has("ollama", "anything"));
     }
 

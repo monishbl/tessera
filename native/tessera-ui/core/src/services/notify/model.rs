@@ -120,6 +120,19 @@ pub struct Hints {
     pub resolved: String,
 }
 
+/// The most a card keeps of what an app sends (any app on the bus could
+/// send megabytes, or a row of buttons wider than the card)
+const MAX_SUMMARY: usize = 300;
+const MAX_BODY: usize = 4000;
+const MAX_BUTTONS: usize = 4;
+
+fn cap_chars(s: &str, n: usize) -> String {
+    match s.char_indices().nth(n) {
+        Some((i, _)) => format!("{}…", &s[..i]),
+        None => s.to_string(),
+    }
+}
+
 /// A Note from Notify's arguments (the picture is the server's: a file it
 /// saved from image-data, or ""). Actions come in pairs (key, label); an odd
 /// list is ignored, as Quickshell does
@@ -129,8 +142,8 @@ pub fn note_from(id: u32, app_name: &str, app_icon: &str, summary: &str, body: &
         app_name: app_name.to_string(),
         app_icon: app_icon.to_string(),
         desktop_entry: hints.desktop_entry.clone(),
-        summary: summary.to_string(),
-        body: body.to_string(),
+        summary: cap_chars(summary, MAX_SUMMARY),
+        body: cap_chars(body, MAX_BODY),
         image: if image.is_empty() { hints.image_path.clone() } else { image.to_string() },
         urgency: hints.urgency.unwrap_or(NORMAL).min(CRITICAL),
         expire_timeout,
@@ -155,6 +168,9 @@ pub fn note_from(id: u32, app_name: &str, app_icon: &str, summary: &str, body: &
                     n.has_inline_reply = true;
                     n.inline_reply_placeholder = pair[1].clone();
                 }
+                continue;
+            }
+            if pair[0] != "default" && n.actions.iter().filter(|a| a.id != "default").count() >= MAX_BUTTONS {
                 continue;
             }
             n.actions.push(Action { id: pair[0].clone(), text: pair[1].clone() });
@@ -279,6 +295,13 @@ pub fn is_call(n: &Note) -> bool {
     if cat.split(['.', '-']).any(|p| p == "call") {
         return true;
     }
+    // (the words alone only with a hint that a call is plausible: a chat
+    // app's category, a resident note, or answer/decline-like buttons; a
+    // mail subject "Dad is calling about Sunday" is a message, not a call)
+    let buttons = n.actions.iter().filter(|a| a.id != "default").count();
+    if !(cat == "im" || cat.starts_with("im.") || n.resident || buttons >= 2) {
+        return false;
+    }
     let text = format!("{} {}", norm(&n.summary), norm(&n.body));
     if has_word_seq(&text, &["missed"]) || has_word_seq(&text, &["ended"]) {
         return false;
@@ -366,11 +389,14 @@ pub fn banner_ms(n: &Note) -> Option<u64> {
     if n.urgency == CRITICAL || is_call(n) {
         return None;
     }
-    Some(if n.expire_timeout > 0 { n.expire_timeout as u64 } else { 5000 })
+    // (an app's own timeout within 2 s .. 60 s: never gone before it's seen,
+    // never pinned for days without being critical)
+    Some(if n.expire_timeout > 0 { (n.expire_timeout as u64).clamp(2000, 60_000) } else { 5000 })
 }
 
 /// The time on a card (Notifications.qml's timeLabel): "now", "5m ago",
-/// then the clock time
+/// then the clock time; from another day "Yesterday 9:41 PM", "Mon 9:41 PM"
+/// within the week, then the date (the history outlives restarts)
 pub fn time_label(at_ms: i64, now_ms: i64, clock: impl Fn(i64) -> String) -> String {
     if at_ms <= 0 {
         return String::new();
@@ -379,7 +405,15 @@ pub fn time_label(at_ms: i64, now_ms: i64, clock: impl Fn(i64) -> String) -> Str
     match mins {
         0 => "now".into(),
         1..=59 => format!("{mins}m ago"),
-        _ => clock(at_ms),
+        _ => {
+            let days = crate::util::local_day(now_ms / 1000) - crate::util::local_day(at_ms / 1000);
+            match days {
+                i64::MIN..=0 => clock(at_ms),
+                1 => format!("Yesterday {}", clock(at_ms)),
+                2..=6 => format!("{} {}", crate::util::strftime("%a", at_ms / 1000), clock(at_ms)),
+                _ => crate::util::strftime("%-d %b %Y", at_ms / 1000),
+            }
+        }
     }
 }
 
@@ -569,18 +603,34 @@ mod tests {
     }
 
     #[test]
+    fn sizes_are_capped() {
+        let acts: Vec<String> = (0..10).flat_map(|i| [format!("a{i}"), format!("A{i}")]).chain(["default".to_string(), "Open".to_string()]).collect();
+        let n = note_from(1, "x", "", &"s".repeat(1000), &"b".repeat(10_000), &acts, &Hints::default(), -1, "", 1000);
+        assert_eq!(n.summary.chars().count(), MAX_SUMMARY + 1);
+        assert_eq!(n.body.chars().count(), MAX_BODY + 1);
+        assert_eq!(n.actions.len(), MAX_BUTTONS + 1);
+        assert!(n.actions.iter().any(|a| a.id == "default"));
+        assert_eq!(cap_chars("héllo", 9), "héllo");
+    }
+
+    #[test]
     fn calls() {
         assert!(is_call(&Note { category: "call.incoming".into(), ..note("Ann", "") }));
         assert!(is_call(&Note { category: "x-gnome.call".into(), ..note("Ann", "") }));
         assert!(!is_call(&Note { category: "call.missed".into(), ..note("Ann", "") }));
         assert!(!is_call(&Note { category: "x-recall".into(), ..note("Ann", "") }));
-        assert!(is_call(&note("Incoming video call", "Ann")));
-        assert!(is_call(&note("Ann", "is calling…")));
-        assert!(is_call(&note("Ann started a call.", "")));
-        assert!(is_call(&note("Ann", "wants to video call")));
-        assert!(!is_call(&note("Missed call", "Ann is calling")));
-        assert!(!is_call(&note("Call ended", "")));
-        assert!(!is_call(&note("Recalling the meeting", "nothing incoming")));
+        // (the words count only with a hint: a chat category, resident, or buttons)
+        let im = |s: &str, b: &str| Note { category: "im.received".into(), ..note(s, b) };
+        assert!(is_call(&im("Incoming video call", "Ann")));
+        assert!(is_call(&Note { resident: true, ..note("Ann", "is calling…") }));
+        let two = vec![Action { id: "answer".into(), text: "Answer".into() }, Action { id: "decline".into(), text: "Decline".into() }];
+        assert!(is_call(&Note { actions: two, ..note("Ann started a call.", "") }));
+        assert!(is_call(&im("Ann", "wants to video call")));
+        assert!(!is_call(&im("Missed call", "Ann is calling")));
+        assert!(!is_call(&im("Call ended", "")));
+        assert!(!is_call(&im("Recalling the meeting", "nothing incoming")));
+        assert!(!is_call(&note("Dad is calling about Sunday", "")));
+        assert!(!is_call(&note("Incoming call", "Ann")));
     }
 
     #[test]
@@ -590,7 +640,9 @@ mod tests {
         assert_eq!(banner_ms(&Note { expire_timeout: 12000, ..note("a", "") }), Some(12000));
         assert_eq!(banner_ms(&Note { urgency: LOW, ..note("a", "") }), Some(5000));
         assert_eq!(banner_ms(&Note { urgency: CRITICAL, ..note("a", "") }), None);
-        assert_eq!(banner_ms(&note("Incoming call", "Ann")), None);
+        assert_eq!(banner_ms(&Note { category: "im".into(), ..note("Incoming call", "Ann") }), None);
+        assert_eq!(banner_ms(&Note { expire_timeout: 1, ..note("a", "") }), Some(2000));
+        assert_eq!(banner_ms(&Note { expire_timeout: i32::MAX, ..note("a", "") }), Some(60_000));
     }
 
     #[test]
@@ -626,7 +678,7 @@ mod tests {
         assert_eq!(route(&n, &cards, &off, now, false), Route::Banner);
         assert_eq!(route(&n, &json!({"island": {"enabled": false, "events": ["notifications"]}}), &off, now, true), Route::Banner);
         // calls: the island's call card by default (a newer kind), a banner when switched off
-        let call = note("Incoming call", "Ann");
+        let call = Note { category: "im.received".into(), ..note("Incoming call", "Ann") };
         assert_eq!(route(&call, &cfg, &off, now, true), Route::Call);
         assert_eq!(route(&call, &json!({"island": {"events": [], "known": ["calls"]}}), &off, now, true), Route::Banner);
         // Focus holds it
@@ -640,7 +692,11 @@ mod tests {
         assert_eq!(time_label(0, 5, clock), "");
         assert_eq!(time_label(1000, 30_000, clock), "now");
         assert_eq!(time_label(1000, 1000 + 5 * 60_000, clock), "5m ago");
-        assert_eq!(time_label(1000, 1000 + 61 * 60_000, clock), "9:41 AM");
+        let noon = crate::util::local_noon_ms(2026, 11, 26);
+        assert_eq!(time_label(noon - 61 * 60_000, noon, clock), "9:41 AM");
+        assert_eq!(time_label(noon - 86_400_000, noon, clock), "Yesterday 9:41 AM");
+        assert!(time_label(noon - 3 * 86_400_000, noon, clock).ends_with(" 9:41 AM"));
+        assert_eq!(time_label(noon - 30 * 86_400_000, noon, clock), "27 Oct 2026");
     }
 
     #[test]
