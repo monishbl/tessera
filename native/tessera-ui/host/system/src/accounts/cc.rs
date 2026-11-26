@@ -213,7 +213,13 @@ fn nets_of(list: &Value) -> Vec<Net> {
 /// The Wi-Fi password rule of the row's "commit": 8 to 63 characters, or a WEP key's length
 pub fn psk_ok(text: &str) -> bool {
     let n = text.chars().count();
-    (8..=63).contains(&n) || [5, 10, 13, 26].contains(&n)
+    wpa_ok(text) || [5, 10, 13, 26].contains(&n)
+}
+
+/// A WPA password: 8 to 63 characters, or the 64 hex digits of a raw key
+pub fn wpa_ok(text: &str) -> bool {
+    let n = text.chars().count();
+    (8..=63).contains(&n) || (n == 64 && text.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// btIcon(d)
@@ -835,7 +841,8 @@ impl ControlCenter {
             let status = if is_active {
                 ss(&focus, "statusText").to_string()
             } else if bs(sched, "enabled") {
-                format!("Scheduled {}–{}", fmt_hm(ss(sched, "from")), fmt_hm(ss(sched, "to")))
+                let c24 = h.cfg()["appearance"]["clock24"].as_bool().unwrap_or(false);
+                format!("Scheduled {}–{}", fmt_hm(ss(sched, "from"), c24), fmt_hm(ss(sched, "to"), c24))
             } else {
                 String::new()
             };
@@ -1111,8 +1118,8 @@ impl ControlCenter {
         let psk = self.fv("psk");
         self.form_problem = if name.is_empty() {
             "Type the network name."
-        } else if sec == "psk" && !(8..=63).contains(&psk.chars().count()) {
-            "Wi-Fi passwords are 8 to 63 characters."
+        } else if sec == "psk" && !wpa_ok(&psk) {
+            "Wi-Fi passwords are 8 to 63 characters (or a 64-digit key)."
         } else if sec == "enterprise" && self.fv("identity").trim().is_empty() {
             "Type your username (often your email address)."
         } else if sec == "enterprise" && !tls && self.fv("password").is_empty() {
@@ -1451,6 +1458,10 @@ impl ControlCenter {
                     return;
                 }
                 let addr = id.strip_prefix("d:").unwrap_or("");
+                // (a device already pairing or connecting: a second click starts nothing)
+                if self.bt_busy.contains(addr) {
+                    return;
+                }
                 if let Some(d) = Self::bt_devices(h).into_iter().find(|d| d.address == addr) {
                     let verb = if d.connected { "disconnect" } else if d.paired { "connect" } else { "pair" };
                     self.exec(h, Do::Bt(d.address, verb));
@@ -1529,7 +1540,7 @@ impl ControlCenter {
             "other" => self.open_form(h, &n.name, false),
             "commit" => {
                 if !psk_ok(text) {
-                    self.hint = if text.is_empty() { "Type the password first." } else { "Wi-Fi passwords are at least 8 characters." }.into();
+                    self.hint = if text.is_empty() { "Type the password first." } else { "Wi-Fi passwords are 8 to 63 characters (or a 64-digit key)." }.into();
                     return;
                 }
                 h.ask("network.join", json!([n.name, text]));
@@ -1720,9 +1731,13 @@ fn map_alts(ap: &Value) -> Value {
     )
 }
 
-/// Focus.fmt(hhmm): "HH:MM" as given (the service formats the clock; plain here)
-fn fmt_hm(s: &str) -> String {
-    s.to_string()
+/// Focus.fmt(hhmm): "22:00" as stored, or "10:00 PM" on the 12-hour clock
+fn fmt_hm(s: &str, clock24: bool) -> String {
+    let parsed = s.split_once(':').and_then(|(a, b)| Some((a.trim().parse::<u32>().ok()?, b.trim().parse::<u32>().ok()?)));
+    match parsed {
+        Some((hr, min)) if !clock24 && hr < 24 && min < 60 => format!("{}:{:02} {}", (hr + 11) % 12 + 1, min, if hr >= 12 { "PM" } else { "AM" }),
+        _ => s.to_string(),
+    }
 }
 
 fn spawn_cmd(c: Vec<String>) {
@@ -1918,6 +1933,14 @@ mod tests {
     fn wifi_passwords() {
         assert!(psk_ok("12345678") && psk_ok("abcde") && psk_ok(&"x".repeat(63)));
         assert!(!psk_ok("") && !psk_ok("1234567") && !psk_ok(&"x".repeat(64)));
+        // (a raw 64-hex-digit WPA key is fine; WEP lengths only in the row's prompt)
+        assert!(psk_ok(&"a1".repeat(32)) && wpa_ok(&"a1".repeat(32)));
+        assert!(!wpa_ok("abcde") && wpa_ok(&"x".repeat(63)) && !wpa_ok(&"x".repeat(64)));
+        assert_eq!(fmt_hm("22:00", true), "22:00");
+        assert_eq!(fmt_hm("22:00", false), "10:00 PM");
+        assert_eq!(fmt_hm("00:30", false), "12:30 AM");
+        assert_eq!(fmt_hm("07:05", false), "7:05 AM");
+        assert_eq!(fmt_hm("soon", false), "soon");
     }
     #[test]
     fn device_icons() {

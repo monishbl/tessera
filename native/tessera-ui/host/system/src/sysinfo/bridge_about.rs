@@ -698,7 +698,8 @@ impl About {
             "features.setUp" => {
                 let known: Vec<String> = self.feat["items"].as_array().map(|a| a.iter().filter_map(|i| i["id"].as_str().map(str::to_string)).collect()).unwrap_or_default();
                 let ids: Vec<String> = a0.as_array().map(|a| a.iter().filter_map(|x| x.as_str()).filter(|x| known.iter().any(|k| k == x)).map(str::to_string).collect()).unwrap_or_default();
-                if !ids.is_empty() && !self.up.running() && !self.feat_running {
+                // (never beside Tessera's own update either: it builds against the system's libraries)
+                if !ids.is_empty() && !SoftwareUpdate::running(&self.up, &self.tu) && !self.feat_running {
                     self.feat_running = true;
                     self.feat_result = Value::Null;
                     let (t, script) = (tx.clone(), util::script("features.py"));
@@ -755,7 +756,7 @@ impl About {
             // and the AUR, through Software Update's job (the root helper, one
             // password; the AUR helper), their names checked here too
             "backup.packages" => {
-                if !self.up.running() {
+                if !SoftwareUpdate::running(&self.up, &self.tu) {
                     let args = backup_install_args(&a);
                     if !args.is_empty() {
                         self.up.update(&tx, &args);
@@ -901,7 +902,11 @@ impl Service for About {
                 _ => self.act(h, f, args),
             },
             "updates" => match f {
-                "update" => self.up.update(&tx, &list(args)),
+                "update" => {
+                    if !SoftwareUpdate::running(&self.up, &self.tu) {
+                        self.up.update(&tx, &list(args));
+                    }
+                }
                 "cancel" => self.up.cancel(),
                 "dismiss" => self.up.dismiss(),
                 "copyLog" => self.up.copy_log(),
@@ -1043,6 +1048,11 @@ impl Service for About {
         let msg = match msg.downcast::<FeatPlan>() {
             Ok(m) => {
                 match features_args(&m.0) {
+                    // (another update began while this planned: it isn't ours to take as the result)
+                    Some(_) if SoftwareUpdate::running(&self.up, &self.tu) => {
+                        self.feat_running = false;
+                        self.feat_result = json!({"error": "Another update started meanwhile. Try again when it has finished."});
+                    }
                     Some(a) => self.up.update(&tx, &a),
                     None => {
                         self.feat_running = false;

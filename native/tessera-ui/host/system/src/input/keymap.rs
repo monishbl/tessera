@@ -454,9 +454,7 @@ impl Keymap {
 
     /// An app from its desktop entry, as a bind action
     pub fn app_action(entry_id: &str, argv: &[String], has_gtk_launch: bool) -> Value {
-        if has_gtk_launch {
-            return json!({"exec": format!("gtk-launch {entry_id}"), "desktop": entry_id});
-        }
+        // (the line runs in a shell: every word quoted, the desktop id too)
         let q = |s: &str| {
             if !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_' || "@%+=:,./-".contains(c)) {
                 s.to_string()
@@ -464,6 +462,9 @@ impl Keymap {
                 format!("'{}'", s.replace('\'', "'\\''"))
             }
         };
+        if has_gtk_launch {
+            return json!({"exec": format!("gtk-launch {}", q(entry_id)), "desktop": entry_id});
+        }
         json!({"exec": argv.iter().map(|a| q(a)).collect::<Vec<_>>().join(" "), "desktop": entry_id})
     }
 
@@ -838,6 +839,13 @@ fn js_str(v: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_shortcuts_quote_the_desktop_id() {
+        assert_eq!(Keymap::app_action("org.gnome.Nautilus", &[], true)["exec"], "gtk-launch org.gnome.Nautilus");
+        assert_eq!(Keymap::app_action("wine-Programs-Some App", &[], true)["exec"], "gtk-launch 'wine-Programs-Some App'");
+        assert_eq!(Keymap::app_action("a;$(rm x)'b", &[], true)["exec"], "gtk-launch 'a;$(rm x)'\\''b'");
+    }
 
     fn km() -> Keymap {
         let mut k = Keymap::default();

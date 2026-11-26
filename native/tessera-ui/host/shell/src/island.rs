@@ -770,7 +770,7 @@ impl Island {
     /// Charger and battery (Island's onChargingChanged and onLevelChanged), on each new reading (Service::data)
     fn watch_battery(&mut self, h: &mut Host) {
         let Some(b) = h.st.shell.get::<tessera_core::services::status::Battery>().cloned() else { return };
-        let level = if b.percent > 1.0 { b.percent / 100.0 } else { b.percent };
+        let level = b.percent / 100.0; // (percent is 0..100: 1% is not 100%)
         // (on the charger: charging, full, or held at a charge limit (5); audit #182)
         let charging = b.present && (b.state == 1 || b.state == 4 || b.state == 5 || b.charging);
         let now = (b.present, level, charging);

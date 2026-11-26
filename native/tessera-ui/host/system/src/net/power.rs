@@ -325,10 +325,9 @@ impl Power {
     fn percent(&self) -> f64 {
         if !self.has_battery() {
             -1.0
-        } else if self.battery.percent > 1.0 {
-            self.battery.percent
         } else {
-            self.battery.percent * 100.0
+            // (UPower's Percentage is 0..100: 1% is 1, not a fraction)
+            self.battery.percent
         }
     }
     fn on_battery(&self) -> bool {
