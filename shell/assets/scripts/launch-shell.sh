@@ -129,6 +129,13 @@ fi
 # shows it (modules/fallback) with Try again, until tessera-ui next stays up.
 STARTS="${XDG_STATE_HOME:-$HOME/.local/state}/tessera/standalone-starts"
 FALLBACK="${XDG_STATE_HOME:-$HOME/.local/state}/tessera/fallback"
+# A count file's first line as a number (0 when it's missing or damaged:
+# never fed to the shell's arithmetic as it is)
+count_of() {
+    local n
+    n=$(head -1 "$1" 2>/dev/null)
+    [[ $n =~ ^[0-9]+$ ]] && echo "$n" || echo 0
+}
 # A Tessera update made ready in the background and not installed yet (no
 # "Restart shell now", no lock since): installed now, at login, before any
 # shell starts (tools/tessera-update.py finish: renames and copies, seconds;
@@ -203,19 +210,19 @@ sys.exit(1 if off else 0)' "$c" 2>/dev/null && return 1
         if [[ -s "$STARTS" && "$(sed -n 2p "$STARTS")" != "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
             rm -f "$STARTS"
         fi
-        if (( $(head -1 "$STARTS" 2>/dev/null || echo 0) >= 2 )) && rollback_ui; then
+        if (( $(count_of "$STARTS") >= 2 )) && rollback_ui; then
             echo "launch-shell: the updated tessera-ui didn't stay up twice: back to the previous build" >&2
             rm -f "$STARTS"
         fi
         # (the QML shell only when it can start at all: a bundle install may
         # not have Quickshell, and a Qt update breaks a frozen build. Else the
         # Rust shell again, said, after a wait that grows each time; audit #98)
-        if (( $(head -1 "$STARTS" 2>/dev/null || echo 0) >= 2 )) && ! qml_runs; then
+        if (( $(count_of "$STARTS") >= 2 )) && ! qml_runs; then
             local tries waited rf step
             rf="$(dirname "$STARTS")/rust-retries"
             # (counted per login, as the starts are)
             [[ "$(sed -n 2p "$rf" 2>/dev/null)" == "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] || rm -f "$rf"
-            tries=$(( $(head -1 "$rf" 2>/dev/null || echo 0) + 1 ))
+            tries=$(( $(count_of "$rf") + 1 ))
             printf '%s\n%s\n' "$tries" "${HYPRLAND_INSTANCE_SIGNATURE:-}" >"$rf" 2>/dev/null
             step=${TESSERA_SHELL_RETRY_STEP:-30}
             waited=$(( tries * step > 300 ? 300 : tries * step ))
@@ -225,7 +232,7 @@ sys.exit(1 if off else 0)' "$c" 2>/dev/null && return 1
             rm -f "$STARTS"
             sleep "$waited"
         fi
-        if (( $(head -1 "$STARTS" 2>/dev/null || echo 0) >= 2 )); then
+        if (( $(count_of "$STARTS") >= 2 )); then
             echo "launch-shell: tessera-ui didn't stay up twice: the QML shell this time ($STARTS)" >&2
             # (why, for the fallback's notice: the crash's own line when the
             # log has one; an EGL failure wrote its note already. A panic in
@@ -265,7 +272,7 @@ if ui="$(standalone_ui)"; then
     TESSERA_QML_FALLBACK="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd -P)"
     export TESSERA_QML_FALLBACK
     mkdir -p "$(dirname "$STARTS")"
-    printf '%s\n%s\n' $(( $(head -1 "$STARTS" 2>/dev/null || echo 0) + 1 )) "${HYPRLAND_INSTANCE_SIGNATURE:-}" > "$STARTS"
+    printf '%s\n%s\n' $(( $(count_of "$STARTS") + 1 )) "${HYPRLAND_INSTANCE_SIGNATURE:-}" > "$STARTS"
     # (its messages, and a crash's, in tessera-ui.log; the run before's in .1)
     log="$(dirname "$STARTS")/tessera-ui.log"
     [[ -f "$log" ]] && mv -f "$log" "$log.1"

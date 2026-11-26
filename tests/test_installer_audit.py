@@ -476,6 +476,37 @@ class LaunchFallback(Temp):
         self.starts(2)
         self.assertEqual(self.launch(), ["qml -c tessera"])
 
+    def test_a_bundle_install_rolls_back_the_bundle(self):
+        # (audit #675: bundle.json there: tessera-bundle.py's rollback, not native-install's)
+        self.write(self.checkout / "bundle.json", "{}")
+        stub = 'import os, sys\nopen(os.environ["MARK"], "a").write("bundle " + " ".join(sys.argv[1:]) + "\\n")\n'
+        self.write(self.checkout / "tools/tessera-bundle.py", stub)
+        self.write(self.state / "fresh-update.json", "{}")
+        self.starts(2)
+        self.assertEqual(self.launch(), ["bundle rollback --json", "rust --standalone"])
+        self.assertEqual(self.starts(), ["1", self.SIG])
+
+    def test_a_rollback_that_fails_is_the_qml_shell_with_its_note(self):
+        self.write(self.checkout / "tools/native-install.py", 'import os, sys\nopen(os.environ["MARK"], "a").write("native-install " + " ".join(sys.argv[1:]) + "\\n")\nsys.exit(1)\n')
+        self.write(self.state / "fresh-update.json", "{}")
+        self.starts(2)
+        self.assertEqual(self.launch(), ["native-install rollback --json", "qml -c tessera"])
+        self.assertTrue((self.state / "fallback").read_text().startswith("The Rust shell crashed twice"))
+
+    def test_the_note_names_the_panic(self):
+        self.write(self.state / "tessera-ui.log", "tessera-ui: starting\ntessera-ui: thread 'main' panicked at core/src/x.rs:1:2: boom\n")
+        self.starts(2)
+        self.assertEqual(self.launch(), ["qml -c tessera"])
+        first = (self.state / "fallback").read_text().splitlines()[0]
+        self.assertIn("thread 'main' panicked at core/src/x.rs:1:2: boom", first)
+
+    def test_a_damaged_count_is_a_first_start(self):
+        for bad in ("x", "a b", "a[$(touch {})]".format(self.d / "ran")):
+            (self.state / "standalone-starts").write_text(f"{bad}\n{self.SIG}\n")
+            self.assertEqual(self.launch(), ["rust --standalone"], bad)
+            self.assertEqual(self.starts(), ["1", self.SIG], bad)
+        self.assertFalse((self.d / "ran").exists())
+
     def test_a_copied_install_finds_its_checkout(self):
         copy = self.home / ".config/quickshell/tessera/assets/scripts"
         for f in ("launch-shell.sh", "old-names.sh"):
