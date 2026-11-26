@@ -1184,7 +1184,8 @@ export component SettingsWindow inherits Window {
                                         text: s.name;
                                         color: Theme.material ? (s.current ? Theme.m3-on-secondary-container : Theme.m3-on-surface) : s.current ? Theme.on-accent : Theme.label;
                                         font-size: Theme.material ? 15px : Theme.body;
-                                        font-weight: s.current ? 600 : 400;
+                                        // (Glass: one weight either way, as macOS: the name kept its width)
+                                        font-weight: Theme.material && s.current ? 600 : 400;
                                         accessible-role: AccessibleRole.none;
                                     }
                                     // (the list is one Tab stop: the open page, ringed)
