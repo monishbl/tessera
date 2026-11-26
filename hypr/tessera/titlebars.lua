@@ -7,7 +7,9 @@ end
 
 local function tesseraDecorations()
     local cfg = (os.getenv("XDG_CONFIG_HOME") ~= nil and os.getenv("XDG_CONFIG_HOME") ~= "") and os.getenv("XDG_CONFIG_HOME") or (os.getenv("HOME") .. "/.config")
-    local f = io.open(cfg .. "/tessera/config.json", "r")
+    -- (the session's own settings, as keybinds.lua reads them: a ./dev.sh tty
+    -- session keeps them in its sandbox home)
+    local f = io.open((TESSERA_USER_DIR or (cfg .. "/tessera")) .. "/config.json", "r")
     if not f then return "none" end
     local s = f:read("*a")
     f:close()
