@@ -170,17 +170,20 @@ Singleton {
     property bool locked: false
     // Remembered for this Hyprland session, so a shell that restarts while the
     // screen is locked (a crash, a repair) locks again straight away
-    readonly property string lockMark: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/tessera-locked-" + (Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") || "none")
+    // (in the runtime folder, /run/user/<uid> without XDG_RUNTIME_DIR as the
+    // Rust shell and keep-shell.sh have it; never /tmp: compat, audit #669)
+    readonly property string lockMark: "tessera-locked-" + (Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") || "none")
+    readonly property string runDir: "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
     onLockedChanged: {
         if (!locked) {
             sleepPending = false;
             sleepGuard.stop();
         }
-        Quickshell.execDetached(locked ? ["touch", lockMark] : ["rm", "-f", lockMark]);
+        Quickshell.execDetached(["sh", "-c", (locked ? "touch -- " : "rm -f -- ") + "\"" + runDir + "/$1\"", "sh", lockMark]);
     }
     Process {
         running: true
-        command: ["sh", "-c", "[ -e \"$1\" ]", "sh", root.lockMark]
+        command: ["sh", "-c", "[ -e \"" + root.runDir + "/$1\" ]", "sh", root.lockMark]
         onExited: code => {
             if (code === 0)
                 root.locked = true;

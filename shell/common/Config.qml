@@ -30,9 +30,13 @@ Singleton {
         onFileChanged: reload()
         onAdapterUpdated: writeTimer.restart()
         onLoaded: {
-            // The display switch cue was on/off before it had styles
-            if (adapter.workspaces.switchCue === "")
-                adapter.workspaces.switchCue = adapter.workspaces.dimOthers ? "glow" : "off";
+            // The display switch cue was on/off before it had styles. Empty
+            // already reads as glow (SpaceSwitch, displays.qml), so only an
+            // old "off" is written: a settings file the Rust shell made has
+            // no switchCue, and writing it rewrote the whole file at the first
+            // load of this fallback (compat, audit #668)
+            if (adapter.workspaces.switchCue === "" && !adapter.workspaces.dimOthers)
+                adapter.workspaces.switchCue = "off";
             // 30 Oct: the anime tab and the gaming overlays are off unless
             // you turn them on again (once, for settings saved before then)
             if (adapter.defaultsVersion < 1) {
