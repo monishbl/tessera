@@ -2349,7 +2349,11 @@ export component Island inherits Rectangle {
         if !Theme.material: Squircle {
             radius: radius;
             opacity: shape.fade;
-            fill: @linear-gradient(180deg, #000000f0 0%, #000000e6 30%, #0000001f 100%);
+            // (without the plugin there's no glass to melt into: it keeps a
+            // scrim to the bottom edge, so the lower rows' grey text and
+            // times stay readable over a bright wallpaper)
+            fill: Theme.plugin ? @linear-gradient(180deg, #000000f0 0%, #000000e6 30%, #0000001f 100%)
+                : @linear-gradient(180deg, #000000f0 0%, #000000e6 30%, #000000a6 100%);
         }
         // Glass, music playing, open: the album art is the island itself, solid
         // up top and melting into the glass below like the black (faded in Rust)
