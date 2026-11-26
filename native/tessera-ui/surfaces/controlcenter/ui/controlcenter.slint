@@ -694,9 +694,15 @@ export component QsSlider {
     in property <bool> enabled: true;
     callback moved(float);
     callback more();
+    // (a seek bar: it follows the pointer and reports once, on release,
+    // instead of a `moved` per pointer move)
+    in property <bool> seek-on-release;
+    callback released(float);
+    property <bool> dragging;
+    property <float> drag;
     property <length> along: vertical ? self.height : self.width;
     property <length> across: vertical ? self.width : self.height;
-    property <float> v: max(0, min(1, value));
+    property <float> v: seek-on-release && dragging ? drag : max(0, min(1, value));
     property <float> shown: v;
     animate shown { duration: touch.pressed ? 0ms : 150ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     property <length> corner: touch.pressed ? 8px : track / 2;
@@ -788,15 +794,30 @@ export component QsSlider {
                     held = false;
                     before = value;
                     if has-more { hold.running = true; }
-                    moved(at());
+                    if seek-on-release {
+                        drag = at();
+                        dragging = true;
+                    } else {
+                        moved(at());
+                    }
                 }
             }
-            if e.kind == PointerEventKind.up { hold.running = false; }
+            if e.kind == PointerEventKind.up {
+                hold.running = false;
+                if dragging {
+                    dragging = false;
+                    released(drag);
+                }
+            }
         }
         moved => {
             if held { return; }
             if abs(self.mouse-x - self.pressed-x) + abs(self.mouse-y - self.pressed-y) > 6px { hold.running = false; }
-            moved(at());
+            if seek-on-release {
+                drag = at();
+            } else {
+                moved(at());
+            }
         }
         scroll-event(e) => {
             if e.delta-y != 0 {
@@ -1166,18 +1187,23 @@ component QsMedia {
             width: parent.width - 88px - (cast-btn.visible ? 40px : 0);
             height: 20px;
             y: 10px;
+            // (a drag follows the pointer and seeks once, on release, as the
+            // island's music card and the Now Playing menu)
+            property <bool> seeking;
+            property <float> drag;
+            property <float> shown: seeking ? drag : media.progress;
             // the done part: QSMedia's WavyProgress while playing (a sine,
             // 3 px high, 24 px long, drifting), else the flat line
             if !media.playing || Theme.still: Rectangle {
                 y: 8px;
-                width: media.timed ? max(4px, parent.width * media.progress) : 0;
+                width: media.timed ? max(4px, parent.width * parent.shown) : 0;
                 height: 4px;
                 border-radius: 2px;
                 background: Theme.m3-primary;
             }
             if media.playing && !Theme.still: Rectangle {
                 y: 4px;
-                width: media.timed ? max(4px, parent.width * media.progress) : 0;
+                width: media.timed ? max(4px, parent.width * parent.shown) : 0;
                 height: 12px;
                 clip: true;
                 Path {
@@ -1193,7 +1219,7 @@ component QsMedia {
                 }
             }
             Rectangle {
-                x: media.timed ? parent.width * media.progress + 4px : 0;
+                x: media.timed ? parent.width * parent.shown + 4px : 0;
                 y: 8px;
                 width: max(0, parent.width - self.x);
                 height: 4px;
@@ -1206,7 +1232,11 @@ component QsMedia {
                 height: parent.height + 12px;
                 enabled: media.seek && media.timed && active;
                 mouse-cursor: pointer;
-                clicked => { media-do("seek:" + max(0, min(1, self.mouse-x / self.width))); }
+                pointer-event(e) => {
+                    if e.kind == PointerEventKind.down && e.button == PointerEventButton.left { parent.drag = max(0, min(1, self.mouse-x / self.width)); parent.seeking = true; }
+                    if e.kind == PointerEventKind.up && parent.seeking { parent.seeking = false; media-do("seek:" + parent.drag); }
+                }
+                moved => { if self.pressed { parent.drag = max(0, min(1, self.mouse-x / self.width)); } }
             }
         }
         GhostButton {
@@ -1311,12 +1341,14 @@ export component Block inherits VerticalLayout {
                 : rt.pressed ? Theme.fill-pressed : rt.has-hover ? Theme.fill : transparent;
             animate background { duration: 150ms; }
         }
+        // (drawn inside the row: rows fill their Flickable's width, and the
+        // Flickable clips, which cut a ring drawn outside to two short lines)
         if focused: Rectangle {
-            x: -3px;
-            y: -3px;
-            width: parent.width + 6px;
-            height: parent.height + 6px;
-            border-radius: (m3 ? 20px : Theme.radius-control) + 3px;
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+            border-radius: m3 ? 20px : Theme.radius-control;
             border-width: 2px;
             border-color: m3 ? Theme.m3-primary : Theme.accent;
         }
