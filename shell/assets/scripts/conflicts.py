@@ -153,7 +153,9 @@ def duplicates(found):
                       "what": f"is running {len(idle)} times, so the screen may dim, lock or sleep twice",
                       "fix": "Tessera starts its own hypridle. Remove exec-once = hypridle from your Hyprland config, "
                              "or systemctl --user disable --now hypridle."})
-    if any(len(v) > 1 for v in clips.values()):
+    # (an untyped recorder, Tessera's own included, takes every kind: next to
+    # a typed one, that kind is saved twice too)
+    if any(len(v) > 1 for v in clips.values()) or (clips.get("") and len(clips) > 1):
         found.append({"id": "cliphist", "name": "a second clipboard recorder",
                       "short": "Saves what you copy twice",
                       "what": "saves everything you copy twice (wl-paste --watch cliphist store)",
