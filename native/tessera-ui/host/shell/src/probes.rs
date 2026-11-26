@@ -141,7 +141,7 @@ pub fn backends(found: &BTreeMap<String, String>, ready: bool) -> Value {
         "no-adapter" => ("No Bluetooth adapter", "No adapter"),
         "not-installed" => ("Bluetooth isn't installed", "Not installed"),
         "no-tool" => ("Bluetooth needs bluetoothctl", "Needs bluetoothctl"),
-        "stopped" => ("Bluetooth is turned off", "Service off"),
+        "stopped" => ("Bluetooth isn't available", "Service off"),
         "blocked" => ("Bluetooth is blocked", "Blocked"),
         "hard-blocked" => ("Bluetooth is switched off", "Switched off"),
         _ => ("", ""),
