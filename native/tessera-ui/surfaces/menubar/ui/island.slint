@@ -216,7 +216,9 @@ export component IslandStatus inherits Rectangle {
         }
         StatFigure {
             key: "cpu";
-            icon: s.cpu-icon;
+            // (Material: the gauge's "speed" symbol; its symbol for Phosphor's
+            // cpu is the same chip as memory's, and the two read as one)
+            icon: Theme.material ? "\u{e628}" : s.cpu-icon;
             label: s.cpu;
             shape: s.cpu-shape;
             tint: dim;
