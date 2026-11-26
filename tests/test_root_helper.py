@@ -946,10 +946,12 @@ class FaceUnlock(unittest.TestCase):
             (p / "usr/lib/systemd/system/polkit-agent-helper@.service").write_text("[Service]\n")
         (p / "etc/systemd/system/polkit-agent-helper@.service.d").mkdir(parents=True)
         (p / "var/lib/tessera/face").mkdir(parents=True)  # (the stub write_root makes no folders)
-        self.config.write_text("[video]\ndevice_path = /dev/video2\n")
+        self.config.write_text(f"[video]\ndevice_path = {self.IR}\n")
         return p
 
-    def admin_on(self, prefix, kind="ir", device="/dev/video2", infrared=lambda d: d == "/dev/video2"):
+    IR = "/dev/v4l/by-path/pci-0000:00:14.0-usb-0:5:1.2-video-index0"
+
+    def admin_on(self, prefix, kind="ir", device=IR, infrared=lambda d, ir=IR: d == ir):
         return self.r.face_admin_on(self.uid, device, kind, exists=lambda p: True, which=lambda n: "/usr/bin/howdy",
                                     prefix=str(prefix), run=lambda *a, **k: None, config=str(self.config), infrared=infrared)
 
@@ -971,7 +973,7 @@ class FaceUnlock(unittest.TestCase):
         p = self.admin_tree()
         noop = lambda *a, **k: None
         # (face admin off: nothing to follow)
-        self.assertEqual(self.r.face_admin_refresh(prefix=str(p), run=noop), [])
+        self.assertEqual(self.refresh(p), [])
         self.assertFalse((p / "var/lib/tessera/face/polkit-1").exists())
         self.admin_on(p)
         copy = p / "var/lib/tessera/face/polkit-1"
@@ -980,20 +982,20 @@ class FaceUnlock(unittest.TestCase):
         # fingerprint off for administrator prompts: the copy loses it too
         without = "".join(l + "\n" for l in self.POLKIT_FP.splitlines() if "pam_fprintd" not in l)
         (p / "etc/pam.d/polkit-1").write_text(without)
-        self.assertEqual(self.r.face_admin_refresh(prefix=str(p), run=noop), [str(copy)])
+        self.assertEqual(self.refresh(p), [str(copy)])
         self.assertNotIn("pam_fprintd", copy.read_text())
         self.assertIn("pam_howdy", copy.read_text())
-        self.assertEqual(self.r.face_admin_refresh(prefix=str(p), run=noop), [])  # (nothing changed)
+        self.assertEqual(self.refresh(p), [])  # (nothing changed)
         # /etc's copy gone (the package's file again): the drop-in follows it
         (p / "etc/pam.d/polkit-1").unlink()
         (p / "usr/lib/pam.d").mkdir(parents=True)
         (p / "usr/lib/pam.d/polkit-1").write_text(self.POLKIT_FP)
-        self.r.face_admin_refresh(prefix=str(p), run=noop)
+        self.refresh(p)
         self.assertIn(":/usr/lib/pam.d/polkit-1", dropin.read_text())
         self.assertIn("pam_fprintd", copy.read_text())
         # no PAM file for polkit at all: face admin is undone
         (p / "usr/lib/pam.d/polkit-1").unlink()
-        self.r.face_admin_refresh(prefix=str(p), run=noop)
+        self.refresh(p)
         self.assertFalse(dropin.exists() or copy.exists())
 
     def test_a_regular_camera_never_approves_administrators(self):
@@ -1009,7 +1011,7 @@ class FaceUnlock(unittest.TestCase):
             self.admin_on(p, device="/dev/video0")
         # asked for the infrared one while Howdy watches the regular one
         with self.assertRaises(self.r.Refused):
-            self.admin_on(p, device="/dev/video2")
+            self.admin_on(p, device=self.IR)
         self.assertFalse(dropin.exists())
         # (and through the command line too)
         with self.assertRaises(self.r.Refused):
@@ -1019,9 +1021,35 @@ class FaceUnlock(unittest.TestCase):
         q = Path(self.dir.name) / "q"
         (q / "etc/pam.d").mkdir(parents=True)
         (q / "etc/pam.d/polkit-1").write_text(self.POLKIT)
-        self.config.write_text("[video]\ndevice_path = /dev/video2\n")
+        self.config.write_text(f"[video]\ndevice_path = {self.IR}\n")
         with self.assertRaises(self.r.Refused):
             self.admin_on(q)  # (a setuid-only polkit: no service to give a camera)
+
+    def test_admin_needs_a_camera_name_that_stays_the_same(self):
+        # (audit #799: /dev/videoN can be the colour camera after a reboot)
+        p = self.admin_tree()
+        self.config.write_text("[video]\ndevice_path = /dev/video2\n")
+        with self.assertRaises(self.r.Refused) as e:
+            self.admin_on(p, device="/dev/video2", infrared=lambda d: True)
+        self.assertIn("by-path", str(e.exception))
+        # on, then Howdy's camera turns out not infrared (or renamed): undone
+        self.config.write_text(f"[video]\ndevice_path = {self.IR}\n")
+        self.admin_on(p)
+        dropin = p / "etc/systemd/system/polkit-agent-helper@.service.d/50-tessera-face.conf"
+        self.assertTrue(dropin.exists())
+        self.refresh(p)
+        self.assertTrue(dropin.exists())
+        self.r.face_admin_refresh(prefix=str(p), run=lambda *a, **k: None, config=str(self.config),
+                                  infrared=lambda d: False, exists=lambda d: True)
+        self.assertFalse(dropin.exists())
+        self.admin_on(p)
+        self.config.write_text("[video]\ndevice_path = /dev/video0\n")
+        self.refresh(p)
+        self.assertFalse(dropin.exists())
+
+    def refresh(self, p):
+        return self.r.face_admin_refresh(prefix=str(p), run=lambda *a, **k: None, config=str(self.config),
+                                         infrared=lambda d: True, exists=lambda d: True)
 
 
 class SysUpdate(unittest.TestCase):

@@ -1155,6 +1155,9 @@ def passkeys_retire(prefix="/", run=subprocess.run):
 # ── face (Settings → Lock Screen → Face) ─────────────────────────────────
 HOWDY_CONFIG = "/etc/howdy/config.ini"
 CAMERA_PATH = re.compile(r"^/dev/(v4l/by-(path|id)/[\w:.\-]+|video\d{1,3})$")
+# (administrator prompts: only a name that stays the same camera; /dev/videoN
+# can be another one after a reboot or a replug)
+STABLE_CAMERA_PATH = re.compile(r"^/dev/v4l/by-(path|id)/[\w:.\-]+$")
 
 
 def howdy_device(text, device):
@@ -1318,6 +1321,9 @@ def face_admin_on(uid, device, kind, exists=os.path.exists, which=shutil.which, 
         raise Refused(NOT_INFRARED)
     if not CAMERA_PATH.match(device) or not exists(device):
         raise Refused(f"not a camera: {device}")
+    if not STABLE_CAMERA_PATH.match(device):
+        raise Refused(f"{device} can be another camera after a restart (it has no /dev/v4l/by-path name): "
+                      "administrator prompts keep asking for your password")
     # (pam_howdy uses Howdy's camera: that one must be the infrared one, whatever was asked)
     if howdy_camera(config) != device:
         raise Refused("Howdy is set to another camera: set face unlock up again")
@@ -1344,16 +1350,25 @@ def face_admin_on(uid, device, kind, exists=os.path.exists, which=shutil.which, 
     return [root(overlay), root(FACE_DROPIN)]
 
 
-def face_admin_refresh(prefix="/", run=subprocess.run):
+def face_admin_refresh(prefix="/", run=subprocess.run, config=None, infrared=is_infrared, exists=os.path.exists):
     """polkit's PAM file changed (a fingerprint turned on or off for
     administrator prompts) while faces approve them: our copy is made again
     from it, so the helper sees that change too (it sees only the copy), and
     the drop-in follows the file PAM reads now (/etc's, or the package's
     again once /etc's copy went). Nothing when face admin is off. Returns
-    the files written."""
+    the files written. Howdy's camera is checked again too: no longer a
+    fixed name, gone, or not infrared, and face admin is undone (the
+    password again)."""
     root = lambda p: os.path.join(prefix, p.lstrip("/"))
     if not os.path.exists(root(FACE_DROPIN)):
         return []
+    camera = howdy_camera(config or root(HOWDY_CONFIG))
+    try:
+        good = bool(STABLE_CAMERA_PATH.match(camera)) and exists(camera) and infrared(camera)
+    except Exception:  # (can't tell: not trusted)
+        good = False
+    if not good:
+        return face_admin_off(prefix=prefix, run=run)
     target = next((p for p in POLKIT_PAM if os.path.exists(root(p))), "")
     if not target:
         # (no PAM file for polkit at all: nothing to show the helper instead)
@@ -3527,6 +3542,12 @@ def setup(src, uid, prefix=None, run=subprocess.run):
     written += [os.path.join(prefix, d.lstrip("/")) for d in passkeys_retire(prefix, run)]
     # (the login rescue, wherever greetd is installed: tessera-login-rescue.service)
     written += [os.path.join(prefix, d.lstrip("/")) for d in rescue_units(prefix, run)]
+    # (faces approving administrator prompts: Howdy's camera still the
+    # infrared one, else back to the password. Never fails the setup)
+    try:
+        written += face_admin_refresh(prefix, run)
+    except Exception as e:
+        print(f"tessera-root setup: face admin not checked: {e!r}", file=sys.stderr)
     # ananicy-cpp reads its rules as it starts
     if prefix == "/" and any(d.startswith("/etc/ananicy.d/") or d == OLD_ANANICY_RULE for d in written):
         with contextlib.suppress(OSError, subprocess.SubprocessError):
