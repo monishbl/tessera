@@ -2,8 +2,11 @@
 //! fatal, in $XDG_STATE_HOME/tessera/crashes/<time>-<part>.txt; the newest
 //! 10 are kept. A report says the version and commit, the part, the panic's
 //! message and backtrace, the last 200 lines of tessera-ui.log, Hyprland's
-//! version and the GPU, and nothing else: the home folder is written as ~,
-//! the user, computer, e-mail, IP and MAC addresses are taken out.
+//! version and the GPU. The home folder is written as ~; the user's name
+//! (four letters or more), the computer's name, e-mail, IPv4, IPv6 and MAC
+//! addresses are taken out. Other things the log quotes (window titles,
+//! device and network names, files outside home) are not: read a report
+//! before sending it. Reports are private to you (folder 0700, files 0600).
 //! Settings → About → Report a Bug lists them, saves them as one file to
 //! Downloads and deletes them (with Undo).
 
@@ -91,10 +94,17 @@ fn hyprland() -> String {
 /// The last `n` lines of tessera-ui.log
 fn log_tail(n: usize) -> String {
     let path = crate::util::xdg("XDG_STATE_HOME", ".local/state").join("tessera/tessera-ui.log");
-    let Ok(bytes) = std::fs::read(&path) else { return "(no log)".into() };
-    // (the end of a big log only: a megabyte holds far more than 200 lines)
-    let from = bytes.len().saturating_sub(1 << 20);
-    let text = String::from_utf8_lossy(&bytes[from..]);
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(&path) else { return "(no log)".into() };
+    // (the end of a big log only, read from there: a megabyte holds far
+    // more than 200 lines, and the log can be far bigger)
+    let len = f.metadata().map_or(0, |m| m.len());
+    let from = len.saturating_sub(1 << 20);
+    let mut bytes = Vec::new();
+    if f.seek(SeekFrom::Start(from)).is_err() || f.read_to_end(&mut bytes).is_err() {
+        return "(no log)".into();
+    }
+    let text = String::from_utf8_lossy(&bytes);
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(n)..].join("\n")
 }
@@ -130,8 +140,12 @@ pub fn compose(p: &Panic, now_secs: i64) -> String {
 
 /// Write a report now; the oldest beyond KEEP go. The file, if written
 pub fn write(p: &Panic) -> Option<PathBuf> {
+    use std::io::Write;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
     let dir = dir();
-    std::fs::create_dir_all(&dir).ok()?;
+    // (yours only: a report quotes the log)
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir).ok()?;
+    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
     let now = crate::util::now_ms() / 1000;
     let stem = format!("{}-{}", crate::util::strftime("%Y%m%d-%H%M%S", now), file_part(&p.part));
     let mut path = dir.join(format!("{stem}.txt"));
@@ -140,7 +154,9 @@ pub fn write(p: &Panic) -> Option<PathBuf> {
         path = dir.join(format!("{stem}-{i}.txt"));
         i += 1;
     }
-    std::fs::write(&path, compose(p, now)).ok()?;
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path).ok()?;
+    f.write_all(compose(p, now).as_bytes()).ok()?;
+    drop(f);
     prune(&dir, KEEP);
     Some(path)
 }
@@ -268,7 +284,7 @@ pub fn restore_deleted() {
 }
 
 /// Take out what could say who you are: the home folder (~), the user's and
-/// the computer's names, e-mail, IPv4 and MAC addresses
+/// the computer's names, e-mail, IPv4, IPv6 and MAC addresses
 pub fn scrub(text: &str) -> String {
     let home = std::env::var("HOME").unwrap_or_default();
     let user = std::env::var("USER").unwrap_or_default();
@@ -320,6 +336,9 @@ fn scrub_word(w: &str) -> &str {
     if is_ipv4(t.split(':').next().unwrap_or("")) {
         return "<ip>";
     }
+    if is_ipv6(t) {
+        return "<ip>";
+    }
     if let Some((a, b)) = t.split_once('@') {
         if a.chars().any(|c| c.is_ascii_alphabetic()) && b.contains('.') && !b.starts_with('.') && b.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-') {
             return "<email>";
@@ -331,6 +350,14 @@ fn scrub_word(w: &str) -> &str {
 fn is_mac(w: &str) -> bool {
     let p: Vec<&str> = w.split(':').collect();
     p.len() == 6 && p.iter().all(|x| x.len() == 2 && x.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+fn is_ipv6(w: &str) -> bool {
+    // (a group of 3-4 hex digits: Rust paths like a::b aren't addresses;
+    // :: and ::1 say nothing about anyone)
+    w.contains(':')
+        && w.split(':').any(|g| g.len() >= 3)
+        && w.parse::<std::net::Ipv6Addr>().is_ok_and(|a| !a.is_loopback() && !a.is_unspecified())
 }
 
 fn is_ipv4(w: &str) -> bool {
@@ -352,6 +379,8 @@ mod tests {
         assert_eq!(scrub_with("bo bob", "/home/bo", "bo", "pc"), "bo bob");
         // (versions and times aren't addresses)
         assert_eq!(scrub_with("0.57.1 12:30:45 2026-11-16", "", "", ""), "0.57.1 12:30:45 2026-11-16");
+        // (IPv6 too; Rust paths and loopback stay)
+        assert_eq!(scrub_with("from fe80::1a2b:3cff:fe4d:5e6f and 2001:db8::7 via ::1 in core::fmt", "", "", ""), "from <ip> and <ip> via ::1 in core::fmt");
     }
 
     #[test]

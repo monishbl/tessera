@@ -270,7 +270,12 @@ impl HostPart {
         let p = prefix(&a.call).to_string();
         let found = crate::perf::time(|| format!("ask {}", a.call), || self.one(st, |s| s.calls().contains(&p.as_str()), |s, h| s.call(h, &a.call, &a.args)));
         if !found {
-            eprintln!("tessera-ui: host: nothing answers {} (args {})", a.call, a.args);
+            // (a call's arguments can name people's things: only with TESSERA_DEBUG)
+            if crate::env::is_set("DEBUG") {
+                eprintln!("tessera-ui: host: nothing answers {} (args {})", a.call, a.args);
+            } else {
+                eprintln!("tessera-ui: host: nothing answers {}", a.call);
+            }
         }
     }
 

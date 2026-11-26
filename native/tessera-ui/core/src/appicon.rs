@@ -107,12 +107,22 @@ impl Img {
     }
 }
 
+/// The largest icon picture decoded (a side, in pixels), the decoder's
+/// memory for it, and the largest SVG file read
+const MAX_ICON_SIDE: u32 = 4096;
+const MAX_ICON_ALLOC: u64 = 96 << 20;
+const MAX_SVG_BYTES: u64 = 8 << 20;
+
 /// An icon file at `size`×`size` (kept square, centred, as Qt's icon provider)
 pub fn load(path: &Path, size: u32) -> Option<Img> {
     let size = size.clamp(1, 1024);
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
     if ext == "svg" || ext == "svgz" {
         use resvg::{tiny_skia, usvg};
+        // (an icon, not a drawing: a huge file is refused unread)
+        if std::fs::metadata(path).ok()?.len() > MAX_SVG_BYTES {
+            return None;
+        }
         let data = std::fs::read(path).ok()?;
         let tree = usvg::Tree::from_data(&data, &usvg::Options::default()).ok()?;
         let (w, h) = (tree.size().width(), tree.size().height());
@@ -123,12 +133,19 @@ pub fn load(path: &Path, size: u32) -> Option<Img> {
         let px = pix.pixels().iter().map(|p| [p.red() as f32 / 255.0, p.green() as f32 / 255.0, p.blue() as f32 / 255.0, p.alpha() as f32 / 255.0]).collect();
         return Some(Img { w: size as usize, h: size as usize, px });
     }
-    let src = image::open(path).ok()?.to_rgba8();
-    let (w, h) = src.dimensions();
+    // Any file can be named as an icon (Icon=/path, a tray's IconName): one
+    // bigger than an icon could sensibly be is refused, not decoded whole
+    let mut reader = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_ICON_SIDE);
+    limits.max_image_height = Some(MAX_ICON_SIDE);
+    limits.max_alloc = Some(MAX_ICON_ALLOC);
+    reader.limits(limits);
+    let mut pre = reader.decode().ok()?.into_rgba8();
+    let (w, h) = pre.dimensions();
     let k = size as f32 / w.max(h).max(1) as f32;
     let (nw, nh) = (((w as f32 * k).round() as u32).max(1), ((h as f32 * k).round() as u32).max(1));
-    // (premultiplied before scaling: no dark fringes from transparent pixels)
-    let mut pre = src.clone();
+    // (premultiplied before scaling, in place: no dark fringes from transparent pixels)
     for p in pre.pixels_mut() {
         let a = p[3] as u32;
         for c in 0..3 {

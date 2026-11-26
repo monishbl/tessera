@@ -138,7 +138,7 @@ pub fn run_copies(stop: Stop, _args: Value) {
 // the app receiving it. Asking PipeWire (pw-cli) costs ~15 ms, so it's
 // only done when the portal's count of open files changes (it opens some
 // for every stream: a free look every 3 s, nothing started), and once a
-// minute; with no portal running, every 10 s. While a stream exists the
+// minute; with no portal running, never. While a stream exists the
 // graph (pw-dump) is read every 2 s and reduced to what the shell reads,
 // reported as {"src":"screenshare","graph":[...]} when it changed, and
 // once with [] when the last stream goes.
@@ -155,7 +155,8 @@ pub fn run_screenshare(stop: Stop, _args: Value) {
                 xdph = find_xdph();
             }
             let changed = match xdph {
-                None => since >= Duration::from_secs(10),
+                // No portal, no xdph stream: nothing to ask PipeWire
+                None => false,
                 Some(p) => {
                     let n = std::fs::read_dir(format!("/proc/{p}/fd")).map(|d| d.count()).ok();
                     let c = n != xfds || since >= Duration::from_secs(60);
@@ -204,18 +205,43 @@ fn find_xdph() -> Option<u32> {
     })
 }
 
-// A short-lived tool's output; it dies with us
+// A short-lived tool's output; it dies with us, and is killed when it takes
+// longer than RUN_LIMIT (a wedged PipeWire must not hold the thread for good)
+const RUN_LIMIT: Duration = Duration::from_secs(5);
+
 fn run(argv: &[&str]) -> Option<String> {
+    use std::io::Read;
     let mut c = Command::new(argv[0]);
-    c.args(&argv[1..]).stdin(Stdio::null()).stderr(Stdio::null());
+    c.args(&argv[1..]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
     unsafe {
         c.pre_exec(|| {
             libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM as libc::c_ulong, 0, 0, 0);
             Ok(())
         });
     }
-    let out = c.output().ok()?;
-    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    let mut child = c.spawn().ok()?;
+    let mut stdout = child.stdout.take()?;
+    // (read on the side, so a big output can't fill the pipe while we wait)
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        buf
+    });
+    let until = Instant::now() + RUN_LIMIT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return None;
+            }
+        }
+    }
+    let out = reader.join().ok()?;
+    Some(String::from_utf8_lossy(&out).into_owned())
 }
 
 /// The share-relevant part of a pw-dump: the xdph nodes, the links out of
