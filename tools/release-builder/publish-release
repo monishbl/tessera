@@ -586,6 +586,26 @@ def can_publish():
                       f"(gh auth switch to an account that can)")
 
 
+def pointer_is_newer(tag, commit, fetch=None):
+    """The commit a rolling release's pointer names now, when it's newer
+    than COMMIT (COMMIT one of its ancestors, by the checkout here): then
+    COMMIT's bundle goes out without moving the pointer back. None when the
+    pointer is COMMIT's, older, missing, or the checkout can't tell."""
+    def get():
+        url = f"https://github.com/{GH_REPO}/releases/download/{tag}/{LATEST}"
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "tessera-publish"}), timeout=30) as r:
+            return json.loads(r.read().decode("utf-8"))
+    try:
+        cur = (fetch or get)()
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    now_at = cur.get("commit") if isinstance(cur, dict) else None
+    if not isinstance(now_at, str) or not re.fullmatch(r"[0-9a-f]{40}", now_at) or now_at == commit:
+        return None
+    r = subprocess.run(["git", "-C", REPO, "merge-base", "--is-ancestor", commit, now_at], capture_output=True, timeout=60)
+    return now_at if r.returncode == 0 else None
+
+
 def publish_bundle_github(s, dest, m):
     """A bundle set to its release: the archives, then the manifest, then
     the pointer (a rolling release's), each with its signature; a rolling
@@ -597,6 +617,13 @@ def publish_bundle_github(s, dest, m):
     if subprocess.run(["gh", "release", "view", tag], capture_output=True,
                       env=dict(os.environ, GH_REPO=GH_REPO, GH_PROMPT_DISABLED="1")).returncode != 0:
         raise Refused(f"there's no release {tag} yet (its program set goes first)")
+    # (an older set published after a newer one: its bundle goes out, the
+    # pointer stays on the newer one)
+    newer = pointer_is_newer(tag, commit) if tag in ROLLING else None
+    if newer:
+        s["pointer_kept"] = newer  # (publish_gitlab leaves it too)
+        names = [n for n in names if not n.startswith(LATEST)]
+        log(f"{tag}: bundle {commit[:12]} is older than {newer[:12]}, which the pointer names: the pointer stays")
     order = [n for n in names if ".tar.zst" in n] + [n for n in names if BUNDLE_MANIFEST_RE.match(n.replace(".minisig", ""))] + \
         [n for n in names if n.startswith(LATEST)]
     for group in (order[:4], order[4:6], order[6:]):
@@ -614,7 +641,7 @@ def publish_bundle_github(s, dest, m):
                     gh("release", "delete-asset", tag, b["name"], "--yes")
             log(f"{tag}: removed the older bundle {old[:12]}")
     base = f"https://github.com/{GH_REPO}/releases/download/{tag}"
-    back = LATEST if tag in ROLLING else f"tessera-{commit}.bundle.json"
+    back = LATEST if tag in ROLLING and not newer else f"tessera-{commit}.bundle.json"
     got = os.path.join(dest, ".downloaded")
     retry("downloading the manifest back", lambda: run(["curl", "-fsSL", "--retry", "3", "--proto", "=https", "-o", got, f"{base}/{back}"], "downloading the manifest back"))
     if sha256_of(got) != sha256_of(os.path.join(dest, back)):
@@ -720,7 +747,7 @@ def publish_gitlab(s, dest):
         with open(GITLAB_PROJECT_FILE) as f:
             project = f.read().strip() or project
     api = "https://gitlab.com/api/v4/projects/" + urllib.parse.quote(project, safe="")
-    names = published_names(s)
+    names = [n for n in published_names(s) if not (s.get("pointer_kept") and n.startswith(LATEST))]
     try:
         for n in [n for n in names if ".manifest.json" not in n] + [n for n in names if ".manifest.json" in n]:
             with open(os.path.join(dest, n), "rb") as f:

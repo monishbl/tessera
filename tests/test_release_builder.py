@@ -360,6 +360,32 @@ class Health(unittest.TestCase):
             except self.pr.Refused as e:
                 self.assertNotIn("others", str(e))  # (on to the next need: minisign, gh)
 
+    def test_an_older_bundle_never_moves_the_pointer_back(self):
+        # (audit #317: published after a newer one, its pointer named the older commit)
+        self.p.stop()
+        try:
+            repo = Path(self.tmp.name) / "repo"
+            ident = ["-c", "user.name=T", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"]
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            shas = []
+            for i in range(2):
+                (repo / "f").write_text(str(i))
+                subprocess.run(["git", "-C", str(repo), "add", "f"], check=True)
+                subprocess.run(["git", "-C", str(repo), *ident, "commit", "-qm", str(i)], check=True)
+                shas.append(subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip())
+            old, new = shas
+            with mock.patch.object(self.pr, "REPO", str(repo)):
+                self.assertEqual(self.pr.pointer_is_newer("tessera-ui-beta", old, fetch=lambda: {"commit": new}), new)
+                self.assertIsNone(self.pr.pointer_is_newer("tessera-ui-beta", new, fetch=lambda: {"commit": old}))
+                self.assertIsNone(self.pr.pointer_is_newer("tessera-ui-beta", new, fetch=lambda: {"commit": new}))
+                self.assertIsNone(self.pr.pointer_is_newer("tessera-ui-beta", old, fetch=lambda: {"commit": "f" * 40}), "unknown here: as before")
+
+                def gone():
+                    raise OSError("404")
+                self.assertIsNone(self.pr.pointer_is_newer("tessera-ui-beta", old, fetch=gone))
+        finally:
+            self.p.start()
+
     def test_the_gitlab_mirror_prunes_bundles_too(self):
         # (audit #721: only program sets were pruned; bundles piled up)
         f, n = [], [0]
