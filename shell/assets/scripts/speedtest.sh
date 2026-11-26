@@ -7,7 +7,7 @@
 #   loaded <ms>             a latency sample while the line is busy
 #   done download|upload <bits/s> <bytes>
 #   ookla <json>            Ookla's own progress and result lines, passed on
-#   error <code> <message>  offline | curl | ookla | timeout
+#   error <code> <message>  offline | curl | ookla | timeout | nodev
 # Usage: speedtest.sh cloudflare | ookla | ookla-py
 # Each phase stops after about 9 s or a data cap, so a test stays well under
 # 400 MB even on gigabit.
@@ -41,8 +41,11 @@ esac
 
 command -v curl >/dev/null || { echo "error curl curl isn't installed"; exit 1; }
 
-# The interface the internet goes through, for its byte counters
-dev=$(ip route get 1.1.1.1 2>/dev/null | awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }')
+# The interface the internet goes through, for its byte counters (over
+# IPv6 when there's no IPv4 route)
+devof() { awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }'; }
+dev=$(ip route get 1.1.1.1 2>/dev/null | devof)
+[[ -n "$dev" ]] || dev=$(ip -6 route get 2606:4700:4700::1111 2>/dev/null | devof)
 count() { cat "/sys/class/net/$dev/statistics/$1" 2>/dev/null || echo 0; }
 
 # One TCP handshake to the test server: the round trip, without the server's
@@ -59,6 +62,12 @@ if [[ "$meta" != \{* ]]; then
     exit 1
 fi
 echo "meta $meta"
+# (no counters to read: the phases could neither measure nor stop at their
+# cap, and would use their data for an error; stop before they start)
+if [[ -z "$dev" || ! -r "/sys/class/net/$dev/statistics/rx_bytes" ]]; then
+    echo "error nodev Couldn't tell which connection the internet goes through, so it can't be measured. Try Ookla in Settings → Network."
+    exit 1
+fi
 for _ in $(seq 1 16); do
     r=$(rtt)
     [[ -n "$r" ]] && echo "ping $r"
