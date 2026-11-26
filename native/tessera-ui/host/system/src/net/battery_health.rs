@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use std::any::Any;
 use std::collections::BTreeMap;
 use tessera_core::host::{Host, Service};
-use tessera_core::services::status::Battery;
+use tessera_core::services::status::{Battery, Charge};
 
 const NAME: &str = "BatteryHealth";
 
@@ -82,11 +82,12 @@ pub fn hm(secs: i64) -> String {
 /// One line for a hover: "84% · Charging · Balanced", "84% · 3:20 left · Low Power"
 pub fn summary(b: &Battery, mode: Option<&str>) -> String {
     let level = b.percent / 100.0; // (percent is 0..100: 1% is not 100%)
-    let state = match b.state {
-        4 => "Fully charged".to_string(),
-        1 => if b.time_to_full > 0 { format!("Full in {}", hm(b.time_to_full)) } else { "Charging".into() },
-        5 => "Not charging".into(),
-        _ => if b.time_to_empty > 0 { format!("{} left", hm(b.time_to_empty)) } else { "On battery".into() },
+    // (held at a charge limit: "Plugged in, not charging · Held at 80%"; #437)
+    let state = match b.charge() {
+        Charge::Full => "Fully charged".to_string(),
+        Charge::Charging => if b.time_to_full > 0 { format!("Full in {}", hm(b.time_to_full)) } else { "Charging".into() },
+        Charge::Held => b.charge_line(),
+        Charge::OnBattery => if b.time_to_empty > 0 { format!("{} left", hm(b.time_to_empty)) } else { "On battery".into() },
     };
     format!("{}% · {}{}", (level * 100.0).round(), state, mode.map(|m| format!(" · {}", super::power::mode_name(m))).unwrap_or_default())
 }
@@ -170,11 +171,15 @@ mod tests {
 
     #[test]
     fn the_hover_line() {
-        let b = Battery { present: true, percent: 84.0, charging: false, state: 2, time_to_empty: 12000, time_to_full: 0 };
+        let b = Battery { present: true, percent: 84.0, charging: false, state: 2, time_to_empty: 12000, time_to_full: 0, plugged: false, limit: None };
         assert_eq!(summary(&b, Some("power-saver")), "84% · 3:20 left · Low Power");
         assert_eq!(summary(&Battery { state: 1, ..b }, None), "84% · Charging");
         // (1% and below are percents too, not fractions of one)
         assert!(summary(&Battery { percent: 1.0, ..b }, None).starts_with("1% "));
         assert!(summary(&Battery { percent: 0.5, ..b }, None).starts_with("1% ") || summary(&Battery { percent: 0.5, ..b }, None).starts_with("0% "));
+        // held at a charge limit (#437), and plugged in without one
+        assert_eq!(summary(&Battery { state: 5, percent: 80.0, plugged: true, limit: Some(80), ..b }, None), "80% · Plugged in, not charging · Held at 80%");
+        assert_eq!(summary(&Battery { state: 5, plugged: true, ..b }, None), "84% · Plugged in, not charging");
+        assert_eq!(summary(&Battery { state: 4, percent: 100.0, plugged: true, ..b }, None), "100% · Fully charged");
     }
 }

@@ -53,5 +53,6 @@ the rest of the shell reads is `tessera_core::saver`.
 
 `TESSERA_FAKE_BATTERY=<file>` (with `TESSERA_SANDBOX=1`, which the sandbox
 sets) replaces UPower with a file read every second: `15 discharging`,
-`80 charging`, `100 full`. Export it before `./dev.sh up`, then write the file
+`80 charging`, `100 full`, `80 held` (plugged in, held at an 80 % charge
+limit: "Plugged in, not charging · Held at 80%"). Export it before `./dev.sh up`, then write the file
 to plug in, unplug or drain the battery.

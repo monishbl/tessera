@@ -25,6 +25,8 @@ pub struct Supply {
     /// energy (µWh) or charge (µAh) now and when full, whichever it reports
     pub now: Option<f64>,
     pub full: Option<f64>,
+    /// a battery's charge limit, charge_control_end_threshold (percent)
+    pub end_threshold: Option<f64>,
 }
 
 impl Supply {
@@ -63,6 +65,7 @@ pub fn read(root: &Path) -> Vec<Supply> {
                 capacity: num(&p.join("capacity")),
                 now: num(&p.join("energy_now")).or_else(|| num(&p.join("charge_now"))),
                 full: num(&p.join("energy_full")).or_else(|| num(&p.join("charge_full"))),
+                end_threshold: num(&p.join("charge_control_end_threshold")),
                 path: p,
             }
         })
@@ -99,6 +102,30 @@ pub fn summary(supplies: &[Supply]) -> Summary {
         (!caps.is_empty()).then(|| caps.iter().sum::<f64>() / caps.len() as f64)
     };
     Summary { has_battery: true, on_battery, percent: percent.map_or(-1, |p| p.round().clamp(0.0, 100.0) as i32) }
+}
+
+/// Whether the computer is on mains, and the charge limit it's set to
+/// (#437: "Plugged in, not charging · Held at 80%")
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Mains {
+    /// any adapter online (None: no adapter says either way)
+    pub plugged: Option<bool>,
+    /// the charge limit below 100 % (charge_control_end_threshold), the
+    /// lowest of its batteries'; None when there's none or it's 100
+    pub limit: Option<u8>,
+}
+
+pub fn mains(supplies: &[Supply]) -> Mains {
+    let adapters: Vec<&Supply> = supplies.iter().filter(|s| s.adapter() && s.online.is_some()).collect();
+    let plugged = (!adapters.is_empty()).then(|| adapters.iter().any(|a| a.online == Some(true)));
+    let limit = supplies
+        .iter()
+        .filter(|s| s.system_battery())
+        .filter_map(|s| s.end_threshold)
+        .filter(|t| *t >= 1.0 && *t < 100.0)
+        .fold(None, |m: Option<f64>, t| Some(m.map_or(t, |m| m.min(t))))
+        .map(|t| t.round() as u8);
+    Mains { plugged, limit }
 }
 
 #[cfg(test)]
@@ -173,6 +200,30 @@ mod tests {
         // no adapter listed at all: the battery's own status
         let r = class("noac", &[("BAT0", &[("type", "Battery"), ("status", "Discharging"), ("capacity", "61")])]);
         assert_eq!(summary(&read(&r)), Summary { has_battery: true, on_battery: true, percent: 61 });
+        assert_eq!(mains(&read(&r)), Mains { plugged: None, limit: None });
+        clean(&r);
+    }
+
+    #[test]
+    fn plugged_in_and_the_charge_limit() {
+        // held at 80 %: plugged in, the battery not charging
+        let r = class(
+            "limit",
+            &[
+                ("AC", &[("type", "Mains"), ("online", "1")]),
+                ("BAT0", &[("type", "Battery"), ("status", "Not charging"), ("capacity", "80"), ("charge_control_end_threshold", "80")]),
+                // (a mouse's limit is not the computer's)
+                ("hidpp_battery_0", &[("type", "Battery"), ("scope", "Device"), ("charge_control_end_threshold", "50")]),
+            ],
+        );
+        assert_eq!(mains(&read(&r)), Mains { plugged: Some(true), limit: Some(80) });
+        clean(&r);
+        // unplugged; a limit of 100 is no limit; a USB-C port counts
+        let r = class("nolimit", &[("ADP1", &[("type", "Mains"), ("online", "0")]), ("BAT0", &[("type", "Battery"), ("charge_control_end_threshold", "100")])]);
+        assert_eq!(mains(&read(&r)), Mains { plugged: Some(false), limit: None });
+        clean(&r);
+        let r = class("usbc", &[("ADP1", &[("type", "Mains"), ("online", "0")]), ("ucsi-source-psy-USBC000:001", &[("type", "USB"), ("online", "1")]), ("BAT0", &[("type", "Battery"), ("charge_control_end_threshold", "60")]), ("BAT1", &[("type", "Battery"), ("charge_control_end_threshold", "75")])]);
+        assert_eq!(mains(&read(&r)), Mains { plugged: Some(true), limit: Some(60) });
         clean(&r);
     }
 }

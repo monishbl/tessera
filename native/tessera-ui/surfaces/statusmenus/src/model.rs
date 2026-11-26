@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::collections::HashSet;
 use tessera_controlcenter::bridge::{Block, BlockKind, MenuItem, Page};
 use tessera_core::services::bluez::{Bluetooth, Device};
-use tessera_core::services::status::Battery;
+use tessera_core::services::status::{Battery, Charge};
 
 /// The menus this surface draws: (Panels name, content width, how far left
 /// of the item it starts). StatusMenus.qml's `width_` and `targetX:
@@ -247,26 +247,26 @@ pub fn level(b: &Battery) -> f64 {
     (b.percent / 100.0).clamp(0.0, 1.0)
 }
 
-/// UPower's states: 1 charging, 4 fully charged
+/// Charging, and fully charged (Battery::charge: the same words as the bar
+/// and Control Center, #437)
 pub fn charging(b: &Battery) -> bool {
-    b.state == 1
+    b.charge() == Charge::Charging
 }
 pub fn full(b: &Battery) -> bool {
-    b.state == 4
+    b.charge() == Charge::Full
 }
 
 /// The line under the level
 pub fn battery_status(b: &Battery) -> String {
     if !b.present {
-        "No battery. This computer runs on mains power.".into()
-    } else if full(b) {
-        "Fully charged".into()
-    } else if charging(b) {
-        if b.time_to_full > 0 { format!("Charging · full in {}", hm(b.time_to_full)) } else { "Charging".into() }
-    } else if b.time_to_empty > 0 {
-        format!("On battery · {} left", hm(b.time_to_empty))
-    } else {
-        "On battery".into()
+        return "No battery. This computer runs on mains power.".into();
+    }
+    match b.charge() {
+        Charge::Full => "Fully charged".into(),
+        Charge::Charging => if b.time_to_full > 0 { format!("Charging · full in {}", hm(b.time_to_full)) } else { "Charging".into() },
+        // (plugged in at a charge limit: "Plugged in, not charging · Held at 80%")
+        Charge::Held => b.charge_line(),
+        Charge::OnBattery => if b.time_to_empty > 0 { format!("On battery · {} left", hm(b.time_to_empty)) } else { "On battery".into() },
     }
 }
 
@@ -461,14 +461,18 @@ mod tests {
 
     #[test]
     fn battery_lines() {
-        let b = Battery { present: true, percent: 84.0, charging: false, state: 2, time_to_empty: 12000, time_to_full: 0 };
+        let b = Battery { present: true, percent: 84.0, charging: false, state: 2, time_to_empty: 12000, time_to_full: 0, plugged: false, limit: None };
         assert_eq!(battery_status(&b), "On battery · 3 h 20 min left");
         assert_eq!(battery_status(&Battery { state: 1, time_to_full: 1500, ..b.clone() }), "Charging · full in 25 min");
-        assert_eq!(battery_status(&Battery { state: 4, ..b.clone() }), "Fully charged");
+        assert_eq!(battery_status(&Battery { state: 4, percent: 100.0, plugged: true, ..b.clone() }), "Fully charged");
+        // plugged in at a charge limit (#437): not "On battery"
+        assert_eq!(battery_status(&Battery { state: 5, percent: 80.0, plugged: true, limit: Some(80), ..b.clone() }), "Plugged in, not charging · Held at 80%");
+        assert_eq!(battery_status(&Battery { state: 4, percent: 80.0, plugged: true, limit: Some(80), ..b.clone() }), "Plugged in, not charging · Held at 80%");
+        assert_eq!(battery_status(&Battery { state: 5, plugged: true, ..b.clone() }), "Plugged in, not charging");
         assert!(battery_status(&Battery::default()).starts_with("No battery"));
         assert_eq!(level(&b), 0.84);
         assert_eq!(watts_line(&b, &json!({"watts": 7.46})), "Using 7.5 W");
-        assert_eq!(watts_line(&Battery { state: 4, ..b.clone() }, &json!({"watts": 7.46})), "");
+        assert_eq!(watts_line(&Battery { state: 4, percent: 100.0, plugged: true, ..b.clone() }, &json!({"watts": 7.46})), "");
         assert_eq!(watts_line(&b, &json!({"watts": -1})), "");
         assert_eq!(health_rows(&json!({"capacity": 0.784, "cycles": 212, "condition": "Service recommended"})).len(), 3);
         assert_eq!(health_rows(&json!({"capacity": -1, "cycles": -1, "condition": ""})), vec![]);

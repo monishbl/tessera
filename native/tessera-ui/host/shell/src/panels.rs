@@ -551,7 +551,8 @@ impl Panels {
             "osd" => self.m.osd_visible = e["shown"] == true,
             "session" => {
                 if let Some(p) = e["power"].as_str().filter(|p| ["lock", "sleep", "logout", "restart", "shutdown"].contains(p)) {
-                    h.ask("system.power", json!([p]));
+                    // ("anyway": Shut Down Anyway in the held-up list, #305)
+                    h.ask("system.power", if e["anyway"] == true { json!([p, true]) } else { json!([p]) });
                 }
                 if e["close"] == "about" && self.m.open == "about" {
                     self.m.close(now_ms());

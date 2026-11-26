@@ -56,7 +56,7 @@ use tessera_core::services::bluez::Bluetooth;
 use tessera_core::services::brightness::{self, Backlight};
 use tessera_core::services::mpris::{self, Players};
 use tessera_core::services::hypr::Glass;
-use tessera_core::services::status::{Battery, Wifi};
+use tessera_core::services::status::{Battery, Charge, Wifi};
 use tessera_core::shell::{self, Command, Part};
 use tessera_core::rows::Rows;
 use tessera_core::theme;
@@ -322,6 +322,17 @@ fn glyphs(material: bool) -> ui::CcGlyphs {
         battery_low: i("battery-low"),
         speaker_x: i("speaker-x"),
         bolt: ic("lightning", false),
+    }
+}
+
+/// The battery tile's icon: the bolt only while charging, the plug while
+/// plugged in and not (full, or held at a charge limit; #437)
+pub fn battery_icon(c: Charge, percent: f64) -> &'static str {
+    match c {
+        Charge::Charging => "battery-charging",
+        Charge::Full | Charge::Held => "plug",
+        Charge::OnBattery if percent < 20.0 => "battery-low",
+        Charge::OnBattery => "battery-high",
     }
 }
 
@@ -656,8 +667,10 @@ impl ControlCenter {
             "battery" => {
                 if let Some(b) = st.shell.get::<Battery>() {
                     title = format!("{}%", b.percent.round());
-                    sub = if b.charging { "Charging" } else { "On battery" }.into();
-                    icon = if b.charging { "battery-charging" } else if b.percent < 20.0 { "battery-low" } else { "battery-high" }.into();
+                    // (the bar's and the battery menu's words: held at a charge
+                    // limit is "Plugged in, not charging", full is not "Charging"; #437)
+                    sub = b.charge_words().into();
+                    icon = battery_icon(b.charge(), b.percent).into();
                 }
             }
             _ => {}
@@ -1801,6 +1814,22 @@ pub fn backdrop_shape(look: &theme::Look, w: f32, h: f32, opacity: f32) -> theme
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_battery_tile_says_held_at_the_limit() {
+        let b = Battery { present: true, percent: 80.0, charging: true, state: 5, time_to_empty: 0, time_to_full: 0, plugged: true, limit: Some(80) };
+        assert_eq!((b.charge_words(), battery_icon(b.charge(), b.percent)), ("Plugged in, not charging", "plug"));
+        let full = Battery { state: 4, percent: 100.0, limit: None, ..b.clone() };
+        assert_eq!((full.charge_words(), battery_icon(full.charge(), full.percent)), ("Fully charged", "plug"));
+        let ch = Battery { state: 1, percent: 50.0, ..b.clone() };
+        assert_eq!((ch.charge_words(), battery_icon(ch.charge(), ch.percent)), ("Charging", "battery-charging"));
+        let off = Battery { state: 2, percent: 15.0, plugged: false, charging: false, ..b.clone() };
+        assert_eq!((off.charge_words(), battery_icon(off.charge(), off.percent)), ("On battery", "battery-low"));
+        // every icon is one the glyph map knows
+        for n in ["battery-charging", "plug", "battery-low", "battery-high"] {
+            assert!(!tessera_core::icons::glyph(n).is_empty(), "{n}");
+        }
+    }
 
     #[test]
     fn the_screen_behind_blurs_under_the_bar() {

@@ -23,10 +23,22 @@
 //!   "screen":…,"info":{osName,hostname,cpu,gpu,memory,kernel,logo}}`
 //!   (SystemInfo stays the shell's), and hears `{"kind":"session","close":"about"}`.
 //! Not like the QML: no elastic pull when the dialog is dragged.
+//!
+//! ── Held up (#305, Rust only) ─────────────────────────────────────────────
+//! Shut Down, Restart and Log Out first read logind's inhibitors (on a
+//! thread, blockers.rs). None: it goes ahead as before. Some: the dialog
+//! turns into a list of the apps holding it up (icon, name, reason) with
+//! Cancel and "Shut Down Anyway" (Restart / Log Out Anyway); Cancel is
+//! chosen first, so a stray Enter never forces it. The list is read again
+//! every 2 s while it shows; once nothing holds the action up any more it
+//! goes ahead, as asked. Anyway says `{"power":…,"anyway":true}`: the
+//! shell's System.power runs `systemctl poweroff -i` (logind still asks
+//! polkit whether you may ignore them; nothing more privileged).
 
 pub mod ui {
     slint::include_modules!();
 }
+pub mod blockers;
 tessera_core::theme_global!(ui);
 
 // tessera-core's modules (shell, wayland, theme, services, util…) under the
@@ -95,6 +107,12 @@ enum M {
     /// the close animation ended (Dialog.qml: unmapped once progress is 0)
     Closed,
     Frame,
+    /// what holds the asked action up (check number .0; None: no logind)
+    Blockers(u64, Option<Vec<blockers::Blocker>>),
+    /// the held-up view's buttons: 0 Cancel, 1 Anyway
+    Button(i32),
+    /// time to read the blockers again
+    Recheck,
 }
 
 struct Win {
@@ -108,6 +126,8 @@ struct Win {
     opts: tessera_core::rows::Rows<ui::SOpt>,
     /// About's rows, changed in place (rows.rs)
     rows: tessera_core::rows::Rows<ui::SRow>,
+    /// the apps holding an action up (#305)
+    blocks: tessera_core::rows::Rows<ui::SBlock>,
 }
 
 pub struct Session {
@@ -121,11 +141,36 @@ pub struct Session {
     morph: [f64; 5],
     frames: tessera_core::pacing::FrameTimer,
     hide: slint::Timer,
+    /// the action whose blockers are being read ("" none) and that read's number
+    checking: String,
+    check_run: u64,
+    /// the action held up, while its list shows ("" the options show)
+    held: String,
+    blockers: Vec<blockers::Blocker>,
+    /// the held-up view's chosen button: 0 Cancel, 1 Anyway
+    button: usize,
+    /// reads the blockers again while the list shows
+    recheck: slint::Timer,
 }
 
 impl Default for Session {
     fn default() -> Self {
-        Self { win: None, open: String::new(), action: String::new(), current: 0, pressed: None, morph: [0.0; 5], frames: tessera_core::pacing::FrameTimer::default(), hide: slint::Timer::default() }
+        Self {
+            win: None,
+            open: String::new(),
+            action: String::new(),
+            current: 0,
+            pressed: None,
+            morph: [0.0; 5],
+            frames: tessera_core::pacing::FrameTimer::default(),
+            hide: slint::Timer::default(),
+            checking: String::new(),
+            check_run: 0,
+            held: String::new(),
+            blockers: Vec::new(),
+            button: 0,
+            recheck: slint::Timer::default(),
+        }
     }
 }
 
@@ -185,14 +230,17 @@ impl Session {
         on!(on_pressing, |i, p| M::Press(i, p));
         on!(on_dismissed, | | M::Dismissed);
         on!(on_closed, | | M::Closed);
+        on!(on_press_button, |i| M::Button(i));
         let opts = tessera_core::rows::Rows::new();
         ui.set_options(opts.model());
         let rows = tessera_core::rows::Rows::new();
         ui.set_rows(rows.model());
+        let blocks = tessera_core::rows::Rows::new();
+        ui.set_blockers(blocks.model());
         ui.show().expect("show session");
         let a11y = crate::a11y::A11y::new(&surface, st.tx.clone());
         surface.hide();
-        self.win = Some(Win { output: output.into(), surface, ui, a11y, glass_sent: String::new(), opts, rows });
+        self.win = Some(Win { output: output.into(), surface, ui, a11y, glass_sent: String::new(), opts, rows, blocks });
         true
     }
 
@@ -253,6 +301,7 @@ impl Session {
         self.hide.stop();
         self.open = which.to_string();
         if which == "session" {
+            self.forget_held();
             self.current = start_at(&self.action);
             self.pressed = None;
             for m in self.morph.iter_mut() {
@@ -274,6 +323,7 @@ impl Session {
             return;
         }
         let which = std::mem::take(&mut self.open);
+        self.forget_held();
         if let Some(w) = &self.win {
             w.ui.set_shown(false);
             w.surface.layer.set_keyboard_interactivity(KeyboardInteractivity::None);
@@ -293,11 +343,108 @@ impl Session {
     }
 
     fn choose(&mut self, st: &State, i: usize) {
-        if self.open != "session" || i >= OPTIONS.len() {
+        if self.open != "session" || !self.held.is_empty() || i >= OPTIONS.len() {
             return;
         }
+        let id = OPTIONS[i].0;
+        if blockers::asks(id) {
+            // (a second click while it reads: the same read answers)
+            if self.checking != id {
+                self.check(st, id);
+            }
+            return;
+        }
+        self.go(st, id, false);
+    }
+
+    /// Close, and have the shell run it
+    fn go(&mut self, st: &State, action: &str, anyway: bool) {
         self.close(st, true);
-        crate::shell::tell(NAME, serde_json::json!({"power": OPTIONS[i].0}));
+        let mut m = serde_json::json!({"power": action});
+        if anyway {
+            m["anyway"] = serde_json::json!(true);
+        }
+        crate::shell::tell(NAME, m);
+    }
+
+    /// Read what holds `action` up, on a thread (M::Blockers)
+    fn check(&mut self, st: &State, action: &str) {
+        self.check_run += 1;
+        self.checking = action.to_string();
+        let (run, to) = (self.check_run, Self::send(st));
+        std::thread::spawn(move || to(Box::new(M::Blockers(run, blockers::now()))));
+    }
+
+    /// Back to no held-up view and no read waited for
+    fn forget_held(&mut self) {
+        self.recheck.stop();
+        self.checking.clear();
+        self.check_run += 1;
+        self.held.clear();
+        self.blockers.clear();
+        self.button = 0;
+    }
+
+    fn blockers_read(&mut self, st: &State, run: u64, found: Option<Vec<blockers::Blocker>>) {
+        if run != self.check_run || self.checking.is_empty() || self.open != "session" {
+            return;
+        }
+        let action = std::mem::take(&mut self.checking);
+        // (no answer from logind: nothing is known to hold it up, as before)
+        let found = found.unwrap_or_default();
+        if found.is_empty() {
+            // (also when the list showed and its apps have finished: go ahead, as asked)
+            self.go(st, &action, false);
+            return;
+        }
+        let first = self.held.is_empty();
+        self.held = action;
+        self.blockers = found;
+        if first {
+            self.button = 0;
+            let to = Self::send(st);
+            self.recheck.start(slint::TimerMode::Repeated, Duration::from_secs(2), move || to(Box::new(M::Recheck)));
+        }
+        self.held_view(st);
+    }
+
+    /// The held-up view's words, rows and chosen button
+    fn held_view(&self, st: &State) {
+        let Some(w) = &self.win else { return };
+        let material = st.shell.look.material;
+        let rows: Vec<ui::SBlock> = blockers::shown(&self.blockers)
+            .iter()
+            .map(|b| {
+                let img = b.icon.as_deref().and_then(|p| slint::Image::load_from_path(p).ok());
+                ui::SBlock {
+                    name: b.name.clone().into(),
+                    why: b.why.clone().into(),
+                    line: blockers::line(b).into(),
+                    initial: b.name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default().into(),
+                    has_icon: img.is_some(),
+                    icon: img.unwrap_or_default(),
+                }
+            })
+            .collect();
+        w.blocks.set(rows);
+        w.ui.set_held_title(blockers::title(&self.held, &self.blockers).into());
+        w.ui.set_held_sub(blockers::subtitle(&self.held, self.blockers.len()).into());
+        w.ui.set_anyway_text(blockers::anyway(&self.held, material).into());
+        w.ui.set_button(self.button as i32);
+        w.ui.set_which("blocked".into());
+    }
+
+    /// The held-up view's buttons: 0 Cancel (closes), 1 Anyway
+    fn press_button(&mut self, st: &State, b: usize) {
+        if self.held.is_empty() {
+            return;
+        }
+        if b == 1 {
+            let action = self.held.clone();
+            self.go(st, &action, true);
+        } else {
+            self.close(st, true);
+        }
     }
 
     /// Material's shapes: toward their own while chosen and not pressed
@@ -396,6 +543,9 @@ impl Part for Session {
                 st.shell.apply_theme(&w.ui.global::<ui::Theme>());
             }
             self.options(st);
+            if !self.held.is_empty() {
+                self.held_view(st);
+            }
         }
     }
 
@@ -413,6 +563,21 @@ impl Part for Session {
             M::Press(i, p) => {
                 self.pressed = if p { Some(i.max(0) as usize) } else { None };
                 self.animate(st);
+            }
+            M::Key(k, repeat) if !self.held.is_empty() => {
+                if k == "\u{1b}" {
+                    self.close(st, true);
+                } else if k == "\u{a}" {
+                    // (a key still repeating never presses a button)
+                    if !repeat {
+                        self.press_button(st, self.button);
+                    }
+                } else if let Some(b) = moved(self.button, &k) {
+                    self.button = b.min(1);
+                    if let Some(w) = &self.win {
+                        w.ui.set_button(self.button as i32);
+                    }
+                }
             }
             M::Key(k, repeat) => {
                 if k == "\u{1b}" {
@@ -448,6 +613,14 @@ impl Part for Session {
                 }
             }
             M::Frame => self.frame(st),
+            M::Blockers(run, found) => self.blockers_read(st, run, found),
+            M::Button(i) => self.press_button(st, i.max(0) as usize),
+            M::Recheck => {
+                if !self.held.is_empty() && self.checking.is_empty() {
+                    let a = self.held.clone();
+                    self.check(st, &a);
+                }
+            }
         }
     }
 
