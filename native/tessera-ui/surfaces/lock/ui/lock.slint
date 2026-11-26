@@ -171,6 +171,8 @@ export global LockData {
     callback edited(string);
     callback submit();
     callback woke();
+    // (a key that woke Bedside Mode: a printable one is the password's first character)
+    callback bedside-key(string);
     callback step(int);
     callback player(string);
 
@@ -399,14 +401,15 @@ component BedCalendar inherits Rectangle {
                 width: Theme.material ? 172px : 150px;
                 height: Theme.material ? 32px : 24px;
                 border-radius: self.height / 2;
-                background: Theme.material ? transparent : Theme.toggle-off;
+                // (an always-dark card: dark mode's values whatever the look's mode)
+                background: Theme.material ? transparent : #ffffff24;
                 if !Theme.material: Rectangle {
                     x: 2px;
                     y: 2px;
                     width: seg.w;
                     height: parent.height - 4px;
                     border-radius: self.height / 2;
-                    background: Theme.dark ? #ffffff33 : #ffffff;
+                    background: #ffffff33;
                 }
                 for o[i] in ["Month", "Week", "To-do"]: Rectangle {
                     property <length> full: self.height / 2;
@@ -768,7 +771,8 @@ component FingerGlyph inherits Rectangle {
     property <bool> live: true;
     Timer {
         interval: 15s;
-        running: root.live && root.phase == "waiting";
+        // (a miss gone quiet loops too: counted then as well)
+        running: root.live && (root.phase == "waiting" || root.phase == "miss");
         triggered => { root.live = false; }
     }
     property <float> k: fresh && !still ? (animation-tick() - t0) / 1ms : 5000;
@@ -1253,7 +1257,7 @@ component GlassLock inherits Rectangle {
             height: 60px;
             border-radius: 12px;
             clip: true;
-            background: #ffffff1f;
+            background: root.ink.with-alpha(0.12);
             if LockData.has-art: Image { width: 100%; height: 100%; source: LockData.art; image-fit: cover; }
         }
         VerticalLayout {
@@ -1273,7 +1277,8 @@ component GlassLock inherits Rectangle {
                 height: b.s;
                 y: (84px - b.s) / 2;
                 border-radius: Theme.radius-control - 2px;
-                background: pt.pressed ? #ffffff38 : pt.has-hover ? #ffffff1a : transparent;
+                // (the plate's ink: dark on a light plate, not white)
+                background: pt.pressed ? root.ink.with-alpha(0.22) : pt.has-hover ? root.ink.with-alpha(0.1) : transparent;
                 accessible-role: button;
                 accessible-label: b.l;
                 accessible-action-default => { LockData.player(b.a); }
@@ -1381,7 +1386,7 @@ component GlassLock inherits Rectangle {
     property <bool> shaking;
     property <int> errors: LockData.error-count;
     changed errors => {
-        if LockData.error != "" {
+        if LockData.error != "" && !LockData.reduce-motion {
             shake-t0 = animation-tick();
             shaking = true;
         }
@@ -1411,7 +1416,8 @@ component GlassLock inherits Rectangle {
         font-weight: 500;
         accessible-role: none;
     }
-    property <length> login-w: max(360px, LockData.error != "" ? err-probe.preferred-width : 0px);
+    // (as wide as the lockout message, up to the screen less 24 px each side; longer, it wraps)
+    property <length> login-w: min(max(360px, LockData.error != "" ? err-probe.preferred-width : 0px), max(360px, min(W - 48px, 520px)));
     login := VerticalLayout {
         x: round((W - login-w) / 2 / 1px) * 1px;
         y: H - H * (ios ? 0.06 : 0.1) - self.preferred-height;
@@ -1566,7 +1572,7 @@ component GlassLock inherits Rectangle {
         if LockData.error != "": Text {
             horizontal-alignment: center;
             text: LockData.error;
-            wrap: no-wrap;
+            wrap: word-wrap;
             color: ink;
             font-size: Theme.small;
             font-weight: 500;
@@ -2202,7 +2208,7 @@ component MaterialLock inherits Rectangle {
             property <bool> shaking;
             property <int> errors: LockData.error-count;
             changed errors => {
-                if LockData.error != "" {
+                if LockData.error != "" && !LockData.reduce-motion {
                     shake-t0 = animation-tick();
                     shaking = true;
                 }
@@ -2481,6 +2487,11 @@ component Bedside inherits Rectangle {
                 LockData.step(e.text == Key.RightArrow ? 1 : -1);
             } else {
                 LockData.woke();
+                // (the key isn't lost: typed straight away, the password's
+                // first character was, a wrong try and a faillock strike)
+                if !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta {
+                    LockData.bedside-key(e.text);
+                }
             }
             accept
         }
