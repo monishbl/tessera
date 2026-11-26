@@ -589,7 +589,10 @@ component ClockFaces inherits Rectangle {
         height: parent.height - 24px;
         x: (parent.width - 176px) / 2 + (i - root.shown) * 184px;
         y: 12px;
-        opacity: max(0.55, 1 - off * 0.45);
+        // (and faded as it reaches the row's ends: a card cut by a hard edge
+        // read as a mistake)
+        property <float> edge: max(0, min(1, min((self.x + self.width) / 96px, (parent.width - self.x) / 96px)));
+        opacity: max(0.55, 1 - off * 0.45) * edge;
         // (the whole card scales, its clock and name too)
         transform-scale: s;
         accessible-role: AccessibleRole.list-item;
