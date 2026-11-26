@@ -319,7 +319,13 @@ export component Spaces inherits Rectangle {
             border-radius: 1.5px;
             background: mark-ink;
         }
+        accessible-role: button;
+        accessible-label: "Earlier spaces";
+        accessible-action-default => { if left-more { root.arrow(-1); } }
+        // (a reach 4 px past the 12 px glyph each side)
         la := TouchArea {
+            x: -4px;
+            width: parent.width + 8px;
             enabled: left-more;
             clicked => { root.arrow(-1); }
         }
@@ -344,7 +350,12 @@ export component Spaces inherits Rectangle {
             border-radius: 1.5px;
             background: mark-ink;
         }
+        accessible-role: button;
+        accessible-label: "Later spaces";
+        accessible-action-default => { if right-more { root.arrow(1); } }
         ra := TouchArea {
+            x: -4px;
+            width: parent.width + 8px;
             enabled: right-more;
             clicked => { root.arrow(1); }
         }
@@ -461,6 +472,9 @@ export struct Live {
     progress: float,
     pos: string,
     rem: string,
+    // the same with every digit a 0 (their widths: no wobble as they count)
+    pos-shape: string,
+    rem-shape: string,
     volume: float,
     muted: bool,
     app-name: string,
@@ -576,6 +590,8 @@ export struct AlertRow {
     has-app-icon: bool,
     // the volume and brightness row
     hud: bool,
+    // which: "volume", "mic" or "brightness" (names the caret's list)
+    hud-of: string,
     hud-value: float,
     device: string,
     leaving: bool,
@@ -815,7 +831,7 @@ component AlertView inherits Rectangle {
             height: 28px;
             icon: levels-open ? "\u{e13c}" : "\u{e136}"; // caret-up | caret-down
             ink: root.ink;
-            label: levels-open ? "Hide outputs" : "Outputs";
+            label: a.hud-of == "brightness" ? (levels-open ? "Hide displays" : "Displays") : a.hud-of == "mic" ? (levels-open ? "Hide inputs" : "Inputs") : (levels-open ? "Hide outputs" : "Outputs");
             clicked => { root.act(a.uid, "levels " + (self.absolute-position.x / 1px)); }
         }
         dev-name := Text {
@@ -849,7 +865,10 @@ component AlertView inherits Rectangle {
                 border-radius: parent.border-radius;
                 background: Theme.material ? Theme.m3-primary : ink;
             }
+            // (8 px of reach over and under, as the level rows below)
             level := TouchArea {
+                y: -8px;
+                height: parent.height + 16px;
                 pointer-event(e) => {
                     if e.kind == PointerEventKind.down { root.set-level(self.mouse-x / self.width); }
                 }
@@ -1439,6 +1458,13 @@ component AlertView inherits Rectangle {
                         height: 46px;
                         border-radius: 23px;
                         background: Theme.material ? Theme.m3-tertiary-container : #8E8E93;
+                        // (no initials: a person glyph, as the call view)
+                        if a.card-initials == "": SymIcon {
+                            text: "\u{e4c2}"; // user
+                            fill: true;
+                            font-size: 22px;
+                            color: Theme.material ? Theme.m3-on-tertiary-container : #ffffff;
+                        }
                         Text {
                             text: a.card-initials;
                             color: Theme.material ? Theme.m3-on-tertiary-container : #ffffff;
@@ -1931,6 +1957,10 @@ component RecentList inherits VerticalLayout {
                             border-color: #ffffff33;
                             accessible-role: button;
                             accessible-label: "Remove " + l.title;
+                            accessible-action-default => {
+                                line.leaving = true;
+                                rm.running = true;
+                            }
                             SymIcon {
                                 text: "\u{e4f6}"; // x
                                 bold: true;
@@ -2340,7 +2370,10 @@ export component Island inherits Rectangle {
         if !Theme.material: Squircle {
             radius: radius;
             opacity: shape.fade;
-            fill: @linear-gradient(180deg, #000000f0 0%, #000000e6 30%, #0000001f 100%);
+            // (at least ~60 % black under the last lines: the status line and
+            // the Recent list are light text, unreadable over a bright wallpaper
+            // on the old 12 % foot)
+            fill: @linear-gradient(180deg, #000000f0 0%, #000000e6 30%, #0000009c 100%);
         }
         // Glass, music playing, open: the album art is the island itself, solid
         // up top and melting into the glass below like the black (faded in Rust)
@@ -2814,11 +2847,24 @@ export component Island inherits Rectangle {
                         if card.kind == "music" && card.seekable: HorizontalLayout {
                             spacing: 8px;
                             height: 14px;
-                            Text {
-                                text: card.pos;
-                                color: Theme.material ? Theme.m3-on-surface-variant : #ffffffbf;
-                                font-size: Theme.caption;
-                                vertical-alignment: center;
+                            // (as wide as the time with zeros: the seek bar's ends
+                            // don't move a pixel each second)
+                            Rectangle {
+                                min-width: max(pos-t.preferred-width, pos-z.preferred-width);
+                                preferred-width: self.min-width;
+                                pos-t := Text {
+                                    width: 100%;
+                                    horizontal-alignment: right;
+                                    text: card.pos;
+                                    color: Theme.material ? Theme.m3-on-surface-variant : #ffffffbf;
+                                    font-size: Theme.caption;
+                                    vertical-alignment: center;
+                                }
+                                pos-z := Text {
+                                    visible: false;
+                                    text: card.pos-shape;
+                                    font-size: Theme.caption;
+                                }
                             }
                             if Theme.material: WavySeek {
                                 horizontal-stretch: 1;
@@ -2861,11 +2907,24 @@ export component Island inherits Rectangle {
                                     moved => { if self.pressed { seek-drag = max(0, min(1, self.mouse-x / self.width)); } }
                                 }
                             }
-                            Text {
-                                text: card.rem;
-                                color: Theme.material ? Theme.m3-on-surface-variant : #ffffffbf;
-                                font-size: Theme.caption;
-                                vertical-alignment: center;
+                            // (as wide as the time with zeros: the seek bar's ends
+                            // don't move a pixel each second)
+                            Rectangle {
+                                min-width: max(rem-t.preferred-width, rem-z.preferred-width);
+                                preferred-width: self.min-width;
+                                rem-t := Text {
+                                    width: 100%;
+                                    horizontal-alignment: left;
+                                    text: card.rem;
+                                    color: Theme.material ? Theme.m3-on-surface-variant : #ffffffbf;
+                                    font-size: Theme.caption;
+                                    vertical-alignment: center;
+                                }
+                                rem-z := Text {
+                                    visible: false;
+                                    text: card.rem-shape;
+                                    font-size: Theme.caption;
+                                }
                             }
                         }
                         if card.kind == "music": Rectangle {
@@ -2971,7 +3030,9 @@ export component Island inherits Rectangle {
                             // open the player's window: pointed at, it widens to say which app
                             oa := Rectangle {
                                 property <bool> open: oat.has-hover && card.app-name != "";
-                                width: open ? min(140px, oa-name.preferred-width + 42px) : 36px;
+                                // (no wider than the room right of the centred transport,
+                                // 68 px each side of the middle, less Cast, which slides with it)
+                                width: open ? max(36px, min(140px, oa-name.preferred-width + 42px, parent.width / 2 - 68px - 4px - (card.cast-shown ? 40px : 0))) : 36px;
                                 animate width { duration: Theme.hover; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
                                 x: parent.width - self.width;
                                 y: (parent.height - self.height) / 2;

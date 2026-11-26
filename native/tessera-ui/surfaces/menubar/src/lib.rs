@@ -75,7 +75,7 @@ const BAR_H: u32 = 30;
 /// with the island: room for it to open below the bar (MenuBar.qml's 420)
 const ISLAND_H: u32 = 420;
 /// without: room for the hover tips
-const TIP_H: u32 = 64;
+const TIP_H: u32 = 100; // (a hover tip of up to three lines under the bar)
 /// MenuPopover's autoClose: the pointer away from the menu for 5 s
 const MENU_AUTO_CLOSE_MS: u64 = 5000;
 /// a wheel notch, as Island.scroll counts it (Qt's angleDelta)
@@ -311,6 +311,11 @@ pub struct Menubar {
     /// the output whose bar carries the inhibitor (remade on another bar
     /// when that one goes)
     inhibitor_on: String,
+}
+
+/// A ticking figure with every digit a 0: its width, measured, stays put
+fn zeros(s: &str) -> String {
+    s.chars().map(|c| if c.is_ascii_digit() { '0' } else { c }).collect()
 }
 
 fn ms_now() -> f64 {
@@ -664,12 +669,17 @@ impl Menubar {
                 show_title: cfg.shows("music", "title"),
                 show_time: false,
                 show_bars: cfg.shows("music", "bars"),
-                show_scroll: cfg.shows("music", "scroll"),
+                // (the title's glide reads the animation tick every frame:
+                // none under Reduce motion, the battery saver, or the low
+                // battery hold that stops the dancing bars)
+                show_scroll: cfg.shows("music", "scroll") && !spring::still(&st.shell.cfg, tessera_core::saver::on()) && !st.shell.get::<Battery>().is_some_and(|b| b.present && !b.charging && b.state != 1 && b.state != 4 && b.percent / 100.0 < 0.3),
                 controls,
                 seekable: p.track.length > 0,
                 progress: if p.track.length > 0 { (self.position_now(p) / (p.track.length as f64 / 1e6)).clamp(0.0, 1.0) as f32 } else { 0.0 },
                 pos: mmss(self.position_now(p)).into(),
                 rem: format!("-{}", mmss((p.track.length as f64 / 1e6 - self.position_now(p)).max(0.0))).into(),
+                pos_shape: zeros(&mmss(self.position_now(p))).into(),
+                rem_shape: zeros(&format!("-{}", mmss((p.track.length as f64 / 1e6 - self.position_now(p)).max(0.0)))).into(),
                 volume: self.volume_now(st) as f32,
                 muted: self.muted_now(st),
                 app_name: desktop_name(&p.identity).unwrap_or_else(|| p.identity.clone()).into(),
@@ -707,7 +717,7 @@ impl Menubar {
             artist: SharedString::new(),
             // (the open card's second line: LiveInfo.detail, else the time)
             time: a.time.as_str().into(),
-            time_shape: a.time.chars().map(|c| if c.is_ascii_digit() { '0' } else { c }).collect::<String>().into(),
+            time_shape: zeros(&a.time).into(),
             art: slint::Image::default(),
             has_art: false,
             playing: false,
@@ -831,6 +841,7 @@ impl Menubar {
                     has_app_icon: app_icon.is_some(),
                     app_icon: app_icon.unwrap_or_default(),
                     hud: kind == "hud",
+                    hud_of: e["hud"].as_str().unwrap_or("volume").into(),
                     hud_value: value.unwrap_or(0.0) as f32,
                     device: s("device").into(),
                     leaving: al.leaving,
@@ -2649,6 +2660,7 @@ fn entry_struct(e: &items::Entry, tray_images: &HashMap<String, slint::Image>) -
         badge: e.badge,
         indicator: e.indicator.as_str().into(),
         unread: e.unread,
+        shape: if e.id == "clock" { zeros(&e.text).into() } else { SharedString::new() },
         ..Default::default()
     };
     match &e.glyph {

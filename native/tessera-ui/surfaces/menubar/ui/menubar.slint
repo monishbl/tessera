@@ -38,6 +38,9 @@ export struct Entry {
     badge: int,
     indicator: string,
     unread: int,
+    // the clock's text with every digit a 0: its width holds the item still
+    // as the minutes tick (Slint draws no tabular figures)
+    shape: string,
 }
 
 // A privacy dot: pops in (PrivacyDots: scale 0 → 1, 200 ms OutBack)
@@ -68,15 +71,23 @@ component Item inherits Rectangle {
     changed hot => { root.drop-hot(hot); }
     property <color> tone: e.danger ? Theme.danger : ink;
     height: 24px;
-    width: (e.glyph == 3 && Theme.material ? chip.width : row.preferred-width) + (e.glyph == 3 ? 16px : 18px);
+    // (Glass privacy: as wide as its dots, 7 px each, 4 px apart)
+    property <int> dots: (e.camera ? 1 : 0) + (e.mic ? 1 : 0) + (e.location ? 1 : 0) + (e.share ? 1 : 0);
+    width: e.glyph == 3 && !Theme.material ? max(16px, dots * 7px + max(0, dots - 1) * 4px + 9px) : (e.glyph == 3 && Theme.material ? chip.width : row.preferred-width) + (e.glyph == 3 ? 16px : 18px);
     border-radius: Theme.material ? self.height / 2 : Theme.radius-item;
     background: Theme.material
         ? tone.with-alpha(e.active ? 0.16 : touch.pressed ? 0.1 : touch.has-hover ? 0.08 : 0)
         : tone.with-alpha(e.active ? 0.22 : touch.pressed ? 0.2 : touch.has-hover ? 0.12 : 0);
     animate background { duration: Theme.hover; }
     accessible-role: button;
-    accessible-label: e.tip != "" ? e.tip : e.text;
+    accessible-label: e.tip != "" ? e.tip : e.glyph == 3 ? "In use:" + (e.camera ? " camera" : "") + (e.mic ? " microphone" : "") + (e.location ? " location" : "") + (e.share ? " screen" : "") : e.text;
     accessible-action-default => { root.clicked(PointerEventButton.left, self.absolute-position.x); }
+    clock-z := Text {
+        visible: false;
+        text: e.shape;
+        font-size: Theme.material ? 14px : Theme.body;
+        font-weight: e.bold ? (Theme.material ? 600 : 700) : 500;
+    }
 
     touch := TouchArea {
         changed has-hover => { root.hovered(self.has-hover, root.absolute-position.x + root.width / 2, e.tip); }
@@ -206,6 +217,7 @@ component Item inherits Rectangle {
             color: hot ? Theme.accent : root.tone;
         }
         if e.text != "": Text {
+            min-width: e.shape != "" ? clock-z.preferred-width : 0;
             text: e.text;
             color: root.tone;
             font-size: Theme.material ? 14px : Theme.body;
@@ -794,10 +806,17 @@ export component Bar inherits Window {
 
     // The tip: no input (outside the input region), on glass (Glass) or
     // Material's plain tooltip
+    // (at most 320 px wide, wrapped: a long tray tooltip or song is not cut
+    // at the screen's edge; tip-m measures it on one line)
+    tip-m := Text {
+        visible: false;
+        text: tip-text;
+        font-size: Theme.small;
+    }
     tip := Rectangle {
         property <length> pad-x: Theme.material ? 8px : 12px;
         property <length> pad-y: Theme.material ? 4px : 7px;
-        width: tip-label.preferred-width + 2 * pad-x;
+        width: min(320px, tip-m.preferred-width + 1px) + 2 * pad-x;
         height: tip-label.preferred-height + 2 * pad-y;
         x: max(0px, min(root.width - self.width, tip-at - self.width / 2));
         y: tip-top + (tip-open ? 0 : -4px);
@@ -807,6 +826,11 @@ export component Bar inherits Window {
         border-radius: Theme.material ? 4px : Theme.radius-control;
         background: Theme.material ? Theme.m3-inverse-surface : Theme.panel;
         tip-label := Text {
+            x: parent.pad-x;
+            width: parent.width - 2 * parent.pad-x;
+            wrap: word-wrap;
+            max-lines: 3;
+            overflow: elide;
             text: tip-text;
             color: Theme.material ? Theme.m3-inverse-on-surface : Theme.label;
             font-size: Theme.small;
