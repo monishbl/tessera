@@ -1,7 +1,8 @@
 // Tessera: the root helper's small fixed jobs run without a password for an
 // administrator (wheel) sitting at this computer, in the session on screen:
 // the login screen's wallpaper and look, the fixes in System health and
-// Settings → Sharing, the shell's priority (Settings → Battery & Power), and
+// Settings → Sharing (not the login and pairing ones: those ask), the
+// shell's priority (Settings → Battery & Power), and
 // the firewall's fixed ports for sharing, opened while you're visible to
 // others and closed after (services/SharingPorts.qml, on its own).
 // Each is its own action (org.tessera.root.policy), picked by pkexec from the
@@ -23,6 +24,11 @@ polkit.addRule(function (action, subject) {
     // (pkexec's command line, for display only; checked too, never trusted alone)
     var words = String(action.lookup("command_line") || "").split(" ");
     if (words[0] !== "/usr/lib/tessera/tessera-root" || words[1] !== silent[action.id])
+        return polkit.Result.NOT_HANDLED;
+    // The login fix rewrites PAM files and may switch the login screen; the
+    // pairing fix restarts Bluetooth: those two keep the password, so no
+    // other program of yours can run them quietly (audit #782)
+    if (action.id === "org.tessera.root.fix" && (words[2] === "login" || words[2] === "btpairing"))
         return polkit.Result.NOT_HANDLED;
     if (subject.active && subject.local && subject.isInGroup("wheel"))
         return polkit.Result.YES;
