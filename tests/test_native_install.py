@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -482,6 +483,36 @@ class Install(Fixture):
         self.assertEqual(ni.read_info(str(self.dest), "tessera-ui", prev=True)["tree"], "b")
         ni.restore(str(self.dest))
         self.assertIn("new", self.installed())
+
+    def test_same_file_links_and_restores_leave_no_temp_names(self):
+        # (keep_as_is makes .prev a hard link of the program: keeping it
+        # again, or restoring, must not leave .tmp-* or .swap names)
+        self.dest.mkdir(exist_ok=True)
+        for name in ni.PROGRAMS:
+            fake_program(self.dest / name, name + " same")
+            os.link(self.dest / name, self.dest / (name + ".prev"))
+        for name in ni.PROGRAMS:
+            ni._keep(str(self.dest / name), str(self.dest / (name + ".prev")))
+        ni.restore(str(self.dest))
+        left = sorted(os.listdir(self.dest))
+        self.assertFalse([n for n in left if ".tmp-" in n or n.endswith(".swap")], left)
+        for name in ni.PROGRAMS:
+            self.assertTrue((self.dest / name).exists() and (self.dest / (name + ".prev")).exists())
+
+    def test_sweep_takes_what_a_killed_install_left(self):
+        self.dest.mkdir(exist_ok=True)
+        fake_program(self.dest / "tessera-events", "events")
+        (self.dest / ".built-c58c38ca").mkdir()
+        (self.dest / ".built-c58c38ca" / "tessera-events").write_text("half")
+        (self.dest / "tessera-events.prev.tmp-12a60472").write_text("x")
+        (self.dest / "tessera-ui.swap").write_text("x")
+        fresh, old = self.dest / ".incoming-00000001", self.dest / ".incoming-00000002"
+        fresh.mkdir()
+        old.mkdir()
+        os.utime(old, (time.time() - 2 * 86400,) * 2)
+        gone = ni.sweep(str(self.dest))
+        self.assertEqual(sorted(os.listdir(self.dest)), [".incoming-00000001", "tessera-events"])
+        self.assertEqual(len(gone), 4)
 
     def test_bad_signature_keeps_the_installed_build(self):
         self.publish()
