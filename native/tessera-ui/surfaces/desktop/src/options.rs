@@ -53,7 +53,7 @@ pub struct WidgetOptions {
 pub fn title(kind: &str) -> &'static str {
     match kind {
         "photos" => "Photos",
-        "worldClock" => "World Clock",
+        "worldClock" => "World clock",
         "stocks" => "Stocks",
         "stack" => "Widget Stack",
         "system" => "System",
@@ -364,7 +364,7 @@ mod tests {
 
     #[test]
     fn headings() {
-        assert_eq!(title("worldClock"), "World Clock");
+        assert_eq!(title("worldClock"), "World clock");
         assert_eq!(title("something"), "Widget");
     }
 }

@@ -1474,7 +1474,7 @@ impl Desktop {
                 row(format!("Open {}", it.name), Act::OpenStack(it.key.clone())),
                 row(format!("Share {n} {}", if n == 1 { "file…" } else { "files…" }), Act::Share(it.stack.iter().map(|e| e.path.clone()).collect())),
                 sep(),
-                row("✓ Use Stacks", Act::UseStacks(false)),
+                row("✓ Use stacks", Act::UseStacks(false)),
             ];
         }
         let _ = st;
@@ -1484,7 +1484,7 @@ impl Desktop {
             row("Quick Preview", Act::QuickLook(p.clone())),
             row("Share…", Act::Share(vec![p.clone()])),
             row("Show in Files", Act::Reveal(p.clone())),
-            row("Copy Path", Act::CopyPath(p.clone())),
+            row("Copy path", Act::CopyPath(p.clone())),
             sep(),
             Row { danger: true, ..row("Move to Trash", Act::Trash(p)) },
         ]
@@ -1512,7 +1512,7 @@ impl Desktop {
         match inner.as_str() {
             "today" => {
                 rows.push(sep());
-                rows.push(row("Today Options…", Act::TodayOptions));
+                rows.push(row("Today options…", Act::TodayOptions));
             }
             "shortcuts" => {
                 let chosen: Vec<String> = self.feed.shortcut_buttons.get(&id).cloned().unwrap_or_else(|| feed::SHORTCUT_DEFAULTS.iter().map(|s| s.to_string()).collect());
@@ -1530,28 +1530,28 @@ impl Desktop {
                 rows.push(row(check(on.iter().any(|x| x == k.id), k.label), Act::StackKind(w.id.clone(), k.id.to_string())));
             }
             rows.push(sep());
-            rows.push(row(check(c.smart_rotate, "Smart Rotate"), Act::SmartRotate));
+            rows.push(row(check(c.smart_rotate, "Smart rotate"), Act::SmartRotate));
         }
         if ["photos", "worldClock", "stocks", "stack", "system"].contains(&w.kind.as_str()) {
             rows.push(sep());
-            rows.push(row("Widget Options…", Act::WidgetOptions(w.kind.clone())));
+            rows.push(row("Widget options…", Act::WidgetOptions(w.kind.clone())));
         }
         rows.push(sep());
-        rows.push(row("Edit Widgets…", Act::EditWidgets));
-        rows.push(Row { danger: true, ..row("Remove Widget", Act::Remove(i)) });
+        rows.push(row("Edit widgets…", Act::EditWidgets));
+        rows.push(Row { danger: true, ..row("Remove widget", Act::Remove(i)) });
         rows
     }
 
     fn desktop_menu(st: &State) -> Vec<Row> {
         let c = Self::cfg(st);
         vec![
-            row("Edit Widgets…", Act::EditWidgets),
-            row("Change Wallpaper…", Act::Wallpaper),
+            row("Edit widgets…", Act::EditWidgets),
+            row("Change wallpaper…", Act::Wallpaper),
             sep(),
-            row(check(c.use_stacks, "Use Stacks"), Act::UseStacks(!c.use_stacks)),
-            row(check(c.icons, "Show Files on Desktop"), Act::ShowFiles),
+            row(check(c.use_stacks, "Use stacks"), Act::UseStacks(!c.use_stacks)),
+            row(check(c.icons, "Show files on desktop"), Act::ShowFiles),
             sep(),
-            row("Desktop Settings…", Act::Settings),
+            row("Desktop settings…", Act::Settings),
         ]
     }
 

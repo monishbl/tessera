@@ -32,7 +32,7 @@ const fn k(id: &'static str, label: &'static str, icon: &'static str, sizes: &'s
 /// WidgetDefs.qml's kinds, in its order
 pub const KINDS: &[KindDef] = &[
     k("clock", "Clock", "clock", &["s", "m"], false, false),
-    k("worldClock", "World Clock", "globe-hemisphere-west", &["s", "m"], false, false),
+    k("worldClock", "World clock", "globe-hemisphere-west", &["s", "m"], false, false),
     k("weather", "Weather", "cloud-sun", &["s", "m"], false, false),
     k("today", "Today", "sun-horizon", &["m", "l"], false, false),
     k("calendar", "Calendar", "calendar-blank", &["s", "m", "l"], false, false),
@@ -45,7 +45,7 @@ pub const KINDS: &[KindDef] = &[
     k("stack", "Widget Stack", "stack", &["s", "m", "l"], false, true),
     k("shortcuts", "Shortcuts", "lightning", &["s", "m"], true, true),
     k("screenTime", "Screen Time", "hourglass-medium", &["s", "m"], false, false),
-    k("batteryHistory", "Battery History", "battery-charging", &["s", "m"], false, false),
+    k("batteryHistory", "Battery history", "battery-charging", &["s", "m"], false, false),
     k("stocks", "Stocks", "chart-line-up", &["s", "m", "l"], false, false),
 ];
 

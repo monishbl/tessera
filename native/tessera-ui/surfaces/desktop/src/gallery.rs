@@ -35,7 +35,7 @@ pub struct Gal {
 pub fn desc(id: &str) -> &'static str {
     match id {
         "clock" => "An analog face, or the time and date.",
-        "worldClock" => "The time in other cities. Right-click it to choose them (Widget Options).",
+        "worldClock" => "The time in other cities. Right-click it to choose them (Widget options).",
         "weather" => "Conditions where you are, and the next hours.",
         "today" => "Your day at a glance: a greeting, what's next, to-dos and the weather.",
         "calendar" => "Today, the month, and what's coming up.",
@@ -43,13 +43,13 @@ pub fn desc(id: &str) -> &'static str {
         "batteries" => "This computer and connected Bluetooth devices.",
         "nowPlaying" => "What's playing, with controls.",
         "system" => "The last minute of CPU and memory; bigger sizes add temperature, network and more.",
-        "photos" => "A picture from your Pictures folder (or one you choose: right-click, Widget Options), changing every 15 minutes.",
+        "photos" => "A picture from your Pictures folder (or one you choose: right-click, Widget options), changing every 15 minutes.",
         "notes" => "A note you can type into on the desktop.",
         "stack" => "Several widgets in one place: scroll to flip; it brings forward what matters now.",
         "shortcuts" => "One-click buttons: screenshot, dark mode, lock... Right-click to choose.",
         "screenTime" => "How long you've used the computer today, and on which apps.",
         "batteryHistory" => "Your battery over the last 24 hours.",
-        "stocks" => "Today's prices for your symbols (right-click it: Widget Options).",
+        "stocks" => "Today's prices for your symbols (right-click it: Widget options).",
         _ => "",
     }
 }
