@@ -880,7 +880,7 @@ class Wiring(unittest.TestCase):
 
     def test_workflow(self):
         wf = (ROOT / ".github/workflows/tessera-ui.yml").read_text()
-        for needle in ("archlinux:base-devel", "-C target-cpu=x86-64-v3", "actions/cache@v4", "TODO(PGO)",
+        for needle in ("archlinux:base-devel", "-C target-cpu=x86-64-v3", "actions/cache@", "TODO(PGO)",
                        "TESSERA_UI_MINISIGN_KEY", "tools/tessera-ui.pub", "tessera-ui-latest", "--prerelease",
                        'tags: ["v*"]', '"native/**"', "minisign -V", "tree=$TREE"):
             self.assertIn(needle, wf)

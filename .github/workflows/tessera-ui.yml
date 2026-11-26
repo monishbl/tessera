@@ -79,7 +79,7 @@ jobs:
     steps:
       - name: Tools and libraries
         run: pacman -Syu --noconfirm --needed git rust zstd jq pkgconf libxkbcommon wayland fontconfig
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Trust the checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Name the sources
@@ -89,7 +89,7 @@ jobs:
           echo "rustc=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
           echo "epoch=$(git log -1 --format=%ct)" >> "$GITHUB_OUTPUT"
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry/index
@@ -138,7 +138,7 @@ jobs:
               programs: {"tessera-ui": {sha256: $ui_sha, version: $ui_version},
                          "tessera-events": {sha256: $ev_sha, version: $ev_version}}}' > "out/variant-$VARIANT.json"
           cat "out/variant-$VARIANT.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: build-${{ matrix.variant }}
           path: out/
@@ -157,10 +157,10 @@ jobs:
     steps:
       - name: Tools
         run: pacman -Syu --noconfirm --needed git jq minisign github-cli
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Trust the checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: build-*
           path: out
@@ -170,12 +170,14 @@ jobs:
         run: |
           set -euo pipefail
           tree=$(git rev-parse HEAD:native)
-          # (a tag: its own release; beta: the Beta channel's rolling one;
-          # main, or a run by hand from any other branch: Stable's)
+          # (a v* tag: its own release; beta: the Beta channel's rolling one;
+          # main: Stable's. A run by hand from any other branch is never
+          # signed and published, least of all as Stable)
           case "$GITHUB_REF" in
-            refs/tags/*)       channel=release tag="$GITHUB_REF_NAME" ;;
+            refs/tags/v*)      channel=release tag="$GITHUB_REF_NAME" ;;
             refs/heads/beta)   channel=beta tag=tessera-ui-beta ;;
-            *)                 channel=stable tag=tessera-ui-latest ;;
+            refs/heads/main)   channel=stable tag=tessera-ui-latest ;;
+            *)                 echo "::error::Only main, beta and v* tags are published; $GITHUB_REF isn't"; exit 1 ;;
           esac
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' native/tessera-ui/Cargo.toml | head -1)
           jq -n --arg commit "$GITHUB_SHA" --arg tree "$tree" --arg version "$version" --arg channel "$channel" --arg tag "$tag" \
@@ -291,6 +293,8 @@ jobs:
           seen=" "
           jq -r 'sort_by(.created_at) | reverse | .[] | "\(.id) \(.file_name)"' <<<"$files" | while read -r id name; do
             t=$(sed -nE 's/^tessera-ui-([0-9a-f]{40}).*/\1/p' <<<"$name")
+            # (only tessera-ui-<tree> files: the publisher's bundles share the package)
+            [[ -n $t ]] || continue
             if [[ " $keep " != *" $t "* || "$seen" == *" $name "* ]]; then
               curl -fsS --request DELETE --header "$hdr" "$api/packages/$pkg/package_files/$id" >/dev/null && echo "removed $name"
             fi
