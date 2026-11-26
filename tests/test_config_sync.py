@@ -289,6 +289,16 @@ class Sync(unittest.TestCase):
         self.assertEqual(self.mine("tessera/keybinds.lua.new"), new)
         self.assertFalse((self.hypr / "tessera/look.lua.new").exists())  # (the same as the new one: fine)
         self.assertIn("keybinds.lua: kept as yours", self.notes[0][1])
+        # (audit #713: the new keybinds.lua isn't recorded as the base, which
+        # would make the older copy look like your own edits for good; the
+        # rest is)
+        base = self.data / "tessera/hypr-base"
+        self.assertFalse((base / "tessera/keybinds.lua").exists())
+        self.assertEqual((base / "tessera/look.lua").read_text(), LOOK)
+        # Once you take Tessera's (the .new copied over), it's the base again
+        (self.hypr / "tessera/keybinds.lua").write_text(new)
+        self.cs.sync(str(self.repo), None)
+        self.assertEqual((base / "tessera/keybinds.lua").read_text(), new)
 
     def test_the_shell_copy_is_replaced(self):
         (self.config / "quickshell/tessera/stale.qml").write_text("old\n")

@@ -446,6 +446,7 @@ def sync_hypr(repo, old_rev=None, config=None, backup=None, say=None):
     known = base if base is not None else old  # (what was shipped before, when known)
 
     results = {}  # rel -> bytes yours become (None: removed)
+    unknown = set()  # (kept as yours with nothing known of what was shipped: left out of the base)
     for rel in sorted(set(new) | set(known or {})):
         if rel in GENERATED:
             continue
@@ -472,6 +473,8 @@ def sync_hypr(repo, old_rev=None, config=None, backup=None, say=None):
             out["added"].append(rel)
             continue
         merged, clashes, how = merge_file(rel, mine, b, n)
+        if how == "fallback" and b is None:
+            unknown.add(rel)
         if merged != mine:
             results[rel] = merged
             out["changed"].append(rel)
@@ -516,7 +519,10 @@ def sync_hypr(repo, old_rev=None, config=None, backup=None, say=None):
                 os.remove(p)
         else:
             _write(p, data, like=None)
-    write_base(new, git_rev(repo))
+    # (what was shipped, as the next merge's base; never for a file kept as
+    # yours without knowing what was shipped before: recorded as Tessera's
+    # new one, your older copy would look like your own edits for good)
+    write_base({rel: data for rel, data in new.items() if rel not in unknown}, git_rev(repo))
     out["done"] = True
     out["any"] = bool(results)
     for n in out["notes"]:
