@@ -29,7 +29,9 @@ if ! flock -n 9; then
     flock -w 3 9 || exit 0
 fi
 shell_dir=$(cd -- "$(dirname -- "$0")/../.." && pwd)
-action="$shell_dir/assets/scripts/idle-action.sh"
+# (quoted: hypridle runs these lines through a shell; a home folder with a
+# space in it is a path, not two words)
+printf -v action %q "$shell_dir/assets/scripts/idle-action.sh"
 # (through shell-ipc.sh: the shell may run either look's root)
 printf -v lock_command 'QS=%q %q call lock lock' "${1:-qs}" "$shell_dir/assets/scripts/shell-ipc.sh"
 printf '%s\n' "$lock_command" >"$idle_dir/lock-command"

@@ -1,4 +1,8 @@
 -- Programs started with the session.
+-- (a path as one shell word, whatever it holds: a space, a quote)
+local function q(s)
+    return "'" .. (s:gsub("'", "'\\''")) .. "'"
+end
 hl.on("hyprland.start", function()
     -- optional plugins (hyprbars), only when some are added: with none,
     -- hyprpm's reload said "run hyprpm update" on screen at every login
@@ -7,7 +11,7 @@ hl.on("hyprland.start", function()
     -- (launch-shell.sh picks the icon theme; with rust.standalone set in Settings'
     -- config it starts `tessera-ui --standalone` instead of Quickshell, and falls
     -- back to Quickshell when that binary is missing)
-    hl.exec_cmd(cfg .. "/quickshell/tessera/assets/scripts/launch-shell.sh -c tessera")
+    hl.exec_cmd(q(cfg .. "/quickshell/tessera/assets/scripts/launch-shell.sh") .. " -c tessera")
     hl.exec_cmd("wl-paste --watch cliphist store")
     -- Passwords for apps (the Secret Service), unless something already
     -- provides it: a keyring unlocked at login (PAM), KWallet, KeePassXC
@@ -16,7 +20,7 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP QT_QPA_PLATFORMTHEME QT_QPA_PLATFORM ELECTRON_OZONE_PLATFORM_HINT XDG_MENU_PREFIX CLAUDE_PASSWORD_STORE")
     -- Apps that start with your session (~/.config/autostart, /etc/xdg/autostart),
     -- once the shell's tray is there for them; once per session
-    hl.exec_cmd("python3 -I " .. cfg .. "/quickshell/tessera/assets/scripts/xdg-autostart.py --wait-tray 15")
+    hl.exec_cmd("python3 -I " .. q(cfg .. "/quickshell/tessera/assets/scripts/xdg-autostart.py") .. " --wait-tray 15")
 end)
 
 -- If the shell ever stops (a crash), it comes back within ~10 s (~5 s
@@ -29,7 +33,7 @@ do
     -- the installer runs, crashed on it every time, 22 Nov. A reload, with a
     -- monitor there, makes it at once)
     local function start()
-        hl.timer(function() hl.exec_cmd(cfg .. "/quickshell/tessera/assets/scripts/keep-shell.sh -c tessera") end, { timeout = 5000, type = "repeat" })
+        hl.timer(function() hl.exec_cmd(q(cfg .. "/quickshell/tessera/assets/scripts/keep-shell.sh") .. " -c tessera") end, { timeout = 5000, type = "repeat" })
     end
     local ok, mon = pcall(hl.get_active_monitor)
     if ok and mon then
