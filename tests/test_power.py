@@ -191,6 +191,48 @@ class IdleConfig(unittest.TestCase):
         subprocess.run(["bash", str(SCRIPTS / "idle-action.sh"), "before-sleep"], env=env, timeout=10)
         self.assertEqual((d / "ran").read_text().strip(), "locked")
 
+    def test_a_shell_folder_with_a_space_is_quoted(self):
+        # (audit #793: hypridle runs the line through sh -c)
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
+        shell = d / "my shell"
+        shutil.copytree(SCRIPTS, shell / "assets/scripts")
+        (d / "bin").mkdir()
+        (d / "bin/hypridle").write_text('#!/bin/sh\ncat "$2" > "$IDLE_CAPTURE"\n')
+        (d / "bin/hypridle").chmod(0o755)
+        (d / "config/tessera").mkdir(parents=True)
+        (d / "config/tessera/idle-listeners").write_text("battery dim 120\n")
+        env = dict(os.environ, PATH=f"{d}/bin:{os.environ['PATH']}", TESSERA_SANDBOX="1", TESSERA_TTY="1",
+                   XDG_RUNTIME_DIR=str(d), XDG_CONFIG_HOME=str(d / "config"), HYPRLAND_INSTANCE_SIGNATURE="fixture",
+                   IDLE_CAPTURE=str(d / "captured"))
+        subprocess.run(["bash", str(shell / "assets/scripts/start-idle.sh"), "qs"], env=env, check=True, timeout=5)
+        conf = (d / "captured").read_text()
+        quoted = str(shell / "assets/scripts/idle-action.sh").replace(" ", "\\ ")
+        self.assertIn("on-timeout = " + quoted + " battery dim", conf)
+        self.assertIn("after_sleep_cmd = " + quoted + " after-sleep", conf)
+
+    def on_ac(self, supplies):
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
+        for name, files in supplies.items():
+            (d / name).mkdir()
+            for k, v in files.items():
+                (d / name / k).write_text(v + "\n")
+        script = ('source <(sed -n "/^on_ac()/,/^}/p" %s); on_ac' % (SCRIPTS / "idle-action.sh"))
+        r = subprocess.run(["bash", "-c", script], env=dict(os.environ, TESSERA_POWER_SUPPLY_DIR=str(d)), timeout=10)
+        return r.returncode == 0
+
+    def test_usb_c_only_laptops_know_when_on_battery(self):
+        bat = {"type": "Battery", "status": "Discharging"}
+        self.assertFalse(self.on_ac({"ucsi-source-psy-1": {"type": "USB", "online": "0"}, "BAT0": bat}))
+        self.assertTrue(self.on_ac({"ucsi-source-psy-1": {"type": "USB", "online": "1"}, "BAT0": bat}))
+        self.assertTrue(self.on_ac({"BAT0": {"type": "Battery", "status": "Charging"}}))
+        self.assertFalse(self.on_ac({"AC": {"type": "Mains", "online": "0"}, "BAT0": bat}))
+        self.assertTrue(self.on_ac({"AC": {"type": "Mains", "online": "1"}, "BAT0": bat}))
+        self.assertTrue(self.on_ac({}))  # (a desktop)
+        # (a mouse's battery isn't the computer's)
+        self.assertTrue(self.on_ac({"hidpp_battery_0": {"type": "Battery", "scope": "Device", "status": "Discharging"}}))
+
     def test_your_own_hypridle_conf_still_wins(self):
         conf, _ = self.run_idle("ac sleep 60\n", own="listener {\n timeout = 1234\n}\n")
         self.assertIn("timeout = 1234", conf)

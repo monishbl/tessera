@@ -11,15 +11,29 @@ set -uo pipefail
 dir=${TESSERA_IDLE_DIR:-}
 
 # On the charger? A computer with no mains supply at all (a desktop) counts
-# as on the charger.
+# as on the charger. A laptop charged over USB-C may show only USB supplies
+# and a battery: then a USB supply online, or a battery not discharging,
+# counts as the charger.
 on_ac() {
-    local seen=0 f
-    for f in /sys/class/power_supply/*; do
-        [[ $(cat "$f/type" 2>/dev/null) == Mains ]] || continue
-        seen=1
-        [[ $(cat "$f/online" 2>/dev/null) == 1 ]] && return 0
+    local root=${TESSERA_POWER_SUPPLY_DIR:-/sys/class/power_supply}
+    local seen=0 usb=0 battery=0 discharging=0 f type
+    for f in "$root"/*; do
+        type=$(cat "$f/type" 2>/dev/null)
+        case "$type" in
+            Mains)
+                seen=1
+                [[ $(cat "$f/online" 2>/dev/null) == 1 ]] && return 0 ;;
+            USB*)
+                [[ $(cat "$f/online" 2>/dev/null) == 1 ]] && usb=1 ;;
+            Battery)
+                [[ $(cat "$f/scope" 2>/dev/null) == Device ]] && continue  # (a mouse's or headset's)
+                battery=1
+                [[ $(cat "$f/status" 2>/dev/null) == Discharging ]] && discharging=1 ;;
+        esac
     done
-    [[ $seen == 0 ]]
+    [[ $seen == 1 ]] && return 1
+    [[ $usb == 1 ]] && return 0
+    [[ $battery == 0 || $discharging == 0 ]]
 }
 # The lock, through the shell. No shell answering (crashed, restarting
 # after an update, hung) must never mean sleeping unlocked (audit #60):
@@ -67,21 +81,26 @@ esac
 # What dim set, when it dimmed (undim puts the brightness back only then: a
 # screen already at a tenth or less was left alone, and brightnessctl's saved
 # level is still an older dim's)
+# (never a fixed name under /tmp: no private runtime folder, no note, and
+# undim then leaves the brightness alone)
 dimmed="${dir:+$dir/dimmed}"
-dimmed="${dimmed:-${XDG_RUNTIME_DIR:-/tmp}/tessera-idle-dimmed}"
+if [[ -z $dimmed ]]; then
+    rt=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+    [[ -d $rt && -O $rt && ! -L $rt ]] && dimmed="$rt/tessera-idle-dimmed"
+fi
 case "$action" in
     dim)
         # Down to a tenth (never brighter), remembered so undim puts it back
-        if command -v brightnessctl >/dev/null; then
+        if [[ -n $dimmed ]] && command -v brightnessctl >/dev/null; then
             cur=$(brightnessctl get 2>/dev/null) max=$(brightnessctl max 2>/dev/null)
             if [[ $cur =~ ^[0-9]+$ && $max =~ ^[0-9]+$ ]] && (( cur > max / 10 )) && brightnessctl -q -s set "$((max / 10))"; then
-                echo "$((max / 10))" >"$dimmed" 2>/dev/null
+                [[ -n $dimmed ]] && echo "$((max / 10))" >"$dimmed" 2>/dev/null
             fi
         fi ;;
     undim)
         # (only after a dim of ours, and not when you changed the brightness
         # meanwhile: yours stays)
-        if [[ -f $dimmed ]]; then
+        if [[ -n $dimmed && -f $dimmed ]]; then
             was=$(cat "$dimmed" 2>/dev/null)
             rm -f "$dimmed"
             if command -v brightnessctl >/dev/null && [[ "$(brightnessctl get 2>/dev/null)" == "$was" ]]; then

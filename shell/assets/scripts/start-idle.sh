@@ -30,6 +30,8 @@ if ! flock -n 9; then
 fi
 shell_dir=$(cd -- "$(dirname -- "$0")/../.." && pwd)
 action="$shell_dir/assets/scripts/idle-action.sh"
+# (quoted for hypridle's sh -c: a folder with a space mustn't split it)
+printf -v action_q '%q' "$action"
 # (through shell-ipc.sh: the shell may run either look's root)
 printf -v lock_command 'QS=%q %q call lock lock' "${1:-qs}" "$shell_dir/assets/scripts/shell-ipc.sh"
 printf '%s\n' "$lock_command" >"$idle_dir/lock-command"
@@ -42,7 +44,7 @@ write_config() {
     # Keep installed/custom listener timeouts and DPMS behavior. Only the lock
     # target and secure-before-sleep requirement are owned by this launcher.
     # (a copy an earlier installer put there doesn't count: own-hypridle.sh)
-    if "$shell_dir/assets/scripts/own-hypridle.sh" "$user_config"; then
+    if [[ $skip_own == 0 ]] && "$shell_dir/assets/scripts/own-hypridle.sh" "$user_config"; then
         cat -- "$user_config" >"$idle_dir/hypridle.conf"
     elif [[ -r "$listeners" ]]; then
         {
@@ -57,11 +59,11 @@ write_config() {
                 fi
                 [[ $src =~ ^(ac|battery)$ && $act =~ ^(dim|lock|off|sleep)$ && $secs =~ ^[0-9]+$ ]] || continue
                 resume=""
-                [[ $act == dim ]] && resume="$action any undim"
-                [[ $act == off ]] && resume="$action any on"
+                [[ $act == dim ]] && resume="$action_q any undim"
+                [[ $act == off ]] && resume="$action_q any on"
                 echo "listener {"
                 echo "    timeout = $secs"
-                echo "    on-timeout = $action $src $act"
+                echo "    on-timeout = $action_q $src $act"
                 [[ -n $resume ]] && echo "    on-resume = $resume"
                 echo "}"
             done <"$listeners"
@@ -97,19 +99,41 @@ EOF
 general {
     lock_cmd = $lock_command
     before_sleep_cmd = $before
-    after_sleep_cmd = $action after-sleep
+    after_sleep_cmd = $action_q after-sleep
     inhibit_sleep = 3
 }
 EOF
 }
 
+# A hypridle that exits at once (a mistake in your own hypridle.conf, an
+# option this version rejects) is started again after 2, 4, 8 ... 60 s, not
+# every second; after 3 such exits with your own file, Tessera's own list is
+# used instead (and you're told once) so the screen still locks.
+skip_own=0 quick=0
 while :; do
     write_config
+    started=$SECONDS
     hypridle -c "$idle_dir/hypridle.conf" &
     echo $! >"$idle_dir/hypridle.pid"
     wait $! || true
     rm -f "$idle_dir/hypridle.pid"
     # Its compositor is gone: so is this loop
     [[ -S "$runtime/hypr/$instance/.socket.sock" ]] || exit 0
-    sleep 1
+    if (( SECONDS - started < 5 )); then
+        quick=$((quick + 1))
+    else
+        quick=0
+    fi
+    if (( quick >= 3 && skip_own == 0 )) && "$shell_dir/assets/scripts/own-hypridle.sh" "$user_config"; then
+        skip_own=1 quick=0
+        notify-send -a Tessera -i dialog-warning "Your hypridle.conf didn't start" \
+            "hypridle stopped at once with ~/.config/hypr/hypridle.conf, so Tessera's own idle timers are used until you log in again." \
+            >/dev/null 2>&1 || true
+    fi
+    if (( quick > 0 )); then
+        delay=$((1 << (quick < 6 ? quick : 6)))
+        sleep $((delay < 60 ? delay : 60))
+    else
+        sleep 1
+    fi
 done
