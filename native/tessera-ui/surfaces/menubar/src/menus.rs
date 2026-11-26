@@ -392,7 +392,7 @@ mod tests {
         let on: Vec<&str> = v.iter().filter(|r| r.enabled && !r.separator && !r.header && r.tiles.is_empty()).map(|r| r.text.as_str()).collect();
         assert_eq!(on, vec!["Left & Right", "Top & Bottom", "Quarters"]);
         // in tabs: take it out
-        let g = Client { grouped: vec!["a".into(), "b".into()], ..w };
+        let g = Client { grouped: vec!["a".into(), "b".into()], ..w.clone() };
         assert_eq!(window(&g, "linux", 0)[3].text, "Move Tab to New Window");
         // a second display's spaces start at its base
         let v = window(&w, "linux", 100);
