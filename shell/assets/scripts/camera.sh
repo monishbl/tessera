@@ -46,9 +46,51 @@ maybe_busy() {
     done
     return 1
 }
+# The apps streaming from a PipeWire camera: browsers and portal apps never
+# open /dev/video* themselves, PipeWire does, so its name alone says nothing.
+# (pw-dump: the nodes linked from a Video/Source node, by app name)
+pw_apps() {
+    command -v pw-dump >/dev/null 2>&1 || return
+    timeout 3 pw-dump 2>/dev/null | python3 -I -c '
+import json, sys
+try:
+    objs = json.load(sys.stdin)
+except ValueError:
+    sys.exit()
+def num(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+by = {o.get("id"): o for o in objs if isinstance(o, dict)}
+def props(o):
+    return ((o or {}).get("info") or {}).get("props") or {}
+kind = lambda o: str(o.get("type", "")).rsplit(":", 1)[-1]
+cams = {i for i, o in by.items() if kind(o) == "Node" and props(o).get("media.class") == "Video/Source"}
+names = set()
+for o in by.values():
+    info = o.get("info") or {}
+    if kind(o) != "Link" or info.get("output-node-id") not in cams:
+        continue
+    node = props(by.get(info.get("input-node-id")))
+    client = props(by.get(num(node.get("client.id"))))
+    name = node.get("application.name") or client.get("application.name") or client.get("application.process.binary") or node.get("node.name")
+    if name:
+        names.add(str(name).replace(",", " ").replace("]", " ").strip())
+print("\n".join(sorted(n for n in names if n)))
+' 2>/dev/null
+}
 scan() {
     fuser "${devs[@]}" 2>/dev/null | tr -s ' ' '\n' | grep -o '[0-9]\+' | sort -u |
-        while read -r p; do cat "/proc/$p/comm" 2>/dev/null; done | sort -u | paste -sd,
+        while read -r p; do cat "/proc/$p/comm" 2>/dev/null; done | sort -u |
+        while read -r c; do
+            if [ "$c" = pipewire ] || [ "$c" = wireplumber ]; then
+                apps=$(pw_apps)
+                if [ -n "$apps" ]; then printf '%s\n' "$apps"; else echo "$c"; fi
+            else
+                echo "$c"
+            fi
+        done | sort -u | paste -sd,
 }
 
 found=-30
