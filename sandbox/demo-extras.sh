@@ -7,16 +7,12 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SB="$ROOT/.sandbox/home"
 export XDG_CONFIG_HOME="$SB/.config" XDG_STATE_HOME="$SB/.local/state" XDG_CACHE_HOME="$SB/.cache" XDG_DATA_HOME="$SB/.local/share"
-QS=qs
-for d in tessera; do
-    [[ -x "$HOME/.local/share/$d/quickshell/bin/qs" ]] && { QS="$HOME/.local/share/$d/quickshell/bin/qs"; break; }
-done
 
 alive() { timeout 3 hyprctl version >/dev/null 2>&1; }
 
-# Wait for the shell (up to a minute)
+# Wait for the shell (up to a minute): either shell, through shell-ipc.sh
 for _ in $(seq 60); do
-    "$QS" -p "$ROOT/shell" ipc show >/dev/null 2>&1 && break
+    "$ROOT/shell/assets/scripts/shell-ipc.sh" call panels close >/dev/null 2>&1 && break
     sleep 1
 done
 sleep 3 # let the menu bar and island settle

@@ -17,6 +17,13 @@ HZ=$(getconf CLK_TCK)
 hypr_pid() { pgrep -P "$("$DEV" status | grep -o '[0-9]\+')" -x Hyprland | head -1; }
 shell_pid() {
     local p
+    # (the Rust shell, as tools/gate/sampler.py finds it: tessera-ui
+    # --standalone in the sandbox's runtime folder)
+    for p in $(pgrep -x tessera-ui; pgrep -x tessera-ui.real); do
+        tr '\0' '\n' <"/proc/$p/cmdline" 2>/dev/null | grep -qx -- --standalone &&
+            tr '\0' '\n' <"/proc/$p/environ" 2>/dev/null | grep -qx "XDG_RUNTIME_DIR=/tmp/tessera-rt" && { echo "$p"; return; }
+    done
+    # (the QML fallback)
     for p in $(pgrep -x tessera-shell; pgrep -x qs; pgrep -x quickshell); do
         tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -q -- "-p $ROOT/shell" &&
             tr '\0' '\n' <"/proc/$p/environ" 2>/dev/null | grep -qx "XDG_RUNTIME_DIR=/tmp/tessera-rt" && { echo "$p"; return; }
@@ -29,7 +36,8 @@ field() { grep -o "$1 [0-9]*" <<<"$2" | head -1 | awk '{print $2}'; }
 frames() { grep -o 'frames:TESSERA-TEST [0-9]*' <<<"$1" | awk '{print $2}'; }
 # Whole-GPU busy share from the render engine's idle (RC6) time: includes your
 # own desktop, so compare phases rather than reading it as the shell's alone
-rc6() { cat /sys/class/drm/card*/power/rc6_residency_ms 2>/dev/null | head -1 || echo 0; }
+# (gt/gt0 on today's i915 and xe; power/ on older kernels)
+rc6() { cat /sys/class/drm/card*/gt/gt0/rc6_residency_ms /sys/class/drm/card*/power/rc6_residency_ms 2>/dev/null | head -1 | grep . || echo 0; }
 
 ipc() { "$DEV" ipc "$@" >/dev/null 2>&1; }
 start_phase() {
