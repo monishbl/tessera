@@ -52,7 +52,8 @@ component Light inherits Rectangle {
     width: 14px;
     height: 14px;
     border-radius: 7px;
-    background: tint;
+    // (darker under the pointer and while pressed: which light a click hits)
+    background: touch.pressed ? tint.darker(0.2) : touch.has-hover ? tint.darker(0.1) : tint;
     accessible-role: button;
     accessible-label: label;
     accessible-action-default => { clicked(); }
@@ -63,10 +64,11 @@ component Light inherits Rectangle {
         color: #0000008c;
     }
     touch := TouchArea {
-        x: -3px;
-        y: -3px;
-        width: parent.width + 6px;
-        height: parent.height + 6px;
+        // (22 px: as large as the 8 px gap lets, without overlapping a neighbour)
+        x: -4px;
+        y: -4px;
+        width: parent.width + 8px;
+        height: parent.height + 8px;
         clicked => { root.clicked(); }
     }
 }
@@ -106,6 +108,8 @@ export component WindowControls inherits Window {
     in property <Gl> min-icon;
     in property <Gl> zoom-icon;
     in property <Gl> max-icon;
+    // the window is maximized: the zoom button restores it
+    in property <bool> maximized;
     // the window's rect inside the surface (the pill and its shadow's room)
     out property <float> win-x: (root.width - qw) / 1px / 2;
     out property <float> win-w: qw / 1px;
@@ -126,6 +130,9 @@ export component WindowControls inherits Window {
     animate qw { duration: Theme.hover; }
     animate qh { duration: Theme.hover; }
     changed hovered => {
+        if !hovered {
+            tile-delay.running = false;
+        }
         if !hovered && tiling {
             tiling = false;
             tiling-off();
@@ -143,7 +150,11 @@ export component WindowControls inherits Window {
         running: false;
         triggered => {
             self.running = false;
-            tiling = true;
+            // (only with the pointer still on the controls: a quick pass over
+            // zoom could remove the button before it said it was left)
+            if hovered {
+                tiling = true;
+            }
         }
     }
     // Plugin mode: the grid goes if the pointer never comes over
@@ -210,7 +221,7 @@ export component WindowControls inherits Window {
             zoom := Light {
                 tint: #28C840;
                 icon: zoom-icon;
-                label: "Zoom";
+                label: maximized ? "Restore" : "Zoom";
                 clicked => { act("maximize"); }
                 changed hovered => { tile-delay.running = self.hovered; }
             }
@@ -229,7 +240,7 @@ export component WindowControls inherits Window {
             }
             MButton {
                 icon: max-icon;
-                label: "Maximize";
+                label: maximized ? "Restore" : "Maximize";
                 clicked => { act("maximize"); }
                 changed hovered => { tile-delay.running = self.hovered; }
             }
