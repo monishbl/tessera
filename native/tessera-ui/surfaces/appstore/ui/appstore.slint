@@ -229,6 +229,7 @@ component AsIconButton inherits FocusScope {
 // Glass's search field (TextField.qml, 28 high, outlined in the accent while typing)
 component GlassSearch inherits Rectangle {
     in-out property <string> text;
+    in property <AsGlyphs> g;
     in property <bool> active: true; // (the other look's field: never focused)
     callback edited(string);
     callback entered();
@@ -241,9 +242,18 @@ component GlassSearch inherits Rectangle {
     border-width: 1px;
     border-color: input.has-focus ? Theme.accent : Theme.separator;
     clip: true;
+    // (a magnifier and the hint while it's empty, focused or not: an empty
+    // ringed box said nothing about what it was for)
+    SymIcon {
+        x: 8px;
+        width: 14px;
+        text: g.search;
+        font-size: 13px;
+        color: Theme.tertiary;
+    }
     input := TextInput {
-        x: 10px;
-        width: parent.width - 20px;
+        x: 28px;
+        width: parent.width - 38px;
         height: 100%;
         text <=> root.text;
         enabled: root.active;
@@ -265,9 +275,9 @@ component GlassSearch inherits Rectangle {
             reject
         }
     }
-    if input.text == "" && !input.has-focus: Text {
-        x: 10px;
-        width: parent.width - 20px;
+    if input.text == "": Text {
+        x: 30px;
+        width: parent.width - 40px;
         height: 100%;
         text: "Search apps";
         color: Theme.tertiary;
@@ -883,6 +893,7 @@ export component AppStoreWindow inherits Window {
             x: 10px;
             y: 14px;
             width: parent.width - 20px;
+            g: g;
             text <=> root.search-text;
             edited(t) => { root.typed(t); }
             entered => { root.entered(); }
