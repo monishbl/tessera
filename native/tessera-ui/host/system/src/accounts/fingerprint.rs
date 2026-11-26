@@ -14,7 +14,6 @@
 use super::common::*;
 use serde_json::{json, Value};
 use std::any::Any;
-use std::time::Duration;
 use tessera_core::host::{Host, Service};
 
 enum M {
@@ -23,7 +22,8 @@ enum M {
     EnrollLine(Value),
     EnrollExit,
     Pam(i32, String),
-    Refresh,
+    /// `fingerprint.py delete`'s answer ({ok, error}; Null when it said nothing usable)
+    Removed(Value),
 }
 
 pub struct Fingerprint {
@@ -42,10 +42,10 @@ pub struct Fingerprint {
     pam_busy: String,
     pam_error: String,
     pam_running: bool,
+    remove_error: String,
     scan_seq: i64,
     scan_result: String,
     enroll: Child,
-    later: slint::Timer,
     lock_on: bool,
 }
 
@@ -58,6 +58,7 @@ impl Default for Fingerprint {
             install_error: String::new(),
             fix_error: String::new(),
             fixing: false,
+            remove_error: String::new(),
             enroll_stage: String::new(),
             enroll_finger: String::new(),
             enroll_stages: 0,
@@ -70,7 +71,6 @@ impl Default for Fingerprint {
             scan_seq: 0,
             scan_result: String::new(),
             enroll: Child::default(),
-            later: slint::Timer::default(),
             lock_on: true,
         }
     }
@@ -129,7 +129,7 @@ impl Fingerprint {
                 "slowStart": i["slowStart"].as_bool().unwrap_or(false), "fixing": self.fixing, "fixError": self.fix_error,
                 "enrollStage": self.enroll_stage, "enrollFinger": self.enroll_finger, "enrollStages": self.enroll_stages,
                 "enrollCount": self.enroll_count, "enrollHint": self.enroll_hint, "enrollError": self.enroll_error,
-                "enrolling": self.enroll.running(), "pamBusy": self.pam_busy, "pamError": self.pam_error,
+                "enrolling": self.enroll.running(), "pamBusy": self.pam_busy, "pamError": self.pam_error, "removeError": self.remove_error,
                 "scanned": {"seq": self.scan_seq, "result": self.scan_result},
             }),
         );
@@ -239,13 +239,15 @@ impl Service for Fingerprint {
                 self.publish();
             }
             "remove" => {
-                // (Quickshell.execDetached, then a refresh after 800 ms)
+                // (the list is read again when the removal has finished, and what
+                // went wrong is said: fprintd busy, the reader unplugged)
                 let cmd = Self::py(&["delete", &a0]);
-                std::thread::spawn(move || {
-                    let _ = run_full(&cmd, None);
-                });
+                self.remove_error.clear();
                 let tx = self.tx();
-                self.later.start(slint::TimerMode::SingleShot, Duration::from_millis(800), move || tx.send(M::Refresh));
+                std::thread::spawn(move || {
+                    let (_, out, _) = run_full(&cmd, None);
+                    tx.send(M::Removed(serde_json::from_str(out.trim()).unwrap_or(Value::Null)));
+                });
             }
             "setPam" => {
                 if self.pam_running {
@@ -275,7 +277,13 @@ impl Service for Fingerprint {
         let Ok(m) = msg.downcast::<M>() else { return };
         match *m {
             M::Status(v) => self.info = v,
-            M::Refresh => self.refresh(),
+            M::Removed(r) => {
+                if r["ok"] != true {
+                    self.remove_error = r["error"].as_str().filter(|e| !e.is_empty()).unwrap_or("The fingerprint couldn't be removed. Try again.").to_string();
+                }
+                self.refresh();
+                self.publish();
+            }
             M::Fix(r) => {
                 self.fixing = false;
                 self.fix_error = if r.is_null() {

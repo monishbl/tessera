@@ -272,7 +272,17 @@ impl Google {
         if !ok {
             self.running = false;
             self.last_error = "Google helper failed. Check that python3 and python-gobject are installed.".into();
-            if self.current.take().is_some() {}
+            // (nothing was sent: the change in hand no longer shows as made,
+            // and the queue goes on, each change told the same way)
+            if let Some(cur) = self.current.take() {
+                if !cur.key.is_empty() {
+                    self.set_override(&cur.key, None);
+                }
+                for k in &cur.also {
+                    self.set_override(k, None);
+                }
+            }
+            self.pump();
         }
     }
     /// run(request): one at a time, turned away while busy
@@ -442,7 +452,10 @@ impl Google {
             "changed" => "it changed on Google".to_string(),
             r => format!("Google refused it ({r})"),
         };
-        let body = format!("Your change to {} couldn't be saved because {why}. Here's what you had: {}", js(c, "title"), js(c, "what"));
+        // (a body is markup: an event's title or text is shown as typed, never as tags)
+        let esc = |t: String| t.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+        let why = esc(why);
+        let body = format!("Your change to {} couldn't be saved because {why}. Here's what you had: {}", esc(js(c, "title")), esc(js(c, "what")));
         let cmd = vec![
             "sh".to_string(),
             "-c".into(),

@@ -75,8 +75,10 @@ impl ScreenTime {
         day.insert(self.counting.clone(), json!(e));
         self.all.insert(d, Value::Object(day));
         // Keep a week
-        let keep: Vec<String> = (0..7).map(|i| day_of(now - i * 86_400_000)).collect();
-        self.all.retain(|k, _| keep.contains(k));
+        // (by date, not by 24-hour steps: a 23- or 25-hour day around a clock
+        // change can't skip one; two hours to spare keeps 7 days, now and then 8)
+        let oldest = day_of(now - 6 * 86_400_000 - 2 * 3_600_000);
+        self.all.retain(|k, _| k.as_str() >= oldest.as_str());
         self.dirty = true;
     }
     fn restart(&mut self, idle: bool) {
