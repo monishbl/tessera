@@ -135,6 +135,22 @@ def kernel_headers(installed, kernels=None):
     return sorted(k + "-headers" for k in kernels)
 
 
+SCALE_MARK = "-- Written by the Tessera installer"
+
+
+def monitors_set(f):
+    """Settings → Displays has saved the displays (monitors.lua is its): not
+    when the file is the one the installer wrote for the scales (install.sh's
+    write_scale, one line a screen)"""
+    try:
+        with open(f) as fh:
+            return not fh.readline().startswith(SCALE_MARK)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+
+
 def installed_kernels():
     """The package of each installed kernel: /usr/lib/modules/*/pkgbase names it."""
     out = set()
@@ -355,8 +371,8 @@ def collect(run=subprocess.run):
         "fingerprint": fp,
         "ir_camera": cam,
         "screens": screens(),
-        "monitors_set": os.path.exists(os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
-                                                    "tessera", "monitors.lua")),
+        "monitors_set": monitors_set(os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+                                                  "tessera", "monitors.lua")),
         "hyprland": hv,
         "pulseaudio": "pulseaudio" in have,
         "network": network,

@@ -865,6 +865,18 @@ show_plan() {
 
 # ── Steps ───────────────────────────────────────────────────────────────
 VIRT=none
+# Is there internet: any of the first mirror, GitHub (Tessera) or
+# archlinux.org answering (no one site's outage, or a network blocking it,
+# stops the install)
+online() {
+    local first u
+    first=$(sed -nE 's/^\s*Server\s*=\s*(https?:\/\/[^/$]+).*/\1/p' /etc/pacman.d/mirrorlist 2>/dev/null | head -1)
+    for u in ${first:+"$first"} https://github.com https://archlinux.org; do
+        # (any HTTP answer counts: a mirror's root may say 403)
+        curl -sS --max-time 8 -o /dev/null "$u" 2>/dev/null && return 0
+    done
+    return 1
+}
 preflight() {
     command -v pacman >/dev/null || { say "  Tessera installs on Arch Linux (pacman)."; return 1; }
     [[ $EUID == 0 ]] && { say "  Run this as your normal user, not root; it asks for sudo when needed."; return 1; }
@@ -875,7 +887,7 @@ preflight() {
         # (command sudo: never the screen's password pause, nothing on its stream)
         (while kill -0 $$ 2>/dev/null; do command sudo -n true 2>/dev/null; sleep 50; done) >/dev/null 2>&1 &
     fi
-    if [[ $DEPS == 1 ]] && ! curl -fsS --max-time 10 -o /dev/null https://archlinux.org; then
+    if [[ $DEPS == 1 ]] && ! online; then
         say "  No internet connection. Connect first (e.g. nmtui or iwctl), then run this again."
         return 1
     fi
@@ -1133,11 +1145,18 @@ hardware_item() { # id
 # A display's scale (the hardware plan's suggestion), only while Settings →
 # Displays hasn't saved its own (monitors.lua is then its)
 write_scale() { # output scale
-    local f="$CONFIG/tessera/monitors.lua"
-    [[ -e "$f" ]] && { note "Settings → Displays has your displays' settings: the scale is left to it."; return 0; }
+    local f="$CONFIG/tessera/monitors.lua" mark="-- Written by the Tessera installer" first="" keep=""
+    [[ -e "$f" ]] && IFS= read -r first <"$f"
+    # (a file this wrote, for another screen: one line a screen, each kept)
+    [[ -e "$f" && "$first" != "$mark"* ]] && { note "Settings → Displays has your displays' settings: the scale is left to it."; return 0; }
     if [[ $DRY == 1 ]]; then note "would write scale $2 for $1 to $f"; return 0; fi
     mkdir -p "$CONFIG/tessera"
-    printf -- '-- Written by the Tessera installer: a scale for this screen. Settings → Displays replaces this file.\nhl.monitor({ output = "%s", mode = "preferred", position = "auto", scale = %s })\n' "$1" "$2" >"$f"
+    [[ -e "$f" ]] && keep=$(grep -F 'hl.monitor(' "$f" | grep -vF "output = \"$1\"")
+    {
+        printf -- '%s: a scale for each screen. Settings → Displays replaces this file.\n' "$mark"
+        [[ -n "$keep" ]] && printf '%s\n' "$keep"
+        printf 'hl.monitor({ output = "%s", mode = "preferred", position = "auto", scale = %s })\n' "$1" "$2"
+    } >"$f.new" && mv -f "$f.new" "$f"
     note "Scale $2 for $1 (Settings → Displays changes it)"
 }
 
