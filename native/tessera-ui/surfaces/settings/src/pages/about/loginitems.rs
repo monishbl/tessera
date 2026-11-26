@@ -170,7 +170,7 @@ fn refresh(cx: &mut Ctx) {
     }
     cx.spawn("about.login.list", || match run(&["list".to_string()]) {
         Some(v) if v["items"].is_array() => json!({"items": v["items"]}),
-        Some(_) => json!({"error": "The list came back unreadable. Try again; if it keeps happening, report a bug from Settings → Report a Bug."}),
+        Some(_) => json!({"error": "The list came back unreadable. Try again; if it keeps happening, report a bug from Settings → Report a bug."}),
         None => json!({"error": "Python 3 is needed to read them. Install python, then try again."}),
     });
 }
@@ -290,12 +290,12 @@ fn item_row(cx: &mut Ctx, it: &Value, start_at_login: bool) -> Row {
 }
 
 pub fn page(cx: &mut Ctx, p: &mut Page) {
-    p.title = "Login Items".into();
+    p.title = "Login items".into();
     cx.want("apps");
     answers(cx);
     let list = cx.once("about.login.list", || match run(&["list".to_string()]) {
         Some(v) if v["items"].is_array() => json!({"items": v["items"]}),
-        Some(_) => json!({"error": "The list came back unreadable. Try again; if it keeps happening, report a bug from Settings → Report a Bug."}),
+        Some(_) => json!({"error": "The list came back unreadable. Try again; if it keeps happening, report a bug from Settings → Report a bug."}),
         None => json!({"error": "Python 3 is needed to read them. Install python, then try again."}),
     });
     let loaded = !list.is_null();

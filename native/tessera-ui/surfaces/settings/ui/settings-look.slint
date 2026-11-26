@@ -1327,7 +1327,7 @@ export component LookCtl inherits VerticalLayout {
         VerticalLayout {
             alignment: center;
             SButton {
-                text: "Play Intro";
+                text: "Play intro";
                 enabled: !r.busy;
                 label: r.label;
                 clicked => { SBus.act(r.id, 0, 0, ""); }

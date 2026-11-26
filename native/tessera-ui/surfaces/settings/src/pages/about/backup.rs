@@ -390,7 +390,7 @@ fn back_up(cx: &mut Ctx, p: &mut Page) {
     for r in rows {
         g.row(r);
     }
-    g.row(Row::new("Back up").detail(format!("Saves “Tessera backup {}” in a folder you choose", crate::util::now("%Y-%m-%d"))).buttons(vec![btn(if busy { "Backing Up…" } else { "Back Up…" }).primary().on(busy).off(busy || nothing)], go));
+    g.row(Row::new("Back up").detail(format!("Saves “Tessera backup {}” in a folder you choose", crate::util::now("%Y-%m-%d"))).buttons(vec![btn(if busy { "Backing up…" } else { "Back up…" }).primary().on(busy).off(busy || nothing)], go));
     g.row(Row::new("Saved").visible(!saved.is_empty()).detail(tilde(&saved)).button("Show in Files", show));
 }
 
@@ -456,7 +456,7 @@ fn restore(cx: &mut Ctx, p: &mut Page) {
             }
         });
         let busy = cx.local_b("about.backup.restore.busy");
-        p.group("").row(Row::new("Restore these settings?").detail(describe(&pending["info"])).buttons(vec![btn("Cancel"), btn("Restore Settings").primary().off(busy)], decide));
+        p.group("").row(Row::new("Restore these settings?").detail(describe(&pending["info"])).buttons(vec![btn("Cancel"), btn("Restore settings").primary().off(busy)], decide));
     }
     if !info.is_object() || file.is_empty() || is_legacy(&file) {
         return;
@@ -607,7 +607,7 @@ fn apps(cx: &mut Ctx, p: &mut Page) {
         });
         g.row(Row::new(format!("{} {}", list.len(), if list.len() == 1 { "app" } else { "apps" }))
             .detail(format!("{here} here already · {chosen_n} chosen"))
-            .buttons(vec![btn(if open { "Hide" } else { "Show" }), btn(if all_on { "Choose None" } else { "Choose All" }).off(!list.iter().any(|a| pickable(a) && s(&a["needs"]).is_empty()))], act));
+            .buttons(vec![btn(if open { "Hide" } else { "Show" }), btn(if all_on { "Choose none" } else { "Choose all" }).off(!list.iter().any(|a| pickable(a) && s(&a["needs"]).is_empty()))], act));
         if !open {
             continue;
         }

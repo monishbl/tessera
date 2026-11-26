@@ -142,13 +142,13 @@ fn sheet(cx: &mut Ctx, p: &mut Page, finger: &str) {
                 cx.local_set("fp.sheet", n.clone());
                 cx.ask("system", "fpEnroll", json!([n.clone()]));
             });
-            rows.push(Row::new("").button("Add Another Finger", id));
+            rows.push(Row::new("").button("Add another finger", id));
         }
     }
     if failed {
         let f = finger.to_string();
         let id = cx.on(move |cx, _| cx.ask("system", "fpEnroll", json!([f.clone()])));
-        rows.push(Row::new("").button("Try Again", id));
+        rows.push(Row::new("").button("Try again", id));
     }
     let enrolling = fp["enrolling"].as_bool().unwrap_or(false);
     let close = cx.on(move |cx, _| {
@@ -317,7 +317,7 @@ pub fn biometrics(cx: &mut Ctx, p: &mut Page) {
             let mut r = Row::new(if name.is_empty() { "Fingerprint reader".to_string() } else { name }).detail(detail).tone(if !install_error.is_empty() || !fix_error.is_empty() { 2 } else { 0 });
             if slow && missing.is_empty() {
                 let id = cx.on(|cx, _| cx.ask("system", "fpFix", Value::Null));
-                r = r.buttons(vec![btn(if fixing { "Setting up…" } else { "Set Up Reader" }).icon("fingerprint").primary().on(fixing)], id);
+                r = r.buttons(vec![btn(if fixing { "Setting up…" } else { "Set up reader" }).icon("fingerprint").primary().on(fixing)], id);
             } else if !missing.is_empty() {
                 let installing = fp["installing"].as_bool().unwrap_or(false);
                 let id = cx.on(|cx, _| cx.ask("system", "fpInstall", Value::Null));
@@ -505,12 +505,12 @@ pub fn biometrics(cx: &mut Ctx, p: &mut Page) {
                 } else if asking {
                     if faces == 1 { "Remove your face".to_string() } else { format!("Remove all {faces} faces") }
                 } else {
-                    "Remove All".into()
+                    "Remove all".into()
                 };
                 b.push(btn(t).danger().off(!busy.is_empty()));
                 acts.push("remove");
             }
-            let add = btn(if faces == 0 { "Add Face" } else { "Add Another" }).icon("smiley").on(adding).off(!busy.is_empty() && !adding);
+            let add = btn(if faces == 0 { "Add face" } else { "Add another" }).icon("smiley").on(adding).off(!busy.is_empty() && !adding);
             b.push(if faces == 0 { add.primary() } else { add });
             acts.push("add");
             let id = cx.on(move |cx, a| match acts.get(a.i.max(0) as usize).copied() {
@@ -538,7 +538,7 @@ pub fn biometrics(cx: &mut Ctx, p: &mut Page) {
                     Row::new("Try it")
                         .detail(if text.is_empty() { hint.to_string() } else { text })
                         .tone(if state == "no" { 2 } else { 0 })
-                        .buttons(vec![btn(if running { "Looking…" } else { "Try It" }).icon("scan").on(running).off(!busy.is_empty())], id),
+                        .buttons(vec![btn(if running { "Looking…" } else { "Try it" }).icon("scan").on(running).off(!busy.is_empty())], id),
                 );
                 // 4. Where it works
                 let on = cx.b("lock.face");

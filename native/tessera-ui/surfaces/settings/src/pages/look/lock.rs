@@ -198,7 +198,7 @@ pub fn lock(cx: &mut Ctx, p: &mut Page) {
         .row(intro_row);
 
     let lock_now = cx.on(|cx, _| cx.ask("look", "lock", Value::Null));
-    p.group("").row(Row::new("Preview").detail("Locks the screen now").button("Lock Screen", lock_now));
+    p.group("").row(Row::new("Preview").detail("Locks the screen now").button("Lock screen", lock_now));
 
     // ── More options ──
     p.more(cx);

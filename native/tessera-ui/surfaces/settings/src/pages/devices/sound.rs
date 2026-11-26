@@ -165,7 +165,7 @@ pub fn sound(cx: &mut Ctx, p: &mut Page) {
             .row(Row::new("Network discovery is off")
                 .visible(checked && pipewire && !avahi)
                 .detail("AirPlay speakers are found with avahi, which isn't running. It asks for your password once.")
-                .button(if fixing { "Turning on…" } else { "Turn On" }, avahi_on)
+                .button(if fixing { "Turning on…" } else { "Turn on" }, avahi_on)
                 .busy(fixing))
             .row(speakers_row);
     }

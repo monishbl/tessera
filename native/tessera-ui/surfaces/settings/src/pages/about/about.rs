@@ -155,8 +155,8 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
             .detail("Whether the services Tessera uses are working, and how to fix them")
             .value(if checks == 0 { String::new() } else if attention == 0 { "All good".into() } else { format!("{attention} to check") })
             .id(health))
-        .row(Row::link("Login Items", "about/loginitems").icon("rocket-launch").detail("The apps that start when you log in").id(login))
-        .row(Row::link("Report a Bug", "about/bugreport").icon("bug").detail("Tell Tessera what went wrong, with what helps fix it").id(bug));
+        .row(Row::link("Login items", "about/loginitems").icon("rocket-launch").detail("The apps that start when you log in").id(login))
+        .row(Row::link("Report a bug", "about/bugreport").icon("bug").detail("Tell Tessera what went wrong, with what helps fix it").id(bug));
 
     let welcome = cx.on(|cx, _| cx.ask("about", "welcome", Value::Null));
     p.group("")

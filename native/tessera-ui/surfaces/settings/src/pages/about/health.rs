@@ -115,7 +115,7 @@ pub fn services(cx: &mut Ctx, p: &mut Page) {
 
 /// The pages a remedy can open that aren't a sidebar page of their own:
 /// their names in "Open …"
-const SUB_PAGES: &[(&str, &str)] = &[("appearance/glass", "Glass"), ("power/cooldown", "Cool-down"), ("about/bugreport", "Report a Bug"), ("notifications/island", "Island")];
+const SUB_PAGES: &[(&str, &str)] = &[("appearance/glass", "Glass"), ("power/cooldown", "Cool-down"), ("about/bugreport", "Report a bug"), ("notifications/island", "Island")];
 
 /// A page's name for its "Open …" button (None: no such page)
 pub fn page_name(page: &str) -> Option<&'static str> {

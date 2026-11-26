@@ -81,7 +81,7 @@ fn with_switch(label: &str, detail: String, buttons: Vec<Opt>, on: bool, enabled
 }
 
 pub fn page(cx: &mut Ctx, p: &mut Page) {
-    p.title = "Report a Bug".into();
+    p.title = "Report a bug".into();
     crashes(cx, p);
     let f = feed(cx);
     let r = &f["bug"];

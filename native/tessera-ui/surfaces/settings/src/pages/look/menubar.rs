@@ -318,8 +318,8 @@ pub fn controlcenter(cx: &mut Ctx, p: &mut Page) {
         cx.toast("Quick Settings is back to the default layout", Some(super::super::about::action(move |cx, _| cx.set("controlCenter.layout", old.clone()))));
     });
     p.group("Layout")
-        .footer("Open Quick Settings and choose Edit Controls to add, remove, resize and move controls. Controls that need a missing tool stay hidden until it's installed. Game Mode turns off animations, blur, shadows and gaps; Anti-Flash softens very bright screens.")
-        .row(Row::new("Edit Controls").detail(if n > 0 { format!("{n} controls, arranged by you") } else { "The default arrangement".into() }).button("Edit…", edit).primary())
+        .footer("Open Quick Settings and choose Edit controls to add, remove, resize and move controls. Controls that need a missing tool stay hidden until it's installed. Game Mode turns off animations, blur, shadows and gaps; Anti-Flash softens very bright screens.")
+        .row(Row::new("Edit controls").detail(if n > 0 { format!("{n} controls, arranged by you") } else { "The default arrangement".into() }).button("Edit…", edit).primary())
         .row(Row::new("Panel background")
             .visible(!cx.material)
             .detail(if solid { "Always on with Solid glass" } else if bg { "Controls sit on one glass panel" } else { "Each control is its own glass chip" })

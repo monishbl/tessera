@@ -146,7 +146,7 @@ pub struct Top {
     pub says_start: bool,
 }
 
-/// Report a Bug: where a crash, a part turned off or a fallback goes next
+/// Report a bug: where a crash, a part turned off or a fallback goes next
 const BUG: (&str, &str) = ("about/bugreport", "");
 
 fn steps(s: &[&str]) -> Vec<String> {
@@ -157,13 +157,13 @@ fn steps(s: &[&str]) -> Vec<String> {
 const SHORT_OF_MEMORY: &[&str] = &[
     "Close apps you aren't using, browser tabs above all",
     "Run big builds while you're away, or with fewer jobs at once so they use less memory",
-    "If it happens with little else open, Report a Bug and say what you were doing",
+    "If it happens with little else open, Report a bug and say what you were doing",
 ];
 /// Slow moments otherwise
 const SLOW: &[&str] = &[
     "If it's while windows move or open over the glass, try Frosted or Solid in Appearance → Glass",
     "If the computer runs hot, turn on Cool-down in Battery & Power",
-    "If it keeps happening, Report a Bug and say what you were doing",
+    "If it keeps happening, Report a bug and say what you were doing",
 ];
 
 /// The last start (this run's), from the record
@@ -190,9 +190,9 @@ pub fn status(events: &[Value], samples: &[Sample], now: i64) -> Top {
             "It stopped and was started again."
         };
         let st: &[&str] = if kinds.iter().any(|k| *k == "stopped") {
-            &["If the computer was short of memory then (a big build, many browser tabs), close what you don't need", "Save the crash report from an event below, if it has one", "Send it with Report a Bug"]
+            &["If the computer was short of memory then (a big build, many browser tabs), close what you don't need", "Save the crash report from an event below, if it has one", "Send it with Report a bug"]
         } else {
-            &["Save the crash report from an event below, if it has one", "Send it with Report a Bug"]
+            &["Save the crash report from an event below, if it has one", "Send it with Report a bug"]
         };
         return bad(format!("{} today", count(restarts, "restart", "restarts")), format!("{why} The events below say when and why."), st, Some(BUG));
     }
@@ -200,7 +200,7 @@ pub fn status(events: &[Value], samples: &[Sample], now: i64) -> Top {
         return bad(
             "Switched to the basic shell today".into(),
             "Tessera stopped twice in a row, so the basic shell stood in until it was started again.".into(),
-            &["Nothing to do if it's back: Tessera tries again by itself", "If it keeps switching, Report a Bug"],
+            &["Nothing to do if it's back: Tessera tries again by itself", "If it keeps switching, Report a bug"],
             Some(BUG),
         );
     }
@@ -208,7 +208,7 @@ pub fn status(events: &[Value], samples: &[Sample], now: i64) -> Top {
         return bad(
             format!("{} was turned off today", cap(first)),
             "It stopped 3 times in 2 minutes. It comes back when you log in again.".into(),
-            &["Log out and in again to bring it back", "Save its crash report from an event below and send it with Report a Bug"],
+            &["Log out and in again to bring it back", "Save its crash report from an event below and send it with Report a bug"],
             Some(BUG),
         );
     }
@@ -216,7 +216,7 @@ pub fn status(events: &[Value], samples: &[Sample], now: i64) -> Top {
         return bad(
             format!("{} recovered today", count(parts, "part", "parts")),
             "A part of Tessera stopped after an error and was started again. Everything else kept working.".into(),
-            &["Nothing to do if it doesn't happen again", "If it does, save the crash report from an event below and send it with Report a Bug"],
+            &["Nothing to do if it doesn't happen again", "If it does, save the crash report from an event below and send it with Report a bug"],
             Some(BUG),
         );
     }
@@ -307,18 +307,18 @@ fn with_steps(text: &str, st: &[&str]) -> String {
 }
 
 pub fn explain(e: &Value) -> Option<(String, String, Offer)> {
-    // (a crash: its report, else Report a Bug)
+    // (a crash: its report, else Report a bug)
     let report = || e["report"].as_str().filter(|r| !r.is_empty()).map(|r| Offer::Report(r.to_string())).unwrap_or(Offer::Open(BUG.0, BUG.1));
     let part = e["part"].as_str().unwrap_or("");
-    let bug: &[&str] = &["If it happens again, Report a Bug and say what you were doing"];
+    let bug: &[&str] = &["If it happens again, Report a bug and say what you were doing"];
     Some(match e["ev"].as_str()? {
         "start" => match e["why"].as_str()? {
-            "crash" => ("Restarted after a crash".into(), with_steps("Tessera stopped after an error and was started again. The crash report has the details.", &["Save its crash report (Save report), if it was kept", "Send it with Report a Bug"]), report()),
+            "crash" => ("Restarted after a crash".into(), with_steps("Tessera stopped after an error and was started again. The crash report has the details.", &["Save its crash report (Save report), if it was kept", "Send it with Report a bug"]), report()),
             "stopped" => (
                 "Restarted after it stopped".into(),
                 with_steps(
                     "Tessera ended without saying why (the computer may have run out of memory) and was started again.",
-                    &["If the computer was short of memory then (a big build, many browser tabs), close what you don't need", "If it happens with memory to spare, Report a Bug"],
+                    &["If the computer was short of memory then (a big build, many browser tabs), close what you don't need", "If it happens with memory to spare, Report a bug"],
                 ),
                 Offer::Open(BUG.0, BUG.1),
             ),
@@ -329,13 +329,13 @@ pub fn explain(e: &Value) -> Option<(String, String, Offer)> {
         "crash" if e["fatal"] != true => (format!("{} stopped and recovered", cap(&part_name(part))), "An error was caught and this part was started again. Everything else kept working.".into(), report()),
         "off" => (
             format!("{} was turned off", cap(&part_name(part))),
-            with_steps("It stopped 3 times in 2 minutes, so it stays off until you log in again.", &["Log out and in again to bring it back", "If it stops again, Report a Bug"]),
+            with_steps("It stopped 3 times in 2 minutes, so it stays off until you log in again.", &["Log out and in again to bring it back", "If it stops again, Report a bug"]),
             Offer::Open(BUG.0, BUG.1),
         ),
         "fallback" => {
             let why = e["why"].as_str().unwrap_or("").trim();
             let text = if why.is_empty() { "Tessera stopped twice in a row, so the basic shell stood in.".to_string() } else { format!("{why}. The basic shell stood in until Tessera was started again.") };
-            ("Switched to the basic shell".into(), with_steps(&text, &["Tessera tries again by itself at its next start", "If it keeps switching, Report a Bug"]), Offer::Open(BUG.0, BUG.1))
+            ("Switched to the basic shell".into(), with_steps(&text, &["Tessera tries again by itself at its next start", "If it keeps switching, Report a bug"]), Offer::Open(BUG.0, BUG.1))
         }
         "lock" => ("Screen locked again after a restart".into(), "Tessera ended while your screen was locked; it locked again as it started, so nothing was left open.".into(), Offer::None),
         "gpu-slow" => {
@@ -419,7 +419,7 @@ fn setup_steps(cx: &mut Ctx, p: &mut Page) {
     let act = cx.on(|cx, _| cx.spawn("health.setup", run_setup));
     let err = done.as_ref().and_then(|d| d["err"].as_str()).filter(|e| !e.is_empty()).map(str::to_string);
     let detail = err.unwrap_or_else(|| "After a sleep the fingerprint reader can stop answering until it's restarted. Run this once so the lock restarts it by itself; it asks for an administrator's password.".into());
-    p.group("Setup").row(Row::new("Restart the fingerprint reader by itself").detail(detail).icon("fingerprint").buttons(vec![btn(if busy { "Setting up…" } else { "Run Setup" }).icon("fingerprint").primary().on(busy)], act));
+    p.group("Setup").row(Row::new("Restart the fingerprint reader by itself").detail(detail).icon("fingerprint").buttons(vec![btn(if busy { "Setting up…" } else { "Run setup" }).icon("fingerprint").primary().on(busy)], act));
 }
 
 /// A scale's top for `max` (a round number above it)
@@ -733,7 +733,7 @@ mod tests {
             let (_, d, o) = explain(&ev(line)[0]).unwrap();
             assert!(matches!(o, Offer::Open(..)) && d.contains("\n1. "), "{line}");
         }
-        // (a crash without its report: Report a Bug)
+        // (a crash without its report: Report a bug)
         assert!(matches!(explain(&ev("{\"t\":1,\"ev\":\"crash\",\"part\":\"dock\"}")[0]).unwrap().2, Offer::Open("about/bugreport", "")));
         let pages = [BUG.0, "update", "power/cooldown"];
         assert!(pages.iter().all(|p| super::super::super::about::health::page_name(p).is_some()));
