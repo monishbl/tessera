@@ -99,8 +99,8 @@ impl Sharing {
             h,
             json!({"kind": "custom", "icon": "check-circle", "title": if one { format!("Received \u{201c}{}\u{201d}", base(&first)) } else { format!("Received {} files", paths.len()) },
                 "subtitle": "From a phone's browser", "color": GREEN,
-                "action": if one { "Open" } else { "Show in Folder" }, "onAction": if one { act("share.fileOpen", json!([first])) } else { act("share.fileReveal", json!([first])) },
-                "action2": if one { "Show in Folder" } else { "" }, "onAction2": act("share.fileReveal", json!([first]))}),
+                "action": if one { "Open" } else { "Show in folder" }, "onAction": if one { act("share.fileOpen", json!([first])) } else { act("share.fileReveal", json!([first])) },
+                "action2": if one { "Show in folder" } else { "" }, "onAction2": act("share.fileReveal", json!([first]))}),
             8000,
         );
     }

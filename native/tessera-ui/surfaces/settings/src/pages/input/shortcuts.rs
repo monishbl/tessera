@@ -363,8 +363,8 @@ fn list(cx: &mut Ctx, p: &mut Page, all: &[Value], ready: bool, user_error: &str
     for (name, list) in shown {
         let mut rows = Vec::new();
         if list.is_empty() {
-            let add = cx.on(|cx, _| open_form(cx, ""));
-            rows.push(Row::new("No shortcuts of your own yet").detail("Add one to open an app, run a command or start a Tessera action.").buttons(vec![btn("Add shortcut").icon("plus")], add));
+            // (no button of its own: Add shortcut is beside the search, just above)
+            rows.push(Row::new("No shortcuts of your own yet").detail("Add one with Add shortcut, above, to open an app, run a command or start a Tessera action."));
         }
         for b in &list {
             let id = b["id"].as_str().unwrap_or("").to_string();

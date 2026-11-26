@@ -57,7 +57,8 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
         row(cx, "Code editor", "Super+C", "code", "Automatic", &["code", "codium", "zed", "cursor", "windsurf"]),
         row(cx, "Text editor", "Super+X", "text", "Automatic", &["gnome-text-editor", "kate", "mousepad"]),
     ];
-    let g = p.group("Default apps");
+    // (no heading: the page is Default Apps already)
+    let g = p.group("");
     g.footer("Used by keyboard shortcuts and the shell. Automatic picks the first one installed. The Files app is set in Desktop & Widgets.");
     for r in rows {
         g.row(r);

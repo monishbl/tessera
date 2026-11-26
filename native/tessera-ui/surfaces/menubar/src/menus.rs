@@ -121,6 +121,15 @@ pub fn system(screen: &str, updates: i32, user: &str, style: &str) -> Vec<Row> {
 
 /// `entry`: the active app's desktop entry id ("" none); `class`: its window's
 pub fn app(name: &str, entry: &str, class: &str) -> Vec<Row> {
+    // The desktop in front (no app): its own actions, not "New Desktop
+    // Window" and "Quit Desktop" greyed out (a menu of dead rows reads as broken)
+    if entry.is_empty() && class.is_empty() {
+        let ipc = |a: &[&str]| Action::Ipc(a.iter().map(|s| s.to_string()).collect());
+        return vec![
+            item("Change Wallpaper…", ipc(&["panels", "settings", "wallpaper"])),
+            item("Edit Widgets…", ipc(&["panels", "widgets", "true"])),
+        ];
+    }
     vec![
         Row { enabled: !entry.is_empty(), ..item(format!("New {name} Window"), Action::Act("launch", entry.into())) },
         sep(),
@@ -339,6 +348,17 @@ mod tests {
         assert_eq!(key_style(&json!({})), "linux");
         assert_eq!(key_style(&json!({"appearance": {"menuIcon": "command"}})), "mac");
         assert_eq!(key_style(&json!({"appearance": {"keySymbols": "windows", "menuIcon": "command"}})), "windows");
+    }
+
+    #[test]
+    fn the_desktop_gets_its_own_app_menu() {
+        let v = app("Desktop", "", "");
+        let texts: Vec<&str> = v.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(texts, vec!["Change Wallpaper…", "Edit Widgets…"]);
+        assert!(v.iter().all(|r| r.enabled));
+        assert_eq!(v[0].action, Action::Ipc(vec!["panels".into(), "settings".into(), "wallpaper".into()]));
+        let v = app("Kitty", "kitty", "kitty");
+        assert_eq!(v[0].text, "New Kitty Window");
     }
 
     #[test]

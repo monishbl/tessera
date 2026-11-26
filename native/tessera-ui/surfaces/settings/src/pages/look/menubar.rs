@@ -82,7 +82,7 @@ pub fn menubar(cx: &mut Ctx, p: &mut Page) {
     let h = format!("Notification Center still opens with {}.", combo(&*cx, "SUPER N"));
     rows.push(toggle(cx, "clock", "Clock and notifications", &h));
     rows.push(toggle(cx, "appMenu", "App name menu", "On the left, next to the system menu."));
-    let h = format!("On the left; window actions are also in {} and friends.", combo(&*cx, "SUPER CTRL F"));
+    let h = format!("On the left; window actions also have their own shortcuts, such as {}.", combo(&*cx, "SUPER CTRL F"));
     rows.push(toggle(cx, "windowMenu", "Window menu", &h));
     let g = p.group("Status items");
     for r in rows {

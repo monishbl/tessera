@@ -38,6 +38,9 @@ export struct Entry {
     badge: int,
     indicator: string,
     unread: int,
+    // the clock's text with 0 for each digit: its width, so the bar doesn't
+    // shift as the minutes change (Slint has no tabular figures)
+    text-shape: string,
 }
 
 // A privacy dot: pops in (PrivacyDots: scale 0 → 1, 200 ms OutBack)
@@ -206,13 +209,22 @@ component Item inherits Rectangle {
             color: hot ? Theme.accent : root.tone;
         }
         if e.text != "": Text {
+            min-width: e.text-shape != "" ? shape-probe.preferred-width : 0px;
             text: e.text;
             color: root.tone;
             font-size: Theme.material ? 14px : Theme.body;
             font-weight: e.bold ? (Theme.material ? 600 : 700) : 500;
+            horizontal-alignment: e.text-shape != "" ? TextHorizontalAlignment.center : TextHorizontalAlignment.left;
             vertical-alignment: center;
             accessible-role: none;
         }
+    }
+    shape-probe := Text {
+        visible: false;
+        text: e.text-shape;
+        font-size: Theme.material ? 14px : Theme.body;
+        font-weight: e.bold ? (Theme.material ? 600 : 700) : 500;
+        accessible-role: none;
     }
     // The privacy dots (Glass), Android's privacy chip (Material)
     if e.glyph == 3 && !Theme.material: HorizontalLayout {

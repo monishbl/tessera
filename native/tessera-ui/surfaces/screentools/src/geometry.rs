@@ -280,11 +280,24 @@ pub const CODECS: [&str; 3] = ["h264", "hevc", "av1"];
 pub const QUALITIES: [&str; 4] = ["medium", "high", "very_high", "ultra"];
 pub const COUNTDOWNS: [i64; 3] = [0, 3, 5];
 
-/// The toolbar's bottom margin (above the dock, as ScreenToolbar.qml)
-pub fn toolbar_bottom(cfg: &Value) -> f32 {
-    let d = &cfg["dock"];
-    if d["enabled"].as_bool().unwrap_or(true) {
-        d["iconSize"].as_f64().unwrap_or(48.0) as f32 + 14.0 + 6.0 + 14.0
+/// How far the dock reaches up from the screen's bottom edge: its pill and
+/// the gap under it, in each look (dock/src/layout.rs's Metrics: bar_h +
+/// bottom_gap)
+pub fn dock_reach(cfg: &Value, material: bool) -> f32 {
+    let icon = (cfg["dock"]["iconSize"].as_f64().unwrap_or(48.0) as f32).clamp(16.0, 160.0);
+    if material {
+        icon.clamp(36.0, 56.0).round() + 2.0 * 8.0 + 16.0
+    } else {
+        let base = icon.round();
+        base + 2.0 * (base * 0.26).round() + 6.0
+    }
+}
+
+/// The toolbar's bottom margin: 16 px clear of the dock (it sat 3 to 6 px
+/// above it and read as one crowded block), 14 from the edge without one
+pub fn toolbar_bottom(cfg: &Value, material: bool) -> f32 {
+    if cfg["dock"]["enabled"].as_bool().unwrap_or(true) {
+        dock_reach(cfg, material) + 16.0
     } else {
         14.0
     }
@@ -388,8 +401,10 @@ mod tests {
         assert_eq!((c.fps, c.mic.as_str()), (30, "default"));
         c.set("codec", &json!("av1"));
         assert_eq!(c.codec, "av1");
-        assert_eq!(toolbar_bottom(&json!({})), 82.0);
-        assert_eq!(toolbar_bottom(&json!({"dock": {"enabled": false}})), 14.0);
+        // (Glass: 48 + 2 × 12 + 6, Material: 48 + 16 + 16; then 16 clear)
+        assert_eq!(toolbar_bottom(&json!({}), false), 94.0);
+        assert_eq!(toolbar_bottom(&json!({}), true), 96.0);
+        assert_eq!(toolbar_bottom(&json!({"dock": {"enabled": false}}), false), 14.0);
         assert_eq!(tilde("/home/a/Videos/Screen Recordings", "/home/a"), "~/Videos/Screen Recordings");
         assert_eq!(tilde("/mnt/x", "/home/a"), "/mnt/x");
     }

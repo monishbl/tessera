@@ -150,7 +150,7 @@ pub fn phone(cx: &mut Ctx, p: &mut Page) {
         } else {
             let setting = b("camSetting");
             let id = cx.on(|cx, _| ask(cx, "phoneSetUpCam", Value::Null));
-            r.button(if setting { "Setting up…" } else { "Set Up" }, id).busy(setting)
+            r.button(if setting { "Setting up…" } else { "Set up" }, id).busy(setting)
         });
     } else {
         let t = cx.on(move |cx, _| ask(cx, "phoneWebcam", json!([!webcam])));

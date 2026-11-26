@@ -92,7 +92,8 @@ pub fn accessibility(cx: &mut Ctx, p: &mut Page) {
             .width(380.0)
             .enabled(b("ready") || enabled),
     );
-    let g = p.group("Live captions");
+    // (no heading: the row is called Live captions already)
+    let g = p.group("");
     g.footer("Subtitles for what this computer plays: videos, calls, podcasts. Made on this computer with the Tiny speech model, about 2 seconds behind; nothing is saved or sent anywhere. The microphone is never captioned. Super+Ctrl+L turns them on and off.");
     for r in rows {
         g.row(r);
@@ -138,7 +139,7 @@ pub fn accessibility(cx: &mut Ctx, p: &mut Page) {
         if index < 0 {
             lang = lang.placeholder(cur);
         }
-        p.group("Live captions").row(lang).row(Row::new("The bar's place").visible(moved).detail("Moved by you").button("Put It Back", back));
+        p.group("Live captions").row(lang).row(Row::new("The bar's place").visible(moved).detail("Moved by you").button("Put it back", back));
     }
     p.end_more();
 }

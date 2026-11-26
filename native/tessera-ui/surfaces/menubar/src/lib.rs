@@ -2620,6 +2620,8 @@ fn entry_struct(e: &items::Entry, tray_images: &HashMap<String, slint::Image>) -
         badge: e.badge,
         indicator: e.indicator.as_str().into(),
         unread: e.unread,
+        // (the clock: its width with every digit a 0, as the island's time)
+        text_shape: if e.id == "clock" { e.text.chars().map(|c| if c.is_ascii_digit() { '0' } else { c }).collect::<String>().into() } else { Default::default() },
         ..Default::default()
     };
     match &e.glyph {

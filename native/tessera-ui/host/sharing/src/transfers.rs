@@ -173,7 +173,8 @@ impl Sharing {
     }
     /// Downloads that went away after growing: finished (renamed to their
     /// real name) or cancelled (deleted). The files changed in the last minute
-    /// say which; a finished one gets "Downloaded <name>".
+    /// say which; a finished one gets its name as the title (the useful part,
+    /// first: two buttons share the row) and "Downloaded to ~/Downloads".
     pub fn dl_recent(&mut self, h: &mut Host, text: &str) {
         let mut files: Vec<tracker::File> = Vec::new();
         for e in text.split('\0') {
@@ -196,8 +197,8 @@ impl Sharing {
         let shown = if home.is_empty() { dir } else { dir.replacen(&home, "~", 1) };
         self.island(
             h,
-            json!({"kind": "transfer", "icon": "download-simple", "color": GREEN, "title": format!("Downloaded {}", base(path)), "subtitle": format!("In {shown}"),
-                "action": "Open", "onAction": act("share.fileOpen", json!([path])), "action2": "Show in Folder", "onAction2": act("share.fileReveal", json!([path]))}),
+            json!({"kind": "transfer", "icon": "download-simple", "color": GREEN, "title": base(path), "subtitle": format!("Downloaded to {shown}"),
+                "action": "Open", "onAction": act("share.fileOpen", json!([path])), "action2": "Show in folder", "onAction2": act("share.fileReveal", json!([path]))}),
             600_000, // up for 10 minutes (or until dismissed)
         );
     }

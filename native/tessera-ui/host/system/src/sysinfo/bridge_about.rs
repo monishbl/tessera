@@ -370,8 +370,8 @@ impl About {
                 "reasons": if packages && tu.packages["reasons"].is_object() { tu.packages["reasons"].clone() } else { json!({}) },
             },
             "back": {
-                "count": su.undo_count(), "long": if at > 0.0 { helpers::fmt_long(at as i64) } else { String::new() },
-                "day": if at > 0.0 { helpers::fmt_day(at as i64) } else { String::new() },
+                "count": su.undo_count(), "long": if at > 0.0 { helpers::fmt_long(at as i64, clock24) } else { String::new() },
+                "day": if at > 0.0 { helpers::fmt_day(at as i64, clock24) } else { String::new() },
                 "packages": su.undo["packages"].as_array().map(|a| a.iter().map(|p| p["name"].clone()).collect::<Vec<_>>()).unwrap_or_default(),
                 "missing": su.undo["missing"].as_array().cloned().unwrap_or_default(), "canGoBack": su.can_go_back(tu, up),
                 "skipped": su.skipped_all(up).iter().map(|p| json!({"name": p["name"], "to": p["to"]})).collect::<Vec<_>>(), "include": su.include_skipped,

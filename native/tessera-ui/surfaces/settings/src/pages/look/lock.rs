@@ -124,7 +124,8 @@ pub fn lock(cx: &mut Ctx, p: &mut Page) {
 
     let standby = cx.b("lock.standby");
     let sb = cx.toggle("lock.standby");
-    p.group("Bedside Mode")
+    // (no heading: the row says Bedside Mode)
+    p.group("")
         .footer("While charging and left alone, the screen shows a large clock, your widgets or photos instead of going dark. Swipe or scroll to change; any key brings your desktop back.")
         .row(Row::new("Bedside Mode").switch(standby, sb));
 

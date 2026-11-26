@@ -198,9 +198,10 @@ export component QuickNote inherits Window {
                 }
                 // (pinned to the top: a Text with only a width is centred)
                 if editor.text == "": Text {
-                    x: 0;
+                    // (2px in: the caret at x 0 stays off the first letter)
+                    x: 2px;
                     y: 0;
-                    width: flick.width;
+                    width: flick.width - 2px;
                     height: self.preferred-height;
                     text: "Write anything. The first line becomes the title.";
                     color: Theme.tertiary;
@@ -254,7 +255,7 @@ export component QuickNote inherits Window {
                 width: parent.width - save-btn.width - 12px;
                 height: parent.height;
                 vertical-alignment: center;
-                text: "Saved to " + folder;
+                text: "Saves to " + folder;
                 color: Theme.tertiary;
                 font-size: Theme.caption;
                 overflow: elide;

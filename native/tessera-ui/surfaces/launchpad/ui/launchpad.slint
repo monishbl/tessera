@@ -329,7 +329,9 @@ export component LaunchpadPanel inherits Window {
                             }
                         }
                         if field.text == "": Text {
-                            width: 100%;
+                            // (2px in: the caret at x 0 stays off the first letter)
+                            x: 2px;
+                            width: parent.width - 2px;
                             height: 100%;
                             text: "Search " + app-count + " apps";
                             color: Theme.material ? Theme.m3-on-surface-variant : Theme.tertiary;

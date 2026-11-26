@@ -970,7 +970,7 @@ impl Island {
             "temperature" => json!({"kind": "temperature", "icon": "thermometer-hot", "title": "Running hot", "subtitle": "CPU 94 °C · close heavy apps or let it cool", "value": 0.9, "color": "#FF453A"}),
             "notification" => json!({"kind": "notification", "headline": "Your order is on its way.", "card": {"name": "Parcel", "time": "now", "text": "Your earbuds ship today and arrive on Thursday.", "initials": "P", "appIcon": "org.gnome.Software"}}),
             "music" => json!({"kind": "music", "icon": "music-notes", "title": "Midnight City", "subtitle": "M83", "color": "#0A84FF", "art": ""}),
-            "download" => json!({"kind": "transfer", "icon": "download-simple", "title": "Downloaded report.pdf", "subtitle": "In ~/Downloads", "color": "#30D158", "action": "Open", "action2": "Show in Folder"}),
+            "download" => json!({"kind": "transfer", "icon": "download-simple", "title": "report.pdf", "subtitle": "Downloaded to ~/Downloads", "color": "#30D158", "action": "Open", "action2": "Show in folder"}),
             "connect" => json!({"kind": "custom", "key": "bt:demo", "icon": "headphones", "title": "Maya's earbuds", "subtitle": "Paired with this computer, not connected", "color": "#0A84FF", "action": "Connect",
                 "onAction": {"call": "island.post", "args": [{"kind": "custom", "key": "bt:demo", "icon": "headphones", "title": "Maya's earbuds", "subtitle": "Connecting… keep the case open nearby", "color": "#0A84FF"}, 20000]}}),
             "linked" => json!({"kind": "device", "key": "bt:demo", "icon": "headphones", "title": "Maya's earbuds", "subtitle": "Connected", "color": "#0A84FF"}),

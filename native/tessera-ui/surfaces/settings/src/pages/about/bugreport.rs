@@ -98,7 +98,8 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
         Opt::new("Steps to reproduce").detail("1. Open …  2. Click …  (optional)").id(s(&r["steps"])),
         Opt::new("What you expected").detail("Optional").id(s(&r["expected"])),
     ];
-    p.group("What happened")
+    // ("Your report": "What happened" is its first box)
+    p.group("Your report")
         .footer("Write in your own words; a few clear sentences help most. Reports become public issues on GitHub, so don't include anything private.")
         .row(Row::new("Title").field(s(&r["title"]), "e.g. Dock disappears after waking", title).width(300.0))
         .row(Row::custom("about", "boxes").id(boxes).data(fields));

@@ -273,7 +273,7 @@ impl Toolbar {
         ui.set_options_open(self.options);
         ui.set_available(b.available);
         ui.set_gsr(b.gsr);
-        ui.set_bottom(geometry::toolbar_bottom(&st.shell.cfg));
+        ui.set_bottom(geometry::toolbar_bottom(&st.shell.cfg, st.shell.look.material));
         let mut mics = vec![(String::new(), "None".to_string()), ("default".to_string(), "Default microphone".to_string())];
         mics.extend(self.mics.iter().cloned());
         let opts: Vec<ui::StOpt> = mics.iter().map(|(n, d)| ui::StOpt { text: d.as_str().into(), checked: *n == c.mic }).collect();

@@ -485,6 +485,11 @@ export component EmojiPicker inherits Window {
                 y: 36px + 8px + 32px + 4px + grid-h;
                 width: parent.width;
                 height: 56px;
+                // (the name's place, and whether the key hints fit beside it:
+                // a long name keeps the row and the hints step aside, rather
+                // than "Waving hand, medi…")
+                property <length> text-x: footer-kind == 3 ? 4px : footer-kind == 1 ? min(glyph-w.preferred-width, 150px) + 16px : 56px;
+                property <bool> hints-fit: !footer-shown || self.text-x + max(name-w.preferred-width, sub-w.preferred-width) + 12px + hints.preferred-width + 2px <= self.width;
                 Rectangle {
                     height: 1px;
                     y: 0;
@@ -505,9 +510,9 @@ export component EmojiPicker inherits Window {
                     accessible-role: none;
                 }
                 if footer-shown: VerticalLayout {
-                    x: footer-kind == 3 ? 4px : footer-kind == 1 ? min(glyph-w.preferred-width, 150px) + 16px : 56px;
+                    x: footer.text-x;
                     y: 2px;
-                    width: hints.x - self.x - 12px;
+                    width: (footer.hints-fit ? hints.x : parent.width) - self.x - 12px;
                     height: parent.height;
                     alignment: center;
                     spacing: 2px;
@@ -531,7 +536,21 @@ export component EmojiPicker inherits Window {
                     text: footer-kind == 1 ? footer-glyph : "";
                     font-size: Theme.title;
                 }
+                name-w := Text {
+                    visible: false;
+                    text: footer-name;
+                    font-size: Theme.body;
+                    font-weight: 600;
+                    accessible-role: none;
+                }
+                sub-w := Text {
+                    visible: false;
+                    text: footer-sub;
+                    font-size: Theme.small;
+                    accessible-role: none;
+                }
                 hints := HorizontalLayout {
+                    visible: footer.hints-fit;
                     x: parent.width - self.width - 2px;
                     y: (parent.height - self.height) / 2 + 2px;
                     width: self.preferred-width;

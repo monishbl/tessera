@@ -428,7 +428,7 @@ mod tests {
         w.shell = ShellState(json!({
             "open": "wifiMenu", "screen": "DP-1",
             "focus": {"on": true, "icon": "briefcase", "name": "Work", "status": "On"},
-            "caffeine": {"on": true, "status": "Until off"},
+            "caffeine": {"on": true, "status": "Until turned off"},
             "recording": {"on": true, "started": -125000.0},
             "unread": 3,
             "privacy": {"any": true, "mic": true},
@@ -440,7 +440,7 @@ mod tests {
         assert_eq!(get("recording").text, "2:05");
         assert_eq!(get("recording").tone, Tone::Danger);
         assert!(get("wifi").active && !get("battery").active);
-        assert_eq!(get("caffeine").tip, "Keeping awake · until off");
+        assert_eq!(get("caffeine").tip, "Keeping awake · until turned off");
         assert_eq!(get("weather").text, "21°");
         assert_eq!(get("weather").tip, "Clear · H 24° L 12° · Lisbon");
         assert_eq!(get("focus").tip, "Work · On");

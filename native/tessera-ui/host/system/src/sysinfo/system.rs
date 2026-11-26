@@ -177,7 +177,9 @@ impl System {
         } else if self.keep_until > 0.0 {
             format!("Until {}", helpers::fmt_hm((self.keep_until / 1000.0) as i64, Self::clock24(h)))
         } else {
-            "Until off".into()
+            // (one phrase wherever it shows: the popover's choice, the bar's
+            // tip, Quick Settings and Battery & Power)
+            "Until turned off".into()
         }
     }
 

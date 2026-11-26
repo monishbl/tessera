@@ -216,7 +216,9 @@ export component IslandStatus inherits Rectangle {
         }
         StatFigure {
             key: "cpu";
-            icon: s.cpu-icon;
+            // (Material: the gauge's "speed" symbol; its symbol for Phosphor's
+            // cpu is the same chip as memory's, and the two read as one)
+            icon: Theme.material ? "\u{e628}" : s.cpu-icon;
             label: s.cpu;
             shape: s.cpu-shape;
             tint: dim;
@@ -1724,6 +1726,10 @@ component ActivityRow inherits Rectangle {
 // close button, it slides off (150 ms) and goes.
 component RecentList inherits VerticalLayout {
     in property <[RecentRow]> rows;
+    // (the newest rows left out: the alert showing in the card under the
+    // island is already the top of the list, and read twice)
+    in property <int> skip;
+    property <int> count: max(0, rows.length - skip);
     in property <int> n;
     in property <bool> shown;
     in property <bool> collapsible;
@@ -1810,13 +1816,14 @@ component RecentList inherits VerticalLayout {
         }
     }
     Flickable {
-        height: min(rows.length * 40px, 300px);
-        content-height: rows.length * 40px;
-        interactive: rows.length * 40px > 300px;
+        height: min(count * 40px, 300px);
+        content-height: count * 40px;
+        interactive: count * 40px > 300px;
         VerticalLayout {
             spacing: 4px;
-            for l in rows: line := Rectangle {
-                height: 36px;
+            for l[i] in rows: line := Rectangle {
+                visible: i >= skip;
+                height: i < skip ? 0px : 36px;
                 property <length> dx;
                 property <bool> leaving;
                 property <length> off: leaving ? (dx < 0 ? -1 : 1) * self.width : dx;
@@ -2286,6 +2293,8 @@ export component Island inherits Rectangle {
     // Recent: opened over the live activities (closes with the island)
     property <bool> recent-open;
     property <bool> recent-over: recent-open && live-count > 0 && recent-n > 0;
+    // (the newest alert in the card under the island: left out of Recent, not read twice)
+    property <int> recent-skip: alerts-below && alerts.length > 0 && recent.length > 0 && recent[0].title == alerts[0].title ? 1 : 0;
     // (Recent opened over the activities keeps the island as tall as it was,
     // so it doesn't shrink from under the pointer and close)
     property <length> recent-hold-h;
@@ -2340,7 +2349,11 @@ export component Island inherits Rectangle {
         if !Theme.material: Squircle {
             radius: radius;
             opacity: shape.fade;
-            fill: @linear-gradient(180deg, #000000f0 0%, #000000e6 30%, #0000001f 100%);
+            // (without the plugin there's no glass to melt into: it keeps a
+            // scrim to the bottom edge, so the lower rows' grey text and
+            // times stay readable over a bright wallpaper)
+            fill: Theme.plugin ? @linear-gradient(180deg, #000000f0 0%, #000000e6 30%, #0000001f 100%)
+                : @linear-gradient(180deg, #000000f0 0%, #000000e6 30%, #000000a6 100%);
         }
         // Glass, music playing, open: the album art is the island itself, solid
         // up top and melting into the glass below like the black (faded in Rust)
@@ -2613,7 +2626,7 @@ export component Island inherits Rectangle {
                                 alignment: center;
                                 spacing: 2px;
                                 Text {
-                                    text: card.title != "" ? card.title : "Not Playing";
+                                    text: card.title != "" ? card.title : "Nothing playing";
                                     color: ink;
                                     font-size: 16px;
                                     font-weight: 600;
@@ -2645,7 +2658,7 @@ export component Island inherits Rectangle {
                         if card.kind == "music" && !card.side: VerticalLayout {
                             spacing: 0;
                             Marquee {
-                                text: card.title != "" ? card.title : "Not Playing";
+                                text: card.title != "" ? card.title : "Nothing playing";
                                 ink: ink;
                                 size: 16px;
                                 weight: 600;
@@ -3049,8 +3062,10 @@ export component Island inherits Rectangle {
                         hover(k, on, x, y) => { root.stat-hover(k, on && expanded, x, y); }
                     }
                     // the last few alerts; with live activities, a header that opens them in their place
-                    if !event-inside && !pinned-rest && recent-n > 0 && (live-count == 0 || recent-open): RecentList {
+                    if !event-inside && !pinned-rest && recent.length > recent-skip && recent-n > 0 && (live-count == 0 || recent-open): RecentList {
                         rows: recent;
+                        // (the card under the island shows the newest: not again here)
+                        skip: recent-skip;
                         n: recent-n;
                         shown: expanded;
                         collapsible: live-count > 0;

@@ -598,7 +598,10 @@ component ClockFaces inherits Rectangle {
         height: parent.height - 24px;
         x: (parent.width - 176px) / 2 + (i - root.shown) * 184px;
         y: 12px;
-        opacity: max(0.55, 1 - off * 0.45);
+        // (and faded as it reaches the row's ends: a card cut by a hard edge
+        // read as a mistake)
+        property <float> edge: max(0, min(1, min((self.x + self.width) / 96px, (parent.width - self.x) / 96px)));
+        opacity: max(0.55, 1 - off * 0.45) * edge;
         // (the whole card scales, its clock and name too)
         transform-scale: s;
         accessible-role: AccessibleRole.list-item;
@@ -831,12 +834,15 @@ component BootCards inherits Rectangle {
 component Sets inherits Rectangle {
     in property <SetRow> r;
     property <int> cols: max(1, floor((self.width - 8px + 12px) / 162px));
+    // (the columns stretch to the row: the same inset either side, not a
+    // strip of empty tile on the right)
+    property <length> tile-w: max(150px, (self.width - 8px - (cols - 1) * 12px) / cols);
     property <length> tile-h: 90px + 6px + 16px + 2px + 14px;
     height: ceil(r.data.length / cols) * (tile-h + 12px) - 12px + 8px;
     for s[i] in r.data: Rectangle {
-        x: 4px + mod(i, cols) * 162px;
+        x: 4px + mod(i, cols) * (tile-w + 12px);
         y: 4px + floor(i / cols) * (tile-h + 12px);
-        width: 150px;
+        width: tile-w;
         height: tile-h;
         accessible-role: AccessibleRole.button;
         accessible-label: s.text;
@@ -886,7 +892,7 @@ component Sets inherits Rectangle {
         }
         Text {
             y: 96px;
-            width: 150px;
+            width: parent.width;
             text: s.text;
             overflow: elide;
             color: Theme.label;
@@ -897,7 +903,7 @@ component Sets inherits Rectangle {
             // (pinned left: a Text sized to itself is centred in its parent)
             x: 0;
             y: 96px + 20px;
-            width: 150px;
+            width: parent.width;
             text: s.detail;
             overflow: elide;
             color: Theme.secondary;
@@ -1166,8 +1172,9 @@ export component LookBlock inherits VerticalLayout {
     }
     if b.sub == "glass-advanced": Advanced { b: b; }
     // The picture showing now
+    // (centred in the column, not left with a blank strip beside it)
     if b.sub == "wallpaper-preview": HorizontalLayout {
-        alignment: start;
+        alignment: center;
         Rectangle {
             width: min(SBus.page-width, 420px);
             height: self.width * 9 / 16;

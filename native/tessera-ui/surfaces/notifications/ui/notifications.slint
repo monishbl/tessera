@@ -56,6 +56,9 @@ export struct Banner {
     alert: bool,
     glyph: string,
     glyph-color: color,
+    // (Material: the glyph on the scheme's primary container, as the island
+    // draws the same alert; a red one keeps its red)
+    alert-tonal: bool,
     // A live entry (core notify/live.rs): every state it had, newest first,
     // "<what it said> · <time>" (more than one: it folds out)
     history: [string],
@@ -565,12 +568,12 @@ export component MaterialCard {
         width: 40px;
         height: 40px;
         border-radius: 20px;
-        background: b.picture ? transparent : b.alert ? Theme.m3-surface-container-highest.mix(b.glyph-color, 0.78) : Theme.m3-secondary-container; // (a picture fills the circle itself)
+        background: b.picture ? transparent : b.alert-tonal ? Theme.m3-primary-container : b.alert ? Theme.m3-surface-container-highest.mix(b.glyph-color, 0.78) : Theme.m3-secondary-container; // (a picture fills the circle itself)
         if b.alert && !b.has-icon: Icon {
             text: b.glyph;
             fill: true;
             font-size: 20px;
-            color: b.glyph-color;
+            color: b.alert-tonal ? Theme.m3-on-primary-container : b.glyph-color;
         }
         clip: b.picture;
         if b.has-icon: Image {

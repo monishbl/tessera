@@ -1536,7 +1536,8 @@ component GlassLock inherits Rectangle {
                             accepted => { LockData.submit(); }
                         }
                         if LockData.password == "": Text {
-                            x: 16px;
+                            // (2px past the input's x: the caret stays off the first letter)
+                            x: 18px;
                             height: parent.height;
                             vertical-alignment: center;
                             text: LockData.finger-state != "" ? "Fingerprint or Password" : LockData.island-kind == "face" ? "Face or Password" : "Enter Password";
