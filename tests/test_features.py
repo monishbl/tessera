@@ -340,8 +340,10 @@ class OnePassword(unittest.TestCase):
     same pkexec, then yours; each feature's result in the status."""
 
     def setUp(self):
+        # (sysupdate.py itself refuses while pacman's real lock file is there,
+        # fakes or not: a stale one skips this too, said so in the reason)
         if os.path.exists("/var/lib/pacman/db.lck"):
-            self.skipTest("a real pacman is running")
+            self.skipTest("/var/lib/pacman/db.lck exists (a real pacman running, or a stale lock): sysupdate.py refuses then")
         self.tmp = tempfile.TemporaryDirectory()
         d = Path(self.tmp.name)
         self.bin = d / "bin"
