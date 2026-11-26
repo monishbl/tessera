@@ -254,7 +254,9 @@ pub fn menu(it: &Item, trash: usize) -> Vec<Row> {
             },
         ],
         Kind::App | Kind::Recent => {
-            let mut v = vec![row(if it.running { "New Window" } else { "Open" }, Action::Launch), separator(), if it.pinned { row("Remove from Dock", Action::Unpin) } else { row("Keep in Dock", Action::Pin) }];
+            let mut v = vec![row(if it.running { "New Window" } else { "Open" }, Action::Launch), separator(), if it.pinned { row("Remove from Dock", Action::Unpin) } else { Row { enabled: it.entry.is_some(), ..row("Keep in Dock", Action::Pin) } }];
+            // (Keep in Dock needs the app's launcher: with none (an AppImage,
+            // a script's window) the pin was written and never shown)
             if it.running {
                 v.push(separator());
                 v.push(row("Quit", Action::Quit));

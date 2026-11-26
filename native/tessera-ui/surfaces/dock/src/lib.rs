@@ -100,6 +100,9 @@ struct Win {
     pointer: Option<(f32, f32)>,
     hot: Option<usize>,
     pressed: Option<(usize, i32)>,
+    /// the pressed item's key: a release activates it only if the item
+    /// under the pointer is still that one (the list can change between)
+    pressed_key: String,
     hovered: bool,
     reveal: Reveal,
     reveal_timer: slint::Timer,
@@ -173,29 +176,44 @@ fn trash_dir() -> PathBuf {
 
 use tessera_core::util::on_path;
 
+/// Settings' file manager as a command line (defaultApps.files, else the
+/// older desktop.fileManager; "nautilus --new-window" and "kitty -e yazi"
+/// are both commands, as open-app.sh runs them): its words, when the
+/// program is installed
+fn chosen_file_manager(cfg: &serde_json::Value) -> Option<Vec<String>> {
+    [&cfg["defaultApps"]["files"], &cfg["desktop"]["fileManager"]].into_iter().filter_map(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).find_map(|s| {
+        let words: Vec<String> = s.split_whitespace().map(String::from).collect();
+        words.first().is_some_and(|w| on_path(w)).then_some(words)
+    })
+}
+
 /// The file manager that opens folders and the Trash (Files.qml): Settings'
-/// choice when it's installed, else the first installed
-fn file_manager(cfg: &serde_json::Value) -> Option<String> {
-    let want = cfg["desktop"]["fileManager"].as_str().unwrap_or("");
-    if !want.is_empty() && on_path(want) {
-        return Some(want.to_string());
-    }
-    ["nautilus", "dolphin", "thunar", "nemo", "caja", "pcmanfm-qt", "pcmanfm"].iter().find(|b| on_path(b)).map(|b| b.to_string())
+/// choice when it's installed, else the first installed (its command's words)
+fn file_manager(cfg: &serde_json::Value) -> Option<Vec<String>> {
+    chosen_file_manager(cfg).or_else(|| ["nautilus", "dolphin", "thunar", "nemo", "caja", "pcmanfm-qt", "pcmanfm"].iter().find(|b| on_path(b)).map(|b| vec![b.to_string()]))
 }
 
 fn open_folder(cfg: &serde_json::Value, path: &std::path::Path) {
     let p = path.to_string_lossy().into_owned();
     match file_manager(cfg) {
-        Some(m) => apps::run(vec![m.clone(), p], &m, None),
-        None => apps::run(vec!["xdg-open".into(), format!("file://{p}")], "open", None),
+        Some(mut m) => {
+            let name = m[0].clone();
+            m.push(p);
+            apps::run(m, &name, None)
+        }
+        // (the plain path: xdg-open takes it, and a file:// URL needed
+        // encoding for a '%', '#' or '?' in it)
+        None => apps::run(vec!["xdg-open".into(), p], "open", None),
     }
 }
 
 fn open_trash(cfg: &serde_json::Value) {
     match file_manager(cfg) {
-        Some(m) => {
-            let uri = if m == "dolphin" { "trash:/" } else { "trash:///" };
-            apps::run(vec![m.clone(), uri.into()], &m, None)
+        Some(mut m) => {
+            let name = m[0].clone();
+            let uri = if name == "dolphin" { "trash:/" } else { "trash:///" };
+            m.push(uri.into());
+            apps::run(m, &name, None)
         }
         None => apps::run(vec!["xdg-open".into(), "trash:///".into()], "open", None),
     }
@@ -552,8 +570,11 @@ impl Dock {
 
     fn press(&mut self, st: &mut State, output: &str, x: f32, y: f32, button: i32) {
         self.pointer(st, output, x, y, true);
+        let Some(hot) = self.win(output).map(|w| w.hot) else { return };
+        let key = hot.and_then(|i| self.items.get(i)).map(|it| it.key()).unwrap_or_default();
         let Some(w) = self.win(output) else { return };
-        w.pressed = w.hot.map(|i| (i, button));
+        w.pressed = hot.map(|i| (i, button));
+        w.pressed_key = key;
         self.update(st);
     }
 
@@ -563,10 +584,11 @@ impl Dock {
         }
         let Some(w) = self.win(output) else { return };
         let pressed = w.pressed.take();
+        let pressed_key = std::mem::take(&mut w.pressed_key);
         let hot = w.hot;
         self.update(st);
         if let Some((i, b)) = pressed {
-            if b == button && hot == Some(i) {
+            if b == button && hot == Some(i) && self.items.get(i).is_some_and(|it| it.key() == pressed_key) {
                 self.activate(st, output, i, button);
             }
         }
@@ -678,9 +700,8 @@ impl Dock {
         // the screen x the menu points at: the icon's centre
         let slot = w.slots.get(i).unwrap_or_default();
         let at = w.ui.get_pill_x() + slot.x + if m.material { m.base } else { slot.size } / 2.0;
-        if it.kind == Kind::Trash {
-            self.trash = count_trash();
-        }
+        // (the Trash's count is the watcher's, counted on its thread: a
+        // read_dir of a big Trash here held up the menu)
         let rows = model::menu(&it, self.trash);
         if self.menu.as_ref().is_some_and(|mw| mw.output != output) {
             let mw = self.menu.take().unwrap();
@@ -856,7 +877,9 @@ impl Part for Dock {
         st.shell.want("apps");
         st.shell.want("icons");
         self.scale = 1.0;
-        self.trash = count_trash();
+        // (the first count off the UI thread too)
+        let to = st.shell.sender(NAME);
+        std::thread::spawn(move || to(Box::new(M::Trash(count_trash()))));
         self.watch_trash(st);
     }
 
@@ -892,6 +915,7 @@ impl Part for Dock {
             pointer: None,
             hot: None,
             pressed: None,
+            pressed_key: String::new(),
             hovered: false,
             reveal: Reveal::default(),
             reveal_timer: slint::Timer::default(),
