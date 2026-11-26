@@ -228,6 +228,9 @@ impl Ai {
         // renaming a model ID on the same connection keeps its saved key
         let same = |a: &Model, b: &Model| a.provider == b.provider && a.endpoint == b.endpoint && a.auth == b.auth && a.project == b.project && a.location == b.location;
         let moved = prev.as_ref().filter(|p| p.key != m.key && same(p, &m)).map(|p| p.key.clone());
+        // (the edited model's old slot, when its key changes: its saved key
+        // goes once it isn't carried over, not left in the keyring for good)
+        let stale = prev.as_ref().filter(|p| p.key != m.key).map(|p| p.key.clone());
         self.stop_quick(h);
         let kept: Vec<Model> = list.into_iter().filter(|x| x.key != old).chain([m.clone()]).collect();
         crate::screen::util::cfg_set("ai.models", json!(write_models(&kept, &[])));
@@ -237,6 +240,14 @@ impl Ai {
         if !secret.is_empty() {
             let mut ks = Keys::default();
             ks.set(&m.key, &secret, &format!("{} · {}", m.name, models::credential_label(&m)));
+            if let Some(old_key) = stale {
+                clear_credential(old_key);
+            }
+        } else if moved.is_none() {
+            // (another connection: the old key isn't this one's)
+            if let Some(old_key) = stale {
+                clear_credential(old_key);
+            }
         } else if let Some(old_key) = moved {
             // (the old entry's key follows the model: read it, keep it under the new slot, drop the old)
             let (slot, label) = (m.key.clone(), format!("{} · {}", m.name, models::credential_label(&m)));
@@ -264,6 +275,11 @@ impl Ai {
         crate::screen::util::cfg_set("ai.models", json!(write_models(&rest, &[])));
         if was {
             crate::screen::util::cfg_set("ai.model", json!(rest.first().map(|m| m.key.clone()).unwrap_or_default()));
+        }
+        // (a second removal within the Undo time: the first can't come back
+        // now, so its credential goes as forget_removed would have done)
+        if let Some((rec, _)) = self.removed.take() {
+            clear_credential(rec["key"].as_str().unwrap_or("").to_string());
         }
         self.removed = Some((record(&gone), was));
     }
