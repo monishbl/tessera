@@ -60,6 +60,10 @@ enum M {
     SettleEnd,
     /// a live wallpaper's frame for a screen
     Frame(String, video::Frame),
+    /// a screen's live wallpaper player ended by itself (ffmpeg exited)
+    LiveEnded(String, u64),
+    /// the pause after that is over: started again
+    LiveRetry,
 }
 
 struct Win {
@@ -161,6 +165,13 @@ struct Screen {
     /// the live wallpaper's video (standalone), and whether its first frame is up
     player: Option<video::Player>,
     playing: bool,
+    /// quick ends of the player in a row, the video they were of, and when
+    /// it last started: started again with a growing pause, given up after three
+    live_fails: u32,
+    live_failed: String,
+    live_started: Option<std::time::Instant>,
+    /// which start the player now is (an end heard from an older one is not its)
+    live_gen: u64,
 }
 
 /// The newest backdrop wish per screen: (picture, pixels)
@@ -516,11 +527,20 @@ impl Background {
             if sc.player.as_ref().is_some_and(|p| p.video != live || p.size != size) {
                 sc.player = None;
             }
+            if sc.live_failed != live {
+                sc.live_fails = 0;
+            }
             match &sc.player {
                 Some(p) => p.set_paused(why.paused()),
+                // (it kept ending at once: the still picture stays)
+                None if sc.live_fails > 3 => {}
                 None => {
                     let (to, out) = (st.shell.sender(NAME), sc.output.clone());
-                    sc.player = Some(video::Player::start(&live, size, why.paused(), move |f| to(Box::new(M::Frame(out.clone(), f)))));
+                    let (end_to, end_out) = (st.shell.sender(NAME), sc.output.clone());
+                    sc.live_started = Some(std::time::Instant::now());
+                    sc.live_gen += 1;
+                    let gen = sc.live_gen;
+                    sc.player = Some(video::Player::start(&live, size, why.paused(), move |f| to(Box::new(M::Frame(out.clone(), f))), move || end_to(Box::new(M::LiveEnded(end_out, gen)))));
                 }
             }
         }
@@ -598,7 +618,7 @@ impl Part for Background {
             return;
         }
         let px = output_pixels(st, output);
-        self.screens.push(Screen { output: name.to_string(), px, asked: (String::new(), (0, 0)), pending: false, win: None, player: None, playing: false });
+        self.screens.push(Screen { output: name.to_string(), px, asked: (String::new(), (0, 0)), pending: false, win: None, player: None, playing: false, live_fails: 0, live_failed: String::new(), live_started: None, live_gen: 0 });
         self.refresh(st);
         self.live_sync(st);
     }
@@ -658,6 +678,29 @@ impl Part for Background {
             M::Faded(output) => self.faded(&output),
             M::Tick => self.tick(st),
             M::Frame(output, f) => self.frame(st, &output, f),
+            M::LiveEnded(output, gen) => {
+                let live = wallpaper::live(&st.shell.cfg).to_string();
+                let Some(sc) = self.screens.iter_mut().find(|s| s.output == output) else { return };
+                if sc.player.is_none() || sc.live_gen != gen {
+                    return;
+                }
+                sc.player = None;
+                let quick = sc.live_started.is_none_or(|t| t.elapsed() < std::time::Duration::from_secs(30));
+                sc.live_fails = if quick { sc.live_fails + 1 } else { 1 };
+                sc.live_failed = live;
+                if sc.live_fails > 3 {
+                    eprintln!("tessera-ui: live wallpaper on {output}: ffmpeg keeps ending; the still picture stays");
+                    return;
+                }
+                let wait = std::time::Duration::from_secs([2, 10, 30][(sc.live_fails as usize - 1).min(2)]);
+                eprintln!("tessera-ui: live wallpaper on {output}: ffmpeg ended; again in {}s", wait.as_secs());
+                let to = st.shell.sender(NAME);
+                std::thread::spawn(move || {
+                    std::thread::sleep(wait);
+                    to(Box::new(M::LiveRetry));
+                });
+            }
+            M::LiveRetry => self.live_sync(st),
             M::SettleEnd => {
                 if self.settle.reveal.is_some_and(|(start, ms)| start.elapsed().as_millis() as i64 >= ms) {
                     self.settle.reveal = None;

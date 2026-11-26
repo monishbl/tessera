@@ -96,7 +96,9 @@ pub struct Player {
 
 impl Player {
     /// Start decoding `video` at `size`; frames go to `deliver` (any thread)
-    pub fn start(video: &str, size: (u32, u32), paused: bool, deliver: impl Fn(Frame) + Send + 'static) -> Self {
+    /// `ended`: ffmpeg stopped on its own (crashed, killed, the file
+    /// replaced), not because the player was stopped
+    pub fn start(video: &str, size: (u32, u32), paused: bool, deliver: impl Fn(Frame) + Send + 'static, ended: impl FnOnce() + Send + 'static) -> Self {
         let ctl = Arc::new((Mutex::new(Ctl { paused, stop: false }), Condvar::new()));
         let in_flight = Arc::new(AtomicBool::new(false));
         let child: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
@@ -104,7 +106,13 @@ impl Player {
         let (v, c, f, ch) = (video.to_string(), ctl.clone(), in_flight.clone(), child.clone());
         std::thread::Builder::new()
             .name("tessera-live".into())
-            .spawn(move || run(&v, size, c, f, ch, spares, deliver))
+            .spawn(move || {
+                let stopped = c.clone();
+                run(&v, size, c, f, ch, spares, deliver);
+                if !stopped.0.lock().map_or(true, |g| g.stop) {
+                    ended();
+                }
+            })
             .ok();
         Self { video: video.to_string(), size, child, ctl, in_flight, spare, shown: None }
     }

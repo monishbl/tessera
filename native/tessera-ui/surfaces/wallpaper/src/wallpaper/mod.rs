@@ -405,11 +405,18 @@ impl Part for WallpaperPicker {
     fn output_removed(&mut self, st: &mut State, name: &str) {
         if self.win.as_ref().is_some_and(|w| w.output == name) {
             let w = self.win.take().unwrap();
+            // (as closed(): the shell's panel state follows, and the glass
+            // shape and a listing still running go too)
+            if w.shown {
+                shell::closed(NAME);
+            }
+            st.shell.glass.set(&w.output, NS, &[]);
             st.drop_surface(&w.surface);
             self.thumbs.set(Vec::new());
             self.files.clear();
             self.loaded.clear();
             self.pool = None;
+            self.listing += 1;
         }
     }
 
