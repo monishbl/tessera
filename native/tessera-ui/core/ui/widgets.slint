@@ -216,9 +216,13 @@ export component StateShape inherits Rectangle {
 export component TextButton inherits Rectangle {
     in property <string> text;
     in property <bool> primary;
+    // the widest it grows (a long or translated label is elided, not run
+    // past its panel or over its neighbour)
+    in property <length> limit: 320px;
     callback clicked();
     property <color> ink: Theme.material ? (primary ? Theme.m3-on-primary : Theme.m3-on-secondary-container) : primary ? Theme.on-accent : Theme.label;
-    width: label.preferred-width + (Theme.material ? 40px : 32px);
+    property <length> pad: Theme.material ? 40px : 32px;
+    width: min(limit, label.preferred-width + pad);
     height: Theme.material ? 40px : 36px;
     border-radius: Theme.material ? (touch.pressed ? 12px : self.height / 2) : Theme.radius-control;
     // (PickerButton.qml: Material's corners on the fast spatial spring; a
@@ -234,10 +238,13 @@ export component TextButton inherits Rectangle {
     accessible-label: text;
     accessible-action-default => { clicked(); }
     label := Text {
+        width: max(0px, parent.width - pad);
         text: root.text;
         color: ink;
         font-size: Theme.body;
         font-weight: 500;
+        horizontal-alignment: center;
+        overflow: elide;
         accessible-role: none;
     }
     touch := TouchArea {

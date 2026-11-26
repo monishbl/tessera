@@ -219,6 +219,18 @@ impl Tags {
         }
         self
     }
+    /// A volume, each channel's raw level as given
+    pub fn levels(mut self, raw: &[u32]) -> Tags {
+        self.0.push(b'v');
+        self.0.push(raw.len().clamp(1, 32) as u8);
+        if raw.is_empty() {
+            self.0.extend(0u32.to_be_bytes());
+        }
+        for r in raw.iter().take(32) {
+            self.0.extend(r.to_be_bytes());
+        }
+        self
+    }
     pub fn arbitrary(mut self, b: &[u8]) -> Tags {
         self.0.push(b'x');
         self.0.extend((b.len() as u32).to_be_bytes());
