@@ -43,6 +43,20 @@ pub struct Decoded {
     pub pixels: Option<SharedPixelBuffer<Rgb8Pixel>>,
 }
 
+/// A picture's size from its header alone (no decode): None when unreadable
+pub fn size_of(path: &str) -> Option<(u32, u32)> {
+    image::image_dimensions(path).ok()
+}
+
+/// A box of `w`×`h`'s shape that fits in `mw`×`mh` (never larger than it is)
+pub fn fit_box(w: u32, h: u32, mw: u32, mh: u32) -> (u32, u32) {
+    if w == 0 || h == 0 {
+        return (mw.max(1), mh.max(1));
+    }
+    let k = (mw as f64 / w as f64).min(mh as f64 / h as f64).min(1.0);
+    (((w as f64 * k).round() as u32).max(1), ((h as f64 * k).round() as u32).max(1))
+}
+
 /// Decode `path` for a `bw`×`bh` box (blocking: on a worker thread). A
 /// picture with transparency is laid on black, as the QML's wallpaper is
 pub fn decode(path: &str, bw: u32, bh: u32) -> Option<SharedPixelBuffer<Rgb8Pixel>> {
@@ -236,6 +250,14 @@ pub fn second_frame(surface: &crate::wayland::Surface, settled: &mut bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_box_keeps_the_pictures_shape() {
+        assert_eq!(fit_box(3840, 2160, 1280, 800), (1280, 720));
+        assert_eq!(fit_box(5760, 1080, 1280, 800), (1280, 240));
+        assert_eq!(fit_box(800, 600, 1280, 800), (800, 600));
+        assert_eq!(fit_box(0, 0, 1280, 800), (1280, 800));
+    }
 
     #[test]
     fn a_wider_picture_loses_its_sides() {

@@ -202,9 +202,7 @@ pub fn power(cx: &mut Ctx, p: &mut Page) {
             }
         }
     } else {
-        let home = std::env::var("HOME").unwrap_or_default();
-        let file = s(&pw["userHypridle"]);
-        let file = if !home.is_empty() { file.replacen(&home, "~", 1) } else { file };
+        let file = super::super::about::tilde(&s(&pw["userHypridle"]));
         p.group("When you're away")
             .footer(format!("You have your own hypridle.conf ({file}), so its timers are used. Rename or remove it to set them here."))
             .row(Row::new("Using your own idle settings"));

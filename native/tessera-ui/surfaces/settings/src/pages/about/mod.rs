@@ -2,11 +2,10 @@
 //! Options and Go back are Rust only), About (about.qml)
 //! and its subpages Back up and restore (Rust only: backup.rs), Report a Bug
 //! (about-bugreport.qml) and Login Items (about-loginitems.qml) (System health
-//! is part of System → Health now: health.rs builds its services part); and two
-//! parts other groups' pages show: a cloud drive's folder (DriveGroup.qml:
-//! `drive::group`, for Google and Microsoft 365) and shortcut and gesture
-//! import and export (ImportExport.qml: `importexport::group`, for Keyboard
-//! and Gestures). Its own views: ui/settings-about.slint. What only the QML
+//! is part of System → Health now: health.rs builds its services part).
+//! (Shortcut and gesture import and export is input/importexport.rs; the
+//! Google page builds its own Drive rows.) Its own views:
+//! ui/settings-about.slint. What only the QML
 //! shell knows and does goes through shell/modules/settings/RustBridgeAbout.qml
 //! (`cx.feed["about"]`, `cx.ask("about", …)`): the updater, the root helper,
 //! pacman, the health checks, the bug report service, rclone, Keymap.
@@ -14,9 +13,7 @@
 pub mod about;
 pub mod backup;
 pub mod bugreport;
-pub mod drive;
 pub mod health;
-pub mod importexport;
 pub mod loginitems;
 pub mod sysinfo;
 pub mod update;
@@ -142,17 +139,34 @@ pub fn app_icon(cx: &mut Ctx, names: &[&str], px: u32) -> Option<slint::Image> {
 
 /// The home folder written as ~
 pub fn tilde(path: &str) -> String {
-    let home = std::env::var("HOME").unwrap_or_default();
-    if !home.is_empty() && path.starts_with(&home) {
-        format!("~{}", &path[home.len()..])
-    } else {
-        path.to_string()
+    tilde_in(path, &std::env::var("HOME").unwrap_or_default())
+}
+
+/// `path` with `home` as "~" only when it is the home folder or inside it
+/// (with HOME=/home/sam, /home/samantha stays as it is)
+pub fn tilde_in(path: &str, home: &str) -> String {
+    let home = home.trim_end_matches('/');
+    if home.is_empty() {
+        return path.to_string();
+    }
+    match path.strip_prefix(home) {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') => format!("~{rest}"),
+        _ => path.to_string(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_home_folder_becomes_a_tilde() {
+        assert_eq!(tilde_in("/home/sam/x", "/home/sam"), "~/x");
+        assert_eq!(tilde_in("/home/sam", "/home/sam"), "~");
+        assert_eq!(tilde_in("/home/samantha/x", "/home/sam"), "/home/samantha/x");
+        assert_eq!(tilde_in("/mnt/backup/home/sam/x", "/home/sam"), "/mnt/backup/home/sam/x");
+        assert_eq!(tilde_in("/x", ""), "/x");
+    }
     use crate::model::Row;
 
     #[test]

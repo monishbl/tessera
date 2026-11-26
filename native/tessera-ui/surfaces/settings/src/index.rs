@@ -249,8 +249,7 @@ pub const LEFT_OUT: &[&str] = &["Show the phone in the Dock", "Keep panels loade
 /// Every Rust settings page's source, compiled in, so rows only the Rust
 /// pages have are found too (audit #130): (the file's page, its source,
 /// functions in it that build another page). A file of helpers is under
-/// the page that shows them. (Not here: about/drive.rs and
-/// about/importexport.rs, which no page uses now; input/keymap.rs,
+/// the page that shows them. (Not here: input/keymap.rs,
 /// system/art.rs, about/sysinfo.rs, about/version.rs and keys.rs, whose
 /// rows, if any, are built from names known at run time.)
 const RUST_PAGES: &[(&str, &str, &[(&str, &str)])] = &[

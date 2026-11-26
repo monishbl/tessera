@@ -14,10 +14,36 @@ fn script() -> String {
     crate::util::asset("shell/assets/scripts/xdg-autostart.py").map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
-/// The script's answer (blocking); None when it didn't answer
+/// How long one run of the script may take (an autostart folder on a dead
+/// mount mustn't hold every later change up for good)
+const RUN_MAX: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// The script's answer (blocking, RUN_MAX at most); None when it didn't
+/// answer
 fn run(args: &[String]) -> Option<Value> {
-    let o = std::process::Command::new("python3").arg("-I").arg(script()).args(args).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output().ok()?;
-    serde_json::from_slice(&o.stdout).ok()
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut child = std::process::Command::new("python3").arg("-I").arg(script()).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let mut out = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = out.read_to_end(&mut buf);
+        buf
+    });
+    let until = std::time::Instant::now() + RUN_MAX;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < until => std::thread::sleep(std::time::Duration::from_millis(50)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Some(json!({"ok": false, "error": "It took too long; try again."}));
+            }
+        }
+    }
+    let buf = reader.join().ok()?;
+    serde_json::from_slice(&buf).ok()
 }
 
 /// Skipped by Tessera whatever the switch says
