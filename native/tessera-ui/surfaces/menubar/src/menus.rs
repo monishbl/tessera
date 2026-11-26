@@ -157,7 +157,7 @@ pub fn layout(name: &str) -> ([f32; 4], &'static str) {
 }
 
 /// `base`: the focused display's block of spaces (spacemap: each display
-/// owns 100 ids), so "Move to space 2" means that display's second space
+/// owns 100 ids), so "Move to Space 2" means that display's second space
 pub fn window(win: &Client, style: &str, base: i32) -> Vec<Row> {
     let has = !win.address.is_empty() && !win.class.is_empty();
     let addr = if win.address.starts_with("0x") { win.address.clone() } else { format!("0x{}", win.address) };
@@ -204,9 +204,9 @@ pub fn window(win: &Client, style: &str, base: i32) -> Vec<Row> {
         en(item("Zoom", act("fullscreen", "mode = \"maximized\", action = \"toggle\"")), has),
         en(item("Enter full screen", act("fullscreen", "mode = \"fullscreen\", action = \"toggle\"")), has),
         sep(),
-        en(item("Move to space 1", act("move", &format!("workspace = {}, follow = false", base + 1))), has),
-        en(item("Move to space 2", act("move", &format!("workspace = {}, follow = false", base + 2))), has),
-        en(item("Move to space 3", act("move", &format!("workspace = {}, follow = false", base + 3))), has),
+        en(item("Move to Space 1", act("move", &format!("workspace = {}, follow = false", base + 1))), has),
+        en(item("Move to Space 2", act("move", &format!("workspace = {}, follow = false", base + 2))), has),
+        en(item("Move to Space 3", act("move", &format!("workspace = {}, follow = false", base + 3))), has),
         sep(),
         en(item("Close window", act("close", "")), has),
     ]
@@ -396,7 +396,7 @@ mod tests {
         assert_eq!(window(&g, "linux", 0)[3].text, "Move tab to new window");
         // a second display's spaces start at its base
         let v = window(&w, "linux", 100);
-        let m2 = v.iter().find(|r| r.text == "Move to space 2").unwrap();
+        let m2 = v.iter().find(|r| r.text == "Move to Space 2").unwrap();
         assert_eq!(m2.action, Action::Dispatch("hl.dsp.window.move({ workspace = 102, follow = false, window = \"address:0x55aa\" })".into()));
         assert!(v.iter().find(|r| r.text == "Picture in Picture").unwrap().checked.is_none());
     }
