@@ -1849,7 +1849,7 @@ export component DeskMenu inherits Window {
             Flickable {
                 width: parent.width;
                 height: parent.height;
-                viewport-height: rows-layout.preferred-height;
+                content-height: rows-layout.preferred-height;
             rows-layout := VerticalLayout {
                 width: parent.width;
                 padding: 5px;
@@ -1939,10 +1939,10 @@ export component Gallery inherits Window {
 
     // The list scrolls so the kind chosen with the arrows stays in sight
     function show-kind(n: int) {
-        if n * kind-step < -kinds-list.viewport-y {
-            kinds-list.viewport-y = -n * kind-step;
-        } else if (n + 1) * kind-step > kinds-list.height - kinds-list.viewport-y {
-            kinds-list.viewport-y = kinds-list.height - (n + 1) * kind-step;
+        if n * kind-step < -kinds-list.content-y {
+            kinds-list.content-y = -n * kind-step;
+        } else if (n + 1) * kind-step > kinds-list.height - kinds-list.content-y {
+            kinds-list.content-y = kinds-list.height - (n + 1) * kind-step;
         }
     }
     property <length> kind-step: Theme.material ? 42px : 38px;
@@ -1986,7 +1986,7 @@ export component Gallery inherits Window {
                 y: 12px;
                 width: 200px;
                 height: parent.height - 24px;
-                viewport-height: root.kinds.length * (Theme.material ? 42px : 38px);
+                content-height: root.kinds.length * (Theme.material ? 42px : 38px);
                 for k[i] in root.kinds: Rectangle {
                     property <bool> chosen: i == root.picked;
                     y: i * (Theme.material ? 42px : 38px);

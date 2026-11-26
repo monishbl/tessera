@@ -430,7 +430,7 @@ impl Session {
         w.ui.set_held_title(blockers::title(&self.held, &self.blockers).into());
         w.ui.set_held_sub(blockers::subtitle(&self.held, self.blockers.len()).into());
         w.ui.set_anyway_text(blockers::anyway(&self.held, material).into());
-        w.ui.set_button(self.button as i32);
+        w.ui.set_held_button(self.button as i32);
         w.ui.set_which("blocked".into());
     }
 
@@ -575,7 +575,7 @@ impl Part for Session {
                 } else if let Some(b) = moved(self.button, &k) {
                     self.button = b.min(1);
                     if let Some(w) = &self.win {
-                        w.ui.set_button(self.button as i32);
+                        w.ui.set_held_button(self.button as i32);
                     }
                 }
             }

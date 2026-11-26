@@ -57,7 +57,7 @@ export component SessionDialog inherits Window {
     in property <string> held-title;
     in property <string> held-sub;
     in property <string> anyway-text;
-    in property <int> button;
+    in property <int> held-button;
     callback press-button(int);
     callback hover(int);
     callback choose(int);
@@ -275,7 +275,7 @@ export component SessionDialog inherits Window {
                 alignment: end;
                 spacing: 8px;
                 for t[i] in ["Cancel", anyway-text]: Rectangle {
-                    property <bool> hot: button == i;
+                    property <bool> hot: held-button == i;
                     property <bool> danger: i == 1;
                     height: Theme.material ? 40px : 30px;
                     width: max(Theme.material ? 96px : 84px, txt.preferred-width + (Theme.material ? 48px : 28px));
