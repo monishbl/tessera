@@ -1080,7 +1080,7 @@ export component AppStoreWindow inherits Window {
                         x: parent.width - self.width - 16px;
                         y: (parent.height - self.height) / 2;
                         primary: Theme.material;
-                        text: updates-running ? "Installing…" : "Install Catalogue";
+                        text: updates-running ? "Installing…" : "Install catalogue";
                         busy: updates-running;
                         g: g;
                         clicked => { root.install-catalogue(); }

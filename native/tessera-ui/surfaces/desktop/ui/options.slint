@@ -286,12 +286,12 @@ export component WidgetOptions inherits Window {
                     VerticalLayout {
                         spacing: 2px;
                         alignment: center;
-                        Lbl { text: "Smart Rotate"; }
+                        Lbl { text: "Smart rotate"; }
                         Hint { text: "Brings forward what matters now: music, the next event, a low battery. For every Widget Stack."; }
                     }
                     Toggle {
                         checked: smart-rotate;
-                        label: "Smart Rotate";
+                        label: "Smart rotate";
                         toggled(on) => { root.rotate(on); }
                     }
                 }

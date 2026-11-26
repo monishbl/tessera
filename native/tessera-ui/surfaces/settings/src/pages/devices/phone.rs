@@ -94,7 +94,7 @@ pub fn phone(cx: &mut Ctx, p: &mut Page) {
         .row(Row::new(s(&phone["model"]))
             .visible(has_phone)
             .detail(phone_detail(&phone))
-            .buttons(icon_button(if mirroring { "Showing" } else { "Show Screen" }, "device-mobile", !mirroring && !needs_tools, false, b("hasScrcpy")), show))
+            .buttons(icon_button(if mirroring { "Showing" } else { "Show screen" }, "device-mobile", !mirroring && !needs_tools, false, b("hasScrcpy")), show))
         .row(Row::new("Allow this computer on your phone")
             .tone(4)
             .visible(!has_phone && waiting)
@@ -122,7 +122,7 @@ pub fn phone(cx: &mut Ctx, p: &mut Page) {
         .row(Row::new("Network discovery is off")
             .visible(needs["checked"].as_bool().unwrap_or(false) && !needs["avahi"].as_bool().unwrap_or(true))
             .detail("Pairing finds the phone with avahi, which isn't running. It asks for your password once.")
-            .button(if fixing { "Turning on…" } else { "Turn On" }, avahi)
+            .button(if fixing { "Turning on…" } else { "Turn on" }, avahi)
             .busy(fixing))
         .row(Row::new(label).detail(detail).tone(if stage == "error" { 2 } else { 0 }).button(if pairing { "Cancel" } else { "Pair" }, pair).enabled(b("hasAdb")))
         .row(code);

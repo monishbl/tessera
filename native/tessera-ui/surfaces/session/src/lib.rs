@@ -53,9 +53,9 @@ const NS: &str = "tessera:session";
 pub const OPTIONS: [(&str, &str, &str, &str, &str); 5] = [
     ("lock", "Lock", "\u{e2fa}", "cookie4", "primary"),
     ("sleep", "Sleep", "\u{e330}", "cookie9", "secondary"),
-    ("logout", "Log Out", "\u{e42a}", "clover4", "secondary"),
+    ("logout", "Log out", "\u{e42a}", "clover4", "secondary"),
     ("restart", "Restart", "\u{e036}", "cookie12", "tertiary"),
-    ("shutdown", "Shut Down", "\u{e3da}", "softBurst", "error"),
+    ("shutdown", "Shut down", "\u{e3da}", "softBurst", "error"),
 ];
 
 /// Material's labels are sentence case ("Log out")

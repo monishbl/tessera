@@ -79,7 +79,7 @@ pub fn mouse(cx: &mut Ctx, p: &mut Page) {
         cx.set("mouse.boundaryMode", "corners");
         cx.set("mouse.cornerSize", 24);
     });
-    p.group("").row(Row::new("Restore defaults").button("Restore Defaults", restore));
+    p.group("").row(Row::new("Restore defaults").button("Restore defaults", restore));
 
     // ── More options ──
     p.more(cx);

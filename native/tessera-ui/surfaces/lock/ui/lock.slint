@@ -1540,7 +1540,7 @@ component GlassLock inherits Rectangle {
                             x: 18px;
                             height: parent.height;
                             vertical-alignment: center;
-                            text: LockData.finger-state != "" ? "Fingerprint or Password" : LockData.island-kind == "face" ? "Face or Password" : "Enter Password";
+                            text: LockData.finger-state != "" ? "Fingerprint or password" : LockData.island-kind == "face" ? "Face or password" : "Enter password";
                             // (stronger than ink2: it sits on glass, 4.5:1 with the field's tint)
                             color: ink.with-alpha(0.82);
                             font-size: Theme.body;

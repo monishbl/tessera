@@ -108,8 +108,8 @@ pub fn desktop(cx: &mut Ctx, p: &mut Page) {
         }
     });
     p.group("Widgets")
-        .footer("Drag a widget to move it; it snaps to the grid. Right-click a widget to change its size, set what it shows (Widget Options) or remove it, or right-click the desktop.")
-        .row(Row::new("Edit Widgets").detail(format!("{} on the desktop", count(widgets, "widget", "widgets"))).button("Edit…", edit).primary())
+        .footer("Drag a widget to move it; it snaps to the grid. Right-click a widget to change its size, set what it shows (Widget options) or remove it, or right-click the desktop.")
+        .row(Row::new("Edit widgets").detail(format!("{} on the desktop", count(widgets, "widget", "widgets"))).button("Edit…", edit).primary())
         .row(Row::new("Show on")
             .visible(show_screen)
             .detail("The display with the widgets and the Desktop folder's files; if it's unplugged, the main display")

@@ -333,7 +333,7 @@ pub fn displays(cx: &mut Ctx, p: &mut Page) {
                 _ if !ddc["scanned"].as_bool().unwrap_or(false) || scanning => "Looking for DDC/CI support…",
                 _ => "This display doesn't answer DDC/CI. Turn on DDC/CI in the display's own menu, then check again.",
             })
-            .button("Check Again", again)
+            .button("Check again", again)
             .enabled(!scanning));
         // Flip
         let n = name.clone();
@@ -433,13 +433,13 @@ pub fn displays(cx: &mut Ctx, p: &mut Page) {
 
         let saved = cx.get("displays.monitors").as_array().map_or(0, Vec::len);
         let reset = cx.on(|cx, _| {
-            if cx.confirmed("displaysReset", "Press Restore Defaults again: every display's saved settings go") {
+            if cx.confirmed("displaysReset", "Press Restore defaults again: every display's saved settings go") {
                 ask(cx, "displaysReset", Value::Null)
             }
         });
         p.group("")
             .footer("Settings are saved per display and come back when it's plugged in again.")
-            .row(Row::new("Restore defaults").detail("Every display goes back to what Hyprland picks by itself").button("Restore Defaults", reset).enabled(saved > 0));
+            .row(Row::new("Restore defaults").detail("Every display goes back to what Hyprland picks by itself").button("Restore defaults", reset).enabled(saved > 0));
     }
     p.end_more();
 }
@@ -469,7 +469,7 @@ mod tests {
     fn a_display_is_named_once() {
         assert_eq!(heading("WAYLAND-1", "WAYLAND-1"), "WAYLAND-1");
         assert_eq!(heading("", "DP-1"), "DP-1");
-        assert_eq!(heading("Built-in Display", "eDP-1"), "Built-in Display (eDP-1)");
+        assert_eq!(heading("Built-in display", "eDP-1"), "Built-in display (eDP-1)");
         assert_eq!(tile_text("WAYLAND-1", 1920.0, 1080.0), "WAYLAND-1 · 1920 × 1080");
         assert_eq!(tile_text("", 1920.0, 1080.0), "1920 × 1080");
         assert_eq!(tile_text("DP-1", 0.0, 0.0), "DP-1");

@@ -14,10 +14,10 @@ pub const WIDGETS: [(&str, &str, &str); 7] = [
     ("notes", "Notes", "note"),
     ("resources", "Resources", "cpu"),
     ("recorder", "Recorder", "record"),
-    ("mixer", "Volume Mixer", "speaker-high"),
-    ("image", "Floating Image", "image"),
+    ("mixer", "Volume mixer", "speaker-high"),
+    ("image", "Floating image", "image"),
     ("crosshair", "Crosshair", "crosshair"),
-    ("fps", "FPS Limit", "gauge"),
+    ("fps", "FPS limit", "gauge"),
 ];
 
 /// The floating image, crosshair and FPS limit only with gaming overlays on

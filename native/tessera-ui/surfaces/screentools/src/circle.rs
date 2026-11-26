@@ -97,7 +97,7 @@ impl Fix {
     fn label(self) -> &'static str {
         match self {
             Fix::None => "",
-            Fix::Settings => "Open AI Settings",
+            Fix::Settings => "Open AI settings",
             Fix::Retry => "Try again",
             Fix::Install => "Install",
         }
