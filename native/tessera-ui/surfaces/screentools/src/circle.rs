@@ -1135,6 +1135,9 @@ impl Circle {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = w2.upgrade() {
                             r2.calm.store(ui.get_calm().to_bits(), Ordering::Relaxed);
+                        } else {
+                            // (its window is gone: so is the light)
+                            r2.stop.store(true, Ordering::Relaxed);
                         }
                         r2.shown.store(true, Ordering::Release);
                     });
@@ -1159,6 +1162,8 @@ impl Circle {
                         if let Some(d) = dots {
                             ui.set_fx_dots(slint::Image::from_rgba8_premultiplied(d));
                         }
+                    } else {
+                        r2.stop.store(true, Ordering::Relaxed);
                     }
                     r2.shown.store(true, Ordering::Release);
                 });
@@ -1204,6 +1209,8 @@ impl Circle {
             let was = self.open;
             self.open = false;
             self.stop_ai();
+            // (the light's thread draws for this window: it ends with it)
+            self.stop_fx();
             let w = self.win.take().unwrap();
             Glass::clear_now(&w.output, NS);
             st.drop_surface(&w.surface);
@@ -1251,6 +1258,7 @@ impl Circle {
     }
 
     pub fn quit(&mut self) {
+        self.stop_fx();
         if let Some(w) = &self.win {
             Glass::clear_now(&w.output, NS);
         }
