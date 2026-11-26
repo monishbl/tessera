@@ -282,8 +282,8 @@ impl Today {
         };
         self.target = motion::target(sw, sh, if st.shell.look.material { 28.0 } else { 26.0 });
         let still = s.reduce_motion;
-        let tl = motion::enter(&self.fx, still, self.motion, &self.target);
         // (from where it is when it's opened again while going)
+        let tl = if self.closing && self.timeline.is_some() { motion::resume(self.frame, self.motion, &self.target) } else { motion::enter(&self.fx, still, self.motion, &self.target) };
         self.frame = tl.at(0.0);
         self.timeline = Some(tl);
         self.started = Instant::now();
@@ -358,6 +358,9 @@ impl Today {
             w.surface.hide();
             st.shell.glass.set(&w.output, NS, &[]);
             w.glass_sent.clear();
+            // (the full-size wallpaper picture, ~33 MB at 4K, isn't kept for
+            // the rest of the day: each open decodes it again)
+            w.ui.set_backdrop(slint::Image::default());
         }
     }
 
@@ -430,9 +433,11 @@ impl Today {
         let wx = st.shell.get::<Weather>().cloned().unwrap_or_default();
         d.set_weather_ready(wx.ready);
         d.set_weather_icon(glyph(if wx.ready { wx.icon } else { "cloud" }, material).into());
-        d.set_weather_temp(format!("{}°", wx.temp).into());
+        // (°C or °F: nothing else tells 21 °C from 21 °F)
+        let unit = if st.shell.cfg["weather"]["units"].as_str() == Some("imperial") { "F" } else { "C" };
+        d.set_weather_temp(format!("{}°{}", wx.temp, unit).into());
         d.set_weather_condition(wx.condition.as_str().into());
-        d.set_weather_hilo(format!("High {}° · Low {}°", wx.high, wx.low).into());
+        d.set_weather_hilo(format!("High {}°{unit} · Low {}°{unit}", wx.high, wx.low).into());
         d.set_weather_rain(if wx.rain_chance > 0 { format!("{}% rain", wx.rain_chance) } else { String::new() }.into());
         d.set_weather_line(format!("H {}° · L {}°{}", wx.high, wx.low, if wx.rain_chance > 0 { format!(" · {}% rain", wx.rain_chance) } else { String::new() }).into());
         d.set_weather_problem(model::weather_problem(&wx.error).into());

@@ -207,6 +207,21 @@ pub fn enter(fx: &str, still: bool, ms: f32, t: &Target) -> Timeline {
     }
 }
 
+/// Opened again while it was going: from wherever it is back to its place
+/// (not the entrance from nothing: a half-faded panel doesn't snap back to
+/// the full screen or the drop and play again)
+pub fn resume(from: Frame, ms: f32, t: &Target) -> Timeline {
+    let d = |v: f32| v * ms;
+    let mut tl = Timeline::new(from);
+    for (p, v) in [(P::W, t.w), (P::H, t.h), (P::X, t.x), (P::Y, t.y), (P::R, t.r), (P::Blur, 0.0)] {
+        tl.to(p, 0.0, d(320.0), v, Ease::OutCubic);
+    }
+    for p in [P::Frost, P::Opacity, P::Rows] {
+        tl.to(p, 0.0, d(320.0), 1.0, Ease::OutCubic);
+    }
+    tl
+}
+
 /// The exit, from wherever it is: it fades and settles a little smaller
 pub fn exit(from: Frame, ms: f32, t: &Target) -> Timeline {
     let d = |v: f32| v * ms;
@@ -235,6 +250,17 @@ mod tests {
 
     fn close(a: f32, b: f32) -> bool {
         (a - b).abs() < 0.01
+    }
+
+    #[test]
+    fn opened_again_while_going_continues_from_there() {
+        let t = target(1920.0, 1080.0, 26.0);
+        let half = exit(enter("shrink", false, 1.0, &t).at(5000.0), 1.0, &t).at(120.0);
+        let tl = resume(half, 1.0, &t);
+        let f = tl.at(0.0);
+        assert!(close(f.w, half.w) && close(f.opacity, half.opacity), "starts where it was");
+        let end = tl.at(tl.length());
+        assert!(close(end.w, t.w) && close(end.opacity, 1.0) && close(end.rows, 1.0));
     }
 
     #[test]
