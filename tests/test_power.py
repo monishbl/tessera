@@ -81,6 +81,18 @@ class BatteryGuard(unittest.TestCase):
         self.assertFalse(guard.should_sleep(4, guard.DISCHARGING, 3))
         self.assertFalse(guard.should_sleep(2, 1, 3))  # charging
 
+    def test_guard_acts_again_after_a_wake_on_an_empty_battery(self):
+        D = guard.DISCHARGING
+        now, at = guard.decide(3, D, 3, None)
+        self.assertTrue(now)
+        self.assertEqual(guard.decide(3, D, 3, None), (True, None))  # (the sleep failed: tried again)
+        at = 3  # (it slept at 3%)
+        self.assertEqual(guard.decide(3, D, 3, at), (False, 3))  # (same level: once)
+        now, at = guard.decide(2, D, 3, at)  # (woken, still draining)
+        self.assertTrue(now)
+        self.assertEqual(guard.decide(5, 1, 3, 2), (False, None))  # (charging resets)
+        self.assertEqual(guard.decide(4, D, 3, None), (False, None))
+
 
 SHIPPED_HYPRIDLE = """# @OLD@ idle behaviour: lock at 5 min, screen off at 10, sleep at 30.
 # Locking goes through the shell's own lock screen.
