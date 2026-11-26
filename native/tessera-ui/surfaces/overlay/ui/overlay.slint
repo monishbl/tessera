@@ -198,10 +198,10 @@ component Frame inherits Rectangle {
         @children
     }
 
-    // Resize grip
+    // Resize grip (4 px in from the corner: inside the card's rounding)
     if OvG.open: Rectangle {
-        x: parent.width - m - 18px;
-        y: parent.height - m - 18px;
+        x: parent.width - m - 22px;
+        y: parent.height - m - 22px;
         width: 18px;
         height: 18px;
         Text {
@@ -666,6 +666,20 @@ export component OverlayUi inherits Window {
                 }
                 Rectangle {
                     height: 52px;
+                    // (the graph's floor, and a word while the first samples
+                    // come in: not a blank box)
+                    Rectangle {
+                        y: parent.height - 1px;
+                        height: 1px;
+                        background: Theme.separator;
+                    }
+                    if mt.line == "": Text {
+                        text: "Collecting…";
+                        color: Theme.tertiary;
+                        font-size: Theme.small;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
                     if mt.area != "": Path {
                         width: 100%;
                         height: 100%;
