@@ -453,6 +453,15 @@ impl Surface {
             // (the lock part ends its lock itself)
             Role::Lock(_) => {}
         }
+        // (its add-ons too, ahead of the wl_surface as the protocols ask:
+        // proxies aren't destroyed on drop, and every menu, banner and OSD
+        // made and dropped left two objects alive for the session)
+        if let Some(vp) = &self.viewport {
+            vp.destroy();
+        }
+        if let Some(f) = &self._fractional {
+            f.destroy();
+        }
         self.wl.commit();
     }
     pub fn show(&self, w: u32, h: u32) {
@@ -779,6 +788,10 @@ pub struct State {
     ti_on: Option<WlSurface>, // where text-input entered
     ti_enabled: bool,
     ti_pending: (Option<String>, Option<(String, i32, i32)>),
+    /// commits sent on text_input: a `done` answers only the state of the
+    /// one with its serial (the protocol: an older one's preedit or commit
+    /// would land in the field the focus has moved to)
+    ti_commits: u32,
     pointer: Option<WlPointer>,
     cursor: Option<WpCursorShapeDeviceV1>,
     keyboard: Option<WlKeyboard>,
@@ -845,6 +858,7 @@ impl State {
             ti_on: None,
             ti_enabled: false,
             ti_pending: (None, None),
+            ti_commits: 0,
             pointer: None,
             cursor: None,
             keyboard: None,
@@ -1213,11 +1227,13 @@ impl State {
                 );
                 ti.set_cursor_rectangle(p.x, p.y, p.w, p.h);
                 ti.commit();
+                self.ti_commits = self.ti_commits.wrapping_add(1);
                 self.ti_enabled = true;
             }
             None if self.ti_enabled => {
                 ti.disable();
                 ti.commit();
+                self.ti_commits = self.ti_commits.wrapping_add(1);
                 self.ti_enabled = false;
             }
             None => {}
@@ -1370,6 +1386,7 @@ impl SeatHandler for State {
             // (SCTK reports seats that existed at start only as capabilities)
             if let (None, Some(m)) = (&self.text_input, &self.text_inputs) {
                 self.text_input = Some(m.get_text_input(&seat, qh, ()));
+                self.ti_commits = 0; // (a new object counts from 0)
             }
             let cb = Box::new(|state: &mut State, _: &WlKeyboard, e: KeyEvent| state.key(e, KeyKind::Repeat));
             self.keyboard = self.seat.get_keyboard_with_repeat(qh, &seat, None, self.loop_handle.clone(), cb).ok();
@@ -1387,14 +1404,27 @@ impl SeatHandler for State {
         }
     }
     fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: WlSeat, cap: Capability) {
+        // (the devices went without a leave first: what had focus or the
+        // pointer is told it lost it, or its hover and focus stay for good)
         if cap == Capability::Keyboard {
             if let Some(k) = self.keyboard.take() {
                 k.release();
             }
+            if let Some(s) = self.keyboard_on.take() {
+                s.dispatch(WindowEvent::WindowActiveChanged(false));
+                self.each_part(|p, st| p.keyboard_left(st, &s));
+            }
+            self.mods_sent = [false; 4];
         }
         if cap == Capability::Pointer {
+            if let Some(c) = self.cursor.take() {
+                c.destroy();
+            }
             if let Some(p) = self.pointer.take() {
                 p.release();
+            }
+            if let Some(s) = self.pointer_on.take() {
+                s.dispatch(WindowEvent::PointerExited);
             }
         }
         if cap == Capability::Touch {
@@ -1682,9 +1712,16 @@ impl Dispatch<ZwpTextInputV3, ()> for State {
                 state.ti_pending.1 = Some((text.unwrap_or_default(), cursor_begin, cursor_end));
             }
             zwp_text_input_v3::Event::CommitString { text } => state.ti_pending.0 = text,
-            zwp_text_input_v3::Event::Done { .. } => {
-                let Some(s) = state.ti_on.as_ref().and_then(|w| state.find(w)) else { return };
+            zwp_text_input_v3::Event::Done { serial } => {
                 let (commit, preedit) = std::mem::take(&mut state.ti_pending);
+                // (an answer to an older state: dropped, as the protocol says)
+                if serial != state.ti_commits {
+                    if crate::env::is_set("DEBUG") {
+                        eprintln!("debug: text-input done {serial} for an older state ({} sent)", state.ti_commits);
+                    }
+                    return;
+                }
+                let Some(s) = state.ti_on.as_ref().and_then(|w| state.find(w)) else { return };
                 if let Some(text) = commit {
                     let mut e = InternalKeyEvent { event_type: KeyEventType::CommitComposition, ..Default::default() };
                     e.key_event.text = text.into();

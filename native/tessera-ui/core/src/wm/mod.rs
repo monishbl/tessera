@@ -103,6 +103,9 @@ pub struct IconKey {
     pub style: Style,
 }
 
+/// The most app icon pictures kept
+const ICON_CACHE: usize = 600;
+
 /// Icons drawn off the UI thread (a part's message)
 pub struct IconsDone(pub Vec<(IconKey, Option<Px>)>);
 
@@ -110,7 +113,11 @@ pub struct IconsDone(pub Vec<(IconKey, Option<Px>)>);
 /// its size as AppIcon.qml (styled) or IconImage (plain) draws it
 #[derive(Default)]
 pub struct AppIcons {
-    cache: HashMap<IconKey, slint::Image>,
+    /// the pictures drawn, each with when it was last asked for (`tick`)
+    cache: HashMap<IconKey, (slint::Image, u64)>,
+    /// counts the asks: the least recently asked go first when there are
+    /// too many (clearing them all redrew a big drawer's icons for ever)
+    tick: u64,
     pending: HashSet<IconKey>,
     /// files that couldn't be drawn (an SVG resvg refuses, a broken link):
     /// the generic app icon instead, and never queued again (each refresh
@@ -171,8 +178,11 @@ impl AppIcons {
             path = st.shell.get::<Icons>()?.path(&[], &["application-x-executable"]).filter(|p| !self.failed.contains(p))?;
         }
         let key = IconKey { path, px: (size * scale.max(1.0)).ceil().max(8.0) as u32, style };
-        if let Some(i) = self.cache.get(&key) {
-            return Some(i.clone());
+        self.tick += 1;
+        let tick = self.tick;
+        if let Some(i) = self.cache.get_mut(&key) {
+            i.1 = tick;
+            return Some(i.0.clone());
         }
         if !self.pending.contains(&key) && !self.queued.contains(&key) {
             self.queued.push(key);
@@ -201,7 +211,8 @@ impl AppIcons {
             self.pending.remove(&k);
             match px {
                 Some(px) => {
-                    self.cache.insert(k, slint::Image::from_rgba8(px));
+                    self.tick += 1;
+                    self.cache.insert(k, (slint::Image::from_rgba8(px), self.tick));
                 }
                 None => {
                     if crate::perf::on() {
@@ -211,8 +222,12 @@ impl AppIcons {
                 }
             }
         }
-        if self.cache.len() > 600 {
-            self.cache.clear();
+        if self.cache.len() > ICON_CACHE {
+            // (down to three quarters: the least recently asked for go)
+            let mut ticks: Vec<u64> = self.cache.values().map(|v| v.1).collect();
+            ticks.sort_unstable();
+            let cut = ticks[self.cache.len() - ICON_CACHE * 3 / 4];
+            self.cache.retain(|_, v| v.1 >= cut);
         }
     }
 }
@@ -401,7 +416,11 @@ pub fn spaces_open(cfg: &serde_json::Value) -> bool {
 
 /// menubar.workspaceCount (Config.qml: 5)
 pub fn workspace_count(cfg: &serde_json::Value) -> i32 {
-    cfg["menubar"]["workspaceCount"].as_i64().unwrap_or(5) as i32
+    // (1..30, as the menu bar reads it: a hand-edited 150 ran into the next
+    // display's block of space ids, 100 apart; 5.0 counts as 5)
+    let v = &cfg["menubar"]["workspaceCount"];
+    let n = v.as_i64().or_else(|| v.as_f64().filter(|f| f.is_finite()).map(|f| f.round() as i64)).unwrap_or(5);
+    n.clamp(1, 30) as i32
 }
 
 #[cfg(test)]
