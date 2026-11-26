@@ -88,6 +88,8 @@ enum M {
     Icon(i32, String, f32, f32),
     StackFile(i32),
     StackFileMenu(i32, f32, f32),
+    /// an open stack's "+N more": the Desktop folder in the file manager
+    StackMore,
     Tick,
     Slow,
     SaveNote,
@@ -472,8 +474,10 @@ impl Desktop {
         ui.on_file(move |i, a, x, y| t(Box::new(M::Icon(i, a.into(), x, y))));
         let t = to.clone();
         ui.on_stack_file(move |i, _| t(Box::new(M::StackFile(i))));
-        let t = to;
+        let t = to.clone();
         ui.on_stack_file_menu(move |i, x, y| t(Box::new(M::StackFileMenu(i, x, y))));
+        let t = to;
+        ui.on_stack_more(move || t(Box::new(M::StackMore)));
         ui.show().expect("show desktop");
         let a11y = crate::a11y::A11y::new(&surface, st.tx.clone());
         self.win = Some(Win { output: name.to_string(), surface, ui, widgets, icons, stack_files, a11y, keys: Vec::new(), glass_sent: String::new(), kbd: None });
@@ -620,7 +624,7 @@ impl Desktop {
     fn stack_panel_at(&self, it: &IconItem) -> (f32, f32) {
         let (c, r) = self.spots.get(&it.key).copied().unwrap_or((0, 0));
         let (_, sh) = self.win.as_ref().map(|w| w.surface.logical_size()).unwrap_or((1920, 1080));
-        let rows = ((it.stack.len().min(16) + 3) / 4) as f32;
+        let rows = ((it.stack.len().min(grid::STACK_CELLS) + 3) / 4) as f32;
         let h = rows * 96.0 + 48.0;
         let x = (grid::ORIGIN.0 + c as f32 * grid::SPOT - (4.0 * 96.0 + 24.0) + 8.0).max(8.0);
         let y = (grid::ORIGIN.1 + r as f32 * grid::SPOT).min(sh as f32 - h - 100.0);
@@ -629,10 +633,13 @@ impl Desktop {
 
     fn stack_files(&mut self, st: &mut State) {
         let Some(it) = self.items.iter().find(|i| i.key == self.open_stack).cloned() else { return };
-        // (ElideMiddle on one 88 px line)
-        let files: Vec<ui::DeskFile> = it.stack.iter().take(16).map(|e| ui::DeskFile { name: elide_middle(&e.name, 14).into(), icon: self.file_icon(st, e) }).collect();
+        // (ElideMiddle on one 88 px line; more than fit: the last cell is
+        // "+N more", #502)
+        let (shown, more) = grid::stack_cells(it.stack.len(), grid::STACK_CELLS);
+        let files: Vec<ui::DeskFile> = it.stack.iter().take(shown).map(|e| ui::DeskFile { name: elide_middle(&e.name, 14).into(), icon: self.file_icon(st, e) }).collect();
         if let Some(w) = &self.win {
             w.stack_files.set(files);
+            w.ui.set_stack_more(more as i32);
         }
     }
 
@@ -2008,6 +2015,13 @@ impl Part for Desktop {
                     ask("open", vec![json!(e.path)]);
                     self.update(st);
                 }
+            }
+            M::StackMore => {
+                // (a stack is the Desktop folder's files of one kind: the
+                // rest are there, in the file manager)
+                self.open_stack.clear();
+                ask("open", vec![json!(files::desktop_dir().to_string_lossy())]);
+                self.update(st);
             }
             M::StackFileMenu(i, x, y) => {
                 if let Some(e) = self.items.iter().find(|it| it.key == self.open_stack).and_then(|it| it.stack.get(i as usize)).cloned() {

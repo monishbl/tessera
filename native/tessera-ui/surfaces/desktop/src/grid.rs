@@ -347,6 +347,21 @@ impl IconItem {
     }
 }
 
+/// The cells an open stack's panel has (4 x 4)
+pub const STACK_CELLS: usize = 16;
+
+/// An open stack of `total` files in `cells` cells: how many files show,
+/// and how many the last cell's "+N more" stands for (0: all fit). With
+/// more files than cells, the last cell is the "+N more" tile (it opens
+/// the Desktop folder in the file manager)
+pub fn stack_cells(total: usize, cells: usize) -> (usize, usize) {
+    if total <= cells || cells == 0 {
+        (total.min(cells), if cells == 0 { total } else { 0 })
+    } else {
+        (cells - 1, total - (cells - 1))
+    }
+}
+
 /// The folder's entries (folders first, then by name, as FolderListModel)
 pub fn sort_entries(list: &mut [Entry]) {
     list.sort_by(|a, b| b.dir.cmp(&a.dir).then_with(|| a.name.cmp(&b.name)));
@@ -623,5 +638,21 @@ mod tests {
         let k = st[0].key.clone();
         let lines = move_icon(&k, x, y, &HashMap::new(), &HashSet::new(), 6, 2, &["/d/b\t4\t0".into(), "/gone\t1\t1".into()], &st).unwrap();
         assert!(lines.contains(&"/d/b\t4\t0".to_string()) && !lines.iter().any(|l| l.starts_with("/gone")));
+    }
+
+    #[test]
+    fn an_open_stack_ends_with_n_more_when_it_overflows() {
+        // fits: every file, no "+N more"
+        assert_eq!(stack_cells(0, STACK_CELLS), (0, 0));
+        assert_eq!(stack_cells(5, STACK_CELLS), (5, 0));
+        assert_eq!(stack_cells(16, STACK_CELLS), (16, 0));
+        // one too many: 15 files and "+2 more" (the 16th cell is the tile)
+        assert_eq!(stack_cells(17, STACK_CELLS), (15, 2));
+        // the audit's 40 screenshots: 15 shown, "+25 more"
+        assert_eq!(stack_cells(40, STACK_CELLS), (15, 25));
+        // never more cells than the panel has
+        let (shown, more) = stack_cells(40, STACK_CELLS);
+        assert_eq!(shown + usize::from(more > 0), STACK_CELLS);
+        assert_eq!(shown + more, 40);
     }
 }

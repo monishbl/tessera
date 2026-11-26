@@ -269,3 +269,4 @@ Removed: the passkeys daemon, its Settings group, its polkit-dialog requests and
 | Change | Asked | Status | Commit |
 |---|---|---|---|
 | Recording stops and saves when the screen locks (the normal stop: SIGINT, the file finished; its microphone muted at once and put back after), then a notification "Recording saved — the screen locked" with Open / Show in folder (always a notification: the island is not seen behind the lock); a start posted just before the lock records nothing, the CPU retry does not start while locked; new captures still refused while locked (#474) | 26 Nov | done, unchecked (unit tests) | `git log --grep "#474"` |
+| Desktop stacks: an open stack with more files than its 16 cells shows 15 and a last "+N more" cell; clicking it opens the Desktop folder in the file manager (a stack is the Desktop folder's files of one kind) (#502) | 26 Nov | done, unchecked (unit tests) | `git log --grep "#502"` |
