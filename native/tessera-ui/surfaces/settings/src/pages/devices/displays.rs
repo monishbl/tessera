@@ -309,7 +309,7 @@ pub fn displays(cx: &mut Ctx, p: &mut Page) {
         // Rotation
         let t = m["transform"].as_i64().unwrap_or(0);
         let n = name.clone();
-        let pick = cx.on(move |cx, a| ask(cx, "displaysSet", json!([n, {"transform": a.i as i64 + if t >= 4 { 4 } else { 0 }}])));
+        let pick = cx.on(move |cx, a| ask(cx, "displaysSet", json!([n, {"transform": (a.i as i64).clamp(0, 3) + if t >= 4 { 4 } else { 0 }}])));
         rows.push(Row::new("Rotation").visible(shown).segmented(&["Standard", "90°", "180°", "270°"], (t % 4) as i32, pick).width(260.0));
         // Brightness over DDC/CI
         let ddc = &f["ddc"];

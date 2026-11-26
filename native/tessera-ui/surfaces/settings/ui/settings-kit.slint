@@ -360,8 +360,12 @@ export component SSlider {
     accessible-action-increment => { nudge(value + key-step); }
     accessible-action-decrement => { nudge(value - key-step); }
     function snap(v: float) -> float {
-        let c = max(min(from, to), min(max(from, to), v));
-        if step > 0 { return round(c / step) * step; }
+        let lo = min(from, to);
+        let hi = max(from, to);
+        let c = max(lo, min(hi, v));
+        // (steps counted from the range's start, not from zero, so its
+        // lowest value can be reached)
+        if step > 0 { return max(lo, min(hi, lo + round((c - lo) / step) * step)); }
         c
     }
     function nudge(v: float) {
@@ -521,9 +525,24 @@ export component SSegmented {
     accessible-role: AccessibleRole.tab-list;
     accessible-label: label;
     forward-focus: fs;
+    function usable(i: int) -> bool {
+        i >= 0 && i < opts.length && !opts[i].off
+    }
+    // (the next usable option from `at` in direction d, past disabled ones;
+    // -1 when there's none: a segmented control has a handful)
+    function next-usable(at: int, d: int) -> int {
+        if usable(at + d) { return at + d; }
+        if usable(at + 2 * d) { return at + 2 * d; }
+        if usable(at + 3 * d) { return at + 3 * d; }
+        if usable(at + 4 * d) { return at + 4 * d; }
+        if usable(at + 5 * d) { return at + 5 * d; }
+        if usable(at + 6 * d) { return at + 6 * d; }
+        if usable(at + 7 * d) { return at + 7 * d; }
+        -1
+    }
     function step(d: int) {
-        let i = current + d;
-        if i >= 0 && i < opts.length && !opts[i].off { selected(i); }
+        let i = next-usable(current, d);
+        if i >= 0 { selected(i); }
     }
     fs := FocusScope {
         // (a click goes to what's under it: keys only; it covered link rows and choices, which then took two clicks or none)
@@ -531,8 +550,8 @@ export component SSegmented {
         key-pressed(e) => {
             if e.text == Key.LeftArrow || e.text == Key.UpArrow { step(-1); return accept; }
             if e.text == Key.RightArrow || e.text == Key.DownArrow { step(1); return accept; }
-            if e.text == Key.Home { selected(0); return accept; }
-            if e.text == Key.End { selected(opts.length - 1); return accept; }
+            if e.text == Key.Home { if next-usable(-1, 1) >= 0 { selected(next-usable(-1, 1)); } return accept; }
+            if e.text == Key.End { if next-usable(opts.length, -1) >= 0 { selected(next-usable(opts.length, -1)); } return accept; }
             reject
         }
     }
@@ -719,7 +738,10 @@ export component SWavy inherits Rectangle {
     in property <float> value;
     property <bool> ind: value < 0;
     property <float> shown: ind ? 0.3 : max(0, min(1, value));
-    property <duration> t: animation-tick();
+    // (held still with Reduce motion or battery saver's "still", and while
+    // the bar is flat: animation-tick() redraws the window every frame)
+    property <bool> moving: !Theme.still && (ind || amplitude > 0);
+    property <duration> t: moving ? animation-tick() : 0ms;
     property <float> phase: mod(t / 1000ms, 1);
     property <float> u: mod(t / 1800ms, 1);
     property <float> half: u < 0.5 ? u * 2 : 2 - u * 2;
@@ -945,6 +967,12 @@ export component SField {
             accessible-label: root.label != "" ? root.label : root.placeholder;
             edited => { root.edited(self.text); }
             accepted => { root.committed(self.text); }
+            // (Esc leaves the field, as a click elsewhere does, instead of
+            // closing the whole window)
+            key-pressed(e) => {
+                if e.text == Key.Escape { self.clear-focus(); return accept; }
+                reject
+            }
             changed has-focus => {
                 if !self.has-focus { root.committed(self.text); }
             }

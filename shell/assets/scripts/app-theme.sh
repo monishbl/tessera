@@ -56,8 +56,12 @@ else
 fi
 a="${accent#\#}"
 accent_rgb="$((16#${a:0:2})),$((16#${a:2:2})),$((16#${a:4:2}))"
+# (the path as a JSON string: backslashes and quotes escaped, so a picture
+# named with either doesn't make matugen's JSON invalid)
+wall_json="${wall//\\/\\\\}"
+wall_json="${wall_json//\"/\\\"}"
 extra=$(printf '{"tessera":{"accent":"#%s","accent_stripped":"%s","accent_rgb":"%s","wallpaper":"%s","red":"%s","green":"%s","yellow":"%s","blue":"%s","magenta":"%s","cyan":"%s"}}' \
-    "$a" "$a" "$accent_rgb" "${wall//\"/}" "$red" "$green" "$yellow" "$blue" "$magenta" "$cyan")
+    "$a" "$a" "$accent_rgb" "$wall_json" "$red" "$green" "$yellow" "$blue" "$magenta" "$cyan")
 
 # A matugen config with just the wanted targets
 conf=$(mktemp --suffix=.toml)
@@ -80,7 +84,19 @@ fi
 include() { # file, line, [create if missing]
     local f="$1" line="$2"
     if [[ -f "$f" ]]; then
-        grep -qF "tessera-colors" "$f" || printf '%s\n%s' "$line" "$(cat "$f")" >"$f"
+        # (written beside the real file and renamed over it: a crash or a full
+        # disk never leaves it empty; its last newline is kept)
+        if ! grep -qF "tessera-colors" "$f"; then
+            local target tmp
+            target=$(readlink -f -- "$f")
+            tmp=$(mktemp "$target.XXXXXX") || return 0
+            if { printf '%s\n' "$line"; cat -- "$target"; } >"$tmp"; then
+                chmod --reference="$target" "$tmp" 2>/dev/null
+                mv -f -- "$tmp" "$target" || rm -f -- "$tmp"
+            else
+                rm -f -- "$tmp"
+            fi
+        fi
     elif [[ "${3:-}" == create ]]; then
         mkdir -p "$(dirname "$f")" && printf '%s\n' "$line" >"$f"
     fi

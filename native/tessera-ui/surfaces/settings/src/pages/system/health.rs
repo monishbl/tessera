@@ -563,7 +563,7 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
     let (secs, n, low) = if week { (6 * 3600, 28usize, "7 days ago") } else { (3600, 24usize, "24 hours ago") };
     let from = (now / secs) * secs - (n as i64 - 1) * secs;
     let slots = health::slots(&samples, from, secs, n);
-    let label_of = |t: i64| if week { tessera_core::util::strftime("%a %H:00", t) } else { tessera_core::util::strftime("%H:00", t) };
+    let label_of = |t: i64| if week { tessera_core::util::strftime("%a %H:%M", t) } else { tessera_core::util::strftime("%H:%M", t) };
     let range = cx.on(|cx, a| cx.local_set("health.range", if a.i == 1 { "week" } else { "day" }));
     let mem_top = nice_top(slots.iter().map(|s| s.mem_max as f64).fold(0.0, f64::max), 1024.0);
     let mem_bars: Vec<Opt> = slots

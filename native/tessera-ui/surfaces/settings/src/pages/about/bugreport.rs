@@ -54,25 +54,11 @@ fn crashes(cx: &mut Ctx, p: &mut Page) {
     g.row(Row::new(format!("Crash reports: {count}")).detail(latest).buttons(vec![btn("Save report").icon("download-simple"), btn("Delete reports").icon("trash").danger()], act));
 }
 
-thread_local! {
-    static SHOT: std::cell::RefCell<Option<(String, Option<slint::Image>)>> = const { std::cell::RefCell::new(None) };
-}
-
-/// The screenshot as it is now (read again when the shell says it changed)
-fn shot(path: &str, version: i64) -> Option<slint::Image> {
-    let key = format!("{path}?v={version}");
-    SHOT.with(|c| {
-        let mut c = c.borrow_mut();
-        if let Some((k, img)) = c.as_ref() {
-            if *k == key {
-                return img.clone();
-            }
-        }
-        let img = slint::Image::load_from_path(std::path::Path::new(path)).ok();
-        *c = Some((key, img.clone()));
-        img
-    })
-}
+/// The screenshot's preview: decoded off the UI thread at preview size (a
+/// 4K capture decoded in the page build stalled the whole shell), read again
+/// when the shell says it changed (Mark up)
+const SHOT_W: u32 = 1280;
+const SHOT_H: u32 = 800;
 
 /// The label of the Send row (what state the report is in)
 pub fn send_label(state: &str, error: &str, wait: i64) -> String {
@@ -145,7 +131,12 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
             cx.local_set("about.bug.showInfo", !show_info);
         }
     });
-    let picture = if has_shot && inc_shot { shot(&s(&r["shot"]), n(&r["shotVersion"])) } else { None };
+    let picture = if has_shot && inc_shot { {
+        // (the whole capture, its own shape: not cropped to the box)
+        let path = s(&r["shot"]);
+        let (w, h) = tessera_core::picture::size_of(&path).map_or((SHOT_W, SHOT_H), |(w, h)| tessera_core::picture::fit_box(w, h, SHOT_W, SHOT_H));
+        cx.picture_as(&path, w, h, &n(&r["shotVersion"]).to_string())
+    } } else { None };
     let log = if gathering { "Reading the log…".to_string() } else if s(&r["log"]).is_empty() { "The log is empty.".into() } else { s(&r["log"]) };
     let info = if gathering { "Reading…".to_string() } else { s(&r["info"]) };
     let g = p.group("Attached");

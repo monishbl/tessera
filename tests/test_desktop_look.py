@@ -327,6 +327,7 @@ class Keyring(Home):
 
     def test_flags_written_kept_and_restored(self):
         self.fake("gnome-keyring-daemon", "exit 0\n")
+        self.fake("code", "exit 0\n")
         self.put(".config/chrome-flags.conf", "--ozone-platform-hint=wayland\n")
         self.put(".config/thorium-flags.conf", "--password-store=basic\n")  # (the user's own choice)
         self.run_look("install")
@@ -341,9 +342,46 @@ class Keyring(Home):
         self.assertIsNone(self.text(".config/code-flags.conf"))
         self.assertEqual(self.text(".config/chrome-flags.conf").strip(), "--ozone-platform-hint=wayland")
 
+    def test_flags_only_for_apps_that_are_there(self):
+        self.fake("gnome-keyring-daemon", "exit 0\n")
+        self.run_look("install")
+        self.assertIsNone(self.text(".config/code-flags.conf"))
+        self.assertIsNone(self.text(".config/brave-flags.conf"))
+        self.fake("brave", "exit 0\n")
+        self.run_look("on")
+        self.assertIn("--password-store=gnome-libsecret", self.text(".config/brave-flags.conf"))
+
     def test_no_keyring_no_flags(self):
         self.run_look("install")
         self.assertIsNone(self.text(".config/code-flags.conf"))
+
+
+class Blocks(Home):
+    """Tessera's marked lines in your files (audit #956)"""
+
+    def test_a_lost_end_line_keeps_your_lines(self):
+        mine = "alias ll='ls -l'\nset -x EDITOR nvim\n"
+        self.put(".config/fish/config.fish", BEGIN + "\nold line\n" + mine + BEGIN + "\nours\n" + END + "\n")
+        self.run_look("install")
+        self.run_look("off")
+        text = self.text(".config/fish/config.fish")
+        self.assertIn("alias ll='ls -l'", text)
+        self.assertIn("set -x EDITOR nvim", text)
+        self.assertNotIn(BEGIN, text)
+        self.assertNotIn(END, text)
+
+
+class Smoothing(Home):
+    """Grayscale smoothing leaves your own fontconfig choice alone"""
+
+    def test_your_rgba_wins(self):
+        self.put(".config/fontconfig/fonts.conf", '<fontconfig><match target="font"><edit name="rgba" mode="assign"><const>rgb</const></edit></match></fontconfig>\n')
+        self.run_look("install")
+        self.assertIsNone(self.text(".config/fontconfig/conf.d/75-tessera-grayscale.conf"))
+
+    def test_written_otherwise(self):
+        self.run_look("install")
+        self.assertIn("rgba", self.text(".config/fontconfig/conf.d/75-tessera-grayscale.conf"))
 
 
 class DiscordLauncher(Home):
@@ -360,6 +398,16 @@ class DiscordLauncher(Home):
         self.assertIn("Exec=/usr/bin/discord --password-store=gnome-libsecret --url -- %u", mine)
         self.run_look("off")
         self.assertIsNone(self.text(".local/share/applications/discord.desktop"))
+
+    def test_refresh_follows_the_systems_entry(self):
+        self.fake("gnome-keyring-daemon", "exit 0\n")
+        apps = self.sys / "usr/share/applications"
+        apps.mkdir(parents=True, exist_ok=True)
+        (apps / "discord.desktop").write_text("[Desktop Entry]\nExec=/usr/bin/discord\n")
+        self.run_look("install")
+        (apps / "discord.desktop").write_text("[Desktop Entry]\nExec=/opt/discord/Discord\n")
+        self.run_look("refresh", "--mode", "dark")
+        self.assertIn("Exec=/opt/discord/Discord --password-store=gnome-libsecret", self.text(".local/share/applications/discord.desktop"))
 
     def test_your_own_entry_is_left_alone(self):
         self.fake("gnome-keyring-daemon", "exit 0\n")

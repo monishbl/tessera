@@ -60,15 +60,22 @@ pub fn play_now(what: &'static str) {
 
 static STILL: AtomicU64 = AtomicU64::new(0);
 
+thread_local! {
+    /// The wait for a slider to rest: one timer started again on each move
+    /// (a thread for every step made a hundred threads in a short drag)
+    static RESTING: slint::Timer = slint::Timer::default();
+}
+
 /// Play a sound once a slider rests (QML plays it as the slider is let go):
-/// each move starts the wait again
+/// each move starts the wait again (on the UI thread, as the page's actions)
 pub fn play_when_still(what: &'static str) {
     let mine = STILL.fetch_add(1, Ordering::SeqCst) + 1;
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(450));
-        if STILL.load(Ordering::SeqCst) == mine {
-            crate::shell::ask("settings", serde_json::json!(["act", "notify", "play", what]));
-        }
+    RESTING.with(|t| {
+        t.start(slint::TimerMode::SingleShot, std::time::Duration::from_millis(450), move || {
+            if STILL.load(Ordering::SeqCst) == mine {
+                crate::shell::ask("settings", serde_json::json!(["act", "notify", "play", what]));
+            }
+        })
     });
 }
 

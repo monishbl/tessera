@@ -101,7 +101,8 @@ def apply_kde(mode, scheme=None):
             scheme = data / "color-schemes" / ("TesseraDesktopDark.colors" if mode == "dark" else "TesseraDesktopLight.colors")
             fallback_scheme(scheme, mode == "dark")
     scheme = Path(scheme).resolve()
-    palette = configparser.ConfigParser(interpolation=None)
+    # (strict=False: a scheme with a key twice is read, not a traceback)
+    palette = configparser.ConfigParser(interpolation=None, strict=False)
     palette.optionxform = str
     palette.read(scheme)
     groups = {s: dict(palette[s]) for s in palette.sections() if s.startswith(("Colors:", "ColorEffects:"))}
@@ -117,7 +118,10 @@ def apply_kde(mode, scheme=None):
         changed |= update_ini(cfg / "dolphinrc", {"UiSettings": {"ColorScheme": scheme.stem}})
     # Qt apps using qt6ct must use the same palette as KDE widgets.
     def color(group, key):
-        value = groups["Colors:" + group][key]
+        # (a scheme without that group, Tooltip or Selection say: the
+        # window's colours, then the view's)
+        value = (groups.get("Colors:" + group, {}).get(key) or groups.get("Colors:Window", {}).get(key)
+                 or groups["Colors:View"].get(key) or groups["Colors:View"]["ForegroundNormal"])
         if value.startswith("#"):
             return value
         return "#" + "".join(f"{int(v):02x}" for v in value.split(",")[:3])
@@ -174,20 +178,31 @@ def apply_gtk(mode):
     the theme, and GTK's own settings.ini for apps that don't read gsettings"""
     dark = mode == "dark"
     cfg = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    now = ""
-    if shutil.which("gsettings"):
-        r = subprocess.run(["gsettings", "get", "org.gnome.desktop.interface", "gtk-theme"], capture_output=True, text=True, timeout=5, check=False)
-        now = r.stdout.strip().strip("'")
+    got = gsettings("get", "org.gnome.desktop.interface", "gtk-theme")
+    now = (got or "").strip().strip("'")
     ini3 = cfg / "gtk-3.0" / "settings.ini"
     mine = current(ini3, "Settings", "gtk-theme-name")
     if not GTK_OURS.match(now) or not GTK_OURS.match(mine):
         return  # (a theme you picked: yours)
     theme = gtk_theme(dark)
-    if shutil.which("gsettings") and now != theme:
-        subprocess.run(["gsettings", "set", "org.gnome.desktop.interface", "gtk-theme", theme], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False)
+    if got is not None and now != theme:
+        gsettings("set", "org.gnome.desktop.interface", "gtk-theme", theme)
     prefer = "true" if dark else "false"
     update_ini(ini3, {"Settings": {"gtk-theme-name": theme, "gtk-application-prefer-dark-theme": prefer}})
     update_ini(cfg / "gtk-4.0" / "settings.ini", {"Settings": {"gtk-application-prefer-dark-theme": prefer}})
+
+
+def gsettings(*args):
+    """gsettings' answer (stdout), or None when it isn't there, fails or
+    hangs (no session bus yet at login, a stuck dconf): the sync goes on
+    without it instead of stopping with a traceback"""
+    if not shutil.which("gsettings"):
+        return None
+    try:
+        r = subprocess.run(["gsettings", *args], capture_output=True, text=True, timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
 
 
 def undo_gtk():
@@ -212,10 +227,9 @@ def undo_gtk():
                 ini.write_text(text)
             else:
                 ini.unlink()
-    if shutil.which("gsettings"):
-        r = subprocess.run(["gsettings", "get", "org.gnome.desktop.interface", "gtk-theme"], capture_output=True, text=True, timeout=5, check=False)
-        if GTK_OURS.match(r.stdout.strip().strip("'")):
-            subprocess.run(["gsettings", "reset", "org.gnome.desktop.interface", "gtk-theme"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False)
+    got = gsettings("get", "org.gnome.desktop.interface", "gtk-theme")
+    if got is not None and GTK_OURS.match(got.strip().strip("'")):
+        gsettings("reset", "org.gnome.desktop.interface", "gtk-theme")
 
 
 def main():
@@ -227,8 +241,7 @@ def main():
     if args.mode == "undo-gtk":
         undo_gtk()
         return
-    if shutil.which("gsettings"):
-        subprocess.run(["gsettings", "set", "org.gnome.desktop.interface", "color-scheme", "prefer-" + args.mode], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False)
+    gsettings("set", "org.gnome.desktop.interface", "color-scheme", "prefer-" + args.mode)
     apply_gtk(args.mode)
     if not args.keep_kde:
         apply_kde(args.mode, args.scheme)

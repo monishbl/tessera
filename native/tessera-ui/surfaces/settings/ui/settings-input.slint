@@ -89,6 +89,9 @@ component Dots inherits Rectangle {
     in property <string> label;
     // (its ink at rest: shortcuts' tertiary; mouse-gestures.qml's secondary)
     in property <color> rest: Theme.tertiary;
+    // (a Tab stop of its own, Return/Space/Menu open it; not in a row that
+    // is one already, as a shortcut's)
+    in property <bool> tab-stop: true;
     width: 28px;
     height: 28px;
     border-radius: Theme.material ? (ta.pressed ? 8px : self.height / 2) : Theme.radius-control - 2px;
@@ -104,6 +107,14 @@ component Dots inherits Rectangle {
     // (lit while its menu is open, shortcuts.qml 146)
     property <bool> shown: SBus.menu-shown == menu-id && menu-id != "";
     SIcon { g: SG.dots; size: 16px; color: lit || shown || ta.has-hover ? Theme.label : root.rest; }
+    if root.tab-stop: dfs := FocusScope {
+        focus-on-click: false;
+        key-pressed(e) => {
+            if !e.repeat && (e.text == Key.Return || e.text == " " || e.text == Key.Menu) { root.open(); return accept; }
+            reject
+        }
+        SFocusRing { shown: dfs.has-focus; radius: root.border-radius; }
+    }
     ta := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.open(); }
@@ -187,6 +198,8 @@ component BindRow inherits Tile {
             Text {
                 text: r.label;
                 overflow: elide;
+                // (long key combinations don't squeeze the name to nothing)
+                min-width: min(self.preferred-width, 120px);
                 color: r.enabled ? Theme.label : Theme.secondary;
                 font-size: Theme.material ? 16px : Theme.body;
                 accessible-role: AccessibleRole.none;
@@ -209,7 +222,7 @@ component BindRow inherits Tile {
         }
         VerticalLayout {
             alignment: center;
-            dots := Dots { menu-id: r.id; lit: ta.has-hover; label: "Options for " + r.label; }
+            dots := Dots { menu-id: r.id; lit: ta.has-hover; label: "Options for " + r.label; tab-stop: false; }
         }
     }
 }
@@ -308,6 +321,10 @@ component Recorder inherits Tile {
                 font-size: Theme.title;
             }
             catcher := Rectangle {
+                // (recording: after a click, or Enter/Space on the focused
+                // box; Tab and Esc only pass by until then, so tabbing
+                // through doesn't record Tab as the key)
+                property <bool> armed;
                 width: 168px;
                 height: 32px;
                 border-radius: Theme.material ? self.height / 2 : Theme.radius-control;
@@ -324,7 +341,7 @@ component Recorder inherits Tile {
                     vertical-alignment: center;
                     horizontal-alignment: center;
                     overflow: elide;
-                    text: fs.has-focus ? "Press a key…" : r.value != "" ? r.value : "Click, then press a key";
+                    text: fs.has-focus && catcher.armed ? "Press a key…" : fs.has-focus ? "Press Enter, then a key" : r.value != "" ? r.value : "Click, then press a key";
                     color: fs.has-focus || r.value == "" ? Theme.secondary : Theme.label;
                     font-size: Theme.body;
                     font-weight: r.value != "" && !fs.has-focus ? 600 : 400;
@@ -332,18 +349,24 @@ component Recorder inherits Tile {
                 }
                 TouchArea {
                     mouse-cursor: pointer;
-                    clicked => { fs.focus(); }
+                    clicked => { catcher.armed = true; fs.focus(); }
                 }
                 // One key, then the box lets go (it never traps the keyboard)
                 fs := FocusScope {
                     // (a click goes to what's under it: keys only; it covered link rows and choices, which then took two clicks or none)
                     focus-on-click: false;
+                    changed has-focus => { if !self.has-focus { catcher.armed = false; } }
                     key-pressed(e) => {
+                        if !catcher.armed {
+                            if !e.repeat && (e.text == Key.Return || e.text == " ") { catcher.armed = true; return accept; }
+                            return reject;
+                        }
                         if e.text == Key.Shift || e.text == Key.ShiftR || e.text == Key.Control || e.text == Key.ControlR || e.text == Key.Alt || e.text == Key.AltGr || e.text == Key.Meta || e.text == Key.MetaR {
                             return accept;
                         }
                         let held = (e.modifiers.shift ? 1 : 0) + (e.modifiers.control ? 2 : 0) + (e.modifiers.alt ? 4 : 0) + (e.modifiers.meta ? 8 : 0);
                         SBus.act(r.id, 10, held, e.text);
+                        catcher.armed = false;
                         // (the focus goes on to "Edit as text", ShortcutRecorder.qml 184)
                         toggle.focus();
                         accept
@@ -422,6 +445,16 @@ component AppRow inherits Tile {
         height: 24px;
         source: r.image;
         image-fit: contain;
+    }
+    // (a quiet tile while the icon is read, or when there's none, as
+    // About's lists: no empty gap before the name)
+    if r.image.width == 0: Rectangle {
+        x: Theme.material ? 20px : 14px;
+        y: (parent.height - self.height) / 2;
+        width: 24px;
+        height: 24px;
+        border-radius: 24px / 4.4;
+        background: Theme.fill;
     }
     Text {
         x: (Theme.material ? 20px : 14px) + 24px + (Theme.material ? 16px : 10px);

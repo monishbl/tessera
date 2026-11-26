@@ -44,12 +44,29 @@ fn upd<'a>(cx: &Ctx<'a>) -> &'a Value {
 /// A button's act, run: a sheet ("sheet:notes"), a package to install
 /// ("install:grub-btrfs"), else the shell's act by name ("tu.update")
 fn run(cx: &mut Ctx, act: &str) {
+    // ("confirm:x": x only on a second press, the button asking first: a
+    // staged update or the build cache isn't thrown away on one click)
+    if let Some(real) = act.strip_prefix("confirm:") {
+        if cx.confirmed(act, asking(real)) {
+            run(cx, real);
+        }
+        return;
+    }
     if let Some(k) = act.strip_prefix("sheet:") {
         cx.ask("about", "sheet", json!([k]));
     } else if let Some(pk) = act.strip_prefix("install:") {
         cx.ask("about", "needs.install", json!([pk]));
     } else {
         cx.ask("about", act, Value::Null);
+    }
+}
+
+/// What the first press of a "confirm:" button says (audit #114's pattern)
+pub fn asking(act: &str) -> String {
+    match act {
+        "tu.cancel" => "Press Discard again to throw the downloaded update away".into(),
+        "cache.delete" => "Press Delete cache again: the next update builds from the start".into(),
+        _ => "Press again to go ahead".into(),
     }
 }
 
@@ -381,7 +398,7 @@ pub fn tessera_part(u: &Value) -> Part {
         if notes {
             buttons.push(bt("What's new", "sheet:notes", 4, true));
         }
-        buttons.push(bt("Discard", "tu.cancel", 0, true));
+        buttons.push(bt("Discard", "confirm:tu.cancel", 0, true));
         return Part { detail: format!("{} is ready to restart", short(&s(&t["staged"]))), buttons, progress: None };
     }
     let result = &t["result"];
@@ -703,7 +720,7 @@ pub fn options(cx: &mut Ctx, p: &mut Page) {
     if let Some(size) = cache_words(u["cache"].as_u64()) {
         let err = s(&u["cacheError"]);
         let deleting = b(&u["cacheBusy"]);
-        let del = cx.on(|cx, _| cx.ask("about", "cache.delete", Value::Null));
+        let del = cx.on(|cx, _| run(cx, "confirm:cache.delete"));
         p.group("Build cache")
             .footer("Kept so updates built on this computer take minutes. Deleting it frees the space; the next build takes longer.")
             .row(Row::new(format!("Build cache · {size}"))
@@ -1166,6 +1183,13 @@ pub fn plain(md: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_staged_update_is_discarded_on_a_second_press() {
+        let p = tessera_part(&feed(json!({"t": {"ready": true, "staged": "656db163"}})));
+        assert_eq!(p.buttons.last().map(|b| b.1.as_str()), Some("confirm:tu.cancel"));
+        assert!(asking("tu.cancel").contains("Discard again"));
+    }
 
     /// A feed as the shell sends it, with `patch` merged in (one level deep)
     fn feed(patch: Value) -> Value {

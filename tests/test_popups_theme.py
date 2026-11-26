@@ -112,6 +112,12 @@ class Gtk(Base):
     def gtk_theme(self):
         return json.loads(self.gs.read_text()).get("gtk-theme")
 
+    def test_a_hung_gsettings_doesnt_stop_the_sync(self):
+        # (no session bus yet, a stuck dconf: settings.ini still follows)
+        self.fake("gsettings", "sleep 20\n")
+        self.run_py(THEME, "dark", "--keep-kde")
+        self.assertIn("gtk-application-prefer-dark-theme=true", self.text("gtk-3.0/settings.ini"))
+
     def test_dark_gtk3_is_a_theme_gtk3_has(self):
         # (no adw-gtk3: Adwaita, dark through settings.ini; never "Adwaita-dark")
         self.run_py(THEME, "dark", "--keep-kde")

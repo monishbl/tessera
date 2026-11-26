@@ -69,7 +69,12 @@ const WIFI_TRANSIENT: &[&str] = &["wifi.form", "wifi.asking", "wifi.typed", "wif
 /// The account pages' typed state (forms, a typed password, a question
 /// asked): gone when you go to another page or Settings opens again, as
 /// the QML's pages made anew
-const PAGE_TRANSIENT: &[&str] = &["acct.", "ai.", "cal.", "wr.", "gest.", "focus.", "dict.refreshed", "look.bootRefreshed", "look.login.", "about.rebootAsk"];
+const PAGE_TRANSIENT: &[&str] = &["acct.", "ai.", "cal.", "wr.", "gest.", "focus.", "dict.refreshed", "look.bootRefreshed", "look.login.", "kb.", "dock.filter", "bio.", "fp.", "ie.", "pk.", "displays.selected", "about.rebootAsk"];
+
+/// A page-local key that goes when the page is left or Settings closes
+fn transient(k: &str) -> bool {
+    k.starts_with("more:") || WIFI_TRANSIENT.iter().any(|w| k.starts_with(w)) || PAGE_TRANSIENT.iter().any(|w| k.starts_with(w))
+}
 /// Material's cookie steps this often (ms)
 const SPIN_MS: u64 = 80;
 /// The services' updates (every service's, every tick) wait this long and
@@ -315,9 +320,11 @@ pub fn sep_h(kind: &MenuKind) -> f32 {
 pub fn menu_box(kind: &MenuKind, material: bool, longest: usize, n: usize, lines: usize, control_w: f32) -> (u32, u32) {
     let item = menu_item_h(kind, material);
     let (max_h, min_w, pad, per_char) = if material { (360.0, 240.0, 70.0, 7.6) } else { (320.0, 220.0, 54.0, 7.4) };
-    // (Dropdown.qml: as wide as the control, 200 at least; 4/5 px above and below)
+    // (Dropdown.qml: as wide as the control, 200 at least, and wide enough
+    // for its longest item (480 at most) so long options aren't cut; 4/5 px
+    // above and below)
     let (w, h) = match kind {
-        MenuKind::Dropdown => (control_w.max(200.0), (n as f32 * item + if material { 8.0 } else { 10.0 }).min(280.0)),
+        MenuKind::Dropdown => (control_w.max(200.0).max((longest as f32 * per_char + pad).min(480.0)), (n as f32 * item + if material { 8.0 } else { 10.0 }).min(280.0)),
         _ => ((longest as f32 * per_char + pad).max(min_w).min(480.0), (n as f32 * item + lines as f32 * sep_h(kind) + 10.0).min(max_h)),
     };
     (w.ceil() as u32, h.ceil() as u32)
@@ -592,7 +599,7 @@ impl Settings {
         if !self.open {
             // (opening again: the page's own state starts over, as the QML
             // window is made anew each time)
-            self.local.retain(|k, _| !k.starts_with("more:") && !WIFI_TRANSIENT.iter().any(|w| k.starts_with(w)) && !PAGE_TRANSIENT.iter().any(|w| k.starts_with(w)));
+            self.forget_page_state();
             // (what was read once is read again: audit #111)
             if let Some(Value::Object(keys)) = self.local.remove(model::ONCE_KEYS) {
                 for k in keys.keys() {
@@ -626,11 +633,24 @@ impl Settings {
         self.sync_chrome(st);
     }
 
+    /// The page's typed state goes (forms, typed passwords and keys, a
+    /// question asked); a fingerprint enrolment the sheet was showing is
+    /// stopped, so the reader isn't left claimed
+    fn forget_page_state(&mut self) {
+        if self.local.get("fp.sheet").and_then(Value::as_str).is_some_and(|s| !s.is_empty()) {
+            // (the shell cancels only when it is enrolling)
+            shell::ask("settings", json!(["act", "system", "fpCancel"]));
+        }
+        self.local.retain(|k, _| !transient(k));
+    }
+
     fn close(&mut self, st: &mut State, say: bool) {
         if !self.open {
             return;
         }
         self.open = false;
+        // (secrets typed but not sent don't stay in memory until next time)
+        self.forget_page_state();
         self.spin_timer.stop();
         self.close_menu(st);
         self.close_popover(st);
@@ -685,7 +705,7 @@ impl Settings {
             shell::ask("settings", json!(["page", page]));
             // (another page: More options close, and the Wi-Fi list's password
             // row, join form and share card go, as WifiList.qml's when hidden)
-            self.local.retain(|k, _| !k.starts_with("more:") && !WIFI_TRANSIENT.iter().any(|w| k.starts_with(w)) && !PAGE_TRANSIENT.iter().any(|w| k.starts_with(w)));
+            self.forget_page_state();
             // (a picture that couldn't be read is tried again on the next
             // page, and a long browse never keeps more than a few hundred)
             self.pictures.retain(|_, p| p.is_some());
@@ -1367,6 +1387,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn typed_page_state_is_transient() {
+        for k in ["kb.view", "kb.text", "dock.filter", "bio.confirming", "fp.sheet", "ie.keyboard.path", "pk.retried", "displays.selected", "acct.icloud.pw", "ai.cred", "ai.klipy", "more:x", "wifi.typed"] {
+            assert!(transient(k), "{k}");
+        }
+        assert!(!transient("about.bk.file"));
+    }
+
+    #[test]
     fn a_press_outside_closes_menus_and_popovers() {
         // (its own menu: stays; the popover: a menu over the window goes, the popover stays)
         assert_eq!(closes_on_press(Pressed::Menu), (false, false));
@@ -1407,6 +1435,10 @@ mod tests {
         assert_eq!(menu_box(&MenuKind::Dropdown, true, 5, 3, 0, 260.0), (260, 116));
         assert_eq!(menu_box(&MenuKind::Dropdown, false, 5, 3, 0, 100.0), (200, 94));
         assert_eq!(menu_box(&MenuKind::Dropdown, true, 5, 30, 0, 100.0).1, 280);
+        // (a long option widens the list, to 480 at most)
+        assert_eq!(menu_box(&MenuKind::Dropdown, false, 40, 3, 0, 100.0).0, 350);
+        assert_eq!(menu_box(&MenuKind::Dropdown, true, 60, 3, 0, 100.0).0, 480);
+        assert_eq!(menu_box(&MenuKind::Dropdown, true, 60, 3, 0, 600.0).0, 600);
         // (a pointer menu: ContextMenu.qml's 28 px rows and 11 px separators, both looks)
         assert_eq!(menu_box(&MenuKind::Pointer, false, 5, 3, 1, 1.0).1, 105);
         assert_eq!(menu_box(&MenuKind::Pointer, true, 5, 3, 1, 1.0).1, 105);

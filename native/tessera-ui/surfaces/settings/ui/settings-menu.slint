@@ -50,11 +50,21 @@ export component SettingsMenu inherits Window {
         if n == 0 { return; }
         // (from the one we're on, the next usable one, round the list)
         let start = current < 0 ? (d > 0 ? -1 : 0) : current;
-        let i1 = mod(start + d + n, n);
-        let i2 = mod(start + 2 * d + 2 * n, n);
-        let i3 = mod(start + 3 * d + 3 * n, n);
-        if !items[i1].off { current = i1; } else if !items[i2].off { current = i2; } else if !items[i3].off { current = i3; }
+        // (eight tries: past a run of disabled items; none usable, and a
+        // place off the list (End) goes back to none)
+        if usable(mod(start + d + n, n)) { current = mod(start + d + n, n); }
+        else if usable(mod(start + 2 * d + 2 * n, n)) { current = mod(start + 2 * d + 2 * n, n); }
+        else if usable(mod(start + 3 * d + 3 * n, n)) { current = mod(start + 3 * d + 3 * n, n); }
+        else if usable(mod(start + 4 * d + 4 * n, n)) { current = mod(start + 4 * d + 4 * n, n); }
+        else if usable(mod(start + 5 * d + 5 * n, n)) { current = mod(start + 5 * d + 5 * n, n); }
+        else if usable(mod(start + 6 * d + 6 * n, n)) { current = mod(start + 6 * d + 6 * n, n); }
+        else if usable(mod(start + 7 * d + 7 * n, n)) { current = mod(start + 7 * d + 7 * n, n); }
+        else if usable(mod(start + 8 * d + 8 * n, n)) { current = mod(start + 8 * d + 8 * n, n); }
+        else if current >= n { current = -1; }
         keep-in-view();
+    }
+    function usable(i: int) -> bool {
+        i >= 0 && i < items.length && !items[i].off
     }
 
     // A key from the Settings window (it kept the keyboard): as the menu's own
@@ -79,7 +89,7 @@ export component SettingsMenu inherits Window {
             if e.text == Key.Home { current = -1; step(1); return accept; }
             if e.text == Key.End { current = items.length; step(-1); return accept; }
             if e.text == Key.Return || e.text == " " {
-                if current >= 0 && !items[current].off { root.pick(current); }
+                if current >= 0 && current < items.length && !items[current].off { root.pick(current); }
                 return accept;
             }
             reject

@@ -220,9 +220,7 @@ impl<'a> Ctx<'a> {
                 let title = if folder { "Choose a folder" } else { "Choose a file" };
                 cx.choose_file(&a.id, folder, title, &start, &filter);
             } else if a.i == 1 {
-                let home = std::env::var("HOME").unwrap_or_default();
-                let t = a.s.trim();
-                let p = if let Some(rest) = t.strip_prefix('~') { format!("{home}{rest}") } else { t.to_string() };
+                let p = expand_home(a.s.trim(), &std::env::var("HOME").unwrap_or_default());
                 if p != cx.s(&path) {
                     cx.set(&path, p);
                 }
@@ -345,7 +343,12 @@ impl<'a> Ctx<'a> {
     /// box (pixels): None until it's ready (the page is built again then),
     /// and None for good when it can't be read
     pub fn picture(&mut self, path: &str, w: u32, h: u32) -> Option<Image> {
-        let key = format!("{path}@{w}x{h}");
+        self.picture_as(path, w, h, "")
+    }
+    /// The same for a file that changes in place: a new `version` reads it
+    /// again
+    pub fn picture_as(&mut self, path: &str, w: u32, h: u32, version: &str) -> Option<Image> {
+        let key = if version.is_empty() { format!("{path}@{w}x{h}") } else { format!("{path}@{w}x{h}#{version}") };
         match self.pictures.get(&key) {
             Some(i) => i.clone(),
             None => {
@@ -1461,6 +1464,15 @@ pub fn soft_breaks(text: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 
+/// A typed path with "~" or "~/…" as the home folder ("~alice/…", someone
+/// else's home, is left as typed)
+pub fn expand_home(t: &str, home: &str) -> String {
+    match t.strip_prefix('~') {
+        Some(rest) if !home.is_empty() && (rest.is_empty() || rest.starts_with('/')) => format!("{}{rest}", home.trim_end_matches('/')),
+        _ => t.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1481,6 +1493,14 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn only_my_own_tilde_is_expanded() {
+        assert_eq!(expand_home("~/Pictures", "/home/me"), "/home/me/Pictures");
+        assert_eq!(expand_home("~", "/home/me/"), "/home/me");
+        assert_eq!(expand_home("~alice/Pictures", "/home/me"), "~alice/Pictures");
+        assert_eq!(expand_home("/x/~", "/home/me"), "/x/~");
+    }
 
     #[test]
     fn hidden_rows_and_empty_groups_fold_away() {

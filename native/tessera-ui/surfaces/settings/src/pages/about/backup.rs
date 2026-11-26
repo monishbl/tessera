@@ -494,12 +494,15 @@ fn restore(cx: &mut Ctx, p: &mut Page) {
 
     // What would change (restore-plan for the parts switched on)
     let plan = cx.local.get("about.bk.plan").cloned().unwrap_or(Value::Null);
-    if plan["for"].as_str() != Some(include.as_str()) || plan.is_null() {
+    // (the plan for this backup and these parts: one for a backup chosen
+    // before is asked for again)
+    if plan["for"].as_str() != Some(include.as_str()) || plan["file"].as_str() != Some(file.as_str()) || plan.is_null() {
         if !cx.local_b("about.bk.plan.busy") {
             let (f, inc) = (file.clone(), include.clone());
             cx.spawn("about.bk.plan", move || {
-                let mut v = run(vec!["restore-plan".into(), f, "--include".into(), inc.clone()]);
+                let mut v = run(vec!["restore-plan".into(), f.clone(), "--include".into(), inc.clone()]);
                 v["for"] = json!(inc);
+                v["file"] = json!(f);
                 v
             });
         }

@@ -18,12 +18,7 @@ pub fn path_action(cx: &mut Ctx, key: &str, folder: bool, filter: &str, start: &
             let from = if cur.is_empty() { start.clone() } else if folder { cur } else { cur.rsplit_once('/').map_or(cur.clone(), |x| x.0.to_string()) };
             cx.choose_file(&a.id, folder, if folder { "Choose a folder" } else { "Choose a file" }, &from, &filter);
         } else if a.i == 1 {
-            let home = std::env::var("HOME").unwrap_or_default();
-            let t = a.s.trim();
-            let p = match t.strip_prefix('~') {
-                Some(rest) => format!("{home}{rest}"),
-                None => t.to_string(),
-            };
+            let p = crate::model::expand_home(a.s.trim(), &std::env::var("HOME").unwrap_or_default());
             if p != cx.s(&key) {
                 cx.set(&key, p);
             }
