@@ -1045,7 +1045,7 @@ export component CalendarTab {
                     height: self.preferred-height;
                     spacing: 10px;
                     Text {
-                        text: ed-readonly ? "Event" : ed-key != "" ? (ed-todo ? "Edit To-do" : "Edit Event") : "New on " + ed-day-short;
+                        text: ed-readonly ? "Event" : ed-key != "" ? (ed-todo ? "Edit to-do" : "Edit event") : "New on " + ed-day-short;
                         color: Theme.label;
                         // (Material: a dialog's headline)
                         font-size: Theme.material ? 22px : Theme.title;
@@ -1204,7 +1204,7 @@ export component CalendarTab {
                         spacing: 8px;
                         if ed-key != "" && !ed-readonly: CalButton {
                             kind: 2;
-                            text: ed-todo ? "Delete To-do" : "Delete Event";
+                            text: ed-todo ? "Delete to-do" : "Delete event";
                             clicked => { root.remove(ed-key, -1); }
                         }
                         Rectangle {
@@ -1216,7 +1216,7 @@ export component CalendarTab {
                         }
                         if !ed-readonly: CalButton {
                             kind: 1;
-                            text: ed-key != "" ? "Save Changes" : ed-todo ? "Add To-do" : "Add Event";
+                            text: ed-key != "" ? "Save changes" : ed-todo ? "Add to-do" : "Add event";
                             clicked => { root.save-now(); }
                         }
                     }

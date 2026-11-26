@@ -2613,7 +2613,7 @@ export component Island inherits Rectangle {
                                 alignment: center;
                                 spacing: 2px;
                                 Text {
-                                    text: card.title != "" ? card.title : "Not Playing";
+                                    text: card.title != "" ? card.title : "Nothing playing";
                                     color: ink;
                                     font-size: 16px;
                                     font-weight: 600;
@@ -2645,7 +2645,7 @@ export component Island inherits Rectangle {
                         if card.kind == "music" && !card.side: VerticalLayout {
                             spacing: 0;
                             Marquee {
-                                text: card.title != "" ? card.title : "Not Playing";
+                                text: card.title != "" ? card.title : "Nothing playing";
                                 ink: ink;
                                 size: 16px;
                                 weight: 600;

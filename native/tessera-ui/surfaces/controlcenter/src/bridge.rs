@@ -363,15 +363,43 @@ pub fn device_picture(d: &audio::Device) -> String {
         }
     } else if ["hdmi", "displayport", "usb", "webcam", "camera"].iter().any(|k| n.contains(k)) {
         return String::new();
-    } else {
+    } else if has_battery() {
         "laptop"
+    } else {
+        // (a desktop's own jacks: not a laptop drawing; the row's icon shows)
+        return String::new();
     };
     crate::util::asset(&format!("shell/assets/devices/{kind}.svg")).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
+/// A battery in /sys/class/power_supply: a laptop (read once)
+fn has_battery() -> bool {
+    static B: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *B.get_or_init(|| {
+        std::fs::read_dir("/sys/class/power_supply").map(|d| d.flatten().any(|e| e.file_name().to_string_lossy().starts_with("BAT"))).unwrap_or(false)
+    })
+}
+
+/// How wide a character draws, in average characters: CJK, Hangul, kana,
+/// full-width forms and emoji take about two
+fn char_weight(c: char) -> f32 {
+    let u = c as u32;
+    let wide = (0x1100..=0x115F).contains(&u)
+        || (0x2E80..=0xA4CF).contains(&u)
+        || (0xAC00..=0xD7A3).contains(&u)
+        || (0xF900..=0xFAFF).contains(&u)
+        || (0xFE30..=0xFE4F).contains(&u)
+        || (0xFF00..=0xFF60).contains(&u)
+        || (0xFFE0..=0xFFE6).contains(&u)
+        || (0x1F300..=0x1FAFF).contains(&u)
+        || (0x20000..=0x3FFFD).contains(&u);
+    if wide { 2.0 } else { 1.0 }
+}
+
 /// How tall a wrapped line of text gets (Slint measures wrapped text in a
 /// layout as one line): its lines at `font` px in `width`, about half an em
-/// a character
+/// a character (wide scripts twice that), with a tenth of each line lost to
+/// word wrapping once a paragraph wraps at all
 pub fn text_height(text: &str, font: f32, width: f32) -> f32 {
     if text.is_empty() {
         return 0.0;
@@ -379,7 +407,9 @@ pub fn text_height(text: &str, font: f32, width: f32) -> f32 {
     let per_line = (width / (font * 0.52)).max(1.0);
     let mut lines = 0.0f32;
     for para in text.split('\n') {
-        lines += (para.chars().count() as f32 / per_line).ceil().max(1.0);
+        let w: f32 = para.chars().map(char_weight).sum();
+        let n = if w <= per_line { 1.0 } else { (w / (per_line * 0.9)).ceil() };
+        lines += n.max(1.0);
     }
     (lines * (font * 1.3).round()).ceil()
 }
@@ -479,7 +509,9 @@ mod tests {
         assert_eq!(text_height("", 12.0, 300.0), 0.0);
         let one = text_height("short", 12.0, 300.0);
         assert_eq!(one, 16.0);
-        assert_eq!(text_height(&"word ".repeat(28), 12.0, 300.0), 3.0 * 16.0); // (140 characters, 48 a line)
+        assert_eq!(text_height(&"word ".repeat(28), 12.0, 300.0), 4.0 * 16.0); // (140 characters, 48 a line, a tenth lost to wrapping)
+        assert_eq!(text_height(&"word ".repeat(9), 12.0, 300.0), 16.0); // (45: one line, no slack)
+        assert_eq!(text_height(&"漢".repeat(40), 12.0, 300.0), 2.0 * 16.0); // (wide: 80 columns)
         let devs = audio::Device { name: "bluez_output.x".into(), description: "WH-1000XM5".into(), bluetooth: true, ..Default::default() };
         assert!(device_picture(&devs).ends_with("headphones.svg"));
         let buds = audio::Device { description: "realme Buds T100".into(), bluetooth: true, ..Default::default() };

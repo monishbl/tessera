@@ -820,7 +820,14 @@ impl ControlCenter {
             }
             return;
         }
+        // (the keyboard's row by its id, not its place: rows come and go
+        // with every scan, and Enter must click the row the ring was on)
+        let focused = usize::try_from(self.pkbd).ok().and_then(|i| self.shown_page.blocks.get(i)).map(|b| b.id.clone()).filter(|id| !id.is_empty());
         self.shown_page = page;
+        if let Some(id) = focused {
+            let at = self.shown_page.blocks.iter().position(|b| b.id == id && b.kind == BlockKind::Row && !b.disabled);
+            self.set_pkbd(at.map_or(-1, |i| i as i32));
+        }
         let Some(w) = &self.win else { return };
         let ui = &w.ui;
         let material = Self::material(st);
@@ -1258,8 +1265,13 @@ impl ControlCenter {
             } else {
                 None
             };
-            if let Some(v) = nv {
-                self.slide(st, &id, v);
+            if let Some(nv) = nv {
+                // ("louder" never lowers: a sink set past 100 % elsewhere
+                // would be clamped down to 100 % by slide())
+                let up = is(Key::RightArrow) || is(Key::UpArrow) || is(Key::PageUp) || is(Key::End);
+                if !(up && v >= 1.0) {
+                    self.slide(st, &id, nv);
+                }
                 return;
             }
         }

@@ -570,7 +570,9 @@ component GlassModule {
                 icon-size: 16px;
                 icon-color: Theme.label;
                 label: "Previous";
-                dim-disabled: false;
+                // (dimmed with no player, as Material's card; full strength
+                // while editing, where every tile is inert)
+                dim-disabled: !editing;
                 enabled: !editing && media.has;
                 clicked => { media-do("previous"); }
             }
@@ -582,7 +584,7 @@ component GlassModule {
                 icon-size: 16px;
                 icon-color: Theme.label;
                 label: media.playing ? "Pause" : "Play";
-                dim-disabled: false;
+                dim-disabled: !editing;
                 enabled: !editing && media.has;
                 clicked => { media-do("toggle"); }
             }
@@ -594,7 +596,7 @@ component GlassModule {
                 icon-size: 16px;
                 icon-color: Theme.label;
                 label: "Next";
-                dim-disabled: false;
+                dim-disabled: !editing;
                 enabled: !editing && media.has;
                 clicked => { media-do("next"); }
             }
@@ -2500,12 +2502,31 @@ export component ControlCenter inherits Window {
                             }
                         }
                     }
-                    Text {
-                        text: "Reset to default";
-                        color: accent-ink;
-                        font-size: Theme.small;
-                        font-weight: 500;
-                        TouchArea {
+                    // (a real button, one name with Material's)
+                    Rectangle {
+                        height: rgt.preferred-height + 8px;
+                        accessible-role: button;
+                        accessible-label: "Reset layout";
+                        accessible-action-default => { reset-layout(); }
+                        Rectangle {
+                            x: -6px;
+                            width: rgt.preferred-width + 12px;
+                            height: parent.height;
+                            border-radius: Theme.item-radius;
+                            background: rgta.pressed ? Theme.fill-pressed : rgta.has-hover ? Theme.fill-hover : transparent;
+                        }
+                        rgt := Text {
+                            x: 0;
+                            height: parent.height;
+                            vertical-alignment: center;
+                            text: "Reset layout";
+                            color: accent-ink;
+                            font-size: Theme.small;
+                            font-weight: 500;
+                        }
+                        rgta := TouchArea {
+                            x: -6px;
+                            width: rgt.preferred-width + 12px;
                             mouse-cursor: pointer;
                             clicked => { reset-layout(); }
                         }
@@ -3082,8 +3103,9 @@ export component ControlCenter inherits Window {
                         width: parent.width - 16px;
                         background: Theme.separator;
                     }
+                    // (Material: the tick at the trailing edge, clear of the text at 16 px)
                     if !it.sep && it.checked: Ic {
-                        x: 6px;
+                        x: Theme.material ? parent.width - 26px : 6px;
                         width: 14px;
                         icon: g.check;
                         bold: true;
@@ -3092,7 +3114,7 @@ export component ControlCenter inherits Window {
                     }
                     if !it.sep: Text {
                         x: Theme.material ? 16px : 22px;
-                        width: parent.width - self.x - 8px;
+                        width: parent.width - self.x - (Theme.material && it.checked ? 30px : 8px);
                         height: parent.height;
                         vertical-alignment: center;
                         overflow: elide;

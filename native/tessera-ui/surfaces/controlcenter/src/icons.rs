@@ -1,8 +1,9 @@
 //! Icons by Phosphor name, as shell/common/Icon.qml draws them: the Phosphor
 //! glyph (shell/common/phosphor.js), and in the Material look the matching
 //! Material Symbols Rounded one where there is one (material-symbols.js).
-//! The names come from the shell at run time (Focus modes, devices), so the
-//! maps are read from the repo once, not compiled in.
+//! The names come from the shell at run time (Focus modes, devices); the
+//! maps are compiled in (an install without the QML tree still has icons),
+//! and a name they don't know draws a question mark, not nothing.
 //!
 //! (Slint can't set the Symbols font's FILL axis: Material's filled icons
 //! draw outlined.)
@@ -26,18 +27,17 @@ pub fn parse_map(src: &str) -> HashMap<String, String> {
     out
 }
 
-fn load(rel: &str) -> HashMap<String, String> {
-    crate::util::asset(rel).and_then(|p| std::fs::read_to_string(p).ok()).map(|s| parse_map(&s)).unwrap_or_default()
-}
+const PHOSPHOR: &str = include_str!("../../../../../shell/common/phosphor.js");
+const SYMBOLS: &str = include_str!("../../../../../shell/common/material-symbols.js");
 
 fn phosphor() -> &'static HashMap<String, String> {
     static M: OnceLock<HashMap<String, String>> = OnceLock::new();
-    M.get_or_init(|| load("shell/common/phosphor.js"))
+    M.get_or_init(|| parse_map(PHOSPHOR))
 }
 
 fn symbols() -> &'static HashMap<String, String> {
     static M: OnceLock<HashMap<String, String>> = OnceLock::new();
-    M.get_or_init(|| load("shell/common/material-symbols.js"))
+    M.get_or_init(|| parse_map(SYMBOLS))
 }
 
 /// (glyph, drawn with the Symbols font)
@@ -47,7 +47,21 @@ pub fn glyph(name: &str, material: bool) -> (String, bool) {
             return (g.clone(), true);
         }
     }
-    (phosphor().get(name).cloned().unwrap_or_default(), false)
+    if let Some(g) = phosphor().get(name) {
+        return (g.clone(), false);
+    }
+    if name.is_empty() {
+        return (String::new(), false);
+    }
+    // (a new or misspelt name: a neutral glyph, said once in the log)
+    static SAID: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    if let Ok(mut s) = SAID.lock() {
+        if !s.iter().any(|x| x == name) {
+            eprintln!("tessera-ui: no icon called {name:?}");
+            s.push(name.to_string());
+        }
+    }
+    (phosphor().get("question").cloned().unwrap_or_default(), false)
 }
 
 #[cfg(test)]
@@ -63,6 +77,8 @@ mod tests {
         assert_eq!(glyph("caret-left", false), ("\u{e138}".to_string(), false));
         let (g, sym) = glyph("arrow-clockwise", true);
         assert!(sym && !g.is_empty());
-        assert_eq!(glyph("nothing-called-this", true), (String::new(), false));
+        assert_eq!(glyph("nothing-called-this", true), glyph("question", false));
+        assert!(!glyph("nothing-called-this", false).0.is_empty());
+        assert_eq!(glyph("", false), (String::new(), false));
     }
 }
