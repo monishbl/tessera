@@ -127,7 +127,9 @@ pub fn dictation(cx: &mut Ctx, p: &mut Page) {
             Some("download") => cx.ask(G, "dictDownload", json!([v])),
             _ => {}
         });
-        rows.push(Row::new(format!("{label}{}", if chosen { " · in use" } else { "" })).detail(detail).buttons(b, id));
+        // ("in use" only once it is here: before, the chosen one is waiting
+        // for its download, beside the Download button)
+        rows.push(Row::new(format!("{label}{}", if chosen && has { " · in use" } else if chosen { " · chosen" } else { "" })).detail(detail).buttons(b, id));
     }
     let g = p.group("Speech model");
     g.footer("Bigger models make fewer mistakes but take longer after you stop talking. Models are downloaded once and kept in ~/.local/share/tessera/whisper.");
