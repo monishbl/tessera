@@ -1591,7 +1591,7 @@ export component Desktop inherits Window {
     callback file(int, string, length, length); // a file or stack: click | open | menu | grab | drop
     callback stack-file(int, bool); // an open stack's file: open, or (true) its menu
     callback stack-file-menu(int, length, length);
-    callback stack-more(); // the "+N more" cell
+    callback open-stack-more(); // the "+N more" cell
     background: transparent;
     no-frame: true;
     title: "Desktop";
@@ -1730,7 +1730,7 @@ export component Desktop inherits Window {
             height: 96px;
             accessible-role: button;
             accessible-label: "\{stack-more} more, open in Files";
-            accessible-action-default => { root.stack-more(); }
+            accessible-action-default => { root.open-stack-more(); }
             Rectangle {
                 x: 2px;
                 y: 2px;
@@ -1742,7 +1742,7 @@ export component Desktop inherits Window {
             T { x: 4px; y: 22px; width: parent.width - 8px; horizontal-alignment: center; text: "+\{stack-more}"; font-size: Theme.title; font-weight: 600; }
             T { x: 4px; y: parent.height - 8px - self.height; width: parent.width - 8px; horizontal-alignment: center; overflow: elide; text: "more"; }
             ma := TouchArea {
-                clicked => { root.stack-more(); }
+                clicked => { root.open-stack-more(); }
             }
         }
     }

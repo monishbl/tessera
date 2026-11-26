@@ -493,7 +493,7 @@ impl Desktop {
         let t = to.clone();
         ui.on_stack_file_menu(move |i, x, y| t(Box::new(M::StackFileMenu(i, x, y))));
         let t = to;
-        ui.on_stack_more(move || t(Box::new(M::StackMore)));
+        ui.on_open_stack_more(move || t(Box::new(M::StackMore)));
         ui.show().expect("show desktop");
         let a11y = crate::a11y::A11y::new(&surface, st.tx.clone());
         self.win = Some(Win { output: name.to_string(), surface, ui, widgets, icons, stack_files, a11y, keys: Vec::new(), glass_sent: String::new(), kbd: None });
