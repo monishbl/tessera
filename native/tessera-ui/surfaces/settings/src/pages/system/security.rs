@@ -468,7 +468,7 @@ pub fn biometrics(cx: &mut Ctx, p: &mut Page) {
             rows.push(
                 Row::new("Set up the camera")
                     .detail(detail)
-                    .buttons(vec![btn(if working { "Setting up…" } else { "Set Up" }).primary().on(working).off(!busy.is_empty() && !working)], id),
+                    .buttons(vec![btn(if working { "Setting up…" } else { "Set up" }).primary().on(working).off(!busy.is_empty() && !working)], id),
             );
         }
         if set_up {

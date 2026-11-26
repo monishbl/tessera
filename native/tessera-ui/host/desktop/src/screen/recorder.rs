@@ -449,17 +449,17 @@ impl ScreenSvc {
         f.rsplit('/').next().unwrap_or(f)
     }
 
-    /// Recorder.saved: the island says it, else a notification with Open / Show in Folder
+    /// Recorder.saved: the island says it, else a notification with Open / Show in folder
     fn saved(&mut self, h: &mut Host, f: &str) {
         if self.island_says(h) {
             util::island_post(h, json!({"kind": "recording", "icon": "record", "title": "Recording saved", "subtitle": Self::base(f), "color": "danger",
-                "more": [{"text": "Open", "call": "recorder.open", "args": [f]}, {"text": "Show in Folder", "call": "recorder.showInFolder", "args": [f]}]}), 6000);
+                "more": [{"text": "Open", "call": "recorder.open", "args": [f]}, {"text": "Show in folder", "call": "recorder.showInFolder", "args": [f]}]}), 6000);
             return;
         }
         let m = util::file_manager(h.cfg());
         util::detached(&[
             "sh", "-c",
-            "a=$(timeout 600 notify-send -a 'Screen Recording' -i video-x-generic -A open=Open -A folder='Show in Folder' 'Recording saved' \"$(basename \"$1\")\"); [ \"$a\" = open ] && xdg-open \"$1\"; [ \"$a\" = folder ] && ${2:-xdg-open} \"$(dirname \"$1\")\"",
+            "a=$(timeout 600 notify-send -a 'Screen Recording' -i video-x-generic -A open=Open -A folder='Show in folder' 'Recording saved' \"$(basename \"$1\")\"); [ \"$a\" = open ] && xdg-open \"$1\"; [ \"$a\" = folder ] && ${2:-xdg-open} \"$(dirname \"$1\")\"",
             "sh", f, &m,
         ]);
     }

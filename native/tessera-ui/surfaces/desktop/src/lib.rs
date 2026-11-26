@@ -945,7 +945,7 @@ impl Desktop {
             }
             "nowPlaying" => {
                 let m = &f.media;
-                r.t1 = if m.title.is_empty() { "Not Playing".into() } else { s(&m.title) };
+                r.t1 = if m.title.is_empty() { "Nothing playing".into() } else { s(&m.title) };
                 r.t2 = s(&m.artist);
                 r.on = m.playing;
                 r.flag = m.has;

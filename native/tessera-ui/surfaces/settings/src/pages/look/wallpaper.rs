@@ -77,7 +77,7 @@ pub fn wallpaper(cx: &mut Ctx, p: &mut Page) {
             cx.choose_file(&a.id, false, "Choose a wallpaper", "~/Pictures", IMAGES);
         }
     });
-    p.group("").row(Row::new("Picture").detail("Any image on your computer, or pick one below").button(if busy { "Choosing…" } else { "Choose Picture…" }, choose).enabled(!busy));
+    p.group("").row(Row::new("Picture").detail("Any image on your computer, or pick one below").button(if busy { "Choosing…" } else { "Choose picture…" }, choose).enabled(!busy));
 
     // Light/dark pairs and time-of-day folders found in the wallpaper folder
     let sets: Vec<Value> = feed(cx)["sets"].as_array().cloned().unwrap_or_default();

@@ -394,7 +394,7 @@ fn microsoft(cx: &mut Ctx, p: &mut Page) {
     );
     let building = needs(f, "building");
     let build_error = s(&f["needs"]["buildError"]);
-    let (o, i) = buttons(cx, vec![(btn(if building { "Building…" } else { "Build It" }).on(building), "needsBuild", Value::Null)]);
+    let (o, i) = buttons(cx, vec![(btn(if building { "Building…" } else { "Build it" }).on(building), "needsBuild", Value::Null)]);
     rows.push(
         Row::new(if building { "Building Tessera's sign-in helper…" } else { "Tessera's sign-in helper isn't built yet" })
             .visible(none && checked && goa && goa_ms && !signin)

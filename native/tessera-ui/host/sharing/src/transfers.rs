@@ -197,7 +197,7 @@ impl Sharing {
         self.island(
             h,
             json!({"kind": "transfer", "icon": "download-simple", "color": GREEN, "title": format!("Downloaded {}", base(path)), "subtitle": format!("In {shown}"),
-                "action": "Open", "onAction": act("share.fileOpen", json!([path])), "action2": "Show in Folder", "onAction2": act("share.fileReveal", json!([path]))}),
+                "action": "Open", "onAction": act("share.fileOpen", json!([path])), "action2": "Show in folder", "onAction2": act("share.fileReveal", json!([path]))}),
             600_000, // up for 10 minutes (or until dismissed)
         );
     }

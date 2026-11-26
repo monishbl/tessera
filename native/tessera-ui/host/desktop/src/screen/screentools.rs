@@ -214,7 +214,7 @@ impl ScreenSvc {
                 let m = util::file_manager(h.cfg());
                 util::detached(&[
                     "sh", "-c",
-                    "a=$(timeout 600 notify-send -a Screenshot -i \"$1\" -A open=Open -A folder='Show in Folder' 'Screenshot saved' 'Copied to the clipboard'); [ \"$a\" = open ] && xdg-open \"$1\"; [ \"$a\" = folder ] && ${2:-xdg-open} \"$(dirname \"$1\")\"",
+                    "a=$(timeout 600 notify-send -a Screenshot -i \"$1\" -A open=Open -A folder='Show in folder' 'Screenshot saved' 'Copied to the clipboard'); [ \"$a\" = open ] && xdg-open \"$1\"; [ \"$a\" = folder ] && ${2:-xdg-open} \"$(dirname \"$1\")\"",
                     "sh", &file, &m,
                 ]);
             }
@@ -335,7 +335,7 @@ impl ScreenSvc {
             let send = h.sender("ScreenTools");
             let file = file.to_string();
             std::thread::spawn(move || {
-                let out = Command::new("timeout").args(["600", "notify-send", "-a", "Screenshot", "-i", &file, "-A", "edit=Edit", "-A", "folder=Show in Folder", "Screenshot saved", "Copied to the clipboard"]).stdin(Stdio::null()).stderr(Stdio::null()).output();
+                let out = Command::new("timeout").args(["600", "notify-send", "-a", "Screenshot", "-i", &file, "-A", "edit=Edit", "-A", "folder=Show in folder", "Screenshot saved", "Copied to the clipboard"]).stdin(Stdio::null()).stderr(Stdio::null()).output();
                 let a = out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
                 send(Box::new(NotifyAction(file, a)));
             });
