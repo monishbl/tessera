@@ -1272,14 +1272,14 @@ mod tests {
         for c in g["cases"].as_array().unwrap() {
             let (rows, _) = query(&s(&c["q"]), &k);
             let got: Vec<Vec<String>> = rows.iter().map(|r| vec![r.section.clone(), r.title.clone(), r.subtitle.clone()]).collect();
-            // the QML's rows, with Actions titles as the UI now shows them (sentence case, `shown`)
+            // the QML's rows, with action titles (Actions or Top Hit) as the UI now shows them (sentence case, `shown`)
             let want: Vec<Vec<String>> = c["rows"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .map(|r| {
                     let mut row: Vec<String> = r.as_array().unwrap().iter().map(s).collect();
-                    if row[0] == "Actions" {
+                    if (row[0] == "Actions" || row[0] == "Top Hit") && ACTIONS.iter().any(|a| a.0 == row[1]) {
                         row[1] = shown(&row[1]);
                     }
                     row
