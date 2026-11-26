@@ -390,6 +390,14 @@ class Swap(Fixture):
         self.assertEqual(B.undo()["current"], two)
         # Nothing else in the data folder holds a version: prune keeps these two
         three = self.install(48)
+        # (`prune` on the command line keeps the one staged for the next restart)
+        staged = self.d / "state/tessera/update-staged"
+        staged.mkdir(parents=True)
+        (staged / "staged.json").write_text(json.dumps({"kind": "bundle", "bundle": three}))
+        self.assertEqual(B.staged_keep(), [three])
+        self.assertEqual(B.prune(keep=B.staged_keep()), [])
+        (staged / "staged.json").unlink()
+        self.assertEqual(B.staged_keep(), [])
         self.assertEqual(B.prune(), [three])
         self.assertTrue((self.data / "versions" / one).is_dir() and (self.data / "versions" / two).is_dir())
 

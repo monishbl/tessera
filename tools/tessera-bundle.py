@@ -1089,6 +1089,14 @@ def prune(data=None, keep=()):
     return gone
 
 
+def staged_keep():
+    """The version Software Update made ready for the next restart
+    (tessera-update.py's update-staged/staged.json), kept by `prune`"""
+    s = load_json(os.path.join(state_dir(), "update-staged", "staged.json"), {}) or {}
+    vid = s.get("bundle") if isinstance(s, dict) else None
+    return [vid] if isinstance(vid, str) and ID.match(vid) else []
+
+
 def status(data=None):
     data = data or data_dir()
     out = {"current": read_link(current_link(data)), "previous": read_link(previous_link(data)), "versions": []}
@@ -1393,7 +1401,7 @@ def main(argv=None):
             emit({"id": vid, "bad": bad}, "All files are right" if not bad else "Wrong: " + ", ".join(bad))
             return 1 if bad else 0
         elif a.command == "prune":
-            emit({"removed": prune()}, "ok")
+            emit({"removed": prune(keep=staged_keep())}, "ok")
         elif a.command == "lock-check":
             lock = check_lock(load_json(a.arg, None))
             emit(lock, "ok")

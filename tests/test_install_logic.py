@@ -318,6 +318,24 @@ class PackagesForSoftwareUpdate(Fakes):
         self.assertIn("upower", missing)  # (the rest still comes)
         self.assertNotIn("power-profiles-daemon", self.status(installed="auto-cpufreq"))
 
+    def test_a_backslash_or_tab_in_a_comment_keeps_the_answer_json(self):
+        import json
+        ver = self.d / "ver"
+        (ver / "tools").mkdir(parents=True)
+        (ver / "tools/packages.sh").write_text('PACKAGES=(\n    # Paths like C:\\dir\\n,\ta "tab" and \\\\ too\n    foo-pkg\n)\nDROPPED=()\n')
+        self.fake("pacman", '''
+            case "$1" in
+                -T) shift; [ "$1" = -- ] && shift; for p; do echo "$p"; done ;;
+                -Si|-Sg) exit 0 ;;
+                -Qq) exit 1 ;;
+            esac
+        ''')
+        self.fake("systemctl", "exit 3\n")
+        p = subprocess.run([str(ROOT / "tools/tessera-packages.sh"), "status", str(ver)], env=self.env, capture_output=True, text=True, timeout=30)
+        out = json.loads(p.stdout)
+        self.assertEqual(out["missing"], ["foo-pkg"])
+        self.assertEqual(out["reasons"]["foo-pkg"], 'Paths like C:\\dir\\n, a "tab" and \\\\ too')
+
 
 if __name__ == "__main__":
     unittest.main()
