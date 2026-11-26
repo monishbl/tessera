@@ -9,7 +9,9 @@
 use super::hx;
 use super::Io;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use tessera_core::host::Host;
+use tessera_core::services::calendar as cal;
 use tessera_core::util::{now_ms, strftime};
 
 fn defaults() -> Vec<Value> {
@@ -24,9 +26,11 @@ fn defaults() -> Vec<Value> {
     ]
 }
 
+/// "HH:MM" as minutes since midnight (hours kept to 0-23, minutes to 0-59:
+/// "25:99" is 23:59, not a time no clock reaches)
 pub fn minutes(hhmm: &str) -> i64 {
     let mut p = hhmm.split(':').map(|x| x.trim().parse::<i64>().unwrap_or(0));
-    p.next().unwrap_or(0) * 60 + p.next().unwrap_or(0)
+    p.next().unwrap_or(0).clamp(0, 23) * 60 + p.next().unwrap_or(0).clamp(0, 59)
 }
 
 /// Is a mode's schedule on at this local time? (minutes since midnight, weekday 0 = Sunday)
@@ -38,7 +42,11 @@ pub fn scheduled_at(mode: &Value, now_min: i64, weekday: i64) -> bool {
     }
     let days: Vec<i64> = s["days"].as_array().map(|a| a.iter().filter_map(|d| d.as_i64()).collect()).unwrap_or_default();
     let (from, to) = (minutes(s["from"].as_str().unwrap_or("0:0")), minutes(s["to"].as_str().unwrap_or("0:0")));
-    if from <= to {
+    // (the same start and end, 00:00 to 00:00: the whole of those days)
+    if from == to {
+        return days.contains(&weekday);
+    }
+    if from < to {
         return days.contains(&weekday) && now_min >= from && now_min < to;
     }
     // Overnight: started today after `from`, or yesterday and before `to`
@@ -51,9 +59,12 @@ fn local_now() -> (i64, i64, i64) {
     let f = |fmt: &str| strftime(fmt, secs).trim().parse::<i64>().unwrap_or(0);
     (f("%H") * 60 + f("%M"), f("%w"), secs)
 }
-fn midnight(secs: i64) -> i64 {
-    let f = |fmt: &str| strftime(fmt, secs).trim().parse::<i64>().unwrap_or(0);
-    secs - (f("%H") * 3600 + f("%M") * 60 + f("%S"))
+/// The local time `min` minutes after midnight, `days` days after the day
+/// of `secs`, in seconds (mktime: right on the days the clocks change, where
+/// "now less the wall-clock hours" is an hour off)
+fn local_at(secs: i64, days: i32, min: i64) -> i64 {
+    let t = cal::local(secs * 1000);
+    cal::make(t.y, t.mo, t.d + days, (min / 60) as i32, (min % 60) as i32, 0) / 1000
 }
 
 #[derive(Default)]
@@ -64,8 +75,10 @@ pub struct FocusModes {
     until: i64,
     /// manual | schedule
     source: String,
-    /// A schedule turned off by hand stays off until its window ends
-    skip_until: i64,
+    /// A schedule turned off by hand stays off until its window ends: by
+    /// mode id (one number for all modes kept every other mode's schedule
+    /// off too; "*" is that old number, read from an older focus.json)
+    skip_until: HashMap<String, i64>,
     /// what a mode changed, to put back afterwards
     restore: Value,
     loaded: bool,
@@ -91,17 +104,16 @@ impl FocusModes {
     fn schedule_end(m: &Value) -> i64 {
         let (_, _, now) = local_now();
         let to = minutes(m["schedule"]["to"].as_str().unwrap_or("0:0"));
-        let mut end = midnight(now) + to * 60;
+        let mut end = local_at(now, 0, to);
         if end <= now {
-            end += 86400;
+            end = local_at(now, 1, to);
         }
         end * 1000
     }
     fn until_evening() -> i64 {
         let (_, _, now) = local_now();
-        let m = midnight(now);
         let h: i64 = strftime("%H", now).trim().parse().unwrap_or(0);
-        (if h < 19 { m + 19 * 3600 } else { m + 86400 + 8 * 3600 }) * 1000
+        (if h < 19 { local_at(now, 0, 19 * 60) } else { local_at(now, 1, 8 * 60) }) * 1000
     }
 
     fn fmt_time(&self, ms: i64) -> String {
@@ -109,7 +121,7 @@ impl FocusModes {
     }
     fn fmt_hhmm(&self, hhmm: &str) -> String {
         let (_, _, now) = local_now();
-        let t = midnight(now) + minutes(hhmm) * 60;
+        let t = local_at(now, 0, minutes(hhmm));
         self.fmt_time(t * 1000)
     }
     /// "On until 7:00 PM" style status
@@ -210,7 +222,8 @@ impl FocusModes {
     pub fn deactivate(&mut self, h: &mut Host, io: &mut Io) {
         let Some(m) = self.mode().cloned() else { return };
         if self.source == "schedule" || Self::scheduled_now(&m) {
-            self.skip_until = Self::schedule_end(&m);
+            let id = m["id"].as_str().unwrap_or("").to_string();
+            self.skip_until.insert(id, Self::schedule_end(&m));
         }
         self.undo_effects();
         self.active.clear();
@@ -239,8 +252,11 @@ impl FocusModes {
                 self.source.clear();
                 return self.changed(h, io);
             }
-        } else if now >= self.skip_until {
-            if let Some(id) = self.modes.iter().find(|m| Self::scheduled_now(m)).and_then(|m| m["id"].as_str().map(String::from)) {
+        } else {
+            self.skip_until.retain(|_, until| now < *until);
+            let skip = &self.skip_until;
+            let skipped = |m: &Value| skip.contains_key("*") || m["id"].as_str().is_some_and(|id| skip.contains_key(id));
+            if let Some(id) = self.modes.iter().find(|m| !skipped(m) && Self::scheduled_now(m)).and_then(|m| m["id"].as_str().map(String::from)) {
                 self.activate(h, io, &id, 0, true);
             }
         }
@@ -301,8 +317,12 @@ impl FocusModes {
     /// Read the file again (Settings → About restored it)
     pub fn reload(&mut self, h: &mut Host, io: &mut Io) {
         self.modes = defaults();
-        match std::fs::read_to_string(Self::path()).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
-            Some(j) => {
+        let path = Self::path();
+        let read = std::fs::read_to_string(&path);
+        let missing = matches!(&read, Err(e) if e.kind() == std::io::ErrorKind::NotFound);
+        let parsed = read.as_ref().ok().map(|s| serde_json::from_str::<Value>(s));
+        match parsed {
+            Some(Ok(j)) => {
                 if let Some(a) = j["modes"].as_array().filter(|a| !a.is_empty()) {
                     self.modes = a.clone();
                 }
@@ -310,12 +330,23 @@ impl FocusModes {
                 self.until = j["until"].as_f64().unwrap_or(0.0) as i64;
                 self.source = j["source"].as_str().unwrap_or("").into();
                 self.restore = if j["restore"].is_object() { j["restore"].clone() } else { json!({}) };
-                self.skip_until = j["skipScheduleUntil"].as_f64().unwrap_or(0.0) as i64;
+                self.skip_until = skip_of(&j["skipScheduleUntil"]);
                 self.loaded = true;
             }
-            None => {
+            // Not JSON (half-written, or a slip in a hand edit): kept aside as
+            // focus.json.bad and said, not replaced by the defaults in silence
+            Some(Err(_)) => {
+                let _ = std::fs::rename(&path, path.with_extension("json.bad"));
+                h.ask("island.post", json!([{"kind": "custom", "icon": "moon", "title": "Focus settings couldn't be read", "subtitle": "The defaults are back; the old file is focus.json.bad", "color": tessera_core::theme::accent_hex("orange", h.st.shell.look.dark)}]));
                 self.loaded = true;
-                self.save();
+            }
+            // (missing: the defaults, written; unreadable: left as it is and
+            // not written over)
+            None => {
+                self.loaded = missing;
+                if missing {
+                    self.save();
+                }
             }
         }
         self.clock24 = h.cfg()["appearance"]["clock24"].as_bool().unwrap_or(false);
@@ -343,6 +374,15 @@ impl FocusModes {
             _ => {}
         }
         None
+    }
+}
+
+/// skipScheduleUntil: {id: ms} (an older file's single number holds for every mode)
+fn skip_of(v: &Value) -> HashMap<String, i64> {
+    match v {
+        Value::Object(o) => o.iter().filter_map(|(k, x)| Some((k.clone(), x.as_f64()? as i64))).collect(),
+        Value::Number(n) => n.as_f64().map(|n| n as i64).filter(|n| *n > 0).map(|n| HashMap::from([("*".to_string(), n)])).unwrap_or_default(),
+        _ => HashMap::new(),
     }
 }
 

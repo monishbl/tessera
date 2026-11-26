@@ -71,6 +71,10 @@ fn busy_days(c: &Calendar, first: i64, last_next: i64) -> BTreeSet<String> {
         if end < d {
             end = d;
         }
+        // (only the days asked for: an event from 1900 to 9999, or a typo in
+        // a year, is not walked day by day every 2 s)
+        d = d.max(first);
+        end = end.min(last_next - 1);
         while d <= end {
             let x = cal::local(d);
             set.insert(format!("{}-{}-{}", x.y, x.mo, x.d));
@@ -101,7 +105,8 @@ impl Feed {
         let hourly: Vec<Value> = w.hourly.iter().map(|x| json!({"time": strftime(if clock24 { "%H" } else { "%-I %p" }, cal::make(t.y, t.mo, t.d, x.hour as i32, 0, 0) / 1000), "temp": x.temp, "icon": x.icon})).collect();
 
         let bat = h.st.shell.get::<status::Battery>().cloned().unwrap_or_default();
-        let level = if bat.percent > 1.0 { bat.percent / 100.0 } else { bat.percent };
+        // (Battery.percent is always 0-100: 1% is not "full")
+        let level = bat.percent / 100.0;
         let mut batteries = Vec::new();
         if bat.present {
             batteries.push(json!({"icon": if bat.charging { "lightning" } else { "laptop" }, "picture": "", "value": level, "name": "This computer"}));
@@ -283,6 +288,16 @@ mod tests {
     fn busy_days_cover_a_multi_day_event() {
         let c = Calendar::default();
         assert!(busy_days(&c, 0, 1000).is_empty());
+    }
+
+    #[test]
+    fn busy_days_stay_inside_the_month_asked_for() {
+        // an event from 1900 to 9999 marks only the month's days
+        let c = Calendar { local: vec![cal::Local { id: "x".into(), title: "long".into(), start: cal::make(1900, 0, 1, 9, 0, 0), end: cal::make(9999, 0, 1, 9, 0, 0), all_day: false }], ..Default::default() };
+        let (first, next) = (cal::make(2026, 1, 1, 0, 0, 0), cal::make(2026, 2, 1, 0, 0, 0));
+        let days = busy_days(&c, first, next);
+        assert_eq!(days.len(), 28);
+        assert!(days.contains("2026-1-1") && days.contains("2026-1-28"));
     }
 
     #[test]

@@ -211,6 +211,7 @@ impl Hub {
         }
         self.timers.publish(h, now);
         self.sync_fine(h);
+        self.notif.cal_dirty = true;
         self.notif.push_widgets(h, &self.timers, now);
     }
 

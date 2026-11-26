@@ -120,7 +120,12 @@ fn follow_events(post: Post) {
     ];
     std::thread::spawn(move || loop {
         use std::io::{BufRead, BufReader};
-        let Some(path) = tessera_core::services::hypr::dir().map(|d| d.join(".socket2.sock")) else { return };
+        // (not known yet: wait and look again, as for a failed connect;
+        // returning here ended the thread for good)
+        let Some(path) = tessera_core::services::hypr::dir().map(|d| d.join(".socket2.sock")) else {
+            std::thread::sleep(Duration::from_secs(1));
+            continue;
+        };
         let Ok(stream) = std::os::unix::net::UnixStream::connect(path) else {
             std::thread::sleep(Duration::from_secs(1));
             continue;
@@ -152,6 +157,8 @@ pub struct Wm {
     feed: feed::Feed,
     screentime: screentime::ScreenTime,
     locked_sent: Option<bool>,
+    /// The panel open when last looked (Edit Widgets ends when another opens)
+    open_seen: String,
     /// what Settings' "notify" group was last told (`settings.feed`)
     settings_sent: String,
 }
@@ -181,6 +188,7 @@ impl Wm {
             feed: Default::default(),
             screentime: Default::default(),
             locked_sent: None,
+            open_seen: String::new(),
             settings_sent: String::new(),
         }
     }
@@ -247,6 +255,17 @@ impl Wm {
             for n in ["switcher", "stagemanager"] {
                 h.tell(n, json!({"locked": locked}));
             }
+            if locked {
+                self.feed.stop_editing(h);
+            }
+        }
+        // Edit Widgets ends when a panel opens over it (Launchpad, Spotlight…)
+        let open = h.state("open").as_str().unwrap_or("").to_string();
+        if open != self.open_seen {
+            if !open.is_empty() {
+                self.feed.stop_editing(h);
+            }
+            self.open_seen = open;
         }
     }
 
