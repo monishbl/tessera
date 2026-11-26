@@ -192,7 +192,7 @@ export component Dock inherits Window {
             }
             property <float> bt: bouncing ? (animation-tick() - bounce-start) / 1ms : 0;
             property <float> cycle: Math.mod(bt, Theme.material ? 480 : 520);
-            // (none with Reduce motion: the dot under the icon says it's launching)
+            // (no hop with Reduce motion)
             property <length> hop: !bouncing || Theme.reduce-motion ? 0 : Theme.material ? (cycle < 220 ? Curves.emphasized(cycle / 220) * root.base * 0.3 : (1 - out-bounce((cycle - 220) / 260)) * root.base * 0.3) : (cycle < 260 ? (1 - (1 - cycle / 260) * (1 - cycle / 260)) * root.base * 0.35 : (1 - (cycle - 260) / 260 * (cycle - 260) / 260) * root.base * 0.35);
             pure function out-bounce(p: float) -> float {
                 if p < 1 / 2.75 { return 7.5625 * p * p; }
