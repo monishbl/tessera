@@ -105,6 +105,8 @@ enum M {
     UndoOver,
     NoticeOver,
     Forget,
+    /// a screenshot from the shell, read and encoded on a thread
+    Attached(Picture),
     TrEdited(String),
     TrSource(String),
     TrTarget(String),
@@ -139,6 +141,8 @@ struct Anime {
     error: String,
     exhausted: bool,
     gen: u64,
+    /// `gen` for the preview threads: a replaced search's stop fetching
+    live: std::sync::Arc<std::sync::atomic::AtomicU64>,
     cells: Rc<VecModel<ui::BooruCell>>,
 }
 
@@ -159,6 +163,8 @@ struct Tr {
     result: String,
     error: String,
     gen: u64,
+    /// a translation on its way (the pane says so, not the old answer)
+    busy: bool,
 }
 
 struct Win {
@@ -272,8 +278,22 @@ fn open_link(url: &str) {
     }
 }
 
+/// `cmd` with `input` on its standard input (not an argument: one is cut at
+/// 128 KiB, and every local user reads arguments in /proc), its output
+fn run_with_input(cmd: &[&str], input: &str) -> std::io::Result<std::process::Output> {
+    use std::io::Write;
+    let mut child = Command::new(cmd[0]).args(&cmd[1..]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
+    if let Some(mut i) = child.stdin.take() {
+        let _ = i.write_all(input.as_bytes());
+    }
+    child.wait_with_output()
+}
+
 fn copy_text(text: &str) {
-    spawn_quiet(vec!["wl-copy".into(), "--".into(), text.into()]);
+    let text = text.to_string();
+    std::thread::spawn(move || {
+        let _ = run_with_input(&["wl-copy"], &text);
+    });
 }
 
 /// base64 (standard, padded): pictures for the request
@@ -332,13 +352,14 @@ fn md_block(b: markdown::Block, above: f32) -> ui::MdBlock {
         widths: tessera_core::rows::shared(if b.kind == markdown::Kind::Table { markdown::column_widths(&b.rows, 396.0) } else { Vec::new() }),
         level: b.level as i32,
         size: markdown::HEAD[b.level.min(6)],
-        text: if b.kind == markdown::Kind::Heading { styled(&format!("**{}**", b.text)) } else { styled(&b.text) },
+        // (no "****" for an empty heading or header cell: CommonMark reads it as text)
+        text: if b.kind == markdown::Kind::Heading && !b.text.trim().is_empty() { styled(&format!("**{}**", b.text)) } else { styled(&b.text) },
         code: b.code.into(),
         lang: b.lang.into(),
         open: b.open,
         items: tessera_core::rows::shared(b.items.iter().map(|i| ui::MdItem { depth: i.depth as i32, marker: i.marker.as_str().into(), text: styled(&i.text) }).collect::<Vec<_>>()),
         rows: tessera_core::rows::shared(
-            b.rows.iter().map(|(head, cells)| ui::MdRow { head: *head, cells: tessera_core::rows::shared(cells.iter().map(|c| styled(&if *head { format!("**{c}**") } else { c.clone() })).collect::<Vec<_>>()) }).collect::<Vec<_>>(),
+            b.rows.iter().map(|(head, cells)| ui::MdRow { head: *head, cells: tessera_core::rows::shared(cells.iter().map(|c| styled(&if *head && !c.trim().is_empty() { format!("**{c}**") } else { c.clone() })).collect::<Vec<_>>()) }).collect::<Vec<_>>(),
         ),
     }
 }
@@ -535,6 +556,7 @@ impl Sidebar {
         ui.set_source_auto(self.tr.source == "auto");
         ui.set_tr_result(self.tr.result.as_str().into());
         ui.set_tr_error(self.tr.error.as_str().into());
+        ui.set_tr_busy(self.tr.busy);
         // Anime
         let a = &self.anime;
         ui.set_booru_provider(booru::provider_index(&a.provider) as i32);
@@ -954,14 +976,17 @@ impl Sidebar {
         let gen = self.tr.gen;
         self.tr.result.clear();
         self.tr.error.clear();
+        self.tr.busy = false;
         if self.tr.input.trim().is_empty() {
             return;
         }
+        self.tr.busy = true;
         let target = settings::translate_target(&st.shell.cfg);
         let (source, text) = (self.tr.source.clone(), self.tr.input.clone());
         let to = Self::thread_sender(st);
         std::thread::spawn(move || {
-            let out = Command::new("trans").args(["-brief", "-no-ansi", "-s", &source, "-t", &target, "--", &text]).stdin(Stdio::null()).stderr(Stdio::null()).output();
+            // (the text on stdin: translate-shell reads it there with no text given)
+            let out = run_with_input(&["trans", "-brief", "-no-ansi", "-s", &source, "-t", &target], &text);
             let r = match out {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err("Translating needs translate-shell. Install it, then try again.".to_string()),
                 Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).trim().to_string()),
@@ -997,6 +1022,7 @@ impl Sidebar {
         } else if !on && self.anime.active {
             self.anime.active = false;
             self.anime.gen += 1;
+            self.anime.live.store(self.anime.gen, std::sync::atomic::Ordering::SeqCst);
             self.anime.loading = false;
         }
     }
@@ -1009,6 +1035,7 @@ impl Sidebar {
         }
         if reset {
             a.gen += 1;
+            a.live.store(a.gen, std::sync::atomic::Ordering::SeqCst);
             a.page = 1;
             a.cells.set_vec(Vec::new());
             a.exhausted = false;
@@ -1037,8 +1064,12 @@ impl Sidebar {
                 }
                 // (the pictures, one after another, each as it comes)
                 let to = Self::thread_sender(st);
+                let live = a.live.clone();
                 std::thread::spawn(move || {
                     for (i, p) in posts.iter().enumerate() {
+                        if live.load(std::sync::atomic::Ordering::SeqCst) != gen {
+                            break;
+                        }
                         if let Some(px) = booru::preview(&p.preview, 400) {
                             to(M::BooruPreview(gen, first + i, px));
                         }
@@ -1075,18 +1106,15 @@ impl Part for Sidebar {
             }
             // A screenshot (lens: circled) for the chat, from the shell's screen tools
             "attach" => {
+                // (read and encoded on a thread: a 4K capture is a few MB)
                 let path = cmd["path"].as_str().unwrap_or("").to_string();
-                let Ok(bytes) = std::fs::read(&path) else { return };
-                let p = Picture { path, data: base64(&bytes), media_type: "image/jpeg".into(), lens: cmd["lens"] == true };
-                self.tab = 0;
-                self.history_open = false;
-                let s = if p.lens {
-                    self.chat.search_picture(p)
-                } else {
-                    self.chat.attach(p);
-                    Submitted::Nothing
-                };
-                self.run_submitted(st, s);
+                let lens = cmd["lens"] == true;
+                let to = Self::thread_sender(st);
+                std::thread::spawn(move || {
+                    if let Ok(bytes) = std::fs::read(&path) {
+                        to(M::Attached(Picture { path, data: base64(&bytes), media_type: "image/jpeg".into(), lens }));
+                    }
+                });
             }
             "continue" => {
                 let n = self.chat.rows.len();
@@ -1166,9 +1194,19 @@ impl Part for Sidebar {
                 return;
             }
             M::Ai(Event::Done { gen, status, parser, body }) => {
-                if self.chat.done(gen, status, &parser, &body) {
-                    self.sync_rows();
-                }
+                // (the rows are synced once, at the end of message())
+                let _ = self.chat.done(gen, status, &parser, &body);
+            }
+            M::Attached(p) => {
+                self.tab = 0;
+                self.history_open = false;
+                let s = if p.lens {
+                    self.chat.search_picture(p)
+                } else {
+                    self.chat.attach(p);
+                    Submitted::Nothing
+                };
+                self.run_submitted(st, s);
             }
             M::Close => self.close(st, true),
             M::Closed => self.closed(st),
@@ -1342,10 +1380,18 @@ impl Part for Sidebar {
                 if self.shown && self.history_open {
                     self.sync_history();
                 }
+                // (only the times move: no row changes, no Markdown parsed again)
+                return;
             }
             M::Forget => {
-                if !self.shown && !self.chat.keep_history() && !self.chat.rows.is_empty() && !self.chat.busy() {
-                    self.chat.new_chat();
+                if !self.shown && !self.chat.keep_history() && !self.chat.rows.is_empty() {
+                    if self.chat.busy() {
+                        // (still answering: asked again in a minute, not kept for good)
+                        let s = Self::sender(st);
+                        self.forget_timer.start(slint::TimerMode::SingleShot, Duration::from_secs(60), move || s(M::Forget));
+                    } else {
+                        self.chat.new_chat();
+                    }
                 }
             }
             M::TrEdited(t) => {
@@ -1417,6 +1463,7 @@ impl Part for Sidebar {
             }
             M::Translated(gen, r) => {
                 if gen == self.tr.gen {
+                    self.tr.busy = false;
                     match r {
                         Ok(t) => self.tr.result = t,
                         Err(e) => self.tr.error = e,

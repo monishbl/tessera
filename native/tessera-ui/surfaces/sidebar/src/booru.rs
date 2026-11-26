@@ -72,7 +72,9 @@ pub struct Post {
 
 /// The posts in an answer (Booru.qml's normalize(), those with a preview);
 /// None when it isn't a list of posts
-pub fn parse(provider: &str, body: &str) -> Option<Vec<Post>> {
+/// (`nsfw`: the posts came from konachan.com, where explicit ones live;
+/// konachan.net is its safe-only mirror and doesn't serve them)
+pub fn parse(provider: &str, body: &str, nsfw: bool) -> Option<Vec<Post>> {
     let v: Value = serde_json::from_str(body).ok()?;
     let list = v.as_array()?;
     let s = |p: &Value, k: &str| p[k].as_str().unwrap_or("").to_string();
@@ -87,7 +89,11 @@ pub fn parse(provider: &str, body: &str) -> Option<Vec<Post>> {
                 if provider == "danbooru" {
                     Post { preview: s(p, "preview_file_url"), page: format!("https://danbooru.donmai.us/posts/{}", id(p)) }
                 } else {
-                    let host = if provider == "konachan" { "https://konachan.net" } else { "https://yande.re" };
+                    let host = match (provider, nsfw) {
+                        ("konachan", true) => "https://konachan.com",
+                        ("konachan", false) => "https://konachan.net",
+                        _ => "https://yande.re",
+                    };
                     Post { preview: s(p, "preview_url"), page: format!("{host}/post/show/{}", id(p)) }
                 }
             })
@@ -145,7 +151,7 @@ pub fn fetch(provider: &str, tags: &str, page: u32, nsfw: bool) -> Result<Vec<Po
     if status != 200 {
         return Err(error_text(status, provider));
     }
-    parse(provider, &String::from_utf8_lossy(&body)).ok_or_else(|| "Got an unexpected response. Try again.".to_string())
+    parse(provider, &String::from_utf8_lossy(&body), nsfw).ok_or_else(|| "Got an unexpected response. Try again.".to_string())
 }
 
 /// A grid tile's picture: fetched, cropped square (the QML's
@@ -182,13 +188,14 @@ mod tests {
     #[test]
     fn posts_from_each_site() {
         let y = json!([{"id": 7, "preview_url": "https://y/p.jpg"}, {"id": 8, "preview_url": ""}]).to_string();
-        assert_eq!(parse("yandere", &y).unwrap(), vec![Post { preview: "https://y/p.jpg".into(), page: "https://yande.re/post/show/7".into() }]);
-        assert_eq!(parse("konachan", &y).unwrap()[0].page, "https://konachan.net/post/show/7");
+        assert_eq!(parse("yandere", &y, false).unwrap(), vec![Post { preview: "https://y/p.jpg".into(), page: "https://yande.re/post/show/7".into() }]);
+        assert_eq!(parse("konachan", &y, false).unwrap()[0].page, "https://konachan.net/post/show/7");
+        assert_eq!(parse("konachan", &y, true).unwrap()[0].page, "https://konachan.com/post/show/7");
         let d = json!([{"id": 9, "preview_file_url": "https://d/p.jpg"}, {"id": 10}]).to_string();
-        assert_eq!(parse("danbooru", &d).unwrap(), vec![Post { preview: "https://d/p.jpg".into(), page: "https://danbooru.donmai.us/posts/9".into() }]);
-        assert_eq!(parse("yandere", "[]").unwrap(), vec![]);
-        assert!(parse("yandere", "{\"error\":1}").is_none());
-        assert!(parse("yandere", "<html>").is_none());
+        assert_eq!(parse("danbooru", &d, false).unwrap(), vec![Post { preview: "https://d/p.jpg".into(), page: "https://danbooru.donmai.us/posts/9".into() }]);
+        assert_eq!(parse("yandere", "[]", false).unwrap(), vec![]);
+        assert!(parse("yandere", "{\"error\":1}", false).is_none());
+        assert!(parse("yandere", "<html>", false).is_none());
     }
 
     #[test]

@@ -616,8 +616,22 @@ pub fn inline(text: &str) -> String {
             }
         } else {
             // (not ending in punctuation that's the sentence's)
-            while e > s && matches!(t[e - 1], Tok::C(c) if ".,;:!?)'&".contains(c)) {
-                e -= 1;
+            // (a closing ')' only when it has no '(' in the address, as GFM's
+            // autolinks: Wikipedia's Rust_(programming_language) keeps it)
+            while e > s {
+                match t[e - 1] {
+                    Tok::C(c) if ".,;:!?'&".contains(c) => e -= 1,
+                    Tok::C(')') => {
+                        let open = t[s..e].iter().filter(|x| matches!(x, Tok::C('('))).count();
+                        let close = t[s..e].iter().filter(|x| matches!(x, Tok::C(')'))).count();
+                        if close > open {
+                            e -= 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    _ => break,
+                }
             }
         }
         let url = text_of(&t[s..e]);
@@ -812,6 +826,9 @@ mod tests {
         assert_eq!(inline("``a ` b``"), "`` a ` b ``");
         assert_eq!(inline("see https://example.com/a?b=1."), "see [https\\:\\/\\/example\\.com\\/a\\?b\\=1](<https://example.com/a?b=1>)\\.");
         assert_eq!(inline("<https://x.y/z>"), "[https\\:\\/\\/x\\.y\\/z](<https://x.y/z>)");
+        // a ')' of the address stays; one of the sentence goes
+        assert!(inline("https://en.wikipedia.org/wiki/Rust_(lang)").contains("(<https://en.wikipedia.org/wiki/Rust_(lang)>)"));
+        assert!(inline("(see https://x.y/z)").contains("(<https://x.y/z>)"));
         assert_eq!(inline("[docs](https://d.io \"Title\")"), "[docs](<https://d.io>)");
         assert_eq!(inline("![cat](https://c.at/c.png)"), "[cat](<https://c.at/c.png>)");
         // anything else isn't a link, and no HTML gets through

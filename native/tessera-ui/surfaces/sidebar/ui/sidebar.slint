@@ -461,7 +461,9 @@ component CodeBlock inherits Rectangle {
             TextInput {
                 text: code;
                 read-only: true;
-                wrap: word-wrap;
+                // (any character: a long URL, hash or minified line has no
+                // space to wrap at, and the block doesn't scroll sideways)
+                wrap: char-wrap;
                 single-line: false;
                 color: Theme.label;
                 selection-background-color: Theme.material ? Theme.m3-primary.with-alpha(0.3) : Theme.accent.with-alpha(0.4);
@@ -550,6 +552,8 @@ component Markdown inherits VerticalLayout {
                             HorizontalLayout {
                                 padding: 6px;
                                 StyledText {
+                                    // (its own width: a wrapped cell measures its height against it)
+                                    width: b.widths[i] - 12px;
                                     text: c;
                                     default-color: ink;
                                     default-font-size: M.body;
@@ -1493,6 +1497,7 @@ component Translate inherits Rectangle {
     in property <[Lang]> langs; // (the first: Detect)
     in property <string> result;
     in property <string> error;
+    in property <bool> busy; // a translation on its way
     callback edited(string);
     callback source(string);
     callback target(string);
@@ -1606,11 +1611,11 @@ component Translate inherits Rectangle {
             out := TextInput {
                 width: parent.width;
                 height: max(self.preferred-height, parent.height);
-                text: error != "" ? error : result;
+                text: error != "" ? error : busy && result == "" ? "Translating…" : result;
                 read-only: true;
                 single-line: false;
                 wrap: word-wrap;
-                color: error != "" ? Theme.danger : Theme.material ? Theme.m3-on-secondary-container : Theme.label;
+                color: error != "" ? Theme.danger : busy ? Theme.secondary : Theme.material ? Theme.m3-on-secondary-container : Theme.label;
                 font-size: Theme.title;
                 accessible-label: "Translation";
             }
@@ -1676,8 +1681,10 @@ component Translate inherits Rectangle {
                     accessible-action-default => { if list-open == 1 { source(l.code); } else { target(l.code); } list-open = 0; }
                     Text {
                         x: Theme.material ? 12px : 10px;
+                        width: parent.width - self.x - 8px;
                         height: 100%;
                         text: l.name;
+                        overflow: elide;
                         vertical-alignment: center;
                         color: lt.has-hover ? (Theme.material ? Theme.on-highlight : Theme.on-accent) : Theme.label;
                         font-size: M.body;
@@ -1991,6 +1998,7 @@ export component Sidebar inherits Window {
     in property <[Lang]> langs;
     in property <string> tr-result;
     in property <string> tr-error;
+    in property <bool> tr-busy;
     // Anime (Booru.qml; the tab only with sidebar.booru)
     in property <[string]> booru-providers;
     in property <int> booru-provider;
@@ -2160,7 +2168,9 @@ export component Sidebar inherits Window {
                         y: 0;
                         if !history-open: Rectangle {
                             x: 0;
-                            width: pr.preferred-width + 24px;
+                            // (no wider than the header less its two buttons: a
+                            // long model id elides, not under History and New chat)
+                            width: min(pr.preferred-width, parent.width - 24px - 84px) + 24px;
                             border-radius: Theme.material ? (model-menu ? self.height / 2 : 12px) : 15px;
                             animate border-radius { duration: 250ms; easing: spring(0.6); }
                             background: Theme.material ? (model-menu ? Theme.m3-secondary-container : Theme.m3-surface-container-high.mix(Theme.m3-on-surface, pt.pressed ? 0.9 : pt.has-hover ? 0.92 : 1)) : pt.has-hover || model-menu ? Theme.fill-hover : Theme.fill;
@@ -2175,6 +2185,7 @@ export component Sidebar inherits Window {
                                 SIcon { g: G.sparkle; fill: true; size: 14px; color: Theme.accent; }
                                 Text {
                                     text: model-name;
+                                    overflow: elide;
                                     color: Theme.material && model-menu ? Theme.m3-on-secondary-container : Theme.label;
                                     font-size: Theme.small;
                                     font-weight: Theme.material ? 500 : 600;
@@ -2591,8 +2602,9 @@ export component Sidebar inherits Window {
                     }
 
                     // A chat deleted in past chats, still offered back
+                    // (above the pictures waiting to go, when there are some)
                     if !history-open: UndoBar {
-                        y: composer-box.y - 10px - self.height;
+                        y: (pictures.length > 0 ? composer-box.y - 8px - 64px : composer-box.y) - 10px - self.height;
                         message: undo-message;
                         can-undo: root.can-undo;
                         undo => { undo(); }
@@ -2720,6 +2732,7 @@ export component Sidebar inherits Window {
                     langs: root.langs;
                     result: tr-result;
                     error: tr-error;
+                    busy: tr-busy;
                     edited(t) => { tr-edited(t); }
                     source(c) => { tr-source(c); }
                     target(c) => { tr-target(c); }
