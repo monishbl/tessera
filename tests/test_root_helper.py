@@ -225,6 +225,30 @@ class LoginLook(unittest.TestCase):
             R.login_look(json.dumps(self.GOOD), dest=str(self.d / "link/greeter.json"))
 
 
+class WriteTree(unittest.TestCase):
+    def test_whole_files_synced_and_swapped_in(self):
+        # (audit #801: each file fsynced before the swap; whole even when big)
+        with tempfile.TemporaryDirectory() as d:
+            dest = os.path.join(d, "shell")
+            os.makedirs(dest)
+            Path(dest, "old.txt").write_text("old")
+            synced = []
+            real = os.fsync
+            def fsync(fd):
+                synced.append(fd)
+                return real(fd)
+            big = os.urandom(3 << 20)
+            from unittest import mock
+            with mock.patch.object(R.os, "fsync", fsync):
+                R.write_tree({"a/b.qml": (b"x", 0o644), "run.sh": (big, 0o755)}, dest)
+            self.assertEqual(Path(dest, "a/b.qml").read_bytes(), b"x")
+            self.assertEqual(Path(dest, "run.sh").read_bytes(), big)
+            self.assertEqual(os.stat(os.path.join(dest, "run.sh")).st_mode & 0o777, 0o755)
+            self.assertFalse(Path(dest, "old.txt").exists())
+            self.assertFalse(Path(dest + ".new").exists() or Path(dest + ".old").exists())
+            self.assertGreaterEqual(len(synced), 2 + 3)  # (two files, three folders, and the parent)
+
+
 class LoginCopy(unittest.TestCase):
     """setup refreshes the login screen's copy of Tessera (./install.sh
     --greeter's /usr/share/tessera) from the checkout, only where there is one."""
@@ -598,6 +622,25 @@ class FingerprintPam(unittest.TestCase):
         self.run_fp(False, "sudo")
         self.assertEqual((self.etc / "sudo").read_text(), original)
 
+    def test_off_isnt_refused_for_the_systems_own_problem(self):
+        # (audit #797: a problem the file has just the same with our line in
+        # it is the system's, not ours; a new one still refuses)
+        original = "#%PAM-1.0\nauth\t\tinclude\t\tsystem-auth\n"
+        (self.etc / "sudo").write_text(original)
+        self.run_fp(True, "sudo")
+        self.r.pam_problem = lambda *a, **k: "sudo: the system's own"
+        (self.etc / "polkit-1").write_text(original)
+        with self.assertRaises(self.r.Refused):
+            self.run_fp(True, "polkit")  # (on: still refused)
+        self.run_fp(False, "sudo")
+        self.assertEqual((self.etc / "sudo").read_text(), original)
+        self.r.pam_problem = lambda *a, **k: ""
+        self.run_fp(True, "sudo")
+        self.r.pam_problem = lambda etc, name, text, **k: "" if "pam_fprintd" in text else "sudo: only without it"
+        with self.assertRaises(self.r.Refused):
+            self.run_fp(False, "sudo")
+        self.assertIn("pam_fprintd", (self.etc / "sudo").read_text())
+
     def test_a_vendor_file_is_copied_to_etc(self):
         (self.vendor / "polkit-1").write_text("#%PAM-1.0\n\nauth include system-auth\n")
         self.assertEqual(self.run_fp(True, "polkit"), [str(self.etc / "polkit-1")])
@@ -922,10 +965,12 @@ class FaceUnlock(unittest.TestCase):
             (p / "usr/lib/systemd/system/polkit-agent-helper@.service").write_text("[Service]\n")
         (p / "etc/systemd/system/polkit-agent-helper@.service.d").mkdir(parents=True)
         (p / "var/lib/tessera/face").mkdir(parents=True)  # (the stub write_root makes no folders)
-        self.config.write_text("[video]\ndevice_path = /dev/video2\n")
+        self.config.write_text(f"[video]\ndevice_path = {self.IR}\n")
         return p
 
-    def admin_on(self, prefix, kind="ir", device="/dev/video2", infrared=lambda d: d == "/dev/video2"):
+    IR = "/dev/v4l/by-path/pci-0000:00:14.0-usb-0:5:1.2-video-index0"
+
+    def admin_on(self, prefix, kind="ir", device=IR, infrared=lambda d, ir=IR: d == ir):
         return self.r.face_admin_on(self.uid, device, kind, exists=lambda p: True, which=lambda n: "/usr/bin/howdy",
                                     prefix=str(prefix), run=lambda *a, **k: None, config=str(self.config), infrared=infrared)
 
@@ -947,7 +992,7 @@ class FaceUnlock(unittest.TestCase):
         p = self.admin_tree()
         noop = lambda *a, **k: None
         # (face admin off: nothing to follow)
-        self.assertEqual(self.r.face_admin_refresh(prefix=str(p), run=noop), [])
+        self.assertEqual(self.refresh(p), [])
         self.assertFalse((p / "var/lib/tessera/face/polkit-1").exists())
         self.admin_on(p)
         copy = p / "var/lib/tessera/face/polkit-1"
@@ -956,20 +1001,20 @@ class FaceUnlock(unittest.TestCase):
         # fingerprint off for administrator prompts: the copy loses it too
         without = "".join(l + "\n" for l in self.POLKIT_FP.splitlines() if "pam_fprintd" not in l)
         (p / "etc/pam.d/polkit-1").write_text(without)
-        self.assertEqual(self.r.face_admin_refresh(prefix=str(p), run=noop), [str(copy)])
+        self.assertEqual(self.refresh(p), [str(copy)])
         self.assertNotIn("pam_fprintd", copy.read_text())
         self.assertIn("pam_howdy", copy.read_text())
-        self.assertEqual(self.r.face_admin_refresh(prefix=str(p), run=noop), [])  # (nothing changed)
+        self.assertEqual(self.refresh(p), [])  # (nothing changed)
         # /etc's copy gone (the package's file again): the drop-in follows it
         (p / "etc/pam.d/polkit-1").unlink()
         (p / "usr/lib/pam.d").mkdir(parents=True)
         (p / "usr/lib/pam.d/polkit-1").write_text(self.POLKIT_FP)
-        self.r.face_admin_refresh(prefix=str(p), run=noop)
+        self.refresh(p)
         self.assertIn(":/usr/lib/pam.d/polkit-1", dropin.read_text())
         self.assertIn("pam_fprintd", copy.read_text())
         # no PAM file for polkit at all: face admin is undone
         (p / "usr/lib/pam.d/polkit-1").unlink()
-        self.r.face_admin_refresh(prefix=str(p), run=noop)
+        self.refresh(p)
         self.assertFalse(dropin.exists() or copy.exists())
 
     def test_a_regular_camera_never_approves_administrators(self):
@@ -985,7 +1030,7 @@ class FaceUnlock(unittest.TestCase):
             self.admin_on(p, device="/dev/video0")
         # asked for the infrared one while Howdy watches the regular one
         with self.assertRaises(self.r.Refused):
-            self.admin_on(p, device="/dev/video2")
+            self.admin_on(p, device=self.IR)
         self.assertFalse(dropin.exists())
         # (and through the command line too)
         with self.assertRaises(self.r.Refused):
@@ -995,9 +1040,35 @@ class FaceUnlock(unittest.TestCase):
         q = Path(self.dir.name) / "q"
         (q / "etc/pam.d").mkdir(parents=True)
         (q / "etc/pam.d/polkit-1").write_text(self.POLKIT)
-        self.config.write_text("[video]\ndevice_path = /dev/video2\n")
+        self.config.write_text(f"[video]\ndevice_path = {self.IR}\n")
         with self.assertRaises(self.r.Refused):
             self.admin_on(q)  # (a setuid-only polkit: no service to give a camera)
+
+    def test_admin_needs_a_camera_name_that_stays_the_same(self):
+        # (audit #799: /dev/videoN can be the colour camera after a reboot)
+        p = self.admin_tree()
+        self.config.write_text("[video]\ndevice_path = /dev/video2\n")
+        with self.assertRaises(self.r.Refused) as e:
+            self.admin_on(p, device="/dev/video2", infrared=lambda d: True)
+        self.assertIn("by-path", str(e.exception))
+        # on, then Howdy's camera turns out not infrared (or renamed): undone
+        self.config.write_text(f"[video]\ndevice_path = {self.IR}\n")
+        self.admin_on(p)
+        dropin = p / "etc/systemd/system/polkit-agent-helper@.service.d/50-tessera-face.conf"
+        self.assertTrue(dropin.exists())
+        self.refresh(p)
+        self.assertTrue(dropin.exists())
+        self.r.face_admin_refresh(prefix=str(p), run=lambda *a, **k: None, config=str(self.config),
+                                  infrared=lambda d: False, exists=lambda d: True)
+        self.assertFalse(dropin.exists())
+        self.admin_on(p)
+        self.config.write_text("[video]\ndevice_path = /dev/video0\n")
+        self.refresh(p)
+        self.assertFalse(dropin.exists())
+
+    def refresh(self, p):
+        return self.r.face_admin_refresh(prefix=str(p), run=lambda *a, **k: None, config=str(self.config),
+                                         infrared=lambda d: True, exists=lambda d: True)
 
 
 class SysUpdate(unittest.TestCase):

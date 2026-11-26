@@ -310,6 +310,23 @@ class Files(Temp):
         self.assertEqual(s, {"_tessera_revisions": {"k": [2, "a", 1]}, "todos": []})
         self.assertEqual(MIG.settings(str(f)), [])
 
+    def test_linked_settings_files_stay_links(self):
+        # (audit #791: dotfiles kept in a repo through links)
+        repo, f = self.home / "dotfiles", self.home / "cfg"
+        self.write(repo / "config.json", json.dumps({"appearance": {"menuIcon": "irice"}}))
+        self.write(repo / "spaces.lua", "IRICE_SPACE_BASES = {}\n")
+        self.write(repo / "kdeglobals", "[General]\nColorScheme=iRiceDesktopDark\n")
+        f.mkdir()
+        for n in ("config.json", "spaces.lua", "kdeglobals"):
+            (f / n).symlink_to(repo / n)
+        MIG.settings(str(f))
+        MIG.color_scheme(str(f / "kdeglobals"), "General")
+        for n in ("config.json", "spaces.lua", "kdeglobals"):
+            self.assertTrue((f / n).is_symlink(), n)
+        self.assertEqual(json.loads((repo / "config.json").read_text())["appearance"]["menuIcon"], "tessera")
+        self.assertIn("TESSERA_SPACE_BASES", (repo / "spaces.lua").read_text())
+        self.assertIn("ColorScheme=TesseraDesktopDark", (repo / "kdeglobals").read_text())
+
     def test_your_files_from_before(self):
         c, data = self.home / ".config", self.home / ".local/share"
         self.write(c / "hypr/irice/keyboard.lua", "-- yours\n")
@@ -540,6 +557,21 @@ class Bash(Temp):
         self.assertEqual(self.bash("old_names_pending && echo yes || echo no").strip(), "yes")
         shutil.rmtree(self.home / ".cache/irice")
         self.checkout(self.home / "iRice")
+        self.assertEqual(self.bash("old_names_pending && echo yes || echo no").strip(), "yes")
+
+    def test_links_left_by_the_migration_count_once_a_day(self):
+        # (audit #792: not Python and a /proc scan on every start)
+        (self.home / ".config").mkdir()
+        (self.home / ".config/irice").symlink_to(self.home / ".config/tessera")
+        self.assertEqual(self.bash("old_names_pending && echo yes || echo no").strip(), "yes")
+        stamp = self.home / ".local/state/tessera/old-names-checked"
+        self.write(stamp, "")
+        self.assertEqual(self.bash("old_names_pending && echo yes || echo no").strip(), "no")
+        os.utime(stamp, (time.time() - 2 * 86400, time.time() - 2 * 86400))
+        self.assertEqual(self.bash("old_names_pending && echo yes || echo no").strip(), "yes")
+        # (a real old folder is always pending)
+        os.utime(stamp)
+        self.write(self.home / ".cache/irice/x", "")
         self.assertEqual(self.bash("old_names_pending && echo yes || echo no").strip(), "yes")
 
     def test_the_dev_container_until_its_renamed(self):

@@ -183,6 +183,19 @@ class LoginSwitch(unittest.TestCase):
                       (self.root / "etc/systemd/system/tessera-login-fallback.service").read_text())
         self.assertIn("OnBootSec=", (self.root / "etc/systemd/system/tessera-login-check.timer").read_text())
 
+    def test_greetds_backup_is_the_latest_config_of_yours(self):
+        # (audit #803: a switch back restored the first-ever copy)
+        self.switch()
+        backup = self.root / "etc/greetd/config.toml.pre-tessera"
+        first = backup.read_text()
+        self.switch()  # (Tessera's config there now: the backup stays)
+        self.assertEqual(backup.read_text(), first)
+        mine = '[terminal]\nvt = 1\n[default_session]\ncommand = "tuigreet --time"\nuser = "greeter"\n'
+        (self.root / "etc/greetd/config.toml").write_text(mine)
+        self.switch()
+        self.assertEqual(backup.read_text(), mine)
+        self.assertIn("/usr/share/tessera/", (self.root / "etc/greetd/config.toml").read_text())
+
     def test_your_wallpaper_when_it_can_be_read(self):
         wall = self.home / "w.png"
         wall.write_bytes(b"\x89PNG\r\n\x1a\n mine")

@@ -70,19 +70,34 @@ def clean(value, what):
     return value
 
 
-def wifi_profiles():
-    """(uuid, connection name, ssid) of every saved Wi-Fi profile."""
+_profiles = None
+
+
+def wifi_profiles(fresh=False, changed=None):
+    """(uuid, connection name, ssid) of every saved Wi-Fi profile. The
+    network name takes one nmcli per profile (seconds, with many saved), so
+    it's asked once per run: fresh (after a save) lists the profiles again
+    and asks only for new ones and the one just `changed`."""
+    global _profiles
+    if _profiles is not None and not fresh:
+        return list(_profiles)
+    known_ssid = {u: s for u, _, s in (_profiles or []) if u != changed}
     r = nmcli("-t", "-f", "NAME,UUID,TYPE", "connection", "show")
     if r.returncode != 0:
+        _profiles = None
         return []
     out = []
     for line in r.stdout.splitlines():
         # nmcli -t escapes ":" inside fields as "\:"
         parts = [p.replace("\0", ":") for p in line.replace("\\:", "\0").split(":")]
         if len(parts) >= 3 and parts[2] == "802-11-wireless":
+            if parts[1] in known_ssid:
+                out.append((parts[1], parts[0], known_ssid[parts[1]]))
+                continue
             s = nmcli("-g", "802-11-wireless.ssid", "connection", "show", parts[1])
             out.append((parts[1], parts[0], s.stdout.strip() if s.returncode == 0 else parts[0]))
-    return out
+    _profiles = out
+    return list(out)
 
 
 def known():
@@ -103,10 +118,10 @@ def forget(ssid):
     return 0
 
 
-def profile_for(ssid):
+def profile_for(ssid, fresh=False, changed=None):
     """The saved Wi-Fi profile for this network name, if there is one: the
     one last connected, when there are several (a broken extra one, say)"""
-    uuids = [u for u, _, s in wifi_profiles() if s == ssid]
+    uuids = [u for u, _, s in wifi_profiles(fresh, changed) if s == ssid]
     if len(uuids) <= 1:
         return uuids[0] if uuids else None
 
@@ -183,8 +198,9 @@ def commands(req, security_seen=""):
         return ssid, cmds
     if security == "psk":
         psk = clean(req.get("psk"), "Wi-Fi password")
-        if not 8 <= len(psk) <= 63:
-            raise ValueError("Wi-Fi passwords are 8 to 63 characters.")
+        # (or the key itself: exactly 64 hex digits)
+        if not (8 <= len(psk) <= 63 or (len(psk) == 64 and all(c in "0123456789abcdefABCDEF" for c in psk))):
+            raise ValueError("Wi-Fi passwords are 8 to 63 characters (or a 64-digit hex key).")
         # (psk-flags 0: the password kept in the profile. A profile made by
         # another app can say "kept by the keyring" (1); then the password
         # typed here wasn't kept, and with no keyring agent the join failed
@@ -292,7 +308,7 @@ def join(req):
         return 1
     # Saved when the profile is there afterwards (nmcli's editor can exit
     # with 0 after a command it refused, so its status alone isn't enough)
-    uuid = profile_for(ssid)
+    uuid = profile_for(ssid, fresh=True, changed=uuid)
     if r.returncode != 0 or not uuid:
         said = (r.stderr + r.stdout).lower()
         if "privileg" in said or "authoriz" in said:

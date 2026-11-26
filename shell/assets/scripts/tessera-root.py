@@ -979,14 +979,19 @@ def pam_backup_dir(etc):
     return os.path.join(os.path.dirname(etc), "pam-backup")
 
 
-def write_pam(etc, name, text, vendor=PAM_VENDOR, check=True):
+def write_pam(etc, name, text, vendor=PAM_VENDOR, check=True, removal_of=None):
     """TEXT as ETC/NAME, only if it locks no one out (pam_problem: refused
     otherwise), the file before kept first: <backup>/NAME (the one before
     the latest edit) and <backup>/NAME.first (before Tessera's first, kept
-    for good). Returns the destination."""
+    for good). Returns the destination. removal_of: the file as it is now,
+    when TEXT only takes Tessera's lines out: then a problem the current
+    file has just the same (the system's own stack's, not Tessera's) doesn't
+    stop it."""
     dest = os.path.join(etc, name)
     if check:
         why = pam_problem(etc, name, text, vendor=vendor)
+        if why and removal_of is not None and pam_problem(etc, name, removal_of, vendor=vendor) == why:
+            why = ""  # (no worse than now: the system's own problem, still there without our lines)
         if why:
             raise Refused(f"{why}: so the change wasn't made")
     before = read_text(dest)
@@ -1107,7 +1112,7 @@ def fingerprint(on, where, etc=PAM_ETC, vendor=PAM_VENDOR, module=PAM_FPRINTD, g
         if new != text or (on and src != dest):
             # (tried with the real Linux-PAM first: the login screen still
             # starts, a password still reaches the password's check)
-            changed.append(write_pam(etc, name, new, vendor))
+            changed.append(write_pam(etc, name, new, vendor, removal_of=None if on else text))
     return changed
 
 
@@ -1155,6 +1160,9 @@ def passkeys_retire(prefix="/", run=subprocess.run):
 # ── face (Settings → Lock Screen → Face) ─────────────────────────────────
 HOWDY_CONFIG = "/etc/howdy/config.ini"
 CAMERA_PATH = re.compile(r"^/dev/(v4l/by-(path|id)/[\w:.\-]+|video\d{1,3})$")
+# (administrator prompts: only a name that stays the same camera; /dev/videoN
+# can be another one after a reboot or a replug)
+STABLE_CAMERA_PATH = re.compile(r"^/dev/v4l/by-(path|id)/[\w:.\-]+$")
 
 
 def howdy_device(text, device):
@@ -1318,6 +1326,9 @@ def face_admin_on(uid, device, kind, exists=os.path.exists, which=shutil.which, 
         raise Refused(NOT_INFRARED)
     if not CAMERA_PATH.match(device) or not exists(device):
         raise Refused(f"not a camera: {device}")
+    if not STABLE_CAMERA_PATH.match(device):
+        raise Refused(f"{device} can be another camera after a restart (it has no /dev/v4l/by-path name): "
+                      "administrator prompts keep asking for your password")
     # (pam_howdy uses Howdy's camera: that one must be the infrared one, whatever was asked)
     if howdy_camera(config) != device:
         raise Refused("Howdy is set to another camera: set face unlock up again")
@@ -1344,16 +1355,25 @@ def face_admin_on(uid, device, kind, exists=os.path.exists, which=shutil.which, 
     return [root(overlay), root(FACE_DROPIN)]
 
 
-def face_admin_refresh(prefix="/", run=subprocess.run):
+def face_admin_refresh(prefix="/", run=subprocess.run, config=None, infrared=is_infrared, exists=os.path.exists):
     """polkit's PAM file changed (a fingerprint turned on or off for
     administrator prompts) while faces approve them: our copy is made again
     from it, so the helper sees that change too (it sees only the copy), and
     the drop-in follows the file PAM reads now (/etc's, or the package's
     again once /etc's copy went). Nothing when face admin is off. Returns
-    the files written."""
+    the files written. Howdy's camera is checked again too: no longer a
+    fixed name, gone, or not infrared, and face admin is undone (the
+    password again)."""
     root = lambda p: os.path.join(prefix, p.lstrip("/"))
     if not os.path.exists(root(FACE_DROPIN)):
         return []
+    camera = howdy_camera(config or root(HOWDY_CONFIG))
+    try:
+        good = bool(STABLE_CAMERA_PATH.match(camera)) and exists(camera) and infrared(camera)
+    except Exception:  # (can't tell: not trusted)
+        good = False
+    if not good:
+        return face_admin_off(prefix=prefix, run=run)
     target = next((p for p in POLKIT_PAM if os.path.exists(root(p))), "")
     if not target:
         # (no PAM file for polkit at all: nothing to show the helper instead)
@@ -1586,13 +1606,29 @@ def firewall_kind(run=subprocess.run):
     return None
 
 
-def _ports_ufw(wanted, run, did):
+# The permanent fix before this tagged its 5353/udp rule just "mDNS", a
+# natural comment for a rule of your own too: taken out once (the first
+# close that doesn't want mDNS), then never again
+UFW_OLD_MDNS_DONE = "/var/lib/tessera/ufw-old-mdns-done"
+
+
+def _ports_ufw(wanted, run, did, prefix="/"):
     want = {f"{lo}:{hi}/{p}" if hi != lo else f"{lo}/{p}" for p, lo, hi in wanted}
     rules = [(int(m[1]), m[2], m[3] or "") for m in map(UFW_RULE.match, _cmd(run, "ufw", "status", "numbered")[1].splitlines()) if m]
+    done_mark = os.path.join(prefix, UFW_OLD_MDNS_DONE.lstrip("/"))
+    old_mdns = not os.path.exists(done_mark) and "5353/udp" not in want
+    ok = True
     # Ours that aren't wanted, last first (the numbers after one move up)
     for n, to, note in sorted(rules, reverse=True):
-        if (note in (UFW_TAG,) + UFW_OLD or (note == "mDNS" and to == "5353/udp")) and to not in want:
-            did(f"closed {to}", "ufw", "--force", "delete", str(n))
+        if (note in (UFW_TAG,) + UFW_OLD or (old_mdns and note == "mDNS" and to == "5353/udp")) and to not in want:
+            ok = did(f"closed {to}", "ufw", "--force", "delete", str(n)) and ok
+    if old_mdns and ok:
+        try:
+            os.makedirs(os.path.dirname(done_mark), mode=0o755, exist_ok=True)
+            with open(done_mark, "w") as f:
+                f.write("1\n")
+        except OSError:
+            pass
     # (a port someone allowed already is left to them)
     for to in sorted(want - {to for _n, to, _note in rules}):
         did(f"opened {to}", "ufw", "allow", to, "comment", UFW_TAG)
@@ -1706,7 +1742,7 @@ def sharing_ports(sets, run=subprocess.run, prefix=None):
             done.append(f"removed {old}")
     kind = firewall_kind(run)
     if kind == "ufw":
-        _ports_ufw(wanted, run, did)
+        _ports_ufw(wanted, run, did, prefix)
     elif kind == "firewalld":
         _ports_firewalld(wanted, run, did, prefix)
     elif kind == "nftables":
@@ -2130,15 +2166,37 @@ def write_tree(files, dest):
         fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, mode)
         try:
             os.fchmod(fd, mode)
-            os.write(fd, data)
+            view = memoryview(data)
+            while view:
+                view = view[os.write(fd, view):]
+            # (on disk before the swap: a power cut just after an update
+            # mustn't leave the login screen's files empty)
+            os.fsync(fd)
         finally:
             os.close(fd)
+    for d, _, _ in os.walk(new):
+        _fsync_dir(d)
     if os.path.islink(dest):
         os.unlink(dest)
     elif os.path.exists(dest):
         os.rename(dest, old)
     os.rename(new, dest)
+    _fsync_dir(os.path.dirname(dest) or ".")
     shutil.rmtree(old, ignore_errors=True)
+
+
+def _fsync_dir(path):
+    """The folder's entries (a rename) on disk; never fails the caller"""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 # The login screen's keyboard layout: the system's (localectl writes it to
@@ -2720,7 +2778,12 @@ def login_switch_on(src, look_text, uid, prefix=None, run=subprocess.run, which=
         ensure_greeter_user(run)
     install_login_copy(repo, look, uid, prefix, run)
     conf = _at(prefix, GREETD_CONFIG)
-    if os.path.isfile(conf) and not os.path.lexists(conf + ".pre-tessera"):
+    # (kept once, and again whenever the config there now is someone else's,
+    # not Tessera's: a switch back then restores the latest one, not the
+    # first-ever copy. The PAM file's backup below stays the first: audit #803)
+    current = read_text(conf) if os.path.isfile(conf) else None
+    if current is not None and (not os.path.lexists(conf + ".pre-tessera")
+                                or (current.strip() and "/usr/share/tessera/" not in current)):
         copy_file(conf, conf + ".pre-tessera")
     write_root(conf, GREETD_TOML, 0o644)
     # (the copy under the old name: greetd starts Tessera's now)
@@ -3362,8 +3425,14 @@ def rescue(args, prefix=None, run=subprocess.run, which=shutil.which, say=print)
     for d in did:
         say(d)
     if current_dm(prefix) == "greetd":
-        restart_greetd(run)
-        say("greetd started again: the login is on tty1 (Ctrl+Alt+F1)")
+        # (run from a terminal inside a desktop greetd started, a restart
+        # would end that session and every unsaved document in it: the
+        # repairs stay, the restart waits for the next login)
+        if greetd_session(run):
+            say("Someone is logged in through the login screen, so greetd wasn't restarted: log out or restart to use the repaired login")
+        else:
+            restart_greetd(run)
+            say("greetd started again: the login is on tty1 (Ctrl+Alt+F1)")
     say("Nothing of Tessera's to undo" if not did else "Once you're in, Tessera offers to put it back (or run: sudo /usr/lib/tessera/tessera-root rescue undo)")
     return 0
 
@@ -3483,6 +3552,12 @@ def setup(src, uid, prefix=None, run=subprocess.run):
     written += [os.path.join(prefix, d.lstrip("/")) for d in passkeys_retire(prefix, run)]
     # (the login rescue, wherever greetd is installed: tessera-login-rescue.service)
     written += [os.path.join(prefix, d.lstrip("/")) for d in rescue_units(prefix, run)]
+    # (faces approving administrator prompts: Howdy's camera still the
+    # infrared one, else back to the password. Never fails the setup)
+    try:
+        written += face_admin_refresh(prefix, run)
+    except Exception as e:
+        print(f"tessera-root setup: face admin not checked: {e!r}", file=sys.stderr)
     # ananicy-cpp reads its rules as it starts
     if prefix == "/" and any(d.startswith("/etc/ananicy.d/") or d == OLD_ANANICY_RULE for d in written):
         with contextlib.suppress(OSError, subprocess.SubprocessError):

@@ -383,6 +383,8 @@ def _json(path):
 
 
 def _write_json(path, data):
+    # (a link, a dotfiles repo's: its target is rewritten, the link stays)
+    path = os.path.realpath(path)
     tmp = path + ".rename-tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
@@ -441,6 +443,7 @@ def rewrite_word(path, old, new):
         return False
     if old not in text:
         return False
+    path = os.path.realpath(path)  # (a link stays a link: its target changes)
     tmp = path + ".rename-tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(text.replace(old, new))
@@ -564,6 +567,7 @@ def color_scheme(path, group):
             lines[i] = line.replace("ColorScheme=iRice", "ColorScheme=Tessera", 1)
             hit = True
     if hit:
+        path = os.path.realpath(path)  # (a link stays a link: its target changes)
         tmp = path + ".rename-tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))

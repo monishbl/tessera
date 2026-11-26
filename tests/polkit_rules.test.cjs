@@ -88,3 +88,10 @@ test('the program and its first argument have to match the action', () => {
     assert.equal(decide(action('org.tessera.root.wallpaper', HELPER, ['fix', 'avahi'])), null);
     assert.equal(decide({ id: 'org.tessera.root.fix', lookup: () => undefined }), null);
 });
+
+test('the login and pairing fixes keep the password', () => {
+    // (they rewrite PAM files / restart Bluetooth: audit #782)
+    assert.equal(decide(action('org.tessera.root.fix', HELPER, ['fix', 'login'])), null);
+    assert.equal(decide(action('org.tessera.root.fix', HELPER, ['fix', 'btpairing'])), null);
+    assert.equal(decide(action('org.tessera.root.fix', HELPER, ['fix', 'networkmanager'])), 'yes');
+});

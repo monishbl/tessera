@@ -29,6 +29,7 @@ set up. Hardware that isn't here hides its feature.
 Only reads, except apply-user and record. TESSERA_SYSTEM_ROOT moves /sys,
 /etc, /usr and pacman's database somewhere else (tests).
 """
+import contextlib
 import glob
 import importlib.util
 import json
@@ -37,6 +38,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.environ.get("TESSERA_SYSTEM_ROOT", "/")
@@ -416,9 +418,17 @@ def edit_config(change):
         return False
     change(c)
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p + ".tmp", "w") as f:
-        json.dump(c, f, indent=4)
-    os.replace(p + ".tmp", p)
+    # (a name of its own: two runs at once never write into one temporary file)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p), prefix=".config.json.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(c, f, indent=4)
+        os.chmod(tmp, os.stat(p).st_mode & 0o777 if os.path.exists(p) else 0o644)
+        os.replace(tmp, p)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
     return True
 
 

@@ -199,6 +199,36 @@ class Files(unittest.TestCase):
         self.assertRegex(fl.EYE_MODEL_URL, r"/[0-9a-f]{40}/")  # (a commit, not a branch)
         self.assertFalse(fl.eye_model_ok(os.path.join(self.tmp.name, "nothing")))
 
+    def test_a_camera_without_pictures_gives_up_quickly(self):
+        """A busy or stalled camera fails every read at once: the check pauses
+        between tries and answers 2 (use the password) after a second."""
+        import sys
+        import types
+        from unittest import mock
+        reads = []
+
+        class Cap:
+            def get(self, prop):
+                return 0
+
+            def read(self):
+                reads.append(1)
+                return False, None
+
+            def release(self):
+                pass
+        cv2 = types.SimpleNamespace(CAP_PROP_FRAME_WIDTH=3, CAP_PROP_FRAME_HEIGHT=4, error=RuntimeError)
+        with mock.patch.dict(sys.modules, {"cv2": cv2, "numpy": types.SimpleNamespace()}), \
+                mock.patch.object(fl, "load_me", lambda np: ([object()], fl.CLOSED)), \
+                mock.patch.object(fl, "open_camera", lambda c, d: Cap()), \
+                mock.patch.object(fl, "Eyes", lambda *a: object()), \
+                mock.patch.object(fl, "NO_FRAME_GIVE_UP", 0.2):
+            import time
+            t0 = time.monotonic()
+            self.assertEqual(fl.check("/dev/video0", timeout=5.0), 2)
+            self.assertLess(time.monotonic() - t0, 2.0)
+        self.assertLess(len(reads), 50)  # (paused, not spinning)
+
     def test_check_without_a_camera_says_so(self):
         self.assertEqual(fl.main(["face_live.py", "check"]), 2)
         self.assertEqual(fl.main(["face_live.py", "nonsense"]), 2)

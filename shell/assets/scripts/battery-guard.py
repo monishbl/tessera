@@ -10,9 +10,9 @@ hibernate.
 It runs as a systemd user service (tessera-battery-guard.service, installed by
 battery-guard-install.sh) and only reacts: UPower tells it when the battery
 changes (PropertiesChanged on its display device), so it costs nothing in
-between. It asks logind to suspend once per discharge: after a wake on a
-still-empty battery it waits for the next change before trying again, and
-plugging in resets it.
+between. It asks logind to suspend once per level: after a wake on a
+still-empty battery it sleeps again as soon as the battery drops another 1%,
+and plugging in resets it.
 
   battery-guard.py [--sleep-at 3]
   battery-guard.py --check <percent> <state>    (the decision only, for tests)
@@ -31,6 +31,19 @@ EMPTY = 5
 def should_sleep(percent, state, sleep_at):
     """On battery (draining or empty) and at or under the level."""
     return state in (DISCHARGING, EMPTY) and 0 <= percent <= sleep_at
+
+
+def decide(percent, state, sleep_at, slept_at):
+    """(sleep now?, the level to remember). slept_at is the level it last
+    slept at in this discharge (None: not yet). After a wake on a
+    still-empty battery it acts again once the level drops a further 1%."""
+    if state not in (DISCHARGING, EMPTY):
+        return False, None  # plugged in: ready for the next time
+    if not should_sleep(percent, state, sleep_at):
+        return False, slept_at
+    if slept_at is None or percent <= slept_at - 1:
+        return True, slept_at
+    return False, slept_at
 
 
 def main():
@@ -52,7 +65,7 @@ def main():
 
     bus = Gio.bus_get_sync(Gio.BusType.SYSTEM)
     device = Gio.DBusProxy.new_sync(bus, Gio.DBusProxyFlags.NONE, None, UPOWER, DISPLAY, DEVICE)
-    done = {"armed": True}
+    done = {"slept_at": None}
 
     def check(*_):
         percent = device.get_cached_property("Percentage")
@@ -61,10 +74,8 @@ def main():
         if percent is None or state is None or (present is not None and not present.unpack()):
             return
         p, s = percent.unpack(), state.unpack()
-        if s not in (DISCHARGING, EMPTY):
-            done["armed"] = True  # plugged in: ready for the next time
-            return
-        if done["armed"] and should_sleep(p, s, args.sleep_at):
+        now, done["slept_at"] = decide(p, s, args.sleep_at, done["slept_at"])
+        if now:
             # (the shell's own "Battery empty" says the same: power_policy.rs
             # battery_alert; while this guard runs, it's the only one that does).
             # Never waited for: a frozen notification server, or no
@@ -81,7 +92,7 @@ def main():
                 login = Gio.DBusProxy.new_sync(bus, Gio.DBusProxyFlags.NONE, None, "org.freedesktop.login1",
                                                "/org/freedesktop/login1", "org.freedesktop.login1.Manager")
                 login.call_sync("Suspend", GLib.Variant("(b)", (False,)), Gio.DBusCallFlags.NONE, 10000, None)
-                done["armed"] = False  # (only once it slept: a failed try is tried again)
+                done["slept_at"] = p  # (only once it slept: a failed try is tried again)
             except GLib.Error as e:
                 print(f"couldn't sleep: {e.message}", file=sys.stderr)
 

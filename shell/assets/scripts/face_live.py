@@ -384,6 +384,13 @@ def load_me(np):
         return [], CLOSED
 
 
+# A failed camera read waits this long before the next try, and the check
+# gives up (exit 2: no answer, use the password) after this long without one
+# good frame.
+FAILED_READ_PAUSE = 0.04
+NO_FRAME_GIVE_UP = 1.0
+
+
 def check(device, timeout=6.0):
     try:
         import cv2
@@ -408,12 +415,19 @@ def check(device, timeout=6.0):
     blink = Blink(closing)
     start = time.monotonic()
     last_box, known, told = None, False, ""
+    last_frame = start
     try:
         while time.monotonic() - start < timeout:
             ok, frame = cap.read()
             t = time.monotonic()
             if not ok:
+                # (a busy or stalled camera fails at once: don't spin a core)
+                if t - last_frame > NO_FRAME_GIVE_UP:
+                    log(f"no picture from {device}")
+                    return 2
+                time.sleep(FAILED_READ_PAUSE)
                 continue
+            last_frame = t
             f = eyes.face(frame)
             if f is None:
                 blink.feed(t, None)
@@ -473,11 +487,17 @@ def enrol(device, frames=5, timeout=10.0):
         got, n, blink, blinks, last_box = [], 0, Blink(), 0, None
         dips = []
         start = time.monotonic()
+        last_frame = start
         while time.monotonic() - start < timeout and (len(got) < frames or blinks < 2):
             ok, frame = cap.read()
             t = time.monotonic()
             if not ok:
+                if t - last_frame > NO_FRAME_GIVE_UP:
+                    print(f"The camera ({device}) gives no picture. Close other apps using it, then try again.", file=sys.stderr)
+                    return 2
+                time.sleep(FAILED_READ_PAUSE)
                 continue
+            last_frame = t
             f = eyes.face(frame)
             if f is None:
                 blink.feed(t, None)

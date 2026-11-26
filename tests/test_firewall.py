@@ -190,6 +190,10 @@ class SharingPortsJob(Fakes):
                                                       "ufw allow 53318:53319/tcp comment Tessera sharing"])
         _, calls = self.ports([], FAKE_UNITS="ufw")
         self.assertEqual(self.changes(calls, "ufw"), [f"ufw --force delete {n}" for n in (9, 8, 5, 4, 3, 2)])
+        # (the old fix's bare "mDNS" rule goes once; after that a rule of
+        # yours called mDNS is yours: audit #800)
+        _, calls = self.ports([], FAKE_UNITS="ufw")
+        self.assertEqual(self.changes(calls, "ufw"), [f"ufw --force delete {n}" for n in (8, 5, 3, 2)])
 
     def test_ufw_leaves_a_port_someone_allowed_to_them(self):
         (self.d / "ufw").write_text("Status: active\n\n[ 1] 53317/tcp                  ALLOW IN    Anywhere\n")
