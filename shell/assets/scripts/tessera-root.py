@@ -979,14 +979,19 @@ def pam_backup_dir(etc):
     return os.path.join(os.path.dirname(etc), "pam-backup")
 
 
-def write_pam(etc, name, text, vendor=PAM_VENDOR, check=True):
+def write_pam(etc, name, text, vendor=PAM_VENDOR, check=True, removal_of=None):
     """TEXT as ETC/NAME, only if it locks no one out (pam_problem: refused
     otherwise), the file before kept first: <backup>/NAME (the one before
     the latest edit) and <backup>/NAME.first (before Tessera's first, kept
-    for good). Returns the destination."""
+    for good). Returns the destination. removal_of: the file as it is now,
+    when TEXT only takes Tessera's lines out: then a problem the current
+    file has just the same (the system's own stack's, not Tessera's) doesn't
+    stop it."""
     dest = os.path.join(etc, name)
     if check:
         why = pam_problem(etc, name, text, vendor=vendor)
+        if why and removal_of is not None and pam_problem(etc, name, removal_of, vendor=vendor) == why:
+            why = ""  # (no worse than now: the system's own problem, still there without our lines)
         if why:
             raise Refused(f"{why}: so the change wasn't made")
     before = read_text(dest)
@@ -1107,7 +1112,7 @@ def fingerprint(on, where, etc=PAM_ETC, vendor=PAM_VENDOR, module=PAM_FPRINTD, g
         if new != text or (on and src != dest):
             # (tried with the real Linux-PAM first: the login screen still
             # starts, a password still reaches the password's check)
-            changed.append(write_pam(etc, name, new, vendor))
+            changed.append(write_pam(etc, name, new, vendor, removal_of=None if on else text))
     return changed
 
 

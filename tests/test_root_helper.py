@@ -622,6 +622,25 @@ class FingerprintPam(unittest.TestCase):
         self.run_fp(False, "sudo")
         self.assertEqual((self.etc / "sudo").read_text(), original)
 
+    def test_off_isnt_refused_for_the_systems_own_problem(self):
+        # (audit #797: a problem the file has just the same with our line in
+        # it is the system's, not ours; a new one still refuses)
+        original = "#%PAM-1.0\nauth\t\tinclude\t\tsystem-auth\n"
+        (self.etc / "sudo").write_text(original)
+        self.run_fp(True, "sudo")
+        self.r.pam_problem = lambda *a, **k: "sudo: the system's own"
+        (self.etc / "polkit-1").write_text(original)
+        with self.assertRaises(self.r.Refused):
+            self.run_fp(True, "polkit")  # (on: still refused)
+        self.run_fp(False, "sudo")
+        self.assertEqual((self.etc / "sudo").read_text(), original)
+        self.r.pam_problem = lambda *a, **k: ""
+        self.run_fp(True, "sudo")
+        self.r.pam_problem = lambda etc, name, text, **k: "" if "pam_fprintd" in text else "sudo: only without it"
+        with self.assertRaises(self.r.Refused):
+            self.run_fp(False, "sudo")
+        self.assertIn("pam_fprintd", (self.etc / "sudo").read_text())
+
     def test_a_vendor_file_is_copied_to_etc(self):
         (self.vendor / "polkit-1").write_text("#%PAM-1.0\n\nauth include system-auth\n")
         self.assertEqual(self.run_fp(True, "polkit"), [str(self.etc / "polkit-1")])
