@@ -12,16 +12,21 @@ use tessera_core::services::status::Battery;
 /// The menus this surface draws: (Panels name, content width, how far left
 /// of the item it starts). StatusMenus.qml's `width_` and `targetX:
 /// Panels.anchorX - 20`; NowPlaying.qml's `contentWidth: 320` and
-/// `Panels.anchorX - 120`.
+/// `Panels.anchorX - 120`. Every bar popover is one width, W (Theme's
+/// popover-width; the Wi-Fi menu's too); Now Playing alone is wider, for
+/// its artwork beside the track and its transport row.
 pub const PANELS: &[(&str, f32, f32)] = &[
-    ("bluetoothMenu", 300.0, 20.0),
-    ("soundMenu", 300.0, 20.0),
-    ("privacyMenu", 260.0, 20.0),
-    ("batteryMenu", 280.0, 20.0),
-    ("resourcesMenu", 280.0, 20.0),
-    ("weatherMenu", 300.0, 20.0),
+    ("bluetoothMenu", W, 20.0),
+    ("soundMenu", W, 20.0),
+    ("privacyMenu", W, 20.0),
+    ("batteryMenu", W, 20.0),
+    ("resourcesMenu", W, 20.0),
+    ("weatherMenu", W, 20.0),
     ("nowPlaying", 320.0, 120.0),
 ];
+
+/// A bar popover's content width (core/ui/theme.slint's popover-width)
+pub const W: f32 = 300.0;
 
 pub fn panel(name: &str) -> Option<(&'static str, f32, f32)> {
     PANELS.iter().find(|p| p.0 == name).copied()
@@ -409,7 +414,7 @@ mod tests {
 
     #[test]
     fn menus_sizes_and_places() {
-        assert_eq!(panel("privacyMenu"), Some(("privacyMenu", 260.0, 20.0)));
+        assert_eq!(panel("privacyMenu"), Some(("privacyMenu", 300.0, 20.0)));
         assert_eq!(panel("nowPlaying").map(|p| (p.1, p.2)), Some((320.0, 120.0)));
         assert_eq!(panel("wifiMenu"), None);
         assert_eq!(PANELS.len(), 7);

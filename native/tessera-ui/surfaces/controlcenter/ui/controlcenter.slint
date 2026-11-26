@@ -3108,7 +3108,7 @@ export component ControlCenter inherits Window {
             y: menu-y + self.height > root.height - 8px && menu-y > root.height - menu-y ? max(8px, menu-y - self.height) : min(menu-y, root.height - self.height - 8px);
             width: 240px;
             height: mcol.preferred-height;
-            border-radius: Theme.material ? 16px : Theme.menu-radius + 2px;
+            border-radius: Theme.radius-menu;
             // (Glass: the plugin's glass under it, lib.rs, plus the menus'
             // own fill, border and shadow, as the status menus: inside the
             // panel its glass alone sees only what the panel's sees, and read
@@ -3123,7 +3123,7 @@ export component ControlCenter inherits Window {
                 padding: Theme.material ? 8px : 5px;
                 for it[i] in menu: Rectangle {
                     height: it.sep ? (Theme.material ? 9px : 11px) : Theme.material ? 44px : 26px;
-                    border-radius: Theme.item-radius;
+                    border-radius: Theme.radius-menu-row;
                     background: !it.sep && (mt.has-hover || i == menu-kbd) ? Theme.menu-hover : transparent;
                     accessible-role: list-item;
                     accessible-label: it.text;

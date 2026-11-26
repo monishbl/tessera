@@ -468,7 +468,7 @@ export component DockMenu inherits Window {
     out property <length> panel-width: panel.width;
     out property <length> panel-height: panel.height;
     out property <float> panel-scale: panel.transform-scale;
-    out property <length> radius: Theme.material ? 18px : 14px;
+    out property <length> radius: Theme.radius-menu;
     callback chosen(int);
     callback dismissed();
     callback closed(); // the close animation ended
@@ -562,7 +562,7 @@ export component DockMenu inherits Window {
                         accessible-role: list-item;
                         accessible-label: armed-row ? r.confirm : r.text;
                         accessible-action-default => { root.choose(i); }
-                        border-radius: Theme.material ? 10px : 8px;
+                        border-radius: Theme.radius-menu-row;
                         background: armed-row ? Theme.danger : hot ? (r.danger && !Theme.material ? Theme.danger : Theme.highlight) : transparent;
                         Text {
                             x: 12px;

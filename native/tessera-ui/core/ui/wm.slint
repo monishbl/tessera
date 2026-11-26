@@ -158,7 +158,7 @@ export component WMenu inherits Rectangle {
         y: my;
         width: menu-w;
         height: natural;
-        border-radius: Theme.material ? 18px : 14px;
+        border-radius: Theme.radius-menu; // (every menu's corner: the bar's, the dock's, the desktop's)
         background: fill;
         opacity: min(1, openness);
         accessible-role: list;
@@ -186,7 +186,7 @@ export component WMenu inherits Rectangle {
                     accessible-role: none;
                 }
                 if !r.separator && !r.header: Rectangle {
-                    border-radius: Theme.material ? 10px : 8px;
+                    border-radius: Theme.radius-menu-row;
                     background: hot ? Theme.highlight : transparent;
                     Text {
                         x: 12px;

@@ -1750,7 +1750,7 @@ export component DeskMenu inherits Window {
     out property <length> panel-width: panel.width;
     out property <length> panel-height: panel.height;
     out property <float> panel-scale: panel.transform-scale;
-    out property <length> radius: Theme.material ? 18px : 14px;
+    out property <length> radius: Theme.radius-menu;
     callback chosen(int);
     callback dismissed();
     callback closed();
@@ -1840,7 +1840,7 @@ export component DeskMenu inherits Window {
                         accessible-role: list-item;
                         accessible-label: r.text;
                         accessible-action-default => { if r.enabled { root.chosen(i); } }
-                        border-radius: Theme.material ? 10px : 8px;
+                        border-radius: Theme.radius-menu-row;
                         background: hot ? (r.danger && !Theme.material ? Theme.danger : Theme.highlight) : transparent;
                         Text {
                             x: 12px;
