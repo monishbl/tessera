@@ -299,7 +299,14 @@ impl DictationSvc {
         let pick = live::Pick { model: live::draft_model(&self.model(h), &self.info["models"]), lang: self.language(h) };
         let helper: Vec<String> = ["setpriv", "--pdeathsig", "TERM", "--", "python3", "-I"].iter().map(|s| s.to_string()).chain([util::script("dictate.py"), "stream".to_string()]).collect();
         let draft = format!("{}/tessera/dictation-partial-{}.wav", util::runtime(), self.session);
-        self.tap = Some(Tap::spawn(self.wav.clone(), self.session, pick, h.sender("Dictation"), helper, draft));
+        // (the levels go straight to the menu bar's part, 20 a second: not
+        // through this service, which would make each a host turn and run
+        // every service's `settled`; a stale one after a stop is ignored there)
+        let tx = h.st.tx.clone();
+        let level_to = move |l: f32| {
+            let _ = tx.send(tessera_core::Msg::Part("menubar", Box::new(json!({"dictation": {"level": l}}))));
+        };
+        self.tap = Some(Tap::spawn(self.wav.clone(), self.session, pick, h.sender("Dictation"), level_to, helper, draft));
         self.tick(h);
         util::later(h.sender("Dictation"), MAX_SECONDS * 1000, Box::new(Limit(self.gen)));
         self.publish(h);
@@ -556,6 +563,12 @@ impl Service for DictationSvc {
                     self.publish(h);
                 }
             }
+            // the island's list: "Dictation settings": what was said is
+            // dropped (nothing pasted into Settings), then Settings opens
+            "settings" => {
+                self.cancel(h);
+                h.ask("panels.openSettings", json!(["shortcuts", "Dictation"]));
+            }
             // Esc anywhere while dictating (a non-consuming bind: hypr/tessera/keybinds.lua)
             "escape" => {
                 if matches!(self.stage, Stage::Listening | Stage::Writing) {
@@ -595,16 +608,6 @@ impl Service for DictationSvc {
         None
     }
     fn message(&mut self, h: &mut Host, msg: Box<dyn std::any::Any + Send>) {
-        // (the live side: many a second while listening, so first)
-        let msg = match msg.downcast::<live::Level>() {
-            Ok(l) => {
-                if l.0 == self.session && self.stage == Stage::Listening {
-                    h.tell("menubar", json!({"dictation": {"level": l.1, "session": l.0}}));
-                }
-                return;
-            }
-            Err(m) => m,
-        };
         let msg = match msg.downcast::<live::Partial>() {
             Ok(p) => {
                 // (a draft still on its way when you stopped is newer than the last: kept)

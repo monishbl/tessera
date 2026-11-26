@@ -4,8 +4,9 @@
 //! The recorder (dictation.rs) writes the WAV as before; the final
 //! transcription reads that same file, so it's exactly as reliable as it was.
 //! Beside it, one thread (a `Tap`) reads the file as it grows, every 50 ms:
-//!   - the level of the newest 50 ms (RMS, in decibels, 0..1) goes to the
-//!     service (`Level`), which hands it to the island: 20 a second at most;
+//!   - the level of the newest 50 ms (RMS, in decibels, 0..1) goes straight
+//!     to the menu bar's island (`level_to`: not through the host, so no
+//!     host turn, nor every service's `settled`, 20 times a second);
 //!   - every 1.2 s at the soonest, when there's new speech and the last draft
 //!     has been answered, the audio so far (its last 28 s) is written to a
 //!     small WAV in the runtime folder and handed to ONE long-lived
@@ -41,8 +42,6 @@ pub const VOICED: f32 = 0.12;
 /// The models small enough for a draft every second or so
 const DRAFT_MODELS: &[&str] = &["tiny", "base"];
 
-/// The newest level (0..1) of a dictation (its session)
-pub struct Level(pub u64, pub f32);
 /// The words so far of a dictation (its session)
 pub struct Partial(pub u64, pub String);
 
@@ -192,15 +191,18 @@ pub struct Tap {
 
 impl Tap {
     /// Follow `file` (the recorder's WAV) for dictation `session`;
-    /// `helper`: the command for `dictate.py stream`; `draft`: the draft's file
-    pub fn spawn<F>(file: String, session: u64, pick: Pick, send: F, helper: Vec<String>, draft: String) -> Tap
+    /// `send`: the service's messages (drafts); `level_to`: where each level
+    /// goes (the menu bar); `helper`: the command for `dictate.py stream`;
+    /// `draft`: the draft's file
+    pub fn spawn<F, L>(file: String, session: u64, pick: Pick, send: F, level_to: L, helper: Vec<String>, draft: String) -> Tap
     where
         F: Fn(Box<dyn Any + Send>) + Send + Clone + 'static,
+        L: Fn(f32) + Send + 'static,
     {
         let stop = Arc::new(AtomicBool::new(false));
         let pick = Arc::new(Mutex::new(pick));
         let (s2, p2) = (stop.clone(), pick.clone());
-        std::thread::spawn(move || follow(file, session, p2, s2, send, helper, draft));
+        std::thread::spawn(move || follow(file, session, p2, s2, send, level_to, helper, draft));
         Tap { stop, pick }
     }
     pub fn stop(&self) {
@@ -266,9 +268,11 @@ impl Helper {
     }
 }
 
-fn follow<F>(file: String, session: u64, pick: Arc<Mutex<Pick>>, stop: Arc<AtomicBool>, send: F, helper_cmd: Vec<String>, draft: String)
+#[allow(clippy::too_many_arguments)]
+fn follow<F, L>(file: String, session: u64, pick: Arc<Mutex<Pick>>, stop: Arc<AtomicBool>, send: F, level_to: L, helper_cmd: Vec<String>, draft: String)
 where
     F: Fn(Box<dyn Any + Send>) + Send + Clone + 'static,
+    L: Fn(f32) + Send + 'static,
 {
     let tick = std::time::Duration::from_millis(FRAME_MS);
     let mut f: Option<std::fs::File> = None;
@@ -316,7 +320,7 @@ where
             continue;
         }
         let l = level(&samples[samples.len().saturating_sub(FRAME)..]);
-        send(Box::new(Level(session, l)));
+        level_to(l);
         voiced |= l >= VOICED;
         if answered.swap(false, Ordering::SeqCst) {
             gate.done();

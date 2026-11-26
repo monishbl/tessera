@@ -2426,7 +2426,8 @@ impl Menubar {
                 } else if let Some(page) = id.strip_prefix("page:") {
                     self.dict.page = page.to_string();
                 } else if id == "settings" {
-                    tessera_core::shell::ask("panels.openSettings", serde_json::json!(["shortcuts", "Dictation"]));
+                    // (the host cancels the dictation first, nothing pasted, then opens Settings)
+                    tessera_core::shell::ask("dictation.settings", serde_json::json!([]));
                     self.dict.picked();
                 } else if let Some(n) = id.strip_prefix("source:") {
                     audio::send(Cmd::DefaultSource(n.to_string()));
