@@ -99,6 +99,8 @@ pub struct ScreenSvc {
     pub(super) rec_pid: Option<i32>,
     /// Stop was asked (the end that follows is a save, even forced)
     pub(super) rec_stopping: bool,
+    /// the screen lock stopped it (its "saved" alert says so)
+    pub(super) stopped_by_lock: bool,
     pub(super) rec_gen: u64,
     // LiveText
     pub(super) recent: Vec<(String, Value)>,
@@ -386,8 +388,9 @@ impl Service for ScreenSvc {
     fn name(&self) -> &'static str {
         "ScreenTools"
     }
-    /// The screen locked: a countdown and a selection end, and a recording's
-    /// microphone is muted (put back as it was when the recording ends);
+    /// The screen locked: a countdown and a selection end, and a recording
+    /// stops and is saved (its microphone muted at once, put back as it was
+    /// when the recording ends; "Recording saved — the screen locked");
     /// new captures are refused while it stays locked (start, select)
     fn settled(&mut self, h: &mut Host) {
         let locked = h.state("locked").as_bool().unwrap_or(false);
@@ -403,6 +406,9 @@ impl Service for ScreenSvc {
         }
         self.selecting.clear();
         self.mute_for_lock(h);
+        if self.lock_stops_recording() {
+            self.stop(h);
+        }
         self.publish(h);
     }
     fn calls(&self) -> &'static [&'static str] {

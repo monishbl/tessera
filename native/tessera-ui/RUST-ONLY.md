@@ -263,3 +263,9 @@ Removed: the passkeys daemon, its Settings group, its polkit-dialog requests and
 | Control Center and status menus: icon maps compiled in with a ? fallback; desktop jacks not drawn as a laptop; page focus kept by row id; volume up never lowers a level above 100 %; Material seek bars seek once on release; Bluetooth menu keeps scanning while open; Now Playing resumes from the paused position; Sound menu scrolls within the screen (#347-#357 #360 #361 #431-#442) | 26 Nov | done, unchecked | audit lows |
 | Menu bar and island: Caffeine's inhibitor moves to a remaining bar; clock re-checked every 10 s (suspend, time-zone change) and steady-width; Window menu spaces per display; space arrows page past the current space; hover tips wrap (3 lines, 320 px; tip surface 100 px); tray Activate/ContextMenu get the item's place; Recent times in the chosen clock (#210 #211 #301 #302 #362-#382 #384) | 26 Nov | done, unchecked (unit tests) | audit lows |
 | Overlay, sidebar, Today: overlay notes re-read when changed elsewhere and never blanked by an unreadable file; widgets kept on screen; FPS chip shows the limit; Copy/Translate via stdin; Konachan explicit links; Today reopened while closing continues; °C/°F (#402-#448, see the status file) | 26 Nov | done, unchecked | audit lows |
+
+## Desktop and recording (26 Nov, 2026-11-23 audit, uncompiled)
+
+| Change | Asked | Status | Commit |
+|---|---|---|---|
+| Recording stops and saves when the screen locks (the normal stop: SIGINT, the file finished; its microphone muted at once and put back after), then a notification "Recording saved — the screen locked" with Open / Show in folder (always a notification: the island is not seen behind the lock); a start posted just before the lock records nothing, the CPU retry does not start while locked; new captures still refused while locked (#474) | 26 Nov | done, unchecked (unit tests) | `git log --grep "#474"` |

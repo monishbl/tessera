@@ -187,6 +187,17 @@ impl ScreenSvc {
         }
     }
 
+    /// The screen locked: a recording running (and not already ending or
+    /// being discarded) is stopped the normal way, so its file is finished
+    /// and saved; true when settled() should call stop()
+    pub(super) fn lock_stops_recording(&mut self) -> bool {
+        if self.rec_pid.is_none() || self.rec_stopping || self.discarding {
+            return false;
+        }
+        self.stopped_by_lock = true;
+        true
+    }
+
     fn restore_mic(&mut self, h: &mut Host) {
         // (what it was before the recording: muted stays muted, and only
         // that microphone is touched)
@@ -259,6 +270,10 @@ impl ScreenSvc {
     /// launch() then runs it again once with the CPU encoder (H.264 only)
     pub(super) fn launch(&mut self, h: &mut Host, what: Value, cpu: bool, keep_file: bool) {
         self.rec_starting = false;
+        // (a start posted just before the lock: nothing is recorded while locked)
+        if self.locked {
+            return;
+        }
         // (one recorder at a time: a second would take over rec_pid and the
         // first could not be stopped from the shell)
         if what.is_null() || self.rec_pid.is_some() {
@@ -326,6 +341,7 @@ impl ScreenSvc {
         full.extend(cmd);
         self.discarding = false;
         self.rec_stopping = false;
+        self.stopped_by_lock = false;
         self.paused = false;
         let mut command = Command::new(&full[0]);
         command.args(&full[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
@@ -442,6 +458,7 @@ impl ScreenSvc {
         }
         self.rec_pid = None;
         let stopping = std::mem::take(&mut self.rec_stopping);
+        let by_lock = std::mem::take(&mut self.stopped_by_lock);
         // asked to stop and ended by a signal (INT 130, TERM 143, KILL 137):
         // whatever was written is the recording
         let code = if stopping && [130, 143, 137, 255].contains(&code) && std::fs::metadata(&self.file).is_ok_and(|m| m.len() > 0) { 0 } else { code };
@@ -460,7 +477,7 @@ impl ScreenSvc {
             self.dropped(h, &f);
         } else if code != 0 && code != 130 && code != 255 {
             // no hardware encoder: once more on the CPU, same file
-            if self.gsr() && !self.cpu_encoding && tessera_core::util::now_ms() - self.started < 10000 && hw_encode_failure(&err) {
+            if self.gsr() && !self.cpu_encoding && !self.locked && tessera_core::util::now_ms() - self.started < 10000 && hw_encode_failure(&err) {
                 eprintln!("Recorder: hardware encoding failed, retrying on the CPU: {}", err.trim().lines().last().unwrap_or(""));
                 if let Some(w) = self.last_what.clone() {
                     return self.launch(h, w, true, true);
@@ -481,7 +498,11 @@ impl ScreenSvc {
             eprintln!("Recorder: ended (code {code}) without a file: {}", err.trim().lines().last().unwrap_or(""));
             self.rec_failed(h, "Nothing was recorded. Try again, and record for a moment longer.");
         } else {
-            self.saved(h, &f);
+            if by_lock {
+                self.saved_on_lock(h, &f);
+            } else {
+                self.saved(h, &f);
+            }
             if self.cpu_encoding {
                 if self.island_says(h) {
                     util::island_post(h, json!({"kind": "recording", "icon": "info", "title": "Recorded with the CPU", "subtitle": "Install intel-media-driver or libva-nvidia-driver", "color": "orange"}), 8000);
@@ -511,6 +532,18 @@ impl ScreenSvc {
         ]);
     }
 
+    /// Stopped because the screen locked: always a notification (the island
+    /// isn't seen behind the lock screen; the notification waits in the
+    /// list), with the same Open / Show in folder as a finished recording
+    fn saved_on_lock(&mut self, h: &mut Host, f: &str) {
+        let m = util::file_manager(h.cfg());
+        util::detached(&[
+            "sh", "-c",
+            "a=$(timeout 3600 notify-send -a 'Screen Recording' -i video-x-generic -A open=Open -A folder='Show in folder' \"$3\" \"$(basename \"$1\")\"); [ \"$a\" = open ] && xdg-open \"$1\"; [ \"$a\" = folder ] && ${2:-xdg-open} \"$(dirname \"$1\")\"",
+            "sh", f, &m, saved_title(true),
+        ]);
+    }
+
     fn rec_failed(&mut self, h: &mut Host, why: &str) {
         if self.island_says(h) {
             util::island_post(h, json!({"kind": "recording", "icon": "warning-circle", "title": "Recording didn't work", "subtitle": why, "color": "danger"}), 6000);
@@ -535,9 +568,42 @@ impl ScreenSvc {
     }
 }
 
+/// The title of the "saved" alert: a recording the lock stopped says why
+pub(super) fn saved_title(by_lock: bool) -> &'static str {
+    if by_lock { "Recording saved \u{2014} the screen locked" } else { "Recording saved" }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_lock_stops_a_running_recording_once() {
+        let mut s = ScreenSvc::new();
+        // nothing recording: nothing to stop
+        assert!(!s.lock_stops_recording());
+        assert!(!s.stopped_by_lock);
+        // recording: stopped, and the save will say the lock did it
+        s.rec_pid = Some(1);
+        s.recording = true;
+        assert!(s.lock_stops_recording());
+        assert!(s.stopped_by_lock);
+        // already ending (Stop pressed, or the lock's stop sent): not again
+        s.rec_stopping = true;
+        assert!(!s.lock_stops_recording());
+        // being discarded: the discard wins, no "saved"
+        let mut d = ScreenSvc::new();
+        d.rec_pid = Some(1);
+        d.discarding = true;
+        assert!(!d.lock_stops_recording());
+        assert!(!d.stopped_by_lock);
+    }
+
+    #[test]
+    fn a_lock_stop_says_why_it_was_saved() {
+        assert_eq!(saved_title(false), "Recording saved");
+        assert_eq!(saved_title(true), "Recording saved \u{2014} the screen locked");
+    }
 
     #[test]
     fn regions_become_gsr_regions() {
