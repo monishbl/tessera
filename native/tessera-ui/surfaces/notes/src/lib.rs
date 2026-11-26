@@ -54,7 +54,12 @@ enum M {
     Closed,
     Pick(i32),
     Paste(String),
+    /// no answer to a save in SAVE_WAIT: the note is editable again
+    SaveTimeout,
 }
+
+/// How long a save waits for the shell's answer
+const SAVE_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// The FAB menu (QuickNote.qml's items): (text, Phosphor name)
 pub const MENU: [(&str, &str); 4] = [
@@ -103,6 +108,9 @@ pub struct Notes {
     to: Option<smithay_client_toolkit::reexports::calloop::channel::Sender<crate::Msg>>,
     /// the draft written to disk a moment after typing stops
     draft_timer: slint::Timer,
+    /// a save's wait for its answer (lost, or the host restarted: the note
+    /// must not stay read-only and "Saving…" for good)
+    save_timer: slint::Timer,
 }
 
 /// The unsaved draft, kept across a shell restart, an update or a logout
@@ -237,6 +245,11 @@ impl Notes {
         self.saving = Some(String::new());
         w.ui.set_saving(true);
         crate::shell::ask(NAME, serde_json::json!(["save", text]));
+        if let Some(to) = self.to.clone() {
+            self.save_timer.start(slint::TimerMode::SingleShot, SAVE_WAIT, move || {
+                let _ = to.send(crate::Msg::Part(NAME, Box::new(M::SaveTimeout)));
+            });
+        }
     }
 
     /// Text into the note at the cursor (typed into the field: Slint keeps
@@ -294,6 +307,7 @@ impl Notes {
         if let Some(p) = v["saved"].as_str() {
             if self.saving.as_deref() == Some(p) {
                 self.saving = None;
+                self.save_timer.stop();
                 self.text.clear();
                 self.draft_timer.stop();
                 write_draft("");
@@ -308,6 +322,7 @@ impl Notes {
         if let Some(p) = v["failed"].as_str() {
             if self.saving.as_deref() == Some(p) || self.saving.as_deref() == Some("") {
                 self.saving = None;
+                self.save_timer.stop();
                 if let Some(w) = &self.win {
                     w.ui.set_saving(false);
                 }
@@ -374,6 +389,15 @@ impl Part for Notes {
             M::Closed => self.closed(st),
             M::Pick(i) => self.pick(i),
             M::Paste(t) => self.put(&t),
+            M::SaveTimeout => {
+                if self.saving.is_some() {
+                    eprintln!("tessera-ui: notes: no answer to the save in {} s; the note can be saved again", SAVE_WAIT.as_secs());
+                    self.saving = None;
+                    if let Some(w) = &self.win {
+                        w.ui.set_saving(false);
+                    }
+                }
+            }
         }
     }
 

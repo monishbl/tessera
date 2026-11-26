@@ -157,7 +157,9 @@ export component QuickNote inherits Window {
                 x: box.m;
                 y: box.m;
                 width: parent.width - 2 * box.m;
-                height: parent.height - 2 * box.m;
+                // (Material: room kept under the text for the Add button, which
+                // sat over the end of the lower lines)
+                height: parent.height - 2 * box.m - (Theme.material ? 68px : 0px);
                 content-height: max(self.height, editor.preferred-height);
                 editor := TextInput {
                     width: flick.width;
