@@ -559,6 +559,21 @@ class Bash(Temp):
         self.checkout(self.home / "iRice")
         self.assertEqual(self.bash("old_names_pending && echo yes || echo no").strip(), "yes")
 
+    def test_links_left_by_the_migration_count_once_a_day(self):
+        # (audit #792: not Python and a /proc scan on every start)
+        (self.home / ".config").mkdir()
+        (self.home / ".config/irice").symlink_to(self.home / ".config/tessera")
+        self.assertEqual(self.bash("old_names_pending && echo yes || echo no").strip(), "yes")
+        stamp = self.home / ".local/state/tessera/old-names-checked"
+        self.write(stamp, "")
+        self.assertEqual(self.bash("old_names_pending && echo yes || echo no").strip(), "no")
+        os.utime(stamp, (time.time() - 2 * 86400, time.time() - 2 * 86400))
+        self.assertEqual(self.bash("old_names_pending && echo yes || echo no").strip(), "yes")
+        # (a real old folder is always pending)
+        os.utime(stamp)
+        self.write(self.home / ".cache/irice/x", "")
+        self.assertEqual(self.bash("old_names_pending && echo yes || echo no").strip(), "yes")
+
     def test_the_dev_container_until_its_renamed(self):
         self.fake("distrobox", 'echo "ID | NAME | STATUS | IMAGE"; echo "abc | $BOXES | Up | arch"\n')
         self.assertEqual(self.bash("old_names_dev_box", BOXES="irice").strip(), "irice")

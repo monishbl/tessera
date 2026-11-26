@@ -20,25 +20,37 @@ old_names_env() {
 }
 
 # Is anything still to move (migrate-names.py)? Cheap, so the shell's start
-# runs Python only when there is: an old-name folder or link in your XDG
-# folders, the checkout at ~/iRice, or old notes.
+# runs Python only when there is: an old-name folder in your XDG folders, the
+# checkout at ~/iRice, or old notes. The links the migration itself leaves
+# behind (kept for weeks while something still names them) only count once
+# a day, so a start doesn't pay for their clean-up every time.
+OLD_NAMES_STAMP="${XDG_STATE_HOME:-$HOME/.local/state}/tessera/old-names-checked"
 old_names_pending() {
-    local b root="${1:-}"
+    local b p root="${1:-}" links=0
+    local paths=()
     for b in "${XDG_CONFIG_HOME:-$HOME/.config}" "${XDG_DATA_HOME:-$HOME/.local/share}" "${XDG_STATE_HOME:-$HOME/.local/state}" \
         "${XDG_CACHE_HOME:-$HOME/.cache}" "$HOME/.config" "$HOME/.local/share" "$HOME/.local/state" "$HOME/.cache"; do
-        [[ -e "$b/irice" || -L "$b/irice" || -e "$b/tessera/MOVED-FROM-IRICE.txt" ]] && return 0
+        [[ -e "$b/tessera/MOVED-FROM-IRICE.txt" ]] && return 0
+        paths+=("$b/irice")
     done
-    [[ -e "$HOME/iRice" || -L "$HOME/iRice" || -e "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/irice" || -L "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/irice" ]] && return 0
-    [[ -z "$root" ]] || for b in "$root/.sandbox/home/.config" "$root/.sandbox/home/.local/share" "$root/.sandbox/home/.local/state"; do
-        [[ -e "$b/irice" || -L "$b/irice" ]] && return 0
+    paths+=("$HOME/iRice" "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/irice")
+    [[ -z "$root" ]] || paths+=("$root/.sandbox/home/.config/irice" "$root/.sandbox/home/.local/share/irice" "$root/.sandbox/home/.local/state/irice")
+    for p in "${paths[@]}"; do
+        if [[ -L "$p" ]]; then
+            links=1
+        elif [[ -e "$p" ]]; then
+            return 0
+        fi
     done
-    return 1
+    # (only links left: at most once a day)
+    [[ $links == 1 && -z "$(find "$OLD_NAMES_STAMP" -mmin -1440 2>/dev/null)" ]]
 }
 
 # Moves what's still under the old name (never fails the caller)
 old_names_migrate() {
     old_names_pending "${1:-}" || return 0
     python3 -I "$OLD_NAMES_DIR/migrate-names.py" ${1:+--checkout "$1"} </dev/null >/dev/null 2>&1 || true
+    { mkdir -p "$(dirname "$OLD_NAMES_STAMP")" && touch "$OLD_NAMES_STAMP"; } 2>/dev/null || true
 }
 
 # The system pieces installed under the old name, until the root setup
