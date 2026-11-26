@@ -205,6 +205,9 @@ ShellRoot {
     GlobalShortcut { appid: "tessera"; name: "dictateRelease"; description: "Dictation (key let go)"; onPressed: Dictation.released() }
     GlobalShortcut { appid: "tessera"; name: "askScreen"; description: "Ask AI about part of the screen"; onPressed: ScreenTools.select("ask") }
     GlobalShortcut { appid: "tessera"; name: "circleSearch"; description: "Circle to search"; onPressed: ScreenTools.select("circle") }
+    // (the Rust shell's name for the trackpad long press: gestures.lua uses it
+    // whenever tessera-ui is installed, also while this fallback runs)
+    GlobalShortcut { appid: "tessera"; name: "circleSearchPointer"; description: "Circle to search (long press)"; onPressed: ScreenTools.select("circle") }
     component Snap: GlobalShortcut {
         required property string layout
         appid: "tessera"
@@ -242,18 +245,27 @@ ShellRoot {
         name: "superTap"
         description: "Tap Super (Overview, or as set)"
         onPressed: root.superDown = Date.now()
-        onReleased: {
-            const armed = root.superDown > 0 && Date.now() - root.superDown < 700;
-            root.superDown = 0;
-            if (!armed)
-                return;
-            const screen = Quickshell.screens.find(s => s.name === Hyprland.focusedMonitor?.name);
-            const what = Config.options.keyboard.superTap;
-            if (what === "overview")
-                Panels.toggle("overview", screen);
-            else if (what === "spotlight")
-                Panels.toggle("spotlight", screen);
-        }
+        onReleased: root.superTapReleased()
+    }
+    function superTapReleased() {
+        const armed = root.superDown > 0 && Date.now() - root.superDown < 700;
+        root.superDown = 0;
+        if (!armed)
+            return;
+        const screen = Quickshell.screens.find(s => s.name === Hyprland.focusedMonitor?.name);
+        const what = Config.options.keyboard.superTap;
+        if (what === "overview")
+            Panels.toggle("overview", screen);
+        else if (what === "spotlight")
+            Panels.toggle("spotlight", screen);
+    }
+    // (keybinds.lua binds the release of Super to this name whenever
+    // tessera-ui is installed, so also while this fallback runs)
+    GlobalShortcut {
+        appid: "tessera"
+        name: "superTapRelease"
+        description: "(Super released)"
+        onPressed: root.superTapReleased()
     }
     GlobalShortcut {
         appid: "tessera"

@@ -1,6 +1,13 @@
 # Roadmap
 
-How Tessera covers each end4 (illogical-impulse) feature, and what's left.
+> **Historical: the QML (Quickshell) shell, October to early November 2026.**
+> Since 7 November the shell is the Rust one (`native/tessera-ui`); what's left
+> today is in [PENDING.md](PENDING.md) and what the Rust shell does on purpose
+> in [RUST-ONLY.md](native/tessera-ui/RUST-ONLY.md). It uses the feature names from before 3 November (Spotlight is now Search,
+> Mission Control All Windows, Stage Manager Stages, App Library the App
+> Drawer, Liquid Glass Glass).
+
+How Tessera covered each end4 (illogical-impulse) feature, and what was left.
 
 ## Foundation
 - [x] Nested sandbox with a headless test output (`./dev.sh`)

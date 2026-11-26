@@ -1,5 +1,13 @@
 # Glass look: the QML surfaces against their Rust twins
 
+> **Historical: measured 5 November 2026 on `b8adf2d`**, when tessera-ui drew
+> some surfaces beside the QML shell. Since then the headline bug is fixed
+> (`theme::glass_shape` takes the look and its glass preset,
+> `core/src/theme.rs`), tessera-ui runs on its own with no QML shell beside it
+> (so the +28 % memory of running both is gone), and the issues listed below
+> are not tracked here any more. Current numbers: [gate.md](gate.md). The
+> measurement scripts and shots were in a session scratchpad and weren't kept.
+
 Measured 5 November 2026 in sandbox arena 7, main at `b8adf2d` (tessera-ui release build, every surface on main in Rust: menubar, dock, osd, emoji, clipboard, background, wallpaper, today, desktop). Method and tools as in [rust-ui-spike-slint.md](rust-ui-spike-slint.md); porting guide in [rust-ui-surfaces.md](rust-ui-surfaces.md).
 
 ## In short

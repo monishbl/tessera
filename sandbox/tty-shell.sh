@@ -3,8 +3,10 @@
 #   tty-shell.sh start     start the shell (no-op if this session already has one)
 #   tty-shell.sh restart   kill the shell (hard, if it's frozen) and start it again
 #   tty-shell.sh watchdog  restart the shell whenever it stops answering IPC
-# The shell runs on the host's Quickshell with config/state/cache in the
-# sandbox home, so your real ~/.config is untouched.
+# The shell runs with config/state/cache in the sandbox home, so your Tessera
+# settings are untouched. Shared with your desktop: the keyboard layout and
+# GPU settings, the clipboard history (not in ./demo.sh), your login apps (not
+# in ./demo.sh), and the real Wi-Fi, Bluetooth and power (no sandbox shims).
 #
 # A new session reuses the Wayland socket of an old one, so everything here is
 # tied to this compositor (HYPRLAND_INSTANCE_SIGNATURE): the watchdog exits

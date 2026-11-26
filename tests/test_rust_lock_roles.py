@@ -32,6 +32,10 @@ def read(p):
 
 
 class SessionLock(unittest.TestCase):
+    """SOURCE-TEXT checks (audit #676): These assert on the text of the files,
+    not on what they do. A backstop against a rule quietly coming undone; a
+    green run here is not behaviour coverage."""
+
     def test_one_lock_never_handed_over(self):
         qml = read(ROOT / "shell/modules/lock/Lock.qml")
         # this shell's lock steps aside only for a lock tessera-ui began

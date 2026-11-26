@@ -1,5 +1,9 @@
 # Tessera: next round
 
+> **Historical: a planning checklist from late October 2026, for the QML
+> shell.** Its shortcuts differ from today's keymap ([FEATURES.md](FEATURES.md)
+> has the current keys).
+
 Tick what you want, add notes under any item (`> your note`), and send it back.
 Nothing in sections 3–5 has been changed yet.
 

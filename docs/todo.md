@@ -1,5 +1,10 @@
 # Tessera: later
 
+> **Historical: checks noted for the QML shell, late October to mid November
+> 2026.** Several changed since (dictation pastes instead of typing with
+> wtype; the fingerprint is set up among the install-time features; the login
+> screen is greetd's, not ly). What's open today: [PENDING.md](../PENDING.md).
+
 ## Built 31 Oct: check on real hardware
 
 Done and pushed (bdb631a, 0d41611, 6aebe8e), tested in the sandbox; these

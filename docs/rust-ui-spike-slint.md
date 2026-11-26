@@ -1,5 +1,11 @@
 # Step 0 spike: the menu bar in Slint
 
+> **Historical: measured 4 November 2026.** The spike's code
+> (`native/tessera-ui-slint/`) was never committed and isn't in the
+> repository, so the Reproduce section below can't be run; its shots were in
+> a session scratchpad. The shell that grew from it is `native/tessera-ui`;
+> current numbers: [gate.md](gate.md).
+
 Measured 4 November 2026 in sandbox arena 4. Code: `native/tessera-ui-slint/` (the bar), `native/tessera-ui-slint/qml-baseline/shell.qml` (the same bar in plain Quickshell, the fair QML number), `native/tessera-ui-slint/tools/measure.py` (the measurement, identical for both). Plan: [rust-ui-plan.md](rust-ui-plan.md).
 
 ## In short
@@ -188,7 +194,7 @@ What maps one to one: property bindings, `id`s (`name := Element`), `animate` = 
 
 Porting estimate from this bar: the QML markup translates nearly line for line (408 → 419 lines). The Rust side (1,074 lines here, without the platform) is where Tessera's JavaScript and Quickshell services go: of the ~100k lines, the share that's JS logic and service code will cost the most, as planned in "Services first where shared".
 
-## Reproduce
+## Reproduce (the spike's code isn't in the repository)
 
 ```
 distrobox enter tessera -- bash -c 'cd native/tessera-ui-slint && cargo build --release'

@@ -1,5 +1,9 @@
 # Overnight report — 27 Oct 2026 (04:25–06:25)
 
+> **Historical: the QML shell, 27 October 2026.** Every number and file here is
+> about the October QML shell, which is now only the crash fallback; the gate
+> ([gate.md](gate.md)) has the Rust shell's.
+
 ## The short version
 
 - Design, Liquid Glass and animations are unchanged. The performance work changes how the glass gets its numbers, not what they are; every screen was checked by screenshot.
@@ -10,7 +14,7 @@
   - Everything else, tonight's work included, is staged and not committed.
   - `.claude/` (Claude Code's scheduler lock file) is left out on purpose.
 
-## Performance: Tessera vs end4
+## Performance: Tessera vs end4 (QML shell, 27 Oct)
 
 The run: 3 alternating rounds while plugged in, power profile Balanced throughout (logged every 10 s), the same test screen for both shells, and about the same frames rendered (end4 1,108 per run, Tessera 1,134).
 
@@ -58,7 +62,7 @@ Same-conditions A/B of the shell changes: panels 45.8% → 41.3% CPU, typing 34.
 1. **World Clock widget didn't load.** A syntax error (`};` inside a comment) came in with the last bug sweep. `modules/desktop/WorldClockWidget.qml`
 2. **AI chat "copy" button did nothing.** It threw `System is not defined` because of a missing import. `modules/sidebar/ChatMessage.qml`
 3. **Wallpaper picker "open folder" failed** (`Files is not defined`). `modules/wallpaper/WallpaperPicker.qml`
-4. **Panels opened on the first screen instead of the focused one** when opened without a screen (Spotlight actions, about 24 call sites). On your three-monitor setup they could appear on the wrong display. `common/Panels.qml`
+4. **Panels opened on the first screen instead of the focused one** when opened without a screen (Spotlight actions, about 24 call sites). With several monitors they could appear on the wrong display. `common/Panels.qml`
 5. **Critical notification banners had no glass.** Text floated on the wallpaper. This predates tonight: the banner's fade-in started after the glass's first sync had ended. `modules/notifications/NotificationPopups.qml`
 6. **Banners covered Notification Center's header.** They now step aside while it's open, as on macOS.
 7. **Quick Note ignored typing until clicked** on its first open. `modules/notes/QuickNote.qml`
@@ -121,12 +125,11 @@ Same-conditions A/B of the shell changes: panels 45.8% → 41.3% CPU, typing 34.
 - **Watts on battery after the optimisations.** It needs a battery run started above about 40% (the earlier one was void). I'll run it when you're up.
 - **Desktop widgets / World Clock on screen.** In the sandbox they render on the nested output, which can't be screenshotted. No errors were logged when they load.
 - **Cool-down's lower refresh rate** on the real panel (the sandbox screen only has 60 Hz).
-- **Multi-monitor:** the plugin's repaint areas were verified on a screen not at 0,0 (the sandbox test screen sits at 20000,20000), but not on your three real monitors.
+- **Multi-monitor:** the plugin's repaint areas were verified on a screen not at 0,0 (the sandbox test screen sits at 20000,20000), but not on real multi-monitor hardware.
 
 ## Files
 
-- **QA reports and screenshots:** `/tmp/claude-1000/-home-user-Projects-Personal-Tessera/d4a55d5f-cd31-430b-b979-3e7c3c9c0b54/scratchpad/qa/`. It contains `ui-report.md`, `ui2-report.md`, `review-report.md`, `review2-report.md` and `lint-report.md`. This is temporary storage; copy anything you want to keep.
-- **Benchmark scripts and raw results:** `/tmp/claude-1000/-home-user-Projects-Personal-Tessera/d4a55d5f-cd31-430b-b979-3e7c3c9c0b54/scratchpad/bench/`. `report.py results-charging4.jsonl <start>` reproduces the table.
+The QA reports, screenshots and benchmark data were in a session's temporary folder and weren't kept.
 
 ## Morning round (27 Oct, after your answers)
 
@@ -150,7 +153,7 @@ Everything below is verified in the sandbox unless marked otherwise. Final sweep
 
 Also fixed along the way: alarms and timers weren't saved when they changed (UiState had no handler for them).
 
-**Done on your machine:** the Inter font (the shell's font) wasn't installed, so the demo would have used a fallback. I copied it from the dev container into `~/.local/share/fonts/tessera-inter/`. Delete that folder to undo; installing `inter-font` with pacman is the clean alternative.
+**Font:** the Inter font (the shell's font then) was missing on the test machine, so it was installed for the demo by hand; installing `inter-font` with pacman is the clean way.
 
 **Not tested:**
 - the demo inside a real tty session;
@@ -190,7 +193,7 @@ From your report (real tty session) and a full sweep of the shell for the same k
 **Glass:**
 - Your material (Glass 100%, Frost 75%, Solid 0%, Tint 75%) is the new built-in Glass preset.
 - Frost over windows defaults to Medium.
-- Your config is set back to Glass.
+- The test machine's settings were set back to Glass.
 
 **Choppiness:**
 - On the shell's side, moving across the menu bar costs almost nothing: under 40 ms of script time per 18 s of hovering.

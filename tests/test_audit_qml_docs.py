@@ -1,7 +1,11 @@
 """The 20 Nov audit's fixes in the QML fallback, the scripts that restart a
 shell, the website and the docs: each rule as it stands now, so it can't
 quietly come undone. Nothing here touches the real system: files are read
-from the checkout, and site/build.sh's scrub runs on a throwaway copy."""
+from the checkout, and site/build.sh's scrub runs on a throwaway copy.
+
+SOURCE-TEXT checks (audit #676): Most tests here assert on the text of the files,
+not on what they do. A backstop against a rule quietly coming undone; a
+green run here is not behaviour coverage."""
 import json
 import re
 import subprocess
@@ -102,8 +106,12 @@ class FallbackKeepsRustOnlySettings(unittest.TestCase):
         for p in (ROOT / "native/tessera-ui").rglob("*.rs"):
             if {"target", "vendor", "review"} & set(p.relative_to(ROOT).parts):
                 continue
-            written |= set(re.findall(r'(?:set_config|config_set)\(\s*"(\w+)\.(\w+)"', p.read_text(encoding="utf-8", errors="replace")))
+            # (also what Settings pages write through their context: cx.set,
+            # toggle, pick, pick_values, num, text; audit #672)
+            written |= set(re.findall(r'(?:set_config|config_set|\bcx\.(?:set|toggle|pick|pick_values|num|text))\(\s*"(\w+)\.(\w+)"',
+                                      p.read_text(encoding="utf-8", errors="replace")))
         self.assertIn(("performance", "gpu"), written)
+        self.assertIn(("dock", "iconSize"), written)
         have = self.declared()
         missing = sorted(f"{s}.{k}" for s, k in written if k not in have.get(s, set()))
         self.assertEqual(missing, [], "keys the Rust shell writes that the QML fallback would drop")

@@ -2,7 +2,8 @@
 -- and forth and the shell makes the pointer big for a moment, with a ring
 -- around it (tessera:findPointer). Hyprland has no "pointer moved" event, so
 -- the position is looked at here, inside Hyprland: every 40 ms while the
--- pointer moves, every 200 ms while it's still. Nothing is started for it.
+-- pointer moves, every 200 ms while it's still (every 2 s, only to see
+-- whether it was turned on, while it's off). Nothing is started for it.
 -- The shell turns it on and off live: TESSERA_FIND_POINTER (hyprctl eval).
 local cfg = (os.getenv("XDG_CONFIG_HOME") ~= nil and os.getenv("XDG_CONFIG_HOME") ~= "") and os.getenv("XDG_CONFIG_HOME") or (os.getenv("HOME") .. "/.config")
 local f = io.open((TESSERA_USER_DIR or (cfg .. "/tessera")) .. "/config.json", "r")
@@ -29,7 +30,7 @@ local still = 0
 local axes = { x = { dir = 0, run = 0, since = 0 }, y = { dir = 0, run = 0, since = 0 } }
 local turns = {}
 local quietUntil = 0
-local fast
+local fast, slow, watch
 
 local function turned(a, d)
     local s = axes[a]
@@ -56,6 +57,10 @@ local function sample()
 end
 
 local function fastTick()
+    if not TESSERA_FIND_POINTER then
+        fast:set_enabled(false)
+        return
+    end
     clock = clock + FAST
     local moved, dx, dy = sample()
     if not moved then return end
@@ -83,7 +88,10 @@ end
 
 local function slowTick()
     if not TESSERA_FIND_POINTER then
+        -- (off: no 200 ms wake-ups; a 2 s look at the setting instead)
         last = nil
+        slow:set_enabled(false)
+        watch:set_enabled(true)
         return
     end
     if fast:is_enabled() then return end -- (the fast one keeps the time then)
@@ -100,10 +108,18 @@ end
 -- CEventLoopManager::scheduleRecalc (19 Nov: system1, twice at login). A
 -- reload of the config (Hyprland already running: a monitor is there) makes
 -- them at once, as before.
+local function watchTick()
+    if TESSERA_FIND_POINTER then
+        watch:set_enabled(false)
+        slow:set_enabled(true)
+    end
+end
 local function start()
     fast = hl.timer(fastTick, { timeout = FAST, type = "repeat" })
     fast:set_enabled(false)
-    hl.timer(slowTick, { timeout = SLOW, type = "repeat" })
+    watch = hl.timer(watchTick, { timeout = 2000, type = "repeat" })
+    watch:set_enabled(false)
+    slow = hl.timer(slowTick, { timeout = SLOW, type = "repeat" })
 end
 local ok, mon = pcall(hl.get_active_monitor)
 if ok and mon then

@@ -182,6 +182,8 @@ end
 
 local function actionOf(a)
     if type(a) ~= "table" then return nil, "no action" end
+    if a.dsp ~= nil and type(a.dsp) ~= "string" then return nil, "dsp is not text" end
+    if a.exec ~= nil and type(a.exec) ~= "string" then return nil, "exec is not text" end
     if a.dsp and a.dsp:gsub("%s", "") == "hl.dsp.window.close()" then return TESSERA_CLOSE end
     if a.space then return space(a) end
     if a.shell then return shortcut(a.shell) end
@@ -202,7 +204,11 @@ end
 -- Keys already taken: a second bind on the same keys is skipped (it happens
 -- when MOD is ALT in the sandbox, or a custom shortcut reuses a default's keys)
 local taken = {}
-local function bind(e, user)
+local function bindOne(e, user)
+    if type(e.keys) ~= "string" then
+        log("skipped " .. tostring(e.id) .. ": keys is not text")
+        return
+    end
     local keys = keysOf(e.keys)
     local modifierKey = MOD == "SUPER" and "Super_L" or "Alt_L"
     -- The modifier is not in the modifier mask yet on its own key-down.
@@ -267,20 +273,29 @@ local function bind(e, user)
         log("couldn't bind " .. tostring(e.id) .. " (" .. keys .. "): " .. tostring(berr))
     end
 end
+-- (each entry on its own: a wrong-typed one in keybinds.json is logged and
+-- skipped, never an error that stops the rest of the config)
+local function bind(e, user)
+    local ok, err = pcall(bindOne, e, user)
+    if not ok then log("skipped " .. tostring(type(e) == "table" and e.id) .. ": " .. tostring(err)) end
+end
 
 local defaults = json.read(here .. "/keymap.json")
 if not defaults then
     log("keymap.json is missing or broken; no default keybinds")
     defaults = {}
 end
-local user = json.read(userDir .. "/keybinds.json") or {}
-local changes = user.keybinds or {}
+local user = json.read(userDir .. "/keybinds.json")
+if type(user) ~= "table" then user = {} end
+local changes = type(user.keybinds) == "table" and user.keybinds or {}
+local shortcuts = type(user.shortcuts) == "table" and user.shortcuts or {}
 
 -- Changed defaults first, then your own shortcuts, then the untouched
 -- defaults: what you set wins a clash
 local later = {}
 for _, e in ipairs(defaults) do
     local c = changes[e.id]
+    if type(c) ~= "table" then c = nil end
     if not (c and c.disabled) then
         if c and c.keys then
             e.keys = c.keys
@@ -290,7 +305,7 @@ for _, e in ipairs(defaults) do
         end
     end
 end
-for _, e in ipairs(user.shortcuts or {}) do
+for _, e in ipairs(shortcuts) do
     if type(e) == "table" and e.keys and not e.disabled then bind(e, true) end
 end
 for _, e in ipairs(later) do bind(e, false) end

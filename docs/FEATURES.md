@@ -36,7 +36,7 @@ A transparent menu bar with everything end4's bar offers:
 
 ### The island
 
-The island sits in the menu bar, black like the iPhone's.
+The island is a black pill in the middle of the menu bar.
 
 - **Closed:** dots for your spaces, or a compact live activity (recording, timer, music, stopwatch).
 - **Alerts** spring open with their own animation: headphones and other Bluetooth devices connecting (with a battery ring), USB devices and drives (with Open), displays, the charger filling its ring, sound moving to another output, low battery, track changes, Focus, CPU or memory running hot. Alerts that arrive together stack in one island and stagger in, each leaving on its own time.
@@ -101,7 +101,7 @@ Recent apps, minimized windows, a Downloads stack and Trash, right-click menus, 
 
 ## Tools
 
-- **Screenshots** of the screen, a window or a selection; Super+Print opens a toolbar. Area screenshots open in Swappy to crop, draw and annotate (Settings → Keyboard Shortcuts).
+- **Screenshots** of the screen, a window or a selection; Super+Print opens a toolbar. Area screenshots open in Tessera's own editor to crop, draw, annotate and redact, with the text it finds ready to copy (Swappy instead, if you choose it in Settings → Screenshots; keys in Settings → Keyboard Shortcuts).
 - **Ask about the screen** (Super+Alt+A): select part of the screen and ask the AI about it ("what's this error?").
 - **Circle to search** (Super+Shift+Space, a 3-finger long press, or the circle button in the AI sidebar): circle, scribble over or box anything on the screen and the AI says what it is. **Search the web** under the answer sends the picture to Google Lens (only when you click it) and opens the results.
 - **Copy text from pictures:** select the text in a screenshot or picture, read on this computer (OCR); translate text on screen; record the screen.
@@ -137,7 +137,7 @@ Choose the material in Settings → Appearance: Glass, Frost or Solid, or your o
 
 Real glass over windows needs the **tessera-glass** Hyprland plugin, which the installer builds (or Settings → Appearance → Build plugin…). Hyprland then draws the glass itself, and only where it repaints anyway, so static glass costs nothing. Without the plugin, Glass refracts the wallpaper only and falls back to Frosted over windows. Rebuild the plugin after a Hyprland update (`tessera rebuild`); until then Tessera uses Frosted.
 
-The shell idles below 0.1% CPU. A live wallpaper is the exception while it's visible (about 10% of a core for a 720p video in testing); it pauses when windows cover most of the screen.
+The shell idles at about half a percent of one core (docs/gate.md has the measurements). A live wallpaper is the exception while it's visible (about 10% of a core for a 720p video in testing); it pauses when windows cover most of the screen.
 
 **Motion** (Settings → Appearance): Subtle, Snappy or Expressive. Press and drag on a popover, menu or button and it gives like rubber, then springs back; nothing moves on hover.
 
@@ -145,7 +145,7 @@ The Material look has its own page: [material-look.md](material-look.md).
 
 ## Keys and gestures
 
-Super is ⌘. Press **Super+/** for the full list, which is read live from Hyprland. Put your own Hyprland changes in `~/.config/hypr/custom.lua`: Tessera loads it last, and an error in it won't break the rest of the config.
+Super is the key with the logo. Press **Super+/** for the full list, which is read live from Hyprland. Put your own Hyprland changes in `~/.config/hypr/custom.lua`: Tessera loads it last, and an error in it won't break the rest of the config.
 
 <!-- keymap: written by tools/gen-keymap.py -->
 | Keys | Action |

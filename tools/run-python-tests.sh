@@ -8,9 +8,10 @@
 #   TESSERA_UI_TEST_BINARY a tessera-ui build, for the tests of the real binary
 set -uo pipefail
 cd "$(dirname "$0")/.."
-H=$(mktemp -d "${TMPDIR:-/tmp}/tessera-pytests.XXXXXX")
+H=$(mktemp -d "${TMPDIR:-/tmp}/tessera-pytests.XXXXXX") || { echo "no temporary home" >&2; exit 2; }
+[[ -n $H && -d $H ]] || { echo "no temporary home" >&2; exit 2; }
 trap 'rm -rf "$H"' EXIT
-mkdir -p "$H/.config" "$H/.local/share" "$H/.local/state" "$H/.cache" "$H/run" "$H/root"
+mkdir -p "$H/.config" "$H/.local/share" "$H/.local/state" "$H/.cache" "$H/run" "$H/root" || exit 2
 chmod 700 "$H/run"
 # (the QML load tests need Tessera's Quickshell, which lives in the real home)
 QSDIR=${TESSERA_TEST_QS:-${XDG_DATA_HOME:-$HOME/.local/share}/tessera/quickshell}

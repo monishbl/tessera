@@ -57,6 +57,8 @@ Files: `site/film/engine/fonts/*.woff2`. Licence: `site/film/engine/fonts/OFL-Ge
 - Each `.proto` file keeps its licence header. `shell/assets/quickshare/proto/NOTICE` explains their use.
 - Tessera uses them to speak the Quick Share protocol with Android phones. It contains no Google SDK.
 
+**wlr-protocols' virtual pointer** (https://gitlab.freedesktop.org/wlroots/wlr-protocols). `sandbox/tools/wlr-virtual-pointer-unstable-v1.xml`, an unchanged copy (as in wayland-protocols-wlr 0.3.12 and Hyprland 0.57.1), copyright © 2019 Josef Gajdusek, MIT licence (in the file). Only the sandbox's test tool `vptr` is built from it, where the wlr-protocols package is missing; it isn't installed.
+
 **RQuickShare** (https://github.com/Martichou/rquickshare, GPL-3.0). One 24-byte constant, `WAKE_DATA` in `shell/assets/scripts/quickshare/nearby/bluez.py`, is the fixed Bluetooth advertisement RQuickShare sends (`core_lib/src/hdl/blea.rs`). It is used for interoperability and credited here. GPL-3.0 is compatible with Tessera's licence.
 
 **end4's illogical-impulse** (https://github.com/end-4/dots-hyprland, GPL-3.0). Tessera's default keys and gestures follow end4's layout wherever both have the same action (`tools/gen-keymap.py`, `hypr/tessera/keybinds.lua`). The layout is followed; no code is copied.

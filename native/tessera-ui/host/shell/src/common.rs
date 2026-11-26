@@ -124,7 +124,7 @@ pub fn upgrades(cfg: &Value) -> Vec<(&'static str, Value)> {
         out.push(("screenshot.editor", json!("tessera")));
     }
     if cfg["workspaces"]["switchCue"].as_str() == Some("") {
-        out.push(("workspaces.switchCue", json!(if cfg["workspaces"]["dimOthers"].as_bool().unwrap_or(false) { "glow" } else { "off" })));
+        out.push(("workspaces.switchCue", json!(if cfg["workspaces"]["dimOthers"].as_bool().unwrap_or(true) { "glow" } else { "off" })));
     }
     // 24 Nov: the spaces in Overview and All Windows show the wallpaper
     // behind their windows (they were blank dark tiles). Config.qml's
@@ -698,9 +698,11 @@ mod tests {
         assert_eq!(value(&u, "appearance.menuIcon"), Some(&json!("tessera")));
         assert_eq!(value(&u, "screenshot.editor"), Some(&json!("tessera")));
         assert_eq!(value(&u, "workspaces.switchCue"), Some(&json!("glow")));
-        // the badge's own "circle" is Tessera's too; no dimOthers: the cue is off
+        // the badge's own "circle" is Tessera's too; no dimOthers: glow, as Config.qml and mode_of() read it
         let u = upgrades(&json!({"defaultsVersion": 3, "appearance": {"menuIcon": "circle"}, "workspaces": {"switchCue": ""}}));
         assert_eq!(value(&u, "appearance.menuIcon"), Some(&json!("tessera")));
+        assert_eq!(value(&u, "workspaces.switchCue"), Some(&json!("glow")));
+        let u = upgrades(&json!({"defaultsVersion": 3, "workspaces": {"switchCue": "", "dimOthers": false}}));
         assert_eq!(value(&u, "workspaces.switchCue"), Some(&json!("off")));
         // a cue already chosen and another menu icon stay
         assert!(upgrades(&json!({"defaultsVersion": 3, "appearance": {"menuIcon": "tessera"}, "workspaces": {"switchCue": "glow"}})).is_empty());

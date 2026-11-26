@@ -1,13 +1,13 @@
 # The Material look (Material 3 Expressive)
 
-Settings → Appearance → Look: **Glass** (macOS Tahoe, the original) or
-**Material** (Material 3 Expressive, as in Android 16). Every feature is the
-same in both; only how it looks and moves changes. Decided with the user
-(2 Nov 2026):
+Settings → Appearance → Look: **Glass** (translucent glass, the original) or
+**Material** (Material 3 Expressive, Google's open design system). Every
+feature is the same in both; only how it looks and moves changes. Decided
+with the user (2 Nov 2026):
 
-- **Layout:** Android panels in the same places. The top bar and dock stay;
-  Control Center becomes Android's Quick Settings (pill tiles, big sliders),
-  Notification Center its notification shade, menus and dialogs Material's.
+- **Layout:** the same places. The top bar and dock stay; Quick Settings get
+  pill tiles and big sliders, Notification Center becomes a notification
+  shade, and menus and dialogs are Material's.
 - **Colour:** Material You, from the wallpaper (or a chosen seed colour), in a
   chosen style (Tonal, Vibrant, Expressive, Neutral).
 - **Surfaces:** opaque tonal surfaces (no glass, no blur): faithful, and the
@@ -19,7 +19,7 @@ same in both; only how it looks and moves changes. Decided with the user
 
 Second round of decisions (same day):
 
-- **Settings** in Material: Android two-pane (a list with tonal circle icons
+- **Settings** in Material: two panes (a list with tonal circle icons
   and a pill on the current page; a headline, a search pill, Expressive
   segmented lists).
 - **Switching** looks shows a screen: the Tessera mark morphs from a glass
@@ -29,11 +29,17 @@ Second round of decisions (same day):
   Appearance, and a first-login welcome (`modules/lookswitch/Welcome.qml`,
   once, on fresh installs).
 - **Different, not restyled, in Material:** Quick Settings, the notification
-  shade, the lock screen (Android 16), search (Google style) and the app
+  shade, the lock screen, search and the app
   drawer, the taskbar, plus its own sound set and an original default
   wallpaper.
 
 ## How it's built (v2: two separate UI trees, one core)
+
+> **Historical: the QML shell, 2–4 November 2026.** The Rust shell
+> (`native/tessera-ui`) draws both looks itself, with neither tree below;
+> this section and the spec numbers are kept as the record of how the QML
+> look was made. (The lock's style names below are Google's release names,
+> as the design was described then.)
 
 The first build mixed Material into Glass's own files (about 240 of them)
 and switched live; it broke Control Center on real hardware and was reverted
@@ -80,8 +86,8 @@ and switched live; it broke Control Center on real hardware and was reverted
   config.json, assembling the Material root from the login screen's copies
   of shell/ and material/ (which every update's setup refreshes). A login
   screen that won't start gives way to the text one.
-- **Not in v2 yet:** the tessera-glass plugin's Material window controls are
-  left out.
+- **Window controls:** the tessera-glass plugin's Material window controls
+  shipped on 3 November (CHANGELOG).
 - **Lesson kept:** Material's pull is 0, and Glass's ElasticPull divides by
   it (0/0 → NaN → a pressed panel never drew again). Material has its own
   no-op ElasticPull/ElasticControl. Test with real clicks, not only IPC.

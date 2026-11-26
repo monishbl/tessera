@@ -2,6 +2,31 @@
 
 Date: 2026-11-03. Branch: `worktree-agent-aca1efca23f50246d`, starting from `60cebd4`.
 
+## Since then (23 November 2026)
+
+This audit is the 3 November record; read it with these changes since:
+
+- **What runs without a password** (`shell/assets/polkit/49-tessera.rules`):
+  five of the root helper's verbs, each its own polkit action, only for an
+  active, local `wheel` session with the exact first argument: `wallpaper`,
+  `login-look`, `fix` (as in this audit), and since then `priority` (the
+  shell's ananicy-cpp rule, Settings → Battery & Power) and `sharing-ports`
+  (the firewall's fixed sharing ports, opened while you're visible to others
+  and closed after). Where this file says "exactly three", read five. Every
+  other verb asks, once: the full list is the helper's usage line
+  (`tessera-root.py`, `main`): wallpaper, login-look, fix, wifi-helper,
+  fingerprint, unhold, phonecam, face, bootmenu, bootsplash, quickshare-trust,
+  priority, sharing-ports, update, boot-check, rescue, features, setup,
+  login-switch. Passkeys were removed (e5af3c10).
+- **Decided:** H3, Apple's wallpapers are no longer downloaded (an older
+  install's copies are removed by `shell/assets/scripts/apple-wallpapers.py`);
+  H4, Tessera is GPL-3.0-or-later (`LICENSE`); M8, the features were renamed
+  (section 7). The "Decide" and "Missing (L2)" cells below are from before.
+- **Paths that moved:** `tools/get-wallpapers.sh` is gone; `qs-wifi-helper.py`
+  and `nearby/debuglog.py` are under `shell/assets/scripts/quickshare/`.
+- **Running the tests:** `tools/run-python-tests.sh` (each file on its own, in
+  a throwaway home), not `python3 -m pytest`.
+
 **Scope.** I read the following and tested them in place:
 
 - the root helper and its polkit policy and rules;
@@ -229,7 +254,7 @@ Status: **Fixed** means fixed in this branch. **Decide** means it needs your dec
 
 ## 6. Licence checklist
 
-**Status (3 Nov 2026):** Tessera is now GPL-3.0-or-later (`LICENSE`), with `THIRD_PARTY_NOTICES.md` and the licence texts in `LICENSES/`; the MaterialColor.js path and the Material Symbols modification notice are fixed. The Material sound pack's source is still unknown (PENDING.md).
+**Status (3 Nov 2026):** Tessera is now GPL-3.0-or-later (`LICENSE`), with `THIRD_PARTY_NOTICES.md` and the licence texts in `LICENSES/`; the MaterialColor.js path and the Material Symbols modification notice are fixed. The Material sound pack was replaced on 4 November by sounds Tessera makes itself (`tools/make-sounds.py material`, 2aac440d; THIRD_PARTY_NOTICES.md).
 
 | Item | Licence | In the repo | What it needs | Status |
 |---|---|---|---|---|

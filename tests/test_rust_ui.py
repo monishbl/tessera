@@ -1,5 +1,11 @@
 """tessera-ui, the interface in Rust (native/tessera-ui, docs/rust-ui-plan.md).
 
+SOURCE-TEXT checks (audit #676): Most tests here assert on the text of the files,
+not on what they do. A backstop against a rule quietly coming undone; a
+green run here is not behaviour coverage.
+They describe the hybrid mode (QML shell with tessera-ui drawing some
+surfaces), which no longer ships.
+
 The QML shell and tessera-ui split the surfaces between them: Settings lists
 the ones Rust draws (`rust.surfaces`, empty by default), services/RustUi.qml
 starts tessera-ui with that list, and each QML surface steps aside only while

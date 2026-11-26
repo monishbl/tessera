@@ -5,6 +5,10 @@
 -- whole session hangs, run `./dev.sh tty-stop` from another console.
 
 local root = os.getenv("TESSERA_ROOT")
+-- (a path as one shell word, whatever it holds: a space, a quote)
+local function q(s)
+    return "'" .. (s:gsub("'", "'\\''")) .. "'"
+end
 local function appDir(base)
     return base .. "/tessera"
 end
@@ -42,8 +46,12 @@ pcall(dofile, root .. "/hypr/tessera/tabs.lua") -- window tabs
 dofile(root .. "/hypr/tessera/rules.lua")
 -- (the shell here keeps its config in the sandbox home)
 pcall(dofile, TESSERA_USER_DIR .. "/window-rules.lua")
-dofile(root .. "/hypr/tessera/keybinds.lua")
-dofile(root .. "/hypr/tessera/gestures.lua")
+-- (a broken entry in your keybinds.json is reported, never stops the rest:
+-- the shell is started below)
+for _, name in ipairs({ "keybinds.lua", "gestures.lua" }) do
+    local ok, err = pcall(dofile, root .. "/hypr/tessera/" .. name)
+    if not ok then print("Tessera: error in " .. name .. ": " .. tostring(err)) end
+end
 pcall(dofile, root .. "/hypr/tessera/titlebars.lua") -- only with the hyprbars plugin
 -- Liquid Glass plugin straight from the repo build (make -C hypr/plugin/tessera-glass)
 TESSERA_GLASS_PLUGIN = { root .. "/hypr/plugin/tessera-glass/tessera-glass.so" }
@@ -51,14 +59,19 @@ pcall(dofile, root .. "/hypr/tessera/glass.lua")
 
 -- The shell runs on the host's Quickshell via tty-shell.sh, with config,
 -- state and cache in the sandbox home; a watchdog restarts it if it freezes.
-local ctl = root .. "/sandbox/tty-shell.sh"
+local ctl = q(root .. "/sandbox/tty-shell.sh")
 
 -- (asks first: a second press within 3 s ends it; Hyprland's own notice, so
 -- it works with the shell frozen)
-hl.bind("SUPER + SHIFT + Escape", hl.dsp.exec_cmd(root .. "/sandbox/confirm-exit.sh"), { description = "Session: End test session (press twice)" })
-hl.bind("CTRL + ALT + BackSpace", hl.dsp.exec_cmd(root .. "/sandbox/confirm-exit.sh"), { description = "Session: End test session, emergency (press twice)" })
+hl.bind("SUPER + SHIFT + Escape", hl.dsp.exec_cmd(q(root .. "/sandbox/confirm-exit.sh")), { description = "Session: End test session (press twice)" })
+hl.bind("CTRL + ALT + BackSpace", hl.dsp.exec_cmd(q(root .. "/sandbox/confirm-exit.sh")), { description = "Session: End test session, emergency (press twice)" })
 hl.bind("SUPER + CTRL + ALT + R", hl.dsp.exec_cmd(ctl .. " restart"), { description = "Session: Force-restart a frozen shell" })
 
+-- ./demo.sh: a clipboard history of the demo's own (the watcher below and
+-- the shell, through tty-shell.sh, both read CLIPHIST_DB_PATH), not yours
+if os.getenv("TESSERA_DEMO") == "1" then
+    hl.env("CLIPHIST_DB_PATH", root .. "/.sandbox/home/.cache/cliphist/db")
+end
 hl.on("hyprland.start", function()
     -- This session's display for its own (private, dbus-run-session) bus, so
     -- its portals open here. Not for the user systemd (HYPRLAND_NO_SD_VARS,
@@ -70,11 +83,14 @@ hl.on("hyprland.start", function()
     hl.exec_cmd(ctl .. " watchdog")
     hl.exec_cmd("wl-paste --watch cliphist store")
     -- Apps that start with your session (XDG autostart), once per session
-    -- (the switch in Settings → Login Items is in this session's own Tessera settings)
-    hl.exec_cmd("TESSERA_USER_DIR='" .. TESSERA_USER_DIR .. "' python3 -I " .. root .. "/shell/assets/scripts/xdg-autostart.py --wait-tray 15")
+    -- (the switch in Settings → Login Items is in this session's own Tessera
+    -- settings). Not in ./demo.sh: a demo shows Tessera, not your own apps
+    if os.getenv("TESSERA_DEMO") ~= "1" then
+        hl.exec_cmd("TESSERA_USER_DIR=" .. q(TESSERA_USER_DIR) .. " python3 -I " .. q(root .. "/shell/assets/scripts/xdg-autostart.py") .. " --wait-tray 15")
+    end
     -- ./demo.sh: a playing track and a few notifications once the shell is up
     if os.getenv("TESSERA_DEMO") == "1" then
-        hl.exec_cmd(root .. "/sandbox/demo-extras.sh")
+        hl.exec_cmd(q(root .. "/sandbox/demo-extras.sh"))
     end
 end)
 -- The watchdog keeps the shell going; this keeps the watchdog going (a second

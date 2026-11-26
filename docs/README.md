@@ -15,7 +15,6 @@ Start with the [README](../README.md) or [tessera.monishbl.in](https://tessera.m
 | [pointer-and-displays.md](pointer-and-displays.md) | Focus follows pointer and moving between displays |
 | [rename-to-tessera.md](rename-to-tessera.md) | For installs from before the name change: what moves by itself, what to run once |
 | [../CHANGELOG.md](../CHANGELOG.md) | What changed, release by release |
-| [../ROADMAP.md](../ROADMAP.md) | How Tessera covers each of end4's features, and what's left |
 
 ## Contributing
 
@@ -25,8 +24,7 @@ Start with the [README](../README.md) or [tessera.monishbl.in](https://tessera.m
 | [LAUNCH.md](LAUNCH.md) | Outward steps for sharing Tessera, with texts ready to paste |
 | [releases.md](releases.md) | Ready-made tessera-ui builds: release builder, signing, channels |
 | [gate.md](gate.md) | The smoothness and stability gate before Beta |
-| [rust-ui-plan.md](rust-ui-plan.md) | The plan for the interface in Rust |
-| [rust-ui-surfaces.md](rust-ui-surfaces.md) | How a surface moves from QML to Rust |
+| [rust-ui-surfaces.md](rust-ui-surfaces.md) | A surface's crate, part and tests (its top half describes the hybrid shell of early November) |
 | [../native/tessera-ui/RUST-ONLY.md](../native/tessera-ui/RUST-ONLY.md) | What the Rust shell does differently on purpose |
 
 ## Internal records
@@ -44,5 +42,7 @@ Kept for history. They describe the code as it was on their date and may be out 
 | [rust-ui-spike-slint.md](rust-ui-spike-slint.md) | The first Rust spike: the menu bar in Slint |
 | [rust-ui-glass-compare.md](rust-ui-glass-compare.md) | Glass look: QML surfaces against their Rust twins |
 | [next-round.md](next-round.md) | A planning checklist for one round of work |
+| [../ROADMAP.md](../ROADMAP.md) | How the QML shell covered each of end4's features, October 2026 |
+| [rust-ui-plan.md](rust-ui-plan.md) | The plan for the interface in Rust, 4 November 2026 |
 | [todo.md](todo.md) | Things to check later |
 | [../PENDING.md](../PENDING.md) | What was pending, 4 November 2026 |

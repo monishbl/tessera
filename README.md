@@ -137,7 +137,7 @@ Real glass over windows comes from **tessera-glass**, a Hyprland plugin the inst
 - [The Material look](docs/material-look.md)
 - [Google Calendar and Tasks](docs/google-integration.md)
 - [Battery saver](docs/battery-saver.md)
-- [Changelog](CHANGELOG.md) and [roadmap](ROADMAP.md)
+- [Changelog](CHANGELOG.md), and what's still open: [PENDING.md](PENDING.md)
 - [All docs](docs/README.md)
 
 ## Contributing

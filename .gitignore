@@ -24,3 +24,7 @@ site/tools/wallpapers/
 /shell/native/build
 # agents' sandbox comparison shots (kept in their worktrees)
 native/tessera-ui/review/
+
+# personal helpers and editor settings, never part of Tessera
+/t.sh
+/.vscode/

@@ -2,9 +2,14 @@
 # Ends the session only on a second press within 3 s: a stray Super+Shift+Escape
 # or Ctrl+Alt+Backspace used to log out at once. Hyprland's own notice, not
 # the shell's, so it still works when the shell is frozen.
-stamp="${XDG_RUNTIME_DIR:-/tmp}/tessera-exit-armed"
+# (the user's own runtime folder, never /tmp: there another user could plant
+# the stamp; read as a number only, never fed to the shell's arithmetic as is)
+stamp="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/tessera-exit-armed"
 now=$(date +%s)
-if [ -f "$stamp" ] && [ $((now - $(cat "$stamp" 2>/dev/null || echo 0))) -le 3 ]; then
+armed=0
+[ -f "$stamp" ] && read -r armed <"$stamp" 2>/dev/null
+case $armed in '' | *[!0-9]*) armed=0 ;; esac
+if [ "$armed" -gt 0 ] && [ $((now - armed)) -le 3 ]; then
     rm -f "$stamp"
     exec hyprctl dispatch "hl.dsp.exit()"
 fi

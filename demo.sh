@@ -6,15 +6,18 @@
 #
 # How: switch to a free console (Ctrl+Alt+F3), log in, cd to this folder and
 # run ./demo.sh. It starts a real Hyprland session with Tessera (the same one as
-# ./dev.sh tty: your own ~/.config is never used or changed; Tessera keeps its
-# settings in .sandbox/home), then a track starts playing and a few
-# notifications arrive. Super+Shift+Escape ends it; then go back to your
-# desktop with Ctrl+Alt+F1 or F2 (whichever it's on).
+# ./dev.sh tty: Tessera keeps its settings in .sandbox/home and doesn't change
+# yours; it does use your keyboard layout and GPU settings, and its Wi-Fi,
+# Bluetooth and power controls act on this computer for real; the demo keeps
+# a clipboard history of its own and starts none of your login apps), then a
+# track starts playing and a few notifications arrive. Super+Shift+Escape
+# ends it; then go back to your desktop with Ctrl+Alt+F1 or F2 (whichever
+# it's on).
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHECK_ONLY=0
 [[ "${1:-}" == "--check" ]] && CHECK_ONLY=1
-[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
 
 ok() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 warn() { printf '  \033[33m!\033[0m %s\n' "$1"; WARN=$((WARN + 1)); }

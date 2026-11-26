@@ -354,7 +354,7 @@
   "group": "Screen",
   "label": "Pick a colour",
   "action": {
-   "exec": "hyprpicker -a"
+   "exec": "hyprpicker -a -r"
   }
  },
  {
@@ -364,9 +364,6 @@
   "label": "Record an area (again to stop)",
   "action": {
    "shell": "record"
-  },
-  "opts": {
-   "locked": true
   }
  },
  {
@@ -376,9 +373,6 @@
   "label": "Record an area (alternative)",
   "action": {
    "shell": "record"
-  },
-  "opts": {
-   "locked": true
   }
  },
  {
@@ -388,9 +382,6 @@
   "label": "Screenshot of the screen",
   "action": {
    "shell": "screenshotScreen"
-  },
-  "opts": {
-   "locked": true
   }
  },
  {
@@ -400,9 +391,6 @@
   "label": "Screenshot of the screen (alternative)",
   "action": {
    "shell": "screenshotScreen"
-  },
-  "opts": {
-   "locked": true
   }
  },
  {

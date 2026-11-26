@@ -29,7 +29,12 @@ if [[ -f "$RT/hyprland.pid" ]] && kill -0 "$(cat "$RT/hyprland.pid")" 2>/dev/nul
 fi
 
 rm -rf "$RT"
-mkdir -p -m 700 "$RT"
+# (a fixed name in /tmp: made here and now, or not at all. One another user
+# made first stays, since /tmp is sticky, and must not be trusted)
+if ! mkdir -m 700 "$RT" 2>/dev/null || [[ -L $RT || ! -O $RT ]]; then
+    echo "inner.sh: $RT belongs to someone else; refusing" >&2
+    exit 1
+fi
 helpers=()
 trap '[[ ${#helpers[@]} -gt 0 ]] && kill "${helpers[@]}" 2>/dev/null; true' EXIT
 if [[ "${TESSERA_VISIBLE:-0}" == 1 ]]; then
