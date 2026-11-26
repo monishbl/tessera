@@ -55,8 +55,12 @@ export function validate(r) {
     if (r.sysinfo !== undefined) {
         if (!r.sysinfo || typeof r.sysinfo !== "object" || Array.isArray(r.sysinfo))
             throw new Error('"sysinfo" must be an object.');
+        // (keys as Tessera names them: "GPU", "Displays"… Anything else, an
+        // "@someone" that would notify them or a line break out of the
+        // table, is left out)
         for (const [k, v] of Object.entries(r.sysinfo).slice(0, 20))
-            out.sysinfo[String(k).slice(0, 40)] = String(v).slice(0, 300);
+            if (/^[\w .()-]{1,40}$/.test(k))
+                out.sysinfo[k] = String(v).slice(0, 300);
     }
     if (r.screenshot !== undefined && r.screenshot !== null) {
         const s = r.screenshot;
@@ -77,6 +81,8 @@ export function validate(r) {
 
 // GitHub would turn "@someone" into a mention and notify them: break those
 const quiet = t => t.replace(/@(?=[\w-])/g, "@​");
+// One cell of a table: no mention, no "|" or line break to leave it
+const cell = t => quiet(String(t)).replace(/\|/g, "/").replace(/[\r\n]+/g, " ");
 // Text inside a fenced block can't close the fence
 const fenced = t => "~~~~text\n" + t.replace(/~{4,}/g, "~~~") + "\n~~~~";
 
@@ -88,7 +94,7 @@ export function issueBody(r, id, origin) {
         parts.push("### What was expected", quiet(r.expected));
     const info = Object.entries(r.sysinfo);
     if (info.length)
-        parts.push("### System", "| | |\n|---|---|\n" + info.map(([k, v]) => `| ${k.replace(/\|/g, "/")} | ${quiet(v).replace(/\|/g, "/")} |`).join("\n"));
+        parts.push("### System", "| | |\n|---|---|\n" + info.map(([k, v]) => `| ${cell(k)} | ${cell(v)} |`).join("\n"));
     if (r.screenshot)
         parts.push("### Screenshot", `![screenshot](${origin}/api/bug-reports/${id}/screenshot)`);
     if (r.log) {
@@ -167,18 +173,31 @@ async function create(request, env) {
         return fail(400, e instanceof SyntaxError ? "The report isn't valid JSON." : e.message);
     }
     const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
-    if (await limited(env, ip))
-        return fail(429, "Too many reports from this network. Wait an hour, or open it on GitHub instead.");
+    // (the database failing, paused or over a row's size: a reason in JSON,
+    // not Cloudflare's HTML error page that the shell read as a bare 500)
     const id = newId();
-    await env.DB.prepare("INSERT INTO reports (id, created, title, happened, steps, expected, version, sysinfo, log, screenshot, screenshot_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .bind(id, Date.now(), r.title, r.happened, r.steps, r.expected, r.version, JSON.stringify(r.sysinfo), r.log,
-            r.screenshot ? r.screenshot.bytes : null, r.screenshot ? r.screenshot.type : null)
-        .run();
+    try {
+        if (await limited(env, ip))
+            return fail(429, "Too many reports from this network. Wait an hour, or open it on GitHub instead.");
+        await env.DB.prepare("INSERT INTO reports (id, created, title, happened, steps, expected, version, sysinfo, log, screenshot, screenshot_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            .bind(id, Date.now(), r.title, r.happened, r.steps, r.expected, r.version, JSON.stringify(r.sysinfo), r.log,
+                r.screenshot ? r.screenshot.bytes : null, r.screenshot ? r.screenshot.type : null)
+            .run();
+    } catch (e) {
+        return fail(503, "The report server is having trouble saving reports. Try again later, or open it on GitHub instead.");
+    }
     // (past the hour's cap for everyone: kept here, not filed on GitHub)
-    const issue = await overGlobal(env) ? null : await fileIssue(env, r, id, new URL(request.url).origin).catch(() => null);
-    if (issue)
-        await env.DB.prepare("UPDATE reports SET issue_url = ? WHERE id = ?").bind(issue, id).run();
-    return json({ ok: true, id, issue_url: issue }, 201);
+    let issue = null;
+    try {
+        issue = await overGlobal(env) ? null : await fileIssue(env, r, id, new URL(request.url).origin);
+        if (issue)
+            await env.DB.prepare("UPDATE reports SET issue_url = ? WHERE id = ?").bind(issue, id).run();
+    } catch (e) {
+        // (it's saved: only the GitHub side failed)
+    }
+    // (said plainly when it isn't on GitHub: it was answered "sent" alone)
+    return json(issue ? { ok: true, id, issue_url: issue }
+        : { ok: true, id, issue_url: null, note: "Saved on the report server, but not filed on GitHub yet." }, 201);
 }
 
 async function screenshot(id, env) {
