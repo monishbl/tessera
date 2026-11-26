@@ -147,13 +147,14 @@ export component MissionControlPanel inherits Window {
             alignment: center;
             Text {
                 text: expose-name;
-                color: Theme.material && !on-wall ? Theme.m3-on-surface : white;
+                // (Glass in light mode: dark text on the light glass, not white)
+                color: Theme.material && !on-wall ? Theme.m3-on-surface : Theme.material || Theme.dark ? white : Theme.label;
                 font-size: 20px;
                 font-weight: 600;
             }
             Text {
                 text: expose-count;
-                color: Theme.material && !on-wall ? Theme.m3-on-surface-variant : #ffffff.with-alpha(0.7);
+                color: Theme.material && !on-wall ? Theme.m3-on-surface-variant : Theme.material || Theme.dark ? #ffffff.with-alpha(0.7) : Theme.secondary;
                 font-size: Theme.small;
             }
         }
@@ -233,7 +234,7 @@ export component MissionControlPanel inherits Window {
                 width: parent.width;
                 horizontal-alignment: center;
                 text: c.title;
-                color: Theme.material && !on-wall ? (c.current ? Theme.m3-on-surface : Theme.m3-on-surface-variant) : c.current ? white : #ffffff.with-alpha(0.7);
+                color: Theme.material && !on-wall ? (c.current ? Theme.m3-on-surface : Theme.m3-on-surface-variant) : !Theme.material && !Theme.dark ? (c.current ? Theme.label : Theme.secondary) : c.current ? white : #ffffff.with-alpha(0.7);
                 font-size: Theme.small;
                 font-weight: c.current ? 600 : 500;
                 overflow: elide;
@@ -253,7 +254,7 @@ export component MissionControlPanel inherits Window {
         transform-origin: { x: self.width / 2, y: self.height / 2 };
         if tiles.length == 0: Text {
             text: expose ? "No open windows" : "No windows on this desktop";
-            color: Theme.material && !on-wall ? Theme.m3-on-surface-variant : #ffffff.with-alpha(0.7);
+            color: Theme.material && !on-wall ? Theme.m3-on-surface-variant : Theme.material || Theme.dark ? #ffffff.with-alpha(0.7) : Theme.secondary;
             font-size: Theme.title;
         }
         for t in tiles: tile := Rectangle {

@@ -418,7 +418,7 @@ export component OverviewPanel inherits Window {
                 }
                 lt := Text {
                     text: l.text;
-                    color: Theme.material ? Theme.m3-on-surface : #ffffff.with-alpha(0.85);
+                    color: Theme.material ? Theme.m3-on-surface : Theme.dark ? #ffffff.with-alpha(0.85) : Theme.label; // (light glass: dark text)
                     font-size: Theme.body;
                     font-weight: 600;
                     accessible-role: none;
@@ -542,7 +542,7 @@ export component OverviewPanel inherits Window {
                     width: parent.width;
                     horizontal-alignment: center;
                     text: c.title;
-                    color: Theme.material ? (c.current ? Theme.m3-on-secondary-container : Theme.m3-on-surface) : #ffffff.with-alpha(c.id == picked || c.current ? 0.95 : 0.7);
+                    color: Theme.material ? (c.current ? Theme.m3-on-secondary-container : Theme.m3-on-surface) : Theme.dark ? #ffffff.with-alpha(c.id == picked || c.current ? 0.95 : 0.7) : c.id == picked || c.current ? Theme.label : Theme.secondary;
                     font-size: Theme.small;
                     font-weight: c.current ? 600 : 500;
                     overflow: elide;
