@@ -2069,7 +2069,7 @@ component DictWave inherits Rectangle {
         y: (root.height - self.height) / 2;
         width: root.width * 63 / 62;
         height: shown ? root.height : 2px;
-        animate height { duration: 320ms; easing: ease-in-out; }
+        animate height { duration: Theme.move-emphasized; easing: ease-in-out; }
         viewbox-width: 630;
         viewbox-height: 100;
         commands: wave;
@@ -2087,7 +2087,7 @@ component DictWave inherits Rectangle {
             width: parent.width * max(0.02, min(1, shown ? level : 0));
             border-radius: 3px;
             background: tint;
-            animate width { duration: 150ms; }
+            animate width { duration: Theme.move-fast; }
         }
     }
 }
@@ -2180,7 +2180,7 @@ component DictCard inherits VerticalLayout {
                 color: Theme.material ? Theme.m3-on-primary-container : tint;
                 // (done: the tick pops in)
                 property <float> pop: done ? 1 : 0;
-                animate pop { duration: reduce-motion ? 0ms : 380ms; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
+                animate pop { duration: Theme.motion(380ms); easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
                 opacity: done ? pop : 1;
             }
         }
