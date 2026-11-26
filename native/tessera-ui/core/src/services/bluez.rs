@@ -27,6 +27,8 @@ pub struct Device {
     pub connected: bool,
     /// 0..100, when it says
     pub battery: Option<u8>,
+    /// signal strength while it's seen in a scan (dBm), for the order
+    pub rssi: Option<i16>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -49,6 +51,22 @@ fn b(p: &HashMap<String, OwnedValue>, k: &str) -> bool {
     matches!(p.get(k).map(|v| &**v), Some(Value::Bool(true)))
 }
 
+/// A device's own name, or "" when it has none: BlueZ fills Alias with the
+/// address ("41-AC-C9-CB-23-B0") for a device that never said a name, and
+/// that isn't one (the lists hide nameless nearby devices and show a paired
+/// one by its address)
+fn real_name(alias: &str, name: &str, address: &str) -> String {
+    let dashed = address.replace(':', "-");
+    let is_address = |n: &str| n.is_empty() || n.eq_ignore_ascii_case(address) || n.eq_ignore_ascii_case(&dashed);
+    if !is_address(alias) {
+        alias.to_string()
+    } else if !is_address(name) {
+        name.to_string()
+    } else {
+        String::new()
+    }
+}
+
 /// BlueZ's objects as the bar needs them (devices by name)
 pub fn from_objects(objs: &Objects) -> Bluetooth {
     let mut out = Bluetooth::default();
@@ -67,10 +85,26 @@ pub fn from_objects(objs: &Objects) -> Bluetooth {
             Some(Value::U8(p)) => Some(*p),
             _ => None,
         });
-        let name = [s(d, "Alias"), s(d, "Name"), s(d, "Address")].into_iter().find(|n| !n.is_empty()).unwrap_or_default();
-        out.devices.push(Device { path: path.to_string(), address: s(d, "Address"), name, icon: s(d, "Icon"), paired: b(d, "Paired"), connected: b(d, "Connected"), battery });
+        let address = s(d, "Address");
+        let name = real_name(&s(d, "Alias"), &s(d, "Name"), &address);
+        let rssi = match d.get("RSSI").map(|v| &**v) {
+            Some(Value::I16(r)) => Some(*r),
+            _ => None,
+        };
+        out.devices.push(Device { path: path.to_string(), address, name, icon: s(d, "Icon"), paired: b(d, "Paired"), connected: b(d, "Connected"), battery, rssi });
     }
-    out.devices.sort_by(|a, b| b.connected.cmp(&a.connected).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+    // connected, then paired, then nearby ones with a name (strongest signal
+    // first), and nameless ones last: a scan in a busy place finds dozens of
+    // unnamed beacons, and sorted by name their addresses (digits) came first
+    out.devices.sort_by(|a, b| {
+        b.connected
+            .cmp(&a.connected)
+            .then_with(|| b.paired.cmp(&a.paired))
+            .then_with(|| a.name.is_empty().cmp(&b.name.is_empty()))
+            .then_with(|| if a.paired { std::cmp::Ordering::Equal } else { b.rssi.unwrap_or(i16::MIN).cmp(&a.rssi.unwrap_or(i16::MIN)) })
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then_with(|| a.address.cmp(&b.address))
+    });
     out
 }
 
@@ -172,6 +206,39 @@ mod tests {
         );
         o.insert(path("/org/bluez/hci0/dev_BB"), [("org.bluez.Device1".to_string(), props(&[("Name", Value::from("Keyboard")), ("Address", Value::from("BB")), ("Paired", Value::from(true))]))].into());
         o
+    }
+
+    #[test]
+    fn an_address_is_not_a_name() {
+        assert_eq!(real_name("41-AC-C9-CB-23-B0", "", "41:AC:C9:CB:23:B0"), "");
+        assert_eq!(real_name("41:ac:c9:cb:23:b0", "", "41:AC:C9:CB:23:B0"), "");
+        assert_eq!(real_name("41-AC-C9-CB-23-B0", "Pixel Buds", "41:AC:C9:CB:23:B0"), "Pixel Buds");
+        assert_eq!(real_name("Kitchen speaker", "JBL Go", "41:AC:C9:CB:23:B0"), "Kitchen speaker");
+        assert_eq!(real_name("", "", "41:AC:C9:CB:23:B0"), "");
+    }
+
+    #[test]
+    fn named_and_near_come_before_nameless() {
+        let mut o: Objects = HashMap::new();
+        let path = |p: &str| OwnedObjectPath::try_from(p.to_string()).unwrap();
+        o.insert(path("/org/bluez/hci0"), [("org.bluez.Adapter1".to_string(), props(&[("Powered", Value::from(true))]))].into());
+        let dev = |o: &mut Objects, id: &str, alias: &str, name: &str, rssi: i16, paired: bool| {
+            let addr = id.replace('_', ":");
+            let mut p = vec![("Alias", Value::from(alias.to_string())), ("Address", Value::from(addr)), ("RSSI", Value::from(rssi)), ("Paired", Value::from(paired))];
+            if !name.is_empty() {
+                p.push(("Name", Value::from(name.to_string())));
+            }
+            o.insert(path(&format!("/org/bluez/hci0/dev_{id}")), [("org.bluez.Device1".to_string(), props(&p))].into());
+        };
+        dev(&mut o, "00_3E_73_17_EF_88", "00-3E-73-17-EF-88", "", -40, false);
+        dev(&mut o, "41_AC_C9_CB_23_B0", "41-AC-C9-CB-23-B0", "", -50, false);
+        dev(&mut o, "AA_00_00_00_00_01", "Zed's speaker", "Zed's speaker", -80, false);
+        dev(&mut o, "AA_00_00_00_00_02", "Buds", "Buds", -60, false);
+        dev(&mut o, "AA_00_00_00_00_03", "Mouse", "Mouse", -90, true);
+        let bt = from_objects(&o);
+        let names: Vec<&str> = bt.devices.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["Mouse", "Buds", "Zed's speaker", "", ""]);
+        assert_eq!(bt.devices[3].address, "00:3E:73:17:EF:88");
     }
 
     #[test]
