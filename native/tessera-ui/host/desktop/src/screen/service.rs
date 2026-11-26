@@ -56,6 +56,8 @@ pub(super) struct DropNow(pub String);
 /// A stop not heard yet: run number, step (1: SIGTERM, 2: SIGKILL)
 pub(super) struct RecEscalate(pub u64, pub u8);
 pub(super) struct StartRec(pub Value);
+/// A selection never answered (the overlay off or gone): ended after a while
+pub(super) struct SelectTimeout(pub u64);
 pub(super) struct NotifyAction(pub String, pub String);
 
 #[derive(Default)]
@@ -82,6 +84,11 @@ pub struct ScreenSvc {
     pub(super) toolbar_seen_open: bool,
     pub(super) mics: Vec<Value>,
     pub(super) mic_muted: bool,
+    /// the microphone the recording started with, and whether it was muted then
+    pub(super) mic_source: String,
+    pub(super) mic_was_muted: bool,
+    /// StartRec posted and not handled yet
+    pub(super) rec_starting: bool,
     pub(super) countdown: i64,
     pub(super) pending: Option<Value>,
     pub(super) tick_gen: u64,
@@ -101,9 +108,21 @@ pub struct ScreenSvc {
     pub(super) index_waiting: bool,
     pub(super) index_pending: bool,
     pub(super) index_seen_off: bool,
+    /// the screenshot indexer running now (0: none), to stop it when search goes off
+    pub(super) index_pid: std::sync::Arc<std::sync::atomic::AtomicU32>,
     // the bridge
     pub(super) last_state: Option<Value>,
+    /// (when looked, tesseract, gpu-screen-recorder, wf-recorder): PATH is
+    /// not searched again on every message and settings step
+    pub(super) tools: std::cell::Cell<Option<(i64, [bool; 3])>>,
+    /// the selection open now (a later one isn't cancelled by its timeout)
+    pub(super) select_gen: u64,
+    /// the screen was locked when last looked
+    pub(super) locked: bool,
 }
+
+/// How long the PATH answers are kept
+const TOOLS_FRESH_MS: i64 = 5000;
 
 impl ScreenSvc {
     pub fn new() -> Self {
@@ -114,14 +133,30 @@ impl ScreenSvc {
         let a: String = self.ocr_langs.chars().filter(|c| c.is_ascii_lowercase() || *c == '_' || *c == '+').collect();
         if a.is_empty() { "eng".into() } else { a }
     }
+    fn tool(&self, i: usize) -> bool {
+        let now = tessera_core::util::now_ms();
+        let found = match self.tools.get() {
+            Some((at, t)) if now - at < TOOLS_FRESH_MS && now >= at => t,
+            _ => {
+                let t = [util::has("tesseract"), util::has("gpu-screen-recorder"), util::has("wf-recorder")];
+                self.tools.set(Some((now, t)));
+                t
+            }
+        };
+        found[i]
+    }
+    /// Look on PATH again at the next question (something was installed)
+    pub(super) fn forget_tools(&self) {
+        self.tools.set(None);
+    }
     pub(super) fn has_tesseract(&self) -> bool {
-        util::has("tesseract")
+        self.tool(0)
     }
     pub(super) fn gsr(&self) -> bool {
-        util::has("gpu-screen-recorder")
+        self.tool(1)
     }
     pub(super) fn available(&self) -> bool {
-        self.gsr() || util::has("wf-recorder")
+        self.gsr() || self.tool(2)
     }
     pub(super) fn folder(&self, h: &Host) -> String {
         let f = h.cfg()["recorder"]["folder"].as_str().unwrap_or("").trim().to_string();
@@ -351,6 +386,25 @@ impl Service for ScreenSvc {
     fn name(&self) -> &'static str {
         "ScreenTools"
     }
+    /// The screen locked: a countdown and a selection end, and a recording's
+    /// microphone is muted (put back as it was when the recording ends);
+    /// new captures are refused while it stays locked (start, select)
+    fn settled(&mut self, h: &mut Host) {
+        let locked = h.state("locked").as_bool().unwrap_or(false);
+        if locked == self.locked {
+            return;
+        }
+        self.locked = locked;
+        if !locked {
+            return;
+        }
+        if self.countdown > 0 {
+            self.cancel_countdown();
+        }
+        self.selecting.clear();
+        self.mute_for_lock(h);
+        self.publish(h);
+    }
     fn calls(&self) -> &'static [&'static str] {
         &["screen", "recorder", "livetext", "screentools"]
     }
@@ -368,6 +422,11 @@ impl Service for ScreenSvc {
         self.publish(h);
     }
     fn outputs_changed(&mut self, h: &mut Host) {
+        // (the display being selected on went away: the selection ends, or
+        // the pointer stayed held to a screen that isn't there)
+        if !self.selecting.is_empty() && !self.selecting_screen.is_empty() && h.st.shell.get::<tessera_core::services::clients::Windows>().is_some_and(|w| w.monitor(&self.selecting_screen).is_none()) {
+            self.selecting.clear();
+        }
         self.last_state = None;
         self.publish(h);
     }

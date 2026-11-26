@@ -60,10 +60,22 @@ impl ScreenSvc {
         if (mode == "record" || mode == "record-window") && self.recording {
             return self.stop(h);
         }
+        // (no captures while the screen is locked)
+        if self.locked {
+            return;
+        }
+        // (nothing to record with: said now, not after the area is drawn)
+        if (mode == "record" || mode == "record-window") && !self.available() {
+            return self.no_recorder(h);
+        }
         h.ask("panels.closeOpen", json!([]));
         self.selecting_screen = focused(h).map(|s| s.name).unwrap_or_default();
         self.selecting = mode.into();
         self.select_from.clear();
+        // (never answered, the overlay off or crashed: ended after a while,
+        // so the pointer isn't held to that screen for good)
+        self.select_gen += 1;
+        util::later(h.sender("ScreenTools"), 180_000, Box::new(SelectTimeout(self.select_gen)));
     }
 
     pub(super) fn cancel_select(&mut self, _h: &mut Host) {
@@ -116,7 +128,8 @@ impl ScreenSvc {
         let dir = Self::shots_dir();
         let file = format!("{}/Screenshot {}-{}.png", dir, util::stamp(true), util::nonce());
         let kind = if !self.has_editor(h) && h.cfg()["screenshot"]["markup"].as_bool().unwrap_or(false) && util::has("swappy") { "shotMarkup" } else { "shot" };
-        let script = format!("mkdir -p {d} && mv -f {s} {f} && wl-copy --type image/png < {f} && echo {f}", d = util::q(&dir), s = util::q(src), f = util::q(&file));
+        // (the copy is best effort: a saved picture is not "failed" because wl-copy is missing)
+        let script = format!("mkdir -p {d} && mv -f {s} {f} && {{ wl-copy --type image/png < {f}; echo {f}; }}", d = util::q(&dir), s = util::q(src), f = util::q(&file));
         self.run(h, kind, script);
     }
 
@@ -168,7 +181,8 @@ impl ScreenSvc {
         let file = format!("{}/Screenshot {}-{}.png", dir, util::stamp(true), util::nonce());
         let a: Vec<String> = args.iter().map(|x| util::q(x)).collect();
         let kind = if area && !self.has_editor(h) && h.cfg()["screenshot"]["markup"].as_bool().unwrap_or(false) && util::has("swappy") { "shotMarkup" } else { "shot" };
-        let script = format!("mkdir -p {d} && grim {a} {f} && wl-copy --type image/png < {f} && echo {f}", d = util::q(&dir), a = a.join(" "), f = util::q(&file));
+        // (the copy is best effort: a saved picture is not "failed" because wl-copy is missing)
+        let script = format!("mkdir -p {d} && grim {a} {f} && {{ wl-copy --type image/png < {f}; echo {f}; }}", d = util::q(&dir), a = a.join(" "), f = util::q(&file));
         self.run(h, kind, script);
     }
 
@@ -324,6 +338,7 @@ impl ScreenSvc {
             self.ocr_install_error = if ok { String::new() } else if why.is_empty() { "The install didn't finish.".into() } else { why };
         }
         self.ocr_installing.clear();
+        self.forget_tools();
         self.list_languages(h);
     }
 
@@ -360,9 +375,11 @@ impl ScreenSvc {
                 }
             };
         }
+        // (one or the other: a failed Text Capture said "No text found" first)
         let msg = take!(JobDone, msg, |j: JobDone| {
-            self.finish(h, &j.0, &j.2);
-            if !j.1 {
+            if j.1 {
+                self.finish(h, &j.0, &j.2);
+            } else {
                 self.failed(h, &j.0);
             }
         });
@@ -385,7 +402,12 @@ impl ScreenSvc {
         let msg = take!(ReadDone, msg, |r: ReadDone| self.lt_finished(h, r.0, r.1, r.2));
         let msg = take!(TelHandler, msg, |t: TelHandler| self.tel_handler = t.0);
         let msg = take!(IndexNow, msg, |_| self.index_now(h));
-        let _ = take!(IndexEnded, msg, |_| self.indexing_now = false);
+        let msg = take!(SelectTimeout, msg, |t: SelectTimeout| {
+            if t.0 == self.select_gen {
+                self.selecting.clear();
+            }
+        });
+        let _ = take!(IndexEnded, msg, |_| self.index_ended(h));
     }
 }
 
