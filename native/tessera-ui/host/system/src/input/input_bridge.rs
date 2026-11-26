@@ -595,7 +595,9 @@ impl Service for Input {
         let _ = M::RefreshBinds;
     }
     fn every_second(&mut self, h: &mut Host, n: u64) {
-        if self.poll_started && n % 2 == 0 {
+        // (every 2 s while Settings shows it, else every 30 s: a hand edit of
+        // the files is still picked up, without a stat of three files all session)
+        if self.poll_started && n % if self.live { 2 } else { 30 } == 0 {
             self.message(h, Box::new(M::Poll));
         }
     }

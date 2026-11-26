@@ -164,6 +164,17 @@ impl Service for BootSnapshots {
                 if self.booted.is_empty() {
                     return;
                 }
+                // (once a boot, not once a shell start: an update's restart, a
+                // crash or the fallback would say it again)
+                let boot = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").map(|s| s.trim().to_string()).unwrap_or_default();
+                let mark = tessera_core::util::state_dir().join("snapshot-boot-said");
+                if !boot.is_empty() {
+                    if std::fs::read_to_string(&mark).is_ok_and(|s| s.trim() == boot) {
+                        return;
+                    }
+                    let _ = std::fs::create_dir_all(tessera_core::util::state_dir());
+                    let _ = std::fs::write(&mark, &boot);
+                }
                 island_post(
                     h,
                     json!({"kind": "custom", "icon": "clock-counter-clockwise", "title": "Started from a snapshot",
