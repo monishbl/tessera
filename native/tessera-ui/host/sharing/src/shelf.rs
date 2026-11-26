@@ -128,6 +128,10 @@ impl Sharing {
             if let Ok(j) = serde_json::from_str::<Value>(&text) {
                 if let Some(a) = j["items"].as_array() {
                     self.shelf.items = a.iter().filter(|i| i.is_object() && (!i["uri"].as_str().unwrap_or("").is_empty() || !i["text"].as_str().unwrap_or("").is_empty())).cloned().collect();
+                    // (a file deleted since, or on a drive that's gone, isn't
+                    // kept: it would be dragged out or shared as a dead path)
+                    self.shelf.items.retain(|i| i["path"].as_str().is_none_or(|p| p.is_empty() || std::path::Path::new(p).exists()));
+                    logic::mark_folders(&mut self.shelf.items, |p| std::path::Path::new(p).is_dir());
                 }
             }
         }
@@ -144,10 +148,11 @@ impl Sharing {
     // ── What's on it ────────────────────────────────────────────────────
     /// Dropped: file URLs, else text (ShelfLogic.drop)
     pub fn shelf_drop(&mut self, urls: &[String], text: &str) -> bool {
-        let (items, added) = logic::drop(&self.shelf.items, urls, text);
+        let (mut items, added) = logic::drop(&self.shelf.items, urls, text);
         if added == 0 {
             return false;
         }
+        logic::mark_folders(&mut items, |p| std::path::Path::new(p).is_dir());
         self.shelf.items = items;
         self.shelf_save();
         true
@@ -328,7 +333,6 @@ impl Sharing {
         self.shelf.probe = None;
         self.shelf.last_move = now;
         self.sched.set("shelf_follow", 120);
-        self.shelf_fetch_monitors(h);
     }
     pub fn shelf_pointer_up(&mut self) {
         let now = tessera_core::util::now_ms();
@@ -367,6 +371,9 @@ impl Sharing {
         if self.shelf.down && !self.shelf.window_move {
             self.shelf.probing = true;
             self.shelf.followed = self.shelf.press;
+            // (the monitors only for a press that is held and followed, not
+            // a thread and a Hyprland request for every click)
+            self.shelf_fetch_monitors(h);
             if !self.shelf.follower.running {
                 // (one at a time: a second would be queued)
                 let cmd = vec!["python3".to_string(), "-I".into(), self.script("pointer-follow.py")];

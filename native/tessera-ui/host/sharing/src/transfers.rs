@@ -164,9 +164,17 @@ impl Sharing {
             let cmd = crate::proc::s(&["find", &dir, "-maxdepth", "1", "-type", "f", "-mmin", "-2", "-printf", "%s\\t%T@\\t%p\\0"]);
             self.run(h, Job::DlRecent, &cmd, None);
         }
-        // (while partial files sit there: again, every second if one grows, else every 10 s)
+        // (while partial files sit there: again, every second if one grows,
+        // else once a minute. A new download makes a new file, which the
+        // folder watcher says at once; the minute is only for a stalled one
+        // that starts growing again (writes aren't watched), and a browser's
+        // leftover .part cost a find every 10 s for the whole session)
         if on && !seen.is_empty() {
-            self.sched.set("dl_look", if self.tr.downloads.is_empty() { 10_000 } else { 1000 });
+            let now = tessera_core::util::now_ms();
+            // (one seen or changed in the last minute, an empty one that's
+            // only starting among them, is looked at every second still)
+            let lively = self.tr.tracked.values().any(|t| now - t.changed_at < 60_000);
+            self.sched.set("dl_look", if self.tr.downloads.is_empty() && !lively { 60_000 } else { 1000 });
         } else if !self.tr.tracked.is_empty() {
             self.sched.set("dl_look", 1000); // (one more look, so a finished download is seen to finish)
         }

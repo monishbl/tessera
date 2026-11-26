@@ -37,7 +37,6 @@ pub mod quickshare;
 pub mod shelf;
 pub mod shelf_logic;
 pub mod sharing;
-pub mod sse;
 pub mod transfers;
 pub mod updates;
 pub mod visibility;
