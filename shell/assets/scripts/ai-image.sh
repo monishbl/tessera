@@ -9,6 +9,32 @@ umask 077
 dir="${XDG_RUNTIME_DIR:-/tmp}/tessera-ai"
 mkdir -p "$dir"
 im=$(command -v magick || command -v convert) || { echo "!	ImageMagick isn't installed" ; exit 2; }
+# (copies from earlier days: the chat that showed them is long sent; a
+# detached picture or a deleted chat's go at once, from the sidebar)
+find "$dir" -maxdepth 1 \( -name 'pic-*.jpg' -o -name 'paste-*' \) -mmin +1440 -delete 2>/dev/null
+
+# The decoder from the file's first bytes, from a short list of picture
+# formats: ImageMagick would otherwise follow the content into SVG, MVG,
+# PostScript or PDF (and their delegates), which can pull in local files
+coder() {
+    local sig
+    sig=$(head -c 12 -- "$1" 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    case $sig in
+        ffd8ff*) echo jpeg ;;
+        89504e470d0a1a0a*) echo png ;;
+        47494638*) echo gif ;;
+        52494646????????57454250*) echo webp ;;
+        424d*) echo bmp ;;
+        49492a00*|4d4d002a*) echo tiff ;;
+        ????????66747970*)
+            case ${sig:16:8} in
+                61766966|61766973) echo avif ;;                          # avif avis
+                68656963|68656978|68657663|6d696631|6d736631) echo heic ;; # heic heix hevc mif1 msf1
+                *) return 1 ;;
+            esac ;;
+        *) return 1 ;;
+    esac
+}
 
 one() { # source, name shown when it fails
     local out="$dir/pic-$(date +%s%N).jpg"
@@ -16,8 +42,13 @@ one() { # source, name shown when it fails
         printf '!\t%s\n' "$2"
         return
     fi
+    local c
+    if ! c=$(coder "$1"); then
+        printf '!\t%s\n' "$2"
+        return
+    fi
     # ([0]: the first frame of a GIF or a multi-page file)
-    if "$im" "$1[0]" -auto-orient -resize '1568x1568>' -strip -quality 85 "jpg:$out" 2>/dev/null; then
+    if "$im" "$c:$1[0]" -auto-orient -resize '1568x1568>' -strip -quality 85 "jpg:$out" 2>/dev/null; then
         printf '%s\t%s\n' "$out" "$(base64 -w0 -- "$out")"
     else
         rm -f -- "$out"

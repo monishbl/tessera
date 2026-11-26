@@ -453,6 +453,21 @@ pub fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
+/// A send-ready copy ai-image.sh made of a picture
+/// ($XDG_RUNTIME_DIR/tessera-ai/pic-*.jpg); nothing else is ever removed
+pub fn is_picture_copy(path: &str) -> bool {
+    let p = Path::new(path);
+    p.is_absolute()
+        && p.parent().and_then(|d| d.file_name()).is_some_and(|d| d == "tessera-ai")
+        && p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("pic-") && n.ends_with(".jpg"))
+}
+/// Remove a picture copy once nothing shows it (detached, or its chat deleted)
+pub fn drop_picture_copy(path: &str) {
+    if is_picture_copy(path) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 pub struct Store {
     pub dir: PathBuf,
 }
@@ -498,9 +513,15 @@ impl Store {
         }
         let _ = write_private(&p, &serde_json::to_string(&s).unwrap());
     }
+    /// The chats' files go, and the send-ready picture copies their rows show
     pub fn remove(&self, ids: &[String]) {
         for id in ids {
             if let Some(p) = self.path_of(id) {
+                for r in self.read_session(id).and_then(|s| s["rows"].as_array().cloned()).unwrap_or_default() {
+                    for path in r["image"].as_str().unwrap_or("").split('\n').chain([r["search"].as_str().unwrap_or("")]) {
+                        drop_picture_copy(path);
+                    }
+                }
                 let _ = std::fs::remove_file(p);
             }
         }
@@ -513,6 +534,27 @@ mod tests {
 
     fn entry(id: &str, updated: i64, pinned: bool) -> Entry {
         Entry { id: id.into(), title: id.into(), created: updated, updated, pinned, ..Default::default() }
+    }
+
+    #[test]
+    fn picture_copies_go_with_their_chat() {
+        assert!(is_picture_copy("/run/user/1000/tessera-ai/pic-123.jpg"));
+        assert!(!is_picture_copy("/home/me/Pictures/pic-1.jpg") && !is_picture_copy("tessera-ai/pic-1.jpg") && !is_picture_copy("/run/user/1000/tessera-ai/shot-1.jpg") && !is_picture_copy(""));
+        let dir = std::env::temp_dir().join(format!("tessera-ui-picgo-{}", std::process::id()));
+        let pics = dir.join("tessera-ai");
+        std::fs::create_dir_all(&pics).unwrap();
+        let (a, b, keep) = (pics.join("pic-1.jpg"), pics.join("pic-2.jpg"), dir.join("pic-3.jpg"));
+        for f in [&a, &b, &keep] {
+            std::fs::write(f, "x").unwrap();
+        }
+        let st = Store::new(dir.join("chats"));
+        let mut row = Row::new("user", "q", "done");
+        row.image = format!("{}\n{}\n{}", a.display(), b.display(), keep.display());
+        let s = Session { id: "abc".into(), title: "t".into(), rows: vec![row], ..Default::default() };
+        st.write_session(&s);
+        st.remove(&["abc".to_string()]);
+        assert!(!a.exists() && !b.exists() && keep.exists() && st.read_session("abc").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

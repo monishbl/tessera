@@ -405,7 +405,8 @@ impl Chat {
     }
     pub fn detach(&mut self, i: usize) {
         if i < self.attachments.len() {
-            self.attachments.remove(i);
+            let p = self.attachments.remove(i);
+            chats::drop_picture_copy(&p.path);
         }
     }
 
