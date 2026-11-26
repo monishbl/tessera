@@ -2038,7 +2038,9 @@ component Marquee inherits Rectangle {
 export struct DictView {
     stage: string, // listening | writing | done
     words: string, // the words so far (a draft, its newest end), or the first ones typed
-    placeholder: bool, // no words yet: `words` is a prompt, dim
+    lines: [string], // the same as the card's lines, the newest last (bright)
+    placeholder: bool, // no words yet: the line is a prompt, dim
+    mic-icon: string, // the microphone's glyph
     hint: string, // "Release to type · Esc to cancel"
     source: string, // "<mic> · <language>"
     elapsed: string, // "0:12"
@@ -2073,9 +2075,9 @@ component DictWave inherits Rectangle {
         viewbox-width: 630;
         viewbox-height: 100;
         commands: wave;
-        fill: tint.with-alpha(0.26);
+        fill: tint.with-alpha(0.22);
         stroke: tint;
-        stroke-width: 1.5px;
+        stroke-width: 2px;
     }
     if reduce-motion: Rectangle {
         y: (root.height - self.height) / 2;
@@ -2127,11 +2129,13 @@ component DictDots inherits Rectangle {
     }
 }
 
-// Dictation's open card: the time limit's ring round the badge, Listening
-// and the time (the seconds left at the end, red), Cancel and Stop; the wave
-// (or, writing, the dots); the words so far (shimmering while they're
-// corrected); the microphone and language (a click: the list to switch) and
-// the key hint. Done: a tick and the first words typed.
+// Dictation's open card, a big live activity in both looks: the badge with
+// the time limit's ring round it, "Listening" and the time (red, "8 s left",
+// only in the last 10 s), Cancel and Stop; the wave across the card on its
+// own panel (writing: the dots); the words so far, the older lines dim and
+// the newest bright (shimmering while they're corrected); the microphone
+// and language (a click: switch them) and the key hint. Done: a tick and the
+// first words typed.
 component DictCard inherits VerticalLayout {
     in property <Live> card;
     in property <DictView> dict;
@@ -2143,12 +2147,16 @@ component DictCard inherits VerticalLayout {
     in property <color> ink2;
     callback control(int);
     callback pick(string);
-    spacing: 8px;
+    spacing: 10px;
     property <bool> listening: dict.stage == "listening";
     property <bool> writing: dict.stage == "writing";
     property <bool> done: dict.stage == "done";
     property <color> warn-color: Theme.material ? Theme.m3-error : Theme.danger;
-    property <color> tint: dict.warn && listening ? warn-color : Theme.material ? Theme.m3-primary : Theme.accent;
+    property <color> accent: Theme.material ? Theme.m3-primary : Theme.accent;
+    property <color> tint: dict.warn && listening ? warn-color : accent;
+    // (the panels inside the card: a quiet surface of its own in each look)
+    property <color> panel: Theme.material ? Theme.m3-surface-container-highest : ink.with-alpha(0.07);
+    property <length> panel-r: Theme.material ? 16px : 12px;
     Rectangle {
         height: 44px;
         badge := Rectangle {
@@ -2157,7 +2165,8 @@ component DictCard inherits VerticalLayout {
             width: 44px;
             height: 44px;
             border-radius: 22px;
-            background: Theme.material ? Theme.m3-primary-container : tint.with-alpha(0.18);
+            background: Theme.material ? (dict.warn && listening ? Theme.m3-error-container : Theme.m3-primary-container) : tint.with-alpha(0.18);
+            animate background { duration: Theme.hover; }
             // (the time limit: its track, and the arc of the time gone)
             if listening: Rectangle {
                 border-radius: 22px;
@@ -2177,7 +2186,7 @@ component DictCard inherits VerticalLayout {
                 text: card.icon;
                 fill: true;
                 font-size: 20px;
-                color: Theme.material ? Theme.m3-on-primary-container : tint;
+                color: Theme.material ? (dict.warn && listening ? Theme.m3-on-error-container : Theme.m3-on-primary-container) : tint;
                 // (done: the tick pops in)
                 property <float> pop: done ? 1 : 0;
                 animate pop { duration: Theme.motion(380ms); easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
@@ -2189,17 +2198,24 @@ component DictCard inherits VerticalLayout {
             width: self.preferred-width;
             y: (44px - 36px) / 2;
             height: 36px;
-            spacing: 4px;
-            for c[i] in card.controls: IconButton {
+            spacing: 6px;
+            for c[i] in card.controls: Rectangle {
                 width: 36px;
                 height: 36px;
-                icon: c.icon;
-                fill: c.fill;
-                size: 18px;
-                ink: c.danger ? warn-color : root.ink;
+                border-radius: 18px;
+                // (Stop filled in the accent, Cancel on the quiet panel)
+                background: c.fill ? accent : panel;
                 opacity: c.on ? 1 : 0.4;
-                label: c.name;
-                clicked => { if c.on { root.control(i); } }
+                IconButton {
+                    width: 100%;
+                    height: 100%;
+                    icon: c.icon;
+                    fill: c.fill;
+                    size: 18px;
+                    ink: c.fill ? (Theme.material ? Theme.m3-on-primary : #ffffff) : root.ink;
+                    label: c.name;
+                    clicked => { if c.on { root.control(i); } }
+                }
             }
         }
         VerticalLayout {
@@ -2208,34 +2224,51 @@ component DictCard inherits VerticalLayout {
             y: 0;
             height: 44px;
             alignment: center;
-            spacing: 0;
+            spacing: 1px;
             Text {
                 text: done ? "Typed" : writing ? "Writing…" : "Listening";
                 color: ink;
-                font-size: Theme.body;
-                font-weight: 600;
+                font-size: Theme.material ? 16px : 15px;
+                font-weight: Theme.material ? 500 : 600;
                 overflow: elide;
             }
             if listening: Text {
                 text: dict.left != "" ? dict.left : dict.elapsed;
                 color: dict.warn ? warn-color : ink2;
                 font-size: Theme.small;
-                font-weight: dict.warn ? 600 : 400;
+                font-weight: dict.warn ? 600 : 500;
                 overflow: elide;
             }
         }
     }
-    // the wave, melting into the dots once it's writing (the list open: its room)
+    // the wave across the card on its panel, melting into the dots once
+    // it's writing (the list open: its room)
     if !done && !(listening && dict.picking): Rectangle {
-        height: 36px;
+        height: 56px;
+        border-radius: panel-r;
+        background: panel;
+        clip: true;
+        // (the middle line it rides on)
+        Rectangle {
+            x: 14px;
+            y: (parent.height - 1px) / 2;
+            width: parent.width - 28px;
+            height: 1px;
+            background: tint.with-alpha(0.18);
+            opacity: listening ? 1 : 0;
+        }
         DictWave {
+            x: 10px;
+            y: 6px;
+            width: parent.width - 20px;
+            height: parent.height - 12px;
             wave: root.wave;
             level: root.level;
             reduce-motion: root.reduce-motion;
             tint: root.tint;
             shown: listening;
             opacity: listening ? 1 : 0;
-            animate opacity { duration: 300ms; }
+            animate opacity { duration: Theme.move-standard; }
         }
         DictDots {
             tint: root.tint;
@@ -2244,18 +2277,20 @@ component DictCard inherits VerticalLayout {
             shown: writing;
         }
     }
-    // the words so far (the newest end), shimmering while they're corrected
-    if dict.words != "": Rectangle {
+    // the words: the older lines dim, the newest bright; shimmering while
+    // they're corrected
+    if dict.lines.length > 0: Rectangle {
         height: words.preferred-height;
         clip: true;
         words := VerticalLayout {
             width: parent.width;
-            Text {
-                text: dict.words;
-                wrap: word-wrap;
-                color: dict.placeholder ? ink2 : ink;
-                font-size: Theme.body;
-                font-weight: done ? 500 : 400;
+            spacing: 2px;
+            for l[i] in dict.lines: Text {
+                text: l;
+                color: dict.placeholder || i < dict.lines.length - 1 ? ink2 : ink;
+                font-size: 14px;
+                font-weight: done || (!dict.placeholder && i == dict.lines.length - 1) ? 500 : 400;
+                overflow: elide;
                 opacity: writing && !reduce-motion ? 0.6 + 0.25 * (0.5 + 0.5 * Math.sin(animation-tick() / 1400ms * 360deg)) : writing ? 0.7 : 1;
             }
         }
@@ -2269,25 +2304,31 @@ component DictCard inherits VerticalLayout {
     }
     // the microphone and language (a click: switch them) and the key hint
     if listening: HorizontalLayout {
-        height: 22px;
+        height: 26px;
         spacing: 8px;
         Rectangle {
             horizontal-stretch: 0;
-            width: min(src.preferred-width + 14px, root.width * 0.58);
-            border-radius: 11px;
-            background: srct.pressed ? ink.with-alpha(0.16) : srct.has-hover || dict.picking ? ink.with-alpha(0.1) : transparent;
+            width: min(src.preferred-width + 20px, root.width * 0.58);
+            border-radius: 13px;
+            background: srct.pressed ? ink.with-alpha(0.16) : srct.has-hover || dict.picking ? ink.with-alpha(0.12) : panel;
             animate background { duration: Theme.hover; }
             accessible-role: button;
             accessible-label: "Microphone and language: " + dict.source;
             accessible-action-default => { root.pick("toggle"); }
             src := HorizontalLayout {
-                x: 7px;
-                width: parent.width - 14px;
-                spacing: 4px;
+                x: 10px;
+                width: parent.width - 20px;
+                spacing: 5px;
+                SymIcon {
+                    text: dict.mic-icon;
+                    font-size: 11px;
+                    color: ink2;
+                }
                 Text {
                     text: dict.source;
                     color: ink2;
                     font-size: Theme.caption;
+                    font-weight: 500;
                     overflow: elide;
                     vertical-alignment: center;
                     accessible-role: none;
@@ -2377,21 +2418,23 @@ component LiveInfo inherits HorizontalLayout {
     in property <Live> live;
     in property <color> ink;
     in property <int> tick;
-    // dictation listening: the little wave (menubar dictation.rs's, 13 levels
-    // in a 120 × 100 viewbox) in place of the icon
-    in property <string> wave;
+    // dictation listening: five bars of your voice (menubar dictation.rs's
+    // newest levels, 0..1 of their room) in place of the icon; the time in
+    // the ink, red only in the time limit's last 10 s
+    in property <[float]> bars;
     in property <color> wave-tint;
+    in property <bool> warn;
     // the room it has (IslandView's maxWidth: "beside" the spaces), and the
     // time's width (measured outside this layout): the title gets what's left
     in property <length> room: 100000px;
     in property <length> time-w;
     alignment: start;
     spacing: 7px;
-    property <bool> waving: live.kind == "dictation" && wave != "";
+    property <bool> waving: live.kind == "dictation" && bars.length > 0;
     if live.show-lead: VerticalLayout {
         alignment: center;
         Rectangle {
-            width: waving ? 28px : Theme.material ? 20px : 18px;
+            width: waving ? (Theme.material ? 30px : 26px) : Theme.material ? 20px : 18px;
             height: Theme.material ? 20px : 18px;
             border-radius: Theme.material || !live.has-art ? self.height / 2 : 5px;
             clip: true;
@@ -2417,18 +2460,21 @@ component LiveInfo inherits HorizontalLayout {
                 source: live.app-icon;
                 image-fit: contain;
             }
-            // dictation listening: the little wave of your voice
-            if waving: Path {
-                x: 4px;
-                y: 3px;
-                width: parent.width - 8px;
-                height: parent.height - 6px;
-                viewbox-width: 120;
-                viewbox-height: 100;
-                commands: root.wave;
-                fill: (Theme.material ? (live.tint == Theme.m3-error ? Theme.m3-on-error : Theme.m3-on-primary) : root.wave-tint).with-alpha(0.35);
-                stroke: Theme.material ? (live.tint == Theme.m3-error ? Theme.m3-on-error : Theme.m3-on-primary) : root.wave-tint;
-                stroke-width: 1px;
+            // dictation listening: five rounded bars, rising and falling
+            // with your voice (each new level eases in over 90 ms)
+            if waving: HorizontalLayout {
+                alignment: center;
+                spacing: 2px;
+                for b in root.bars: VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 2.5px;
+                        height: max(3px, b * (Theme.material ? 12px : 14px));
+                        animate height { duration: Theme.motion(90ms); easing: ease-out; }
+                        border-radius: 1.25px;
+                        background: Theme.material ? Theme.m3-on-primary : root.wave-tint;
+                    }
+                }
             }
             if !waving && !live.has-art && live.kind != "recording" && !(live.kind == "call" && live.has-app-icon): SymIcon {
                 text: live.icon;
@@ -2454,7 +2500,7 @@ component LiveInfo inherits HorizontalLayout {
         tt := Text {
             width: 100%;
             text: live.time;
-            color: live.kind == "recording" ? (Theme.material ? Theme.m3-error : Theme.danger) : Theme.material ? ink : live.tint;
+            color: live.kind == "recording" || (live.kind == "dictation" && root.warn) ? (Theme.material ? Theme.m3-error : Theme.danger) : Theme.material || live.kind == "dictation" ? ink : live.tint;
             font-size: Theme.small;
             font-weight: 600;
             vertical-alignment: center;
@@ -2581,7 +2627,7 @@ export component Island inherits Rectangle {
     // language list; a pick in it ("toggle": the list opens or closes)
     in property <DictView> dict;
     in property <string> dict-wave;
-    in property <string> dict-mini;
+    in property <[float]> dict-bars;
     in property <float> dict-level;
     in property <[LevelRow]> dict-rows;
     callback dict-pick(string);
@@ -2868,7 +2914,8 @@ export component Island inherits Rectangle {
                     live: root.live;
                     ink: root.ink;
                     tick: root.tick;
-                    wave: root.dict.stage == "listening" ? root.dict-mini : "";
+                    bars: root.dict-bars; // (empty unless listening: menubar lib.rs)
+                    warn: root.dict.warn;
                     wave-tint: Theme.accent;
                     // (a swap: it shrinks away, then grows back from its side)
                     property <float> shown: compact ? 1 : 0;

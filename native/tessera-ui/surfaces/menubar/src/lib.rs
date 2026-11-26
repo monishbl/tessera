@@ -300,6 +300,9 @@ pub struct Menubar {
     dict: dictation::Card,
     dict_wave: dictation::Wave,
     dict_rows: Rows<ui::LevelRow>,
+    /// the pill's five bars, and the card's lines of words (changed in place)
+    dict_bars: Rows<f32>,
+    dict_lines: Rows<SharedString>,
     /// the music card: where the song was (bus, seconds, when read) and the
     /// player's volume (None: it has none, the system's is used), read each
     /// second while an island is open with music (IslandFocusCard's positionChanged)
@@ -751,7 +754,8 @@ impl Menubar {
     /// All at once (island.activityMode "all"): every activity but music as
     /// a row (IslandActivity), without "reset"
     fn act_rows(&mut self, material: bool, roles: &ui::Theme) -> Vec<ui::ActRow> {
-        let acts: Vec<Activity> = self.island.activities.iter().filter(|a| a.kind != "music").cloned().collect();
+        // (not music's, nor dictation's: theirs is the card)
+        let acts: Vec<Activity> = self.island.activities.iter().filter(|a| a.kind != "music" && a.kind != "dictation").cloned().collect();
         acts.iter()
             .map(|a| {
                 let raw = island::color(&a.color).unwrap_or(roles.get_accent());
@@ -942,13 +946,15 @@ impl Menubar {
         self.dict.follow(&dict_stage, dc["session"].as_i64().unwrap_or(0));
         if dict_stage != "listening" && !self.dict_wave.is_empty() {
             self.dict_wave.clear();
+            self.dict_bars.set(Vec::new());
             for b in &self.bars {
                 b.ui.set_dict_wave(SharedString::new());
-                b.ui.set_dict_mini(SharedString::new());
                 b.ui.set_dict_level(0.0);
             }
         }
-        let dict_open = self.dict.open() && cfg.activity_mode != "all" && self.island.primary().is_some_and(|a| a.kind == "dictation");
+        // (in every activity mode: while it's on, dictation's card is the open island's)
+        let dictating = self.island.activities.iter().any(|a| a.kind == "dictation");
+        let dict_open = self.dict.open() && dictating;
         let dict_view = self.dict_view(st, &dc, now_ms);
         let dict_rows = self.dict_rows_now(st, &dc);
         self.dict_rows.set_keyed(dict_rows, |l| l.id.clone());
@@ -1169,8 +1175,11 @@ impl Menubar {
             let live_key = format!("{material}{all_mode}{:?}{:?}{:?}{}{}", self.island.primary(), self.island.activities, players.chosen(), self.art.0, self.art.1.is_some());
             if live_key != b.live_key {
                 let primary = self.island.primary().cloned();
-                // the open card: the focused one (all at once: the music, with the others as rows)
-                let card = if all_mode { self.island.activities.iter().find(|a| a.kind == "music").cloned() } else { primary.clone() };
+                // the open card: dictation's while it's on (every mode: it takes the
+                // open island over), else the focused one (all at once: the music,
+                // with the others as rows)
+                let dictation = self.island.activities.iter().find(|a| a.kind == "dictation").cloned();
+                let card = if dictation.is_some() { dictation } else if all_mode { self.island.activities.iter().find(|a| a.kind == "music").cloned() } else { primary.clone() };
                 let pill = self.live_struct(st, primary.as_ref(), false, &cfg, material, &theme);
                 b.ui.set_live(pill);
                 let card_live = self.live_struct(st, card.as_ref(), true, &cfg, material, &theme);
@@ -2091,10 +2100,9 @@ impl Menubar {
         }
         let eased = self.dict_wave.push(raw);
         let wave = SharedString::from(self.dict_wave.path(dictation::WAVE_N));
-        let mini = SharedString::from(self.dict_wave.path(dictation::MINI_N));
+        self.dict_bars.set(dictation::bars(&self.dict_wave));
         for b in &self.bars {
             b.ui.set_dict_wave(wave.clone());
-            b.ui.set_dict_mini(mini.clone());
             b.ui.set_dict_level(eased);
         }
         if self.dict.heard(raw) {
@@ -2120,7 +2128,7 @@ impl Menubar {
         let (words, placeholder) = if stage == "done" {
             (s("typed"), false)
         } else if !partial.is_empty() {
-            (dictation::tail_words(&partial, 90), false)
+            (partial.clone(), false) // (the card shows its newest lines: dictation::lines)
         } else if listening {
             ("Start speaking…".to_string(), true)
         } else {
@@ -2132,7 +2140,12 @@ impl Menubar {
         let secs = elapsed.floor() as i64;
         ui::DictView {
             stage: stage.as_str().into(),
+            lines: {
+                self.dict_lines.set(dictation::lines(&words, dictation::LINE_CHARS, dictation::MAX_LINES).into_iter().map(SharedString::from).collect());
+                self.dict_lines.model()
+            },
             words: words.into(),
+            mic_icon: glyph("microphone").into(),
             placeholder,
             hint: dictation::hint(&s("mode")).into(),
             source: if mic.is_empty() { lang } else { format!("{mic} · {lang}") }.into(),
@@ -2998,6 +3011,7 @@ impl Part for Menubar {
             ui.on_level_mute(move |id| t(Box::new(M::LevelMute(id.to_string()))));
         }
         ui.set_dict_rows(self.dict_rows.model());
+        ui.set_dict_bars(self.dict_bars.model());
         {
             let t = to.clone();
             ui.on_dict_pick(move |id| t(Box::new(M::DictPick(id.to_string()))));

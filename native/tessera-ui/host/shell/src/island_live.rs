@@ -121,7 +121,7 @@ pub fn derive(h: &Host, now: i64) -> Vec<(&'static str, Option<Value>)> {
                 ]
             };
             json!({
-                "icon": if done { "check" } else if writing { "text-aa" } else { "microphone" }, "color": accent("red"),
+                "icon": if done { "check" } else if writing { "text-aa" } else { "microphone" }, "color": "", // (the accent: Material primary; the card turns red only in the last 10 s)
                 "title": if done { "Typed" } else if writing { "Writing…" } else { "Listening" },
                 "time": if writing || done { String::new() } else { since(dc["startedAt"].as_f64().unwrap_or(0.0) as i64, now) },
                 "detail": if done {

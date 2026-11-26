@@ -13,8 +13,11 @@ use std::fmt::Write;
 
 /// The card's wave: its points (one more than shows: it slides in from the right)
 pub const WAVE_N: usize = 64;
-/// The pill's little wave
-pub const MINI_N: usize = 13;
+/// The pill's bars (the newest levels, rising and falling)
+pub const MINI_BARS: usize = 5;
+/// The card's words: characters a line, lines at most
+pub const LINE_CHARS: usize = 46;
+pub const MAX_LINES: usize = 3;
 /// One level each 50 ms
 pub const FRAME_MS: f64 = 50.0;
 /// A level this high is you speaking (for the shrink)
@@ -224,6 +227,40 @@ pub fn tail_words(text: &str, max: usize) -> String {
     format!("…{from_word}")
 }
 
+/// The words as the card's lines (about `per_line` characters each, broken
+/// between words), the newest `max` of them; "…" first when older ones were
+/// left out. The card draws the older lines dim and the newest bright.
+pub fn lines(text: &str, per_line: usize, max: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for w in text.split_whitespace() {
+        let w: String = if w.chars().count() > per_line { w.chars().take(per_line).collect() } else { w.to_string() };
+        if !cur.is_empty() && cur.chars().count() + 1 + w.chars().count() > per_line {
+            out.push(std::mem::take(&mut cur));
+        }
+        if !cur.is_empty() {
+            cur.push(' ');
+        }
+        cur.push_str(&w);
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    if out.len() > max {
+        out.drain(..out.len() - max);
+        if let Some(first) = out.first_mut() {
+            first.insert(0, '…');
+        }
+    }
+    out
+}
+
+/// The pill's five bars: the newest levels, each at least a dot's height
+/// (0..1 of the bar's room), so it's visibly alive even when you're quiet
+pub fn bars(w: &Wave) -> Vec<f32> {
+    w.tail(MINI_BARS).iter().map(|v| (0.22 + 0.78 * v.clamp(0.0, 1.0)).min(1.0)).collect()
+}
+
 /// The languages Settings → Dictation offers (pages/input/dictation.rs's)
 pub const LANGUAGES: &[(&str, &str)] = &[
     ("", "Same as the system"),
@@ -389,6 +426,35 @@ mod tests {
         assert_eq!(tail_words("abcdefghij", 4), "…ghij");
         // (not on a character's middle)
         assert_eq!(tail_words("ééééé ü", 3), "…ü");
+    }
+
+    #[test]
+    fn the_words_as_lines_newest_last() {
+        assert!(lines("", 10, 3).is_empty());
+        assert_eq!(lines("one two three", 20, 3), vec!["one two three"]);
+        assert_eq!(lines("one two three four", 9, 3), vec!["one two", "three", "four"]);
+        // older lines left out: "…" before the first one kept
+        assert_eq!(lines("a b c d e f", 3, 2), vec!["…c d", "e f"]);
+        // a word longer than a line is cut to it
+        assert_eq!(lines("abcdefghijkl", 5, 3), vec!["abcde"]);
+        for l in lines(&"word ".repeat(80), LINE_CHARS, MAX_LINES) {
+            assert!(l.chars().count() <= LINE_CHARS + 1);
+        }
+        assert_eq!(lines(&"word ".repeat(80), LINE_CHARS, MAX_LINES).len(), MAX_LINES);
+    }
+
+    #[test]
+    fn the_pill_bars_stay_alive() {
+        let mut w = Wave::default();
+        let quiet = bars(&w);
+        assert_eq!(quiet.len(), MINI_BARS);
+        assert!(quiet.iter().all(|&b| b > 0.2 && b < 0.3));
+        for _ in 0..3 {
+            w.push(1.0);
+        }
+        let loud = bars(&w);
+        // the newest on the right, taller than the silence before it
+        assert!(loud[4] > loud[1] && loud[4] <= 1.0);
     }
 
     #[test]

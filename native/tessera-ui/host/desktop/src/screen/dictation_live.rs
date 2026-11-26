@@ -276,9 +276,10 @@ where
 {
     let tick = std::time::Duration::from_millis(FRAME_MS);
     let mut f: Option<std::fs::File> = None;
-    let mut head: Vec<u8> = Vec::new();
-    let mut in_data = false;
-    let mut odd = None;
+    let mut wav = WavTail::default();
+    // (the fallback: the microphone itself, when the recording doesn't grow)
+    let mut meter: Option<Meter> = None;
+    let mut ticks = 0u32;
     let mut samples: Vec<i16> = Vec::with_capacity(RATE * 16);
     let mut buf = vec![0u8; 32 * 1024];
     let mut gate = PartialGate::default();
@@ -287,36 +288,34 @@ where
     let mut no_drafts = false;
     let mut voiced = false;
     let mut id = 0u64;
-    'outer: while !stop.load(Ordering::SeqCst) {
+    while !stop.load(Ordering::SeqCst) {
         std::thread::sleep(tick);
         if stop.load(Ordering::SeqCst) {
             break;
         }
-        if f.is_none() {
-            f = std::fs::File::open(&file).ok();
-        }
-        let Some(file_now) = f.as_mut() else { continue };
-        // (everything new since the last look)
-        loop {
-            match file_now.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    if in_data {
-                        push_pcm(&buf[..n], &mut odd, &mut samples);
-                    } else {
-                        head.extend_from_slice(&buf[..n]);
-                        if let Some(at) = data_offset(&head) {
-                            in_data = true;
-                            push_pcm(&head[at.min(head.len())..], &mut odd, &mut samples);
-                            head = Vec::new();
-                        } else if head.len() > 1 << 16 {
-                            break 'outer; // (not a WAV it can read: no levels, no drafts)
-                        }
-                    }
+        ticks = ticks.saturating_add(1);
+        let before = samples.len();
+        if let Some(m) = meter.as_mut() {
+            m.read_new(&mut buf, &mut samples);
+        } else {
+            if f.is_none() {
+                f = std::fs::File::open(&file).ok();
+            }
+            if let Some(file_now) = f.as_mut() {
+                read_new(file_now, &mut buf, &mut wav, &mut samples);
+            }
+            // (nothing readable after a second, or not a WAV it knows: the
+            // microphone through parec instead, for the levels and the drafts)
+            if samples.is_empty() && (ticks >= SWITCH_TICKS || wav.foreign()) {
+                f = None;
+                meter = Meter::start();
+                if meter.is_none() {
+                    break; // (no levels, no drafts; dictation itself goes on)
                 }
             }
         }
-        if samples.is_empty() {
+        // (only what's new: a level that didn't change isn't sent again)
+        if samples.len() == before {
             continue;
         }
         let l = level(&samples[samples.len().saturating_sub(FRAME)..]);
@@ -358,7 +357,111 @@ where
     if let Some(h) = helper.take() {
         h.end();
     }
+    if let Some(m) = meter.take() {
+        m.end();
+    }
     let _ = std::fs::remove_file(&draft);
+}
+
+/// Ticks (of FRAME_MS) without a sample from the recording before the
+/// microphone is read directly
+const SWITCH_TICKS: u32 = 20;
+
+/// A WAV file read as it's written: its header skipped, then its samples
+#[derive(Debug, Default)]
+pub struct WavTail {
+    head: Vec<u8>,
+    in_data: bool,
+    odd: Option<u8>,
+    foreign: bool,
+}
+
+impl WavTail {
+    /// Bytes as they were appended to the file: the samples among them
+    pub fn feed(&mut self, bytes: &[u8], out: &mut Vec<i16>) {
+        if self.foreign {
+            return;
+        }
+        if self.in_data {
+            return push_pcm(bytes, &mut self.odd, out);
+        }
+        self.head.extend_from_slice(bytes);
+        if let Some(at) = data_offset(&self.head) {
+            self.in_data = true;
+            let head = std::mem::take(&mut self.head);
+            push_pcm(&head[at.min(head.len())..], &mut self.odd, out);
+        } else if self.head.len() > 1 << 16 {
+            // (no header is that long: not a WAV it can read)
+            self.foreign = true;
+            self.head = Vec::new();
+        }
+    }
+    pub fn foreign(&self) -> bool {
+        self.foreign
+    }
+}
+
+/// Everything appended to a file since the last read (a regular file at its
+/// end reads 0 bytes, then whatever the recorder adds after)
+pub fn read_new(f: &mut impl Read, buf: &mut [u8], tail: &mut WavTail, out: &mut Vec<i16>) {
+    loop {
+        match f.read(buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => tail.feed(&buf[..n], out),
+        }
+    }
+}
+
+/// The microphone read directly (`parec`, 16 kHz mono raw, the default
+/// source), when the recording can't be followed: its output never blocks
+struct Meter {
+    child: std::process::Child,
+    out: std::process::ChildStdout,
+    odd: Option<u8>,
+}
+
+impl Meter {
+    fn start() -> Option<Meter> {
+        use std::os::unix::io::AsRawFd;
+        let mut c = std::process::Command::new("setpriv");
+        c.args(["--pdeathsig", "TERM", "--", "parec", "--raw", "--format=s16le", "--channels=1", "--rate=16000", "--latency-msec=50", "-d", "@DEFAULT_SOURCE@"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null());
+        super::util::default_signals(&mut c);
+        let mut child = c.spawn().ok()?;
+        let Some(out) = child.stdout.take() else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        };
+        let fd = out.as_raw_fd();
+        unsafe {
+            let fl = libc::fcntl(fd, libc::F_GETFL);
+            libc::fcntl(fd, libc::F_SETFL, fl | libc::O_NONBLOCK);
+        }
+        Some(Meter { child, out, odd: None })
+    }
+
+    /// What it has said since the last look (never waits)
+    fn read_new(&mut self, buf: &mut [u8], out: &mut Vec<i16>) {
+        loop {
+            match self.out.read(buf) {
+                Ok(0) => break,
+                Ok(n) => push_pcm(&buf[..n], &mut self.odd, out),
+                Err(_) => break, // (WouldBlock: nothing more yet)
+            }
+        }
+    }
+
+    fn end(self) {
+        let Meter { mut child, out, .. } = self;
+        drop(out);
+        unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
 }
 
 #[cfg(test)]
@@ -382,6 +485,48 @@ mod tests {
         // not there yet, not a WAV
         assert_eq!(data_offset(&w[..30]), None);
         assert_eq!(data_offset(b"OggS0000000000000000"), None);
+    }
+
+    #[test]
+    fn a_growing_recording_is_followed() {
+        // as a recorder writes one: the header first (sizes not known yet),
+        // then the samples as they come, in pieces of any length
+        use std::io::Write;
+        let path = std::env::temp_dir().join(format!("tessera-dictation-test-{}.wav", std::process::id()));
+        let mut w = std::fs::File::create(&path).unwrap();
+        let mut header = wav_bytes(&[]);
+        header[4..8].copy_from_slice(&0u32.to_le_bytes());
+        w.write_all(&header[..20]).unwrap(); // (not even the whole header yet)
+        let mut r = std::fs::File::open(&path).unwrap();
+        let (mut tail, mut out, mut buf) = (WavTail::default(), Vec::new(), vec![0u8; 64]);
+        read_new(&mut r, &mut buf, &mut tail, &mut out);
+        assert!(out.is_empty());
+        w.write_all(&header[20..]).unwrap();
+        read_new(&mut r, &mut buf, &mut tail, &mut out);
+        assert!(out.is_empty());
+        // a loud 50 ms, written in two pieces split inside a sample
+        let loud: Vec<u8> = std::iter::repeat(8000i16).take(FRAME).flat_map(|s| s.to_le_bytes()).collect();
+        w.write_all(&loud[..701]).unwrap();
+        read_new(&mut r, &mut buf, &mut tail, &mut out);
+        assert_eq!(out.len(), 350);
+        w.write_all(&loud[701..]).unwrap();
+        read_new(&mut r, &mut buf, &mut tail, &mut out);
+        assert_eq!(out.len(), FRAME);
+        assert!(out.iter().all(|&s| s == 8000));
+        assert!(level(&out) > VOICED);
+        // nothing new: nothing more
+        read_new(&mut r, &mut buf, &mut tail, &mut out);
+        assert_eq!(out.len(), FRAME);
+        assert!(!tail.foreign());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn not_a_wav_is_given_up_on() {
+        let mut t = WavTail::default();
+        let mut out = Vec::new();
+        t.feed(&vec![7u8; 70_000], &mut out);
+        assert!(t.foreign() && out.is_empty());
     }
 
     #[test]

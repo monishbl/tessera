@@ -473,7 +473,7 @@ export component Bar inherits Window {
     // dictation's card, its waves and level, its mic and language list (Island's)
     in property <DictView> dict;
     in property <string> dict-wave;
-    in property <string> dict-mini;
+    in property <[float]> dict-bars;
     in property <float> dict-level;
     in property <[LevelRow]> dict-rows;
     callback dict-pick(string);
@@ -780,7 +780,7 @@ export component Bar inherits Window {
         mic-level: root.mic-level;
         dict: root.dict;
         dict-wave: root.dict-wave;
-        dict-mini: root.dict-mini;
+        dict-bars: root.dict-bars;
         dict-level: root.dict-level;
         dict-rows: root.dict-rows;
         dict-pick(id) => { root.dict-pick(id); }
