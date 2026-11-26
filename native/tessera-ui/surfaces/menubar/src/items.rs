@@ -11,7 +11,7 @@ use crate::icons::glyph;
 use crate::services::bluez::Bluetooth;
 use crate::services::bridge::ShellState;
 use crate::services::mpris::Players;
-use crate::services::status::{Battery, Wifi};
+use crate::services::status::{Battery, Charge, Wifi};
 use crate::services::tray::Tray;
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -155,12 +155,14 @@ fn hm(secs: i64) -> String {
 /// Without the QML shell's BatteryHealth: the level and what it's doing
 pub fn battery_tip(b: &Battery) -> String {
     let pct = b.percent.round() as i32;
-    match b.state {
-        4 => format!("{pct}% · fully charged"),
-        1 if b.time_to_full > 0 => format!("{pct}% · full in {}", hm(b.time_to_full)),
-        1 => format!("{pct}% · charging"),
-        _ if b.time_to_empty > 0 => format!("{pct}% · {} left", hm(b.time_to_empty)),
-        _ => format!("{pct}% · on battery"),
+    // (held at a charge limit: "plugged in, not charging · held at 80%"; #437)
+    match b.charge() {
+        Charge::Full => format!("{pct}% · fully charged"),
+        Charge::Charging if b.time_to_full > 0 => format!("{pct}% · full in {}", hm(b.time_to_full)),
+        Charge::Charging => format!("{pct}% · charging"),
+        Charge::Held => format!("{pct}% · {}", b.charge_line().to_lowercase()),
+        Charge::OnBattery if b.time_to_empty > 0 => format!("{pct}% · {} left", hm(b.time_to_empty)),
+        Charge::OnBattery => format!("{pct}% · on battery"),
     }
 }
 
@@ -311,7 +313,7 @@ pub fn entries(i: &Inputs) -> Vec<Entry> {
         let level = (b.percent / 100.0) as f32;
         out.push(Entry {
             text: battery_text(level, b.charging, &bar.battery_percent),
-            glyph: Glyph::Battery { level, charging: b.state == 1, plugged: b.state == 4 || b.state == 5, low_power: s.bool("battery.lowPower"), show_percent: bar.battery_percent == "inside" },
+            glyph: Glyph::Battery { level, charging: b.state == 1, plugged: matches!(b.charge(), Charge::Full | Charge::Held), low_power: s.bool("battery.lowPower"), show_percent: bar.battery_percent == "inside" },
             tip: if s.str("battery.summary").is_empty() { battery_tip(b) } else { s.str("battery.summary").into() },
             ..e("battery", "batteryMenu", "")
         });
@@ -387,7 +389,7 @@ mod tests {
         World {
             bar: super::super::settings::bar(&json!({})),
             shell: ShellState(json!({"open": "", "screen": ""})),
-            battery: Battery { present: true, percent: 64.0, charging: false, state: 2, time_to_empty: 5400, time_to_full: 0 },
+            battery: Battery { present: true, percent: 64.0, charging: false, state: 2, time_to_empty: 5400, time_to_full: 0, plugged: false, limit: None },
             wifi: Wifi { present: true, enabled: true, ssid: "Home".into(), strength: 80 },
             bt: Bluetooth::default(),
             players: Players::default(),
@@ -458,9 +460,13 @@ mod tests {
         assert_eq!(battery_text(0.18, false, "off"), "18%");
         assert_eq!(battery_text(0.18, true, "off"), "");
         assert_eq!(battery_text(0.18, false, "inside"), "");
-        let b = Battery { present: true, percent: 64.0, charging: false, state: 2, time_to_empty: 5400, time_to_full: 0 };
+        let b = Battery { present: true, percent: 64.0, charging: false, state: 2, time_to_empty: 5400, time_to_full: 0, plugged: false, limit: None };
         assert_eq!(battery_tip(&b), "64% · 1 h 30 min left");
-        assert_eq!(battery_tip(&Battery { state: 4, percent: 100.0, ..b.clone() }), "100% · fully charged");
+        assert_eq!(battery_tip(&Battery { state: 4, percent: 100.0, plugged: true, ..b.clone() }), "100% · fully charged");
+        // held at a charge limit (#437): not "charging", not "on battery"
+        let held = Battery { state: 5, percent: 80.0, plugged: true, limit: Some(80), ..b.clone() };
+        assert_eq!(battery_tip(&held), "80% · plugged in, not charging · held at 80%");
+        assert_eq!(battery_tip(&Battery { state: 2, ..held.clone() }), "80% · plugged in, not charging · held at 80%");
         let w = Wifi { present: true, enabled: true, ssid: "Home".into(), strength: 45 };
         assert_eq!(wifi_tip(&w, false, ""), "Home · Fair signal");
         assert_eq!(wifi_tip(&Wifi { enabled: false, ..w.clone() }, false, ""), "Wi-Fi off");
@@ -470,7 +476,13 @@ mod tests {
         // the battery's glyph: plugged when full or holding
         let mut wd = world();
         wd.battery.state = 4;
+        wd.battery.plugged = true;
         wd.bar.battery_percent = "inside".into();
+        let v = run(&wd, false, false);
+        assert_eq!(v.iter().find(|e| e.id == "battery").unwrap().glyph, Glyph::Battery { level: 0.64, charging: false, plugged: true, low_power: false, show_percent: true });
+        // held at a limit, UPower saying discharging: still the plug
+        wd.battery.state = 2;
+        wd.battery.limit = Some(65);
         let v = run(&wd, false, false);
         assert_eq!(v.iter().find(|e| e.id == "battery").unwrap().glyph, Glyph::Battery { level: 0.64, charging: false, plugged: true, low_power: false, show_percent: true });
     }

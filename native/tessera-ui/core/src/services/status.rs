@@ -25,6 +25,64 @@ pub struct Battery {
     /// seconds, 0 unknown
     pub time_to_empty: i64,
     pub time_to_full: i64,
+    /// on mains (an adapter online; without one listed, UPower's state:
+    /// charging, full or pending charge); #437
+    pub plugged: bool,
+    /// the charge limit below 100 % (charge_control_end_threshold), if set
+    pub limit: Option<u8>,
+}
+
+/// What the battery is doing, worded the same in the bar, the battery menu
+/// and Control Center (#437)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Charge {
+    Charging,
+    Full,
+    /// plugged in, not charging: held at its charge limit, or the charger
+    /// waits (UPower's pending charge)
+    Held,
+    OnBattery,
+}
+
+impl Battery {
+    pub fn charge(&self) -> Charge {
+        if self.state == 1 {
+            return Charge::Charging;
+        }
+        if !self.plugged {
+            return Charge::OnBattery;
+        }
+        // (at a limit below 100 % UPower may call it fully charged: it's held)
+        let below_limit_full = self.limit.is_some_and(|l| l < 100) && self.percent < 99.0;
+        if !below_limit_full && (self.state == 4 || self.percent >= 99.0) {
+            return Charge::Full;
+        }
+        Charge::Held
+    }
+
+    /// "Charging", "Fully charged", "Plugged in, not charging", "On battery"
+    pub fn charge_words(&self) -> &'static str {
+        match self.charge() {
+            Charge::Charging => "Charging",
+            Charge::Full => "Fully charged",
+            Charge::Held => "Plugged in, not charging",
+            Charge::OnBattery => "On battery",
+        }
+    }
+
+    /// "Held at 80%" when it's held at (or near) its charge limit, else ""
+    pub fn held_at(&self) -> String {
+        match self.limit {
+            Some(l) if self.charge() == Charge::Held && self.percent + 5.0 >= l as f64 => format!("Held at {l}%"),
+            _ => String::new(),
+        }
+    }
+
+    /// "Plugged in, not charging · Held at 80%" (or charge_words alone)
+    pub fn charge_line(&self) -> String {
+        let held = self.held_at();
+        if held.is_empty() { self.charge_words().to_string() } else { format!("{} · {held}", self.charge_words()) }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -192,7 +250,12 @@ fn battery(conn: &Connection) -> zbus::Result<Battery> {
     let p = proxy(conn, "/org/freedesktop/UPower/devices/DisplayDevice", "org.freedesktop.UPower.Device", "org.freedesktop.UPower")?;
     let kind: u32 = p.get_property("Type")?;
     let state: u32 = p.get_property("State")?;
+    // (the adapters and the charge limit, read from the kernel: UPower's
+    // display device says neither; #437)
+    let m = crate::power_supply::mains(&crate::power_supply::read(std::path::Path::new(crate::power_supply::CLASS)));
     Ok(Battery {
+        plugged: plugged_in(m.plugged, state),
+        limit: m.limit,
         present: kind == 2 && p.get_property::<bool>("IsPresent")?,
         percent: p.get_property("Percentage")?,
         // charging, fully charged, or pending charge: on the charger at a
@@ -254,16 +317,26 @@ fn wifi(conn: &Connection) -> zbus::Result<Wifi> {
     Ok(out)
 }
 
-/// The fake battery file's reading: "15 discharging", "80 charging", "100 full"
+/// On mains: an adapter's word when one says, else UPower's state
+/// (charging, fully charged, pending charge); charging is always plugged
+pub fn plugged_in(adapter: Option<bool>, state: u32) -> bool {
+    state == 1 || adapter.unwrap_or(matches!(state, 4 | 5))
+}
+
+/// The fake battery file's reading: "15 discharging", "80 charging", "100
+/// full", "80 held" (plugged in at an 80 % limit)
 pub fn fake_battery(text: &str) -> Option<Battery> {
     let mut f = text.split_whitespace();
     let percent: f64 = f.next()?.parse().ok().filter(|p: &f64| (0.0..=100.0).contains(p))?;
-    let state = match f.next().unwrap_or("discharging") {
+    let word = f.next().unwrap_or("discharging");
+    let state = match word {
         "charging" => 1,
         "full" => 4,
+        "held" => 5,
         _ => 2,
     };
-    Some(Battery { present: true, percent, charging: state != 2, state, time_to_empty: 0, time_to_full: 0 })
+    let limit = (word == "held").then(|| percent.round() as u8).filter(|l| *l < 100);
+    Some(Battery { present: true, percent, charging: state != 2, state, time_to_empty: 0, time_to_full: 0, plugged: state != 2, limit })
 }
 
 pub fn spawn(tx: Sender<Msg>) {
@@ -300,6 +373,34 @@ mod tests {
         assert_eq!(fake_battery("100 full").unwrap().state, 4);
         assert_eq!(fake_battery("42").unwrap().state, 2);
         assert!(fake_battery("").is_none() && fake_battery("x").is_none() && fake_battery("150 full").is_none());
+        let h = fake_battery("80 held").unwrap();
+        assert_eq!((h.state, h.plugged, h.limit, h.charge()), (5, true, Some(80), Charge::Held));
+    }
+
+    #[test]
+    fn plugged_in_at_the_charge_limit() {
+        let b = Battery { present: true, percent: 80.0, charging: true, state: 5, time_to_empty: 0, time_to_full: 0, plugged: true, limit: Some(80) };
+        // held at the limit: UPower's pending charge, or its "fully charged" below 100 %
+        assert_eq!(b.charge(), Charge::Held);
+        assert_eq!(Battery { state: 4, ..b }.charge(), Charge::Held);
+        assert_eq!(b.charge_words(), "Plugged in, not charging");
+        assert_eq!(b.held_at(), "Held at 80%");
+        assert_eq!(b.charge_line(), "Plugged in, not charging · Held at 80%");
+        // above the limit (set after it charged) it's still held there; far below, no "Held at"
+        assert_eq!(Battery { percent: 84.0, ..b }.held_at(), "Held at 80%");
+        assert_eq!(Battery { percent: 40.0, ..b }.charge_line(), "Plugged in, not charging");
+        // no limit: plugged in and not charging; full at the top
+        let n = Battery { limit: None, ..b };
+        assert_eq!((n.charge(), n.held_at()), (Charge::Held, String::new()));
+        assert_eq!(Battery { state: 4, percent: 100.0, ..n }.charge(), Charge::Full);
+        assert_eq!(Battery { state: 5, percent: 100.0, ..n }.charge_words(), "Fully charged");
+        // charging, and on battery (an adapter offline wins over a stale "full")
+        assert_eq!(Battery { state: 1, ..b }.charge_words(), "Charging");
+        assert_eq!(Battery { state: 2, plugged: false, ..b }.charge_words(), "On battery");
+        assert_eq!(Battery { state: 4, plugged: plugged_in(Some(false), 4), ..b }.charge(), Charge::OnBattery);
+        // plugged: the adapter's word, else UPower's state
+        assert!(plugged_in(Some(true), 2) && plugged_in(None, 5) && plugged_in(None, 4) && plugged_in(Some(false), 1));
+        assert!(!plugged_in(None, 2) && !plugged_in(Some(false), 5));
     }
 
     fn r(connected: bool, strength: u8, ssid: &str) -> Radio {
