@@ -240,8 +240,8 @@ fn separator() -> Row {
 pub fn menu(it: &Item, trash: usize) -> Vec<Row> {
     match it.kind {
         Kind::Launcher => vec![row("Open App Drawer", Action::OpenDrawer), separator(), row("Remove from Dock", Action::RemoveLauncher)],
-        Kind::Minimized => vec![row("Restore", Action::Restore), separator(), row("Close Window", Action::CloseWindow)],
-        Kind::Downloads => vec![row("Open Downloads", Action::OpenDownloads), row("Show Recent Files", Action::ShowDownloads), separator(), row("Remove from Dock", Action::RemoveDownloads)],
+        Kind::Minimized => vec![row("Restore", Action::Restore), separator(), row("Close window", Action::CloseWindow)],
+        Kind::Downloads => vec![row("Open Downloads", Action::OpenDownloads), row("Show recent files", Action::ShowDownloads), separator(), row("Remove from Dock", Action::RemoveDownloads)],
         Kind::Trash => vec![
             row("Open Trash", Action::OpenTrash),
             separator(),
@@ -254,7 +254,7 @@ pub fn menu(it: &Item, trash: usize) -> Vec<Row> {
             },
         ],
         Kind::App | Kind::Recent => {
-            let mut v = vec![row(if it.running { "New Window" } else { "Open" }, Action::Launch), separator(), if it.pinned { row("Remove from Dock", Action::Unpin) } else { Row { enabled: it.entry.is_some(), ..row("Keep in Dock", Action::Pin) } }];
+            let mut v = vec![row(if it.running { "New window" } else { "Open" }, Action::Launch), separator(), if it.pinned { row("Remove from Dock", Action::Unpin) } else { Row { enabled: it.entry.is_some(), ..row("Keep in Dock", Action::Pin) } }];
             // (Keep in Dock needs the app's launcher: with none (an AppImage,
             // a script's window) the pin was written and never shown)
             if it.running {
@@ -356,8 +356,8 @@ mod tests {
         let w = windows(vec![client("0x1", "foot", (1, "1")), client("0x2", "vlc", (1, "1"))], "0x1");
         let items = build(&s, &apps(), &w, &[]);
         let texts = |it: &Item, n| menu(it, n).iter().map(|r| r.text.clone()).collect::<Vec<_>>();
-        assert_eq!(texts(&items[1], 0), vec!["New Window", "", "Remove from Dock", "", "Quit"]);
-        assert_eq!(texts(&items[2], 0), vec!["New Window", "", "Keep in Dock", "", "Quit"]);
+        assert_eq!(texts(&items[1], 0), vec!["New window", "", "Remove from Dock", "", "Quit"]);
+        assert_eq!(texts(&items[2], 0), vec!["New window", "", "Keep in Dock", "", "Quit"]);
         let trash = items.iter().find(|i| i.kind == Kind::Trash).unwrap();
         let rows = menu(trash, 0);
         assert!(!rows[2].enabled && rows[2].danger);
