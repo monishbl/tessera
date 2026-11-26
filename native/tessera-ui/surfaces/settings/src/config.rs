@@ -173,9 +173,15 @@ impl Cfg {
         Self { file, tx: None }
     }
 
-    /// The file was read again (the shell or another window changed it)
+    /// The file was read again (the shell or another window changed it),
+    /// with this window's changes the writer hasn't saved yet laid over it
     pub fn reload(&mut self, file: Value) {
         self.file = file;
+        if self.tx.is_some() {
+            if let Ok(q) = QUEUED.lock() {
+                lay_over(&mut self.file, &q);
+            }
+        }
     }
 
     /// The setting, or Config.qml's default
@@ -225,8 +231,22 @@ impl Cfg {
             return;
         }
         if let Some(tx) = &self.tx {
+            if let Ok(mut q) = QUEUED.lock() {
+                q.retain(|(k, _)| k != path);
+                q.push((path.to_string(), value.clone()));
+            }
             let _ = tx.send((path.to_string(), value));
         }
+    }
+}
+
+/// Changes sent to the writer and not yet written: a reload of the file in
+/// that moment keeps them (else a switch jumps back, then forward again)
+static QUEUED: std::sync::Mutex<Vec<(String, Value)>> = std::sync::Mutex::new(Vec::new());
+
+fn lay_over(file: &mut Value, queued: &[(String, Value)]) {
+    for (k, v) in queued {
+        set_path(file, k, v.clone());
     }
 }
 
@@ -246,17 +266,25 @@ fn writer() -> mpsc::Sender<(String, Value)> {
                 }
                 // (the file as it is now, under a lock, written whole; a
                 // broken one kept aside and the person told, never written
-                // over: tessera_core::cfgfile)
-                let r = tessera_core::cfgfile::edit_config(|m| {
+                // over: tessera_core::cfgfile. On its files lane, so the
+                // flush on the way out waits for it and this process's
+                // reads see it until it lands)
+                let batch = std::sync::Arc::new(pending);
+                let b = batch.clone();
+                tessera_core::cfgfile::edit_config_later(move |m| {
                     let mut changed = false;
-                    for (k, v) in pending {
-                        changed |= tessera_core::cfgfile::put_path(m, &k, v);
+                    for (k, v) in b.iter() {
+                        changed |= tessera_core::cfgfile::put_path(m, k, v.clone());
                     }
                     changed
                 });
-                if let Err(e) = r {
-                    eprintln!("tessera-ui: settings: couldn't save: {e}");
-                }
+                // (after the write, on the same lane: no longer queued here,
+                // unless changed again since)
+                tessera_core::cfgfile::FILES.run(move || {
+                    if let Ok(mut q) = QUEUED.lock() {
+                        q.retain(|e| !batch.contains(e));
+                    }
+                });
             }
         });
         std::sync::Mutex::new(tx)
@@ -334,6 +362,13 @@ mod tests {
         c.set("appearance.glassFrost", number_for("appearance.glassFrost", 0.5));
         assert_eq!(c.file, json!({"dock": {"iconSize": 52}, "appearance": {"glassFrost": 0.5}}));
         assert!(!set_path(&mut c.file, "dock.iconSize", json!(52)));
+    }
+
+    #[test]
+    fn queued_changes_outlast_a_reload() {
+        let mut file = json!({"dock": {"iconSize": 48, "enabled": true}});
+        lay_over(&mut file, &[("dock.iconSize".into(), json!(60)), ("menubar.autoHide".into(), json!(true))]);
+        assert_eq!(file, json!({"dock": {"iconSize": 60, "enabled": true}, "menubar": {"autoHide": true}}));
     }
 
     #[test]
