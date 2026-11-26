@@ -29,6 +29,25 @@ pub const FILE_MANAGERS: &[(&str, &str)] = &[
     ("pcmanfm", "PCManFM"),
 ];
 
+/// desktop.screen's choices (#501): "primary" first, then each connected
+/// display by its friendly name ("Model · DP-1"), and one chosen that isn't
+/// connected now (it comes back when plugged in; primary meanwhile).
+/// screens: (connector, model); gives (values, labels, the chosen index)
+pub fn screen_choices(screens: &[(String, String)], chosen: &str) -> (Vec<String>, Vec<String>, i32) {
+    let mut values = vec!["primary".to_string()];
+    let mut labels = vec!["Main display".to_string()];
+    for (name, model) in screens {
+        values.push(name.clone());
+        labels.push(if model.is_empty() || model.eq_ignore_ascii_case(name) { name.clone() } else { format!("{model}  \u{b7}  {name}") });
+    }
+    if !chosen.is_empty() && chosen != "primary" && !values.iter().any(|v| v == chosen) {
+        values.push(chosen.to_string());
+        labels.push(format!("{chosen} (not connected)"));
+    }
+    let at = if chosen.is_empty() { 0 } else { values.iter().position(|v| v == chosen).map_or(0, |i| i as i32) };
+    (values, labels, at)
+}
+
 /// "3 widgets", "1 widget"
 pub fn count(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
@@ -75,9 +94,27 @@ pub fn desktop(cx: &mut Ctx, p: &mut Page) {
             });
         }
     });
+    // Which display shows the widgets and files (desktop.screen, #501)
+    let screens: Vec<(String, String)> = match feed(cx)["screens"].as_array() {
+        Some(a) if !a.is_empty() => a.iter().map(|s| (s["name"].as_str().unwrap_or("").to_string(), s["model"].as_str().unwrap_or("").to_string())).collect(),
+        _ => cx.screens.iter().map(|n| (n.clone(), String::new())).collect(),
+    };
+    let chosen = cx.s("desktop.screen");
+    let (svalues, slabels, sat) = screen_choices(&screens, &chosen);
+    let show_screen = screens.len() > 1 || svalues.len() > 2;
+    let sp = cx.on(move |cx, a| {
+        if let Some(v) = svalues.get(a.i.max(0) as usize) {
+            cx.set("desktop.screen", v.clone());
+        }
+    });
     p.group("Widgets")
         .footer("Drag a widget to move it; it snaps to the grid. Right-click a widget to change its size, set what it shows (Widget Options) or remove it, or right-click the desktop.")
         .row(Row::new("Edit Widgets").detail(format!("{} on the desktop", count(widgets, "widget", "widgets"))).button("Edit…", edit).primary())
+        .row(Row::new("Show on")
+            .visible(show_screen)
+            .detail("The display with the widgets and the Desktop folder's files; if it's unplugged, the main display")
+            .choice(&slabels, sat, sp)
+            .width(260.0))
         .row(Row::new("Files app")
             .detail(if none_installed { format!("No file manager installed (e.g. {})", tessera_core::util::install_hint("nautilus", "", "")) } else { "Opens folders, Downloads and the Trash".to_string() })
             .choice(&opts, index, fp)
@@ -159,5 +196,24 @@ mod tests {
         assert_eq!(count(1, "widget", "widgets"), "1 widget");
         assert_eq!(count(4, "widget", "widgets"), "4 widgets");
         assert_eq!(CORNER_ACTIONS.len(), 9);
+    }
+
+    #[test]
+    fn the_desktops_display_is_picked_by_friendly_name() {
+        let screens = vec![("eDP-1".to_string(), "BOE 0x0BCA".to_string()), ("DP-1".to_string(), "DELL U2720Q".to_string())];
+        let (values, labels, at) = screen_choices(&screens, "primary");
+        assert_eq!(values, ["primary", "eDP-1", "DP-1"]);
+        assert_eq!(labels, ["Main display", "BOE 0x0BCA  \u{b7}  eDP-1", "DELL U2720Q  \u{b7}  DP-1"]);
+        assert_eq!(at, 0);
+        // (unset reads as primary)
+        assert_eq!(screen_choices(&screens, "").2, 0);
+        assert_eq!(screen_choices(&screens, "DP-1").2, 2);
+        // chosen and unplugged: still shown, said so
+        let (values, labels, at) = screen_choices(&screens[..1], "DP-1");
+        assert_eq!(values, ["primary", "eDP-1", "DP-1"]);
+        assert_eq!(labels[2], "DP-1 (not connected)");
+        assert_eq!(at, 2);
+        // no model: the connector alone
+        assert_eq!(screen_choices(&[("HDMI-A-1".to_string(), String::new())], "primary").1[1], "HDMI-A-1");
     }
 }

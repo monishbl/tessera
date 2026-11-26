@@ -400,6 +400,7 @@ Singleton {
                 property list<string> worldClocks: ["Cupertino|America/Los_Angeles", "London|Europe/London", "Tokyo|Asia/Tokyo", "Sydney|Australia/Sydney"]
                 property bool icons: true // files and folders in ~/Desktop on the desktop
                 property bool useStacks: false // grouped by kind into stacks
+                property string screen: "primary" // the display with the widgets and files (Rust shell): primary (the one at the layout's 0,0) | a connector name, e.g. DP-1 (unplugged: primary)
                 property list<string> iconPositions: [] // "path\tcol\trow" in icon spots (half a widget cell)
                 property bool smartRotate: true // Smart Stacks bring forward what matters now
                 property list<string> stocks: ["AAPL", "MSFT", "^GSPC", "BTC-USD", "NVDA", "GOOGL"] // Yahoo Finance symbols for the Stocks widget

@@ -76,7 +76,7 @@ impl Desktop {
             }
             return;
         }
-        let out = Some(self.feed.edit_screen.clone()).filter(|s| !s.is_empty() && st.output_named(s).is_some()).or_else(|| Self::primary(st).map(|p| p.1));
+        let out = Some(self.feed.edit_screen.clone()).filter(|s| !s.is_empty() && st.output_named(s).is_some()).or_else(|| self.primary(st).map(|p| p.1));
         let Some(out) = out else { return };
         if self.gal.as_ref().is_some_and(|g| g.output != out) {
             self.gallery_drop(st);

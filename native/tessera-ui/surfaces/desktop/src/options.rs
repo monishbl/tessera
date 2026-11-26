@@ -135,7 +135,7 @@ impl WidgetOptions {
         if !tessera_core::host::standalone() {
             return;
         }
-        let output = screen.or_else(|| self.win.as_ref().map(|w| w.output.clone())).or_else(|| Desktop::primary(st).map(|p| p.1));
+        let output = screen.or_else(|| self.win.as_ref().map(|w| w.output.clone())).or_else(|| Desktop::primary_for(st, None).map(|p| p.1));
         let Some(output) = output else { return };
         if self.win.as_ref().is_some_and(|w| w.output != output) {
             self.drop_win(st);

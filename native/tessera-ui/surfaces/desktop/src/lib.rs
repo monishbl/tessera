@@ -356,6 +356,8 @@ struct Cfg {
     stocks: Vec<String>,
     graph: String,
     h24: bool,
+    /// desktop.screen: "primary" or a connector name (#501)
+    screen: String,
 }
 
 impl Cfg {
@@ -374,6 +376,7 @@ impl Cfg {
             stocks: list("stocks", default_stocks),
             graph: cfg["resources"]["graphStyle"].as_str().unwrap_or("area").to_string(),
             h24: cfg["appearance"]["clock24"].as_bool().unwrap_or(false),
+            screen: d["screen"].as_str().unwrap_or("primary").to_string(),
         }
     }
 }
@@ -428,9 +431,22 @@ impl Desktop {
         self.win.as_ref().map(|w| w.ui.global::<ui::Theme>().get_accent()).unwrap_or_default()
     }
 
-    /// The first screen (Quickshell.screens[0]: widgets live on one)
-    fn primary(st: &State) -> Option<(WlOutput, String)> {
-        st.outputs_now().into_iter().next()
+    /// The screen the widgets and files live on (desktop.screen, #501):
+    /// the one chosen while it's connected, else the primary one
+    fn primary(&self, st: &State) -> Option<(WlOutput, String)> {
+        Self::primary_for(st, self.win.as_ref().map(|w| w.output.as_str()))
+    }
+
+    /// The same, from outside (Widget Options): `current`, the display
+    /// showing them now, if known
+    pub(crate) fn primary_for(st: &State, current: Option<&str>) -> Option<(WlOutput, String)> {
+        let outs = st.outputs_now();
+        let placed: Vec<(String, (i32, i32))> = outs
+            .iter()
+            .map(|(o, n)| (n.clone(), st.outputs.info(o).map(|i| i.logical_position.unwrap_or(i.location)).unwrap_or((0, 0))))
+            .collect();
+        let name = desktop_screen(&Self::cfg(st).screen, &placed, current)?;
+        outs.into_iter().find(|(_, n)| *n == name)
     }
 
     fn make(&mut self, st: &mut State, output: &WlOutput, name: &str) {
@@ -1703,7 +1719,7 @@ impl Desktop {
     }
 
     fn ensure(&mut self, st: &mut State) {
-        let Some((o, n)) = Self::primary(st) else {
+        let Some((o, n)) = self.primary(st) else {
             self.unmake(st);
             return;
         };
@@ -1853,6 +1869,70 @@ fn steps_back(open: &str, screen: &str, output: &str) -> bool {
     open == "overview" && (screen.is_empty() || screen == output)
 }
 
+/// Which display gets the widgets and files (desktop.screen, #501), from
+/// the connected outputs (name, layout position):
+/// - a connector name: that display while it's connected;
+/// - "primary" (and a chosen one unplugged): the display at the layout's
+///   0,0 (the top-left one, where the compositor puts the first), not
+///   whichever the compositor happened to announce first; one already
+///   showing them keeps them when several claim 0,0 or none does; else
+///   the first listed
+fn desktop_screen(choice: &str, outputs: &[(String, (i32, i32))], current: Option<&str>) -> Option<String> {
+    if choice != "primary" && !choice.is_empty() && outputs.iter().any(|(n, _)| n == choice) {
+        return Some(choice.to_string());
+    }
+    let at_origin: Vec<&String> = outputs.iter().filter(|(_, p)| *p == (0, 0)).map(|(n, _)| n).collect();
+    let still = |c: &str| outputs.iter().any(|(n, _)| n == c);
+    if let Some(c) = current.filter(|c| at_origin.iter().any(|n| n == c) || (at_origin.is_empty() && still(*c))) {
+        return Some(c.to_string());
+    }
+    at_origin.first().map(|n| n.to_string()).or_else(|| outputs.first().map(|(n, _)| n.clone()))
+}
+
+#[cfg(test)]
+mod screen_tests {
+    use super::desktop_screen;
+
+    fn outs(list: &[(&str, (i32, i32))]) -> Vec<(String, (i32, i32))> {
+        list.iter().map(|(n, p)| (n.to_string(), *p)).collect()
+    }
+
+    #[test]
+    fn primary_is_the_display_at_the_origin_not_the_first_listed() {
+        // the external screen announced first, the laptop at 0,0
+        let o = outs(&[("DP-1", (1920, 0)), ("eDP-1", (0, 0))]);
+        assert_eq!(desktop_screen("primary", &o, None).as_deref(), Some("eDP-1"));
+        assert_eq!(desktop_screen("", &o, None).as_deref(), Some("eDP-1"));
+        // (and stays there whatever was showing them before)
+        assert_eq!(desktop_screen("primary", &o, Some("DP-1")).as_deref(), Some("eDP-1"));
+    }
+
+    #[test]
+    fn a_chosen_display_while_connected_else_primary() {
+        let o = outs(&[("eDP-1", (0, 0)), ("HDMI-A-1", (1920, 0))]);
+        assert_eq!(desktop_screen("HDMI-A-1", &o, Some("eDP-1")).as_deref(), Some("HDMI-A-1"));
+        // unplugged: back to primary
+        let only = outs(&[("eDP-1", (0, 0))]);
+        assert_eq!(desktop_screen("HDMI-A-1", &only, Some("HDMI-A-1")).as_deref(), Some("eDP-1"));
+    }
+
+    #[test]
+    fn no_clear_origin_keeps_the_current_one() {
+        // nobody at 0,0 (a layout moved off it): the one showing them stays
+        let o = outs(&[("DP-1", (0, 100)), ("DP-2", (2560, 100))]);
+        assert_eq!(desktop_screen("primary", &o, Some("DP-2")).as_deref(), Some("DP-2"));
+        assert_eq!(desktop_screen("primary", &o, None).as_deref(), Some("DP-1"));
+        // the current one gone: the first listed
+        assert_eq!(desktop_screen("primary", &o, Some("HDMI-A-1")).as_deref(), Some("DP-1"));
+        // several at 0,0 (mirrored): the current one if it's one of them
+        let m = outs(&[("DP-1", (0, 0)), ("DP-2", (0, 0))]);
+        assert_eq!(desktop_screen("primary", &m, Some("DP-2")).as_deref(), Some("DP-2"));
+        assert_eq!(desktop_screen("primary", &m, None).as_deref(), Some("DP-1"));
+        // nothing connected: nowhere
+        assert_eq!(desktop_screen("primary", &[], Some("DP-1")), None);
+    }
+}
+
 #[cfg(test)]
 mod step_back_tests {
     #[test]
@@ -1910,6 +1990,13 @@ impl Part for Desktop {
         self.refresh_zones(st);
         self.wall_ink.check(&st.shell.cfg, st.shell.look.material, &st.tx, true);
         self.after_layout(st);
+        // (desktop.screen changed: the widgets and files move to that display)
+        let had = self.win.as_ref().map(|w| w.output.clone());
+        self.ensure(st);
+        if self.win.as_ref().map(|w| w.output.clone()) != had && self.win.is_some() {
+            self.refresh_folder(st);
+            self.refresh_zones(st);
+        }
     }
 
     fn plugin_changed(&mut self, st: &mut State) {

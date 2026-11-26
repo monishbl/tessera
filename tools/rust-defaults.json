@@ -46,6 +46,7 @@
  "desktop.fileManager": "",
  "desktop.icons": true,
  "desktop.photosFolder": "",
+ "desktop.screen": "primary",
  "desktop.smartRotate": true,
  "desktop.useStacks": false,
  "dictation.language": "",
