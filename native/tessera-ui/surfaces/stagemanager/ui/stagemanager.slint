@@ -62,7 +62,8 @@ export component StageStrip inherits Window {
                     width: parent.width - 2 * self.x;
                     height: parent.height - 2 * self.x;
                     source: c.picture;
-                    image-fit: fill;
+                    // (the window's own shape, cut to the card: not squashed)
+                    image-fit: cover;
                     accessible-role: none;
                 }
             }
