@@ -178,15 +178,30 @@ for f in "$CONFIG/quickshell/tessera/assets/scripts/file-manager-share.py" "$HER
     fi
 done
 run rm -rf "$CONFIG/quickshell/tessera" "$CONFIG/quickshell/$OLD_NAME"
-if [[ -n "$BACKUP" ]]; then
-    run rm -rf "$CONFIG/hypr.tessera-removed"
+# (the one an earlier uninstall set aside is kept too, by its date: never
+# deleted without a word)
+set_aside_hypr() {
+    if [[ -e "$CONFIG/hypr.tessera-removed" ]]; then
+        local when
+        when=$(date -r "$CONFIG/hypr.tessera-removed" '+%Y%m%d-%H%M%S' 2>/dev/null || date '+%Y%m%d-%H%M%S')
+        [[ -e "$CONFIG/hypr.tessera-removed-$when" ]] && when="$when-$RANDOM"
+        run mv "$CONFIG/hypr.tessera-removed" "$CONFIG/hypr.tessera-removed-$when"
+    fi
     run mv "$CONFIG/hypr" "$CONFIG/hypr.tessera-removed"
-    run cp -a "$BACKUP" "$CONFIG/hypr"
+}
+if [[ -n "$BACKUP" ]]; then
+    set_aside_hypr
+    # (the backup from before Tessera moves back: the next install then
+    # backs up your config as it is by then, not this one again)
+    if [[ "$BACKUP" == "$CONFIG/hypr.pre-tessera" ]]; then
+        run mv "$BACKUP" "$CONFIG/hypr"
+    else
+        run cp -a "$BACKUP" "$CONFIG/hypr"
+    fi
 elif [[ $HYPR_OURS == 1 ]]; then
     # (Tessera's config would run the scripts removed above, every 5 s:
     # aside, whole, with any change of yours in it)
-    run rm -rf "$CONFIG/hypr.tessera-removed"
-    run mv "$CONFIG/hypr" "$CONFIG/hypr.tessera-removed"
+    set_aside_hypr
 fi
 
 # ── The system's ────────────────────────────────────────────────────────

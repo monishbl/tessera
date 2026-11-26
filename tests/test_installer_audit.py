@@ -175,6 +175,26 @@ class Uninstall(Temp):
         p = self.run_uninstall("--yes")
         self.assertEqual((self.c / "hypr/hyprland.lua").read_text(), "-- mine\n")
 
+    def test_uninstall_twice_keeps_both_set_aside_and_takes_the_backup_back(self):
+        # (audit #732: the first set-aside one kept by its date; the backup
+        # from before Tessera moved back, so the next install takes a fresh one)
+        self.write(self.c / "hypr.pre-tessera/hyprland.lua", "-- before\n")
+        self.write(self.c / "hypr/hyprland.lua", "-- tessera one, with my edit\n")
+        self.write(self.c / "hypr/tessera/execs.lua", "--\n")
+        self.assertEqual(self.run_uninstall("--yes").returncode, 0)
+        self.assertEqual((self.c / "hypr/hyprland.lua").read_text(), "-- before\n")
+        self.assertFalse((self.c / "hypr.pre-tessera").exists())
+        self.write(self.c / "hypr.pre-tessera/hyprland.lua", "-- before, edited\n")
+        self.write(self.c / "hypr/hyprland.lua", "-- tessera two\n")
+        self.write(self.c / "hypr/tessera/execs.lua", "--\n")
+        p = self.run_uninstall("--yes")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual((self.c / "hypr/hyprland.lua").read_text(), "-- before, edited\n")
+        self.assertEqual((self.c / "hypr.tessera-removed/hyprland.lua").read_text(), "-- tessera two\n")
+        older = [d for d in os.listdir(self.c) if d.startswith("hypr.tessera-removed-")]
+        self.assertEqual(len(older), 1, os.listdir(self.c))
+        self.assertEqual((self.c / older[0] / "hyprland.lua").read_text(), "-- tessera one, with my edit\n")
+
     def big_parts(self):
         return [self.write(self.data / "tessera/repo/install.sh"), self.write(self.data / "tessera/bin/tessera-ui", "", 0o755),
                 self.write(self.data / "tessera/quickshell/bin/qs"), self.write(self.data / "tessera/build/quickshell/x"),
