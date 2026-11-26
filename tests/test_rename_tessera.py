@@ -310,6 +310,23 @@ class Files(Temp):
         self.assertEqual(s, {"_tessera_revisions": {"k": [2, "a", 1]}, "todos": []})
         self.assertEqual(MIG.settings(str(f)), [])
 
+    def test_linked_settings_files_stay_links(self):
+        # (audit #791: dotfiles kept in a repo through links)
+        repo, f = self.home / "dotfiles", self.home / "cfg"
+        self.write(repo / "config.json", json.dumps({"appearance": {"menuIcon": "irice"}}))
+        self.write(repo / "spaces.lua", "IRICE_SPACE_BASES = {}\n")
+        self.write(repo / "kdeglobals", "[General]\nColorScheme=iRiceDesktopDark\n")
+        f.mkdir()
+        for n in ("config.json", "spaces.lua", "kdeglobals"):
+            (f / n).symlink_to(repo / n)
+        MIG.settings(str(f))
+        MIG.color_scheme(str(f / "kdeglobals"), "General")
+        for n in ("config.json", "spaces.lua", "kdeglobals"):
+            self.assertTrue((f / n).is_symlink(), n)
+        self.assertEqual(json.loads((repo / "config.json").read_text())["appearance"]["menuIcon"], "tessera")
+        self.assertIn("TESSERA_SPACE_BASES", (repo / "spaces.lua").read_text())
+        self.assertIn("ColorScheme=TesseraDesktopDark", (repo / "kdeglobals").read_text())
+
     def test_your_files_from_before(self):
         c, data = self.home / ".config", self.home / ".local/share"
         self.write(c / "hypr/irice/keyboard.lua", "-- yours\n")
