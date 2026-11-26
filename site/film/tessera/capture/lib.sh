@@ -12,11 +12,12 @@ WALLS="$CAP/seed/photos"
 dev() { "$ROOT/dev.sh" "$@"; }
 
 # The prelude every in-sandbox script gets: ipc, the virtual pointer, keys
-PRELUDE='
-ipc() { QS=qs '"$ROOT"'/shell/assets/scripts/shell-ipc.sh call "$@" >/dev/null 2>&1; }
-P() { '"$ROOT"'/.sandbox/bin/vptr -o TESSERA-TEST "$@" >/dev/null 2>&1; }
+# (the root quoted: a checkout in a folder with a space or a quote is one path)
+printf -v PRELUDE '
+ipc() { QS=qs %q call "$@" >/dev/null 2>&1; }
+P() { %q -o TESSERA-TEST "$@" >/dev/null 2>&1; }
 key() { wtype "$@" 2>/dev/null; }
-'
+' "$ROOT/shell/assets/scripts/shell-ipc.sh" "$ROOT/.sandbox/bin/vptr"
 inbox() { dev run bash -c "$PRELUDE$1"; }
 
 # setup <glass|material> [wallpaper] [scale 2|1]: the look, seeded, reloaded,
