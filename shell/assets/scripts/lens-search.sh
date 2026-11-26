@@ -17,13 +17,15 @@ grim -t jpeg -q 90 -g "$area" "$img" || { notify-send -a "Screen search" "Couldn
 out=$(python3 -I "$(dirname "$0")/lens-upload.py" "$img")
 url=$(jq -r 'select(.ok) | .url' <<<"$out")
 if [[ -n "$url" ]]; then
-    exec xdg-open "$url"
+    xdg-open "$url"  # (not exec: the EXIT trap removes the capture; the page holds its own copy)
+    exit 0
 fi
 # Lens changed how it takes pictures: paste it there instead
 if [[ $(jq -r '.fallback' <<<"$out") == true ]]; then
     wl-copy --type image/jpeg <"$img"
     notify-send -a "Screen search" "Paste the picture into Lens" "It's on the clipboard: press Ctrl+V on the page that opens."
-    exec xdg-open "https://lens.google.com/"
+    xdg-open "https://lens.google.com/"
+    exit 0
 fi
 notify-send -a "Screen search" "Couldn't search the picture" "$(jq -r '.error // "Try again."' <<<"$out")"
 exit 1

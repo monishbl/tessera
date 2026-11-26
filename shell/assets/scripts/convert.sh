@@ -12,12 +12,20 @@ temp() { sed -E 's/^([-0-9.,]+)[[:space:]]*(°)?[fF]$/\1 °F/; s/^([-0-9.,]+)[[:
 sing() { sed -E 's/\b(cup|ounce|pound|gram|liter|litre|meter|metre|mile|foot|yard|gallon|pint|quart|teaspoon|tablespoon|second|minute|hour|day|week|month|year|byte|bit)s\b/\1/g; s/\bfeet\b/foot/g; s/\binches\b/inch/g; s/\b([kKmMgGtTpP])i?[bB]\b/\U\1B/g' <<<"$1"; }
 from=$(sing "$(temp "$from")") to=$(sing "$(temp "$to")")
 stamp="${XDG_CACHE_HOME:-$HOME/.cache}/tessera/exrates-stamp"
-args=(-t)
-if grep -qiE '^[$€£¥₹]|\b[a-z]{3}$' <<<"$from" && grep -qiE '^[a-z]{3}$|^[$€£¥₹]$' <<<"$to" && [[ -z "$(find "$stamp" -mmin -1440 2>/dev/null)" ]]; then
-    args+=(-e)
+args=(-t) refresh=
+# (currency codes, not any three letters: "10 cup to tsp", "1 day to min"
+# are no reason to fetch rates)
+cur='usd|eur|gbp|jpy|cny|inr|aud|cad|chf|hkd|sgd|nzd|krw|sek|nok|dkk|isk|pln|czk|huf|ron|bgn|try|rub|uah|brl|mxn|ars|clp|cop|pen|zar|egp|ngn|kes|aed|sar|qar|kwd|ils|thb|idr|myr|php|vnd|pkr|bdt|lkr|npr|twd'
+if grep -qiE "^[\$€£¥₹]|\b($cur)\$" <<<"$from" && grep -qiE "^($cur)\$|^[\$€£¥₹]\$" <<<"$to" && [[ -z "$(find "$stamp" -mmin -1440 2>/dev/null)" ]]; then
+    args+=(-e) refresh=1
+fi
+raw=$(timeout 6 qalc "${args[@]}" "$from to $to" 2>/dev/null)
+st=$?
+out=$(tail -1 <<<"$raw")
+# (the stamp only once the refresh has worked: offline, the next query tries again)
+if [[ -n "$refresh" && $st -eq 0 ]]; then
     mkdir -p "${stamp%/*}" && : >"$stamp"
 fi
-out=$(timeout 6 qalc "${args[@]}" "$from to $to" 2>/dev/null | tail -1)
 if [[ "$out" == *" + "* ]]; then
     n=$(timeout 4 qalc -t "($from)/(1 $to)" 2>/dev/null | tail -1)
     [[ "$n" =~ ^[0-9.,−-]+(E[−-]?[0-9]+)?$ ]] && out="$n $to"
