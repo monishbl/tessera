@@ -94,6 +94,7 @@ use tessera_core::services::weather::Weather;
 use tessera_core::shell::Part;
 use tessera_core::wayland::{LockEvent, Spec, State, Surface};
 use auth::{Backend, Conv, Event as Auth, Kind, Outcome};
+use logic::wipe;
 use slint::{ComponentHandle, Image, ModelRc, VecModel};
 use tessera_core::rows::Rows;
 use smithay_client_toolkit::reexports::client::protocol::wl_output::WlOutput;
@@ -185,6 +186,8 @@ fn is_pass(id: u64, pass_id: u64) -> bool {
 enum M {
     /// (the screen typed on, the field's text)
     Edited(String, String),
+    /// (the screen, a key that woke Bedside Mode)
+    BedsideKey(String, String),
     Submit,
     Woke,
     Step(i32),
@@ -640,10 +643,21 @@ fn avatar_files() -> Option<(Vec<u8>, Vec<u8>)> {
     Some((round, cookie))
 }
 
+/// A file:// art address's path: percent-decoded (MPRIS sends "My%20Album"),
+/// only for this computer (no host, or localhost)
+fn art_path(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("file://")?;
+    let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+    if !rest.starts_with('/') {
+        return None;
+    }
+    Some(mpris::percent_decode(rest.split(['?', '#']).next().unwrap_or(rest)))
+}
+
 fn art_files(url: &str) -> Option<(Vec<u8>, Vec<u8>)> {
-    let path = url.strip_prefix("file://")?;
+    let path = art_path(url)?;
     let side = 120;
-    let px = shape::square_picture(path, side)?;
+    let px = shape::square_picture(&path, side)?;
     Some((shape::cut(&px, side, "cookie9"), shape::cut(&px, side, "circle")))
 }
 
@@ -721,7 +735,7 @@ impl Lock {
             reader::offer_restart();
         }
         self.sb.idle = false;
-        self.password.clear();
+        wipe(&mut self.password);
         self.typed_on = None;
         // (a match or a password check from the lock before this one never
         // unlocks this one: its timers stop and its answers are ignored)
@@ -838,6 +852,11 @@ impl Lock {
             let to = to.clone();
             let on = name.to_string();
             d.on_edited(move |t| to(Box::new(M::Edited(on.clone(), t.to_string()))));
+        }
+        {
+            let to = to.clone();
+            let on = name.to_string();
+            d.on_bedside_key(move |t| to(Box::new(M::BedsideKey(on.clone(), t.to_string()))));
         }
         on!(on_submit, | | M::Submit);
         on!(on_woke, | | M::Woke);
@@ -1659,7 +1678,7 @@ impl Lock {
         if self.password.is_empty() && self.wins.iter().all(|w| w.ui.global::<ui::LockData>().get_password().is_empty()) {
             return;
         }
-        self.password.clear();
+        wipe(&mut self.password);
         self.typed_on = None;
         self.field();
     }
@@ -1674,10 +1693,18 @@ impl Lock {
             return;
         }
         self.typed_on = Some(on);
+        // (at most PAM's own limit: a key held down by something on the
+        // keyboard grew it, and every copy and the dots' layout, for ever)
+        let mut text = text;
+        let cut = logic::cap_password(&mut text);
         if text == self.password {
+            if cut {
+                self.field();
+            }
             return;
         }
         let was_empty = self.password.is_empty();
+        wipe(&mut self.password);
         self.password = text;
         if !self.password.is_empty() {
             self.woke(st);
@@ -1719,7 +1746,7 @@ impl Lock {
                     }
                 }
                 self.pam_locked = false;
-                self.password.clear();
+                wipe(&mut self.password);
                 self.typed_on = None;
                 self.rules(st);
             }
@@ -1880,7 +1907,7 @@ impl Lock {
             "standby" => {
                 self.sb.demo_charging = true;
                 self.sb.idle = true;
-                self.password.clear();
+                wipe(&mut self.password);
                 self.typed_on = None;
             }
             "wake" => self.woke(st),
@@ -1915,7 +1942,7 @@ impl Lock {
                 self.typed_on = None;
             }
             "wrong" => {
-                self.password.clear();
+                wipe(&mut self.password);
                 self.typed_on = None;
                 self.error = "Incorrect password. Try again.".into();
                 self.error_count += 1;
@@ -1926,7 +1953,7 @@ impl Lock {
                 self.busy = true;
             }
             "lockout" => {
-                self.password.clear();
+                wipe(&mut self.password);
                 self.typed_on = None;
                 self.busy = false;
                 self.error = logic::locked_text(540);
@@ -1946,7 +1973,7 @@ impl Lock {
                 self.face.text.clear();
                 self.error.clear();
                 self.busy = false;
-                self.password.clear();
+                wipe(&mut self.password);
                 self.typed_on = None;
             }
         }
@@ -2170,6 +2197,12 @@ impl Part for Lock {
         let Ok(m) = msg.downcast::<M>() else { return };
         match *m {
             M::Edited(on, t) => self.set_password(st, on, t),
+            M::BedsideKey(on, t) => {
+                if logic::printable_key(&t) {
+                    let text = format!("{}{t}", self.password);
+                    self.set_password(st, on, text);
+                }
+            }
             M::Submit if !self.typing_counts() => {}
             M::Submit => self.submit(st),
             M::Woke => {
@@ -2649,6 +2682,16 @@ impl Lock {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn album_art_paths_are_decoded_and_local_only() {
+        use super::art_path;
+        assert_eq!(art_path("file:///home/sam/Music/My%20Album/cover.jpg").as_deref(), Some("/home/sam/Music/My Album/cover.jpg"));
+        assert_eq!(art_path("file://localhost/tmp/%C3%A9t%C3%A9.png").as_deref(), Some("/tmp/été.png"));
+        assert_eq!(art_path("file:///tmp/a.jpg?size=300").as_deref(), Some("/tmp/a.jpg"));
+        assert_eq!(art_path("file://otherhost/tmp/a.jpg"), None);
+        assert_eq!(art_path("https://example.com/a.jpg"), None);
+    }
+
     #[test]
     fn a_password_answer_counts_whatever_the_reader_and_camera_started_since() {
         use super::is_pass;

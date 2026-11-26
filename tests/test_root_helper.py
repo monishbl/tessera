@@ -328,35 +328,47 @@ class LoginCopy(unittest.TestCase):
             self.assertEqual(ui.read_bytes(), b"\x7fELF new")
             self.assertEqual(stat.S_IMODE(ui.stat().st_mode), 0o755)
             self.assertNotIn(str(ui), self.refresh())  # (unchanged)
+            # (the first root step of this version recorded it in root's own
+            # record: a build of yours taken by the old rule, once; audit #95)
+            trust = json.loads((self.d / "root" / R.LOGIN_UI_TRUST.lstrip("/")).read_text())
+            new_sha = hashlib.sha256(b"\x7fELF new").hexdigest()
+            self.assertEqual(trust["built"], [new_sha])
+            self.assertEqual(trust["installed"], {"sha256": new_sha, "how": "built"})
             # one another account could have written: refused, and the login
-            # screen falls back to the QML one (bin/ stays for the next one)
+            # screen keeps the one root last put there (bin/ stays)
             put(b"\x7fELF planted")
             mine.chmod(0o777)
             self.refresh()
-            self.assertFalse(ui.exists())
+            self.assertEqual(ui.read_bytes(), b"\x7fELF new")
             self.assertTrue((self.share / "bin").is_dir())
             put(b"\x7fELF new")
             self.refresh()
-            self.assertEqual(ui.read_bytes(), b"\x7fELF new")  # (back, once it's accepted)
+            self.assertEqual(ui.read_bytes(), b"\x7fELF new")  # (accepted again: root's record lists it)
             bindir.chmod(0o777)
             self.refresh()
-            self.assertFalse(ui.exists())
+            self.assertEqual(ui.read_bytes(), b"\x7fELF new")
             bindir.chmod(0o755)
             record.chmod(0o666)
             self.refresh()
-            self.assertFalse(ui.exists())
-            put(b"\x7fELF new")
-            self.refresh()
+            self.assertEqual(ui.read_bytes(), b"\x7fELF new")
             # not a program: refused
             put(b"#!/bin/sh\n")
             self.refresh()
-            self.assertFalse(ui.exists())
-            put(b"\x7fELF new")
+            self.assertEqual(ui.read_bytes(), b"\x7fELF new")
+            # a build of yours root's record doesn't list (its own record
+            # matches it, as a planted one's would): refused, the last one kept
+            put(b"\x7fELF rebuilt")
             self.refresh()
+            self.assertEqual(ui.read_bytes(), b"\x7fELF new")
             # a link: refused
             mine.unlink()
             (self.d / "elsewhere").write_bytes(b"\x7fELF new")
             mine.symlink_to(self.d / "elsewhere")
+            self.refresh()
+            self.assertEqual(ui.read_bytes(), b"\x7fELF new")
+            # the copy there isn't the one root's record names: removed, the
+            # QML login screen instead
+            ui.write_bytes(b"\x7fELF other")
             self.refresh()
             self.assertFalse(ui.exists())
         finally:
@@ -417,7 +429,8 @@ class Setup(unittest.TestCase):
     def test_installs_what_changed(self):
         with tempfile.TemporaryDirectory() as t:
             written = R.setup(str(ROOT / "shell"), os.getuid(), prefix=t)
-            self.assertEqual(len(written), len(R.FILES) + len(R.BOOTSPLASH_IDS))  # (and a folder per boot animation)
+            self.assertEqual(len(written), len(R.FILES) + len(R.BOOTSPLASH_IDS) + 1)  # (and a folder per boot animation, and root's record of trusted login screens, audit #95)
+            self.assertIn(os.path.join(t, R.LOGIN_UI_TRUST.lstrip("/")), written)
             helper = Path(t) / "usr/lib/tessera/tessera-root"
             self.assertEqual(helper.read_bytes(), SOURCE.read_bytes())
             self.assertEqual(stat.S_IMODE(helper.stat().st_mode), 0o755)
@@ -431,7 +444,7 @@ class Setup(unittest.TestCase):
 
     def test_policy_actions_match_the_subcommands(self):
         policy = (ROOT / "shell/assets/polkit/org.tessera.root.policy").read_text()
-        for sub in ("wallpaper", "login-look", "fix", "wifi-helper", "update", "bootsplash"):
+        for sub in ("wallpaper", "login-look", "fix", "wifi-helper", "update", "bootsplash", "login-ui-trust"):
             self.assertIn(f'<action id="org.tessera.root.{sub}">', policy)
             self.assertIn(f'org.freedesktop.policykit.exec.argv1">{sub}<', policy)
         # every action names its first argument (pkexec takes the first action

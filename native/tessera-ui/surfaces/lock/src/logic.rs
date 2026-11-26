@@ -144,6 +144,43 @@ pub fn typing_counts(lid_closed: bool, locked: bool, outputs: &[&str]) -> bool {
     !(lid_closed && locked) || outputs.iter().any(|o| !built_in(o))
 }
 
+/// The longest answer PAM takes (PAM_MAX_RESP_SIZE, 512 bytes)
+pub const MAX_PASSWORD: usize = 512;
+
+/// TEXT cut to MAX_PASSWORD bytes (on a character's edge); true when it was
+/// longer. The cut-off part is overwritten first
+pub fn cap_password(text: &mut String) -> bool {
+    if text.len() <= MAX_PASSWORD {
+        return false;
+    }
+    let mut at = MAX_PASSWORD;
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    let mut tail = text.split_off(at);
+    wipe(&mut tail);
+    true
+}
+
+/// A password's bytes overwritten before they go back to the allocator, then
+/// emptied (String::clear leaves them in memory)
+pub fn wipe(s: &mut String) {
+    let mut b = std::mem::take(s).into_bytes();
+    b.iter_mut().for_each(|x| *x = 0);
+    std::hint::black_box(&b);
+}
+
+/// A key's text that types something: one character, not a control one
+/// (Return, Escape, Backspace, Shift… are control characters in Slint's
+/// Key) nor Slint's private-use codes (the arrows, F1…, Home, Insert…)
+pub fn printable_key(t: &str) -> bool {
+    let mut c = t.chars();
+    match (c.next(), c.next()) {
+        (Some(ch), None) => !ch.is_control() && !('\u{E000}'..='\u{F8FF}').contains(&ch),
+        _ => false,
+    }
+}
+
 /// A laptop's own panel (eDP, LVDS, DSI)
 pub fn built_in(output: &str) -> bool {
     ["eDP", "LVDS", "DSI"].iter().any(|p| output.starts_with(p))
@@ -365,6 +402,33 @@ pub fn contrast_on_black(rgb: [u8; 3], alpha: f64, dim: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_password_is_capped_at_pams_limit_and_wiped() {
+        let mut s = "a".repeat(600);
+        assert!(cap_password(&mut s));
+        assert_eq!(s.len(), MAX_PASSWORD);
+        let mut s = "é".repeat(300); // (2 bytes each: cut on a character's edge)
+        assert!(cap_password(&mut s));
+        assert_eq!(s.len(), MAX_PASSWORD);
+        assert!(s.chars().all(|c| c == 'é'));
+        let mut s = "short".to_string();
+        assert!(!cap_password(&mut s));
+        assert_eq!(s, "short");
+        wipe(&mut s);
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn a_key_that_wakes_bedside_mode_types_only_when_printable() {
+        for t in ["a", "Z", "7", " ", "é", "€"] {
+            assert!(printable_key(t), "{t:?}");
+        }
+        // (Return, Escape, Tab, Backspace, Delete, Shift, Control, Up, F1, two characters, none)
+        for t in ["\n", "\u{1b}", "\t", "\u{8}", "\u{7f}", "\u{10}", "\u{11}", "\u{F700}", "\u{F704}", "ab", ""] {
+            assert!(!printable_key(t), "{t:?}");
+        }
+    }
 
     #[test]
     fn the_clock_ink_follows_the_wallpaper_behind_it() {

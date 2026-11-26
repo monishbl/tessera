@@ -287,18 +287,27 @@ component FingerGlyph inherits Rectangle {
     changed phase => {
         t0 = animation-tick();
         fresh = true;
+        live = true;
     }
     Timer {
         interval: 1300ms;
         running: root.fresh;
         triggered => { root.fresh = false; }
     }
+    // The waiting loop runs 15 s, then rests lit (the lock's FingerGlyph:
+    // a login screen left on otherwise redrew every frame for hours)
+    property <bool> live: true;
+    Timer {
+        interval: 15s;
+        running: root.live && (root.phase == "waiting" || root.phase == "miss");
+        triggered => { root.live = false; }
+    }
     property <float> k: fresh && !still ? (animation-tick() - t0) / 1ms : 5000;
     // a miss: red at once, back to the ink after 1.1 s (150 ms each way)
     property <float> red: phase != "miss" ? 0 : still ? (fresh ? 1 : 0)
         : k < 150 ? 1 - (1 - k / 150) * (1 - k / 150) : k < 1100 ? 1 : k < 1250 ? 1 - (k - 1100) / 150 : 0;
     // waiting (or a miss gone back to waiting): the loop, 2.4 s, linear
-    property <bool> looping: !still && (phase == "waiting" || (phase == "miss" && red <= 0));
+    property <bool> looping: !still && live && (phase == "waiting" || (phase == "miss" && red <= 0));
     property <float> lt: looping ? Math.mod(animation-tick() / 1ms, 2400) / 2400 : -1;
     pure function glow(i: int) -> float {
         if !looping {
@@ -456,8 +465,11 @@ component Shaker {
     property <int> i;
     property <bool> shaking;
     public function go() {
-        i = 0;
-        shaking = true;
+        // (not with Reduce Motion: the red rim and the message say it)
+        if !Greet.reduce-motion {
+            i = 0;
+            shaking = true;
+        }
     }
     Timer {
         interval: 16ms;
@@ -742,6 +754,8 @@ component GlassStyle inherits Rectangle {
         background: rgba(255, 255, 255, 0.18);
         border-width: nm.has-focus ? 1px : 0px;
         border-color: rgba(255, 255, 255, 0.25);
+        // (a long name stays in its pill, not over the buttons beside it)
+        clip: true;
         nm := NameInput {
             x: 14px;
             width: parent.width - 2 * 14px;
@@ -1081,6 +1095,7 @@ component PlainStyle inherits Rectangle {
         background: root.fill;
         border-width: nm.has-focus ? 1px : 0px;
         border-color: #3A3A40;
+        clip: true;
         nm := NameInput {
             x: 18px;
             width: parent.width - 2 * 18px;
@@ -1910,6 +1925,7 @@ component MaterialStyle inherits Rectangle {
         background: Greet.m.high;
         border-width: nm.has-focus ? 2px : 0px;
         border-color: Greet.m.primary;
+        clip: true;
         nm := NameInput {
             x: 24px;
             width: parent.width - 48px;

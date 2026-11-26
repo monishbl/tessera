@@ -201,6 +201,9 @@ pub struct Polkit {
     error: String,
     error_count: i32,
     waiting: bool,
+    /// the answer was typed before PAM asked (a reader's turn first): the
+    /// prompt that follows takes it, so the check goes on (audit #770)
+    early: bool,
     finger_asked_at: i64,
     finger_missed: bool,
     miss: slint::Timer,
@@ -235,6 +238,7 @@ impl Default for Polkit {
             error: String::new(),
             error_count: 0,
             waiting: false,
+            early: false,
             finger_asked_at: 0,
             finger_missed: false,
             miss: slint::Timer::default(),
@@ -393,6 +397,7 @@ impl Polkit {
         self.ask = Ask::default();
         self.retry.stop();
         self.prompted = false;
+        self.early = false;
         self.pam_error.clear();
         self.started_at = crate::util::now_ms();
         let Some(r) = self.queue.first() else { return };
@@ -550,6 +555,16 @@ impl Polkit {
             return;
         }
         let Some(s) = &self.session else { return };
+        // (at most PAM's own limit, 512 bytes)
+        let mut text = text;
+        if text.len() > 512 {
+            let mut at = 512;
+            while !text.is_char_boundary(at) {
+                at -= 1;
+            }
+            text.truncate(at);
+        }
+        self.early = !self.ask.required;
         self.waiting = true;
         self.error.clear();
         s.respond(&text);
@@ -570,8 +585,15 @@ impl Polkit {
                 self.prompted = true;
                 self.ask.prompt = text;
                 self.ask.secret = !echo;
-                self.ask.required = true;
-                self.waiting = false;
+                // (an answer typed during the reader's turn is already on its
+                // way: this prompt takes it, still "Checking…", and a wrong
+                // one says so below)
+                if std::mem::take(&mut self.early) && self.waiting {
+                    self.ask.required = false;
+                } else {
+                    self.ask.required = true;
+                    self.waiting = false;
+                }
             }
             Line::Info(t) | Line::Error(t) => {
                 let l = t.to_lowercase();

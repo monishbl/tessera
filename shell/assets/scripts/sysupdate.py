@@ -924,6 +924,7 @@ def helper_current(folder=None):
 
 
 LOGIN_UI = "/usr/share/tessera/bin"  # (the login screen's tessera-ui, where the switch put one)
+LOGIN_UI_TRUST = "/var/lib/tessera/login-ui-trust.json"  # (root's record of builds trusted for it: tessera-root.py)
 
 
 def _sha256(path):
@@ -957,6 +958,8 @@ def login_ui_stale(home=None):
     if not isinstance(rec, dict):
         return False
     if rec.get("source") in ("built", "built-tuned", "bundle-built"):
+        # (root takes a build of yours once its own record lists it: this
+        # update's root step records it, login_ui_build, before it refreshes)
         if rec.get("sha256") != sha:
             return False
     elif rec.get("source") in ("ready-made", "bundle"):
@@ -979,6 +982,32 @@ def login_ui_stale(home=None):
         return False
 
 
+def login_ui_build(home=None):
+    """The sha256 of your installed tessera-ui when it was built on this
+    computer (an update with --how build, ./install.sh's build) and root's
+    own record (tessera-root.py LOGIN_UI_TRUST) doesn't list it yet: the
+    update's root step then records it (update --trust-built), the admin's
+    password for the update being the consent; root checks the program
+    itself is that build. "" otherwise (signed, none, changed since)."""
+    mine = os.path.join(home or os.path.expanduser("~"), ".local/share/tessera/bin/tessera-ui")
+    try:
+        with open(mine + ".json") as f:
+            rec = json.load(f)
+        sha = _sha256(mine)
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(rec, dict) or rec.get("source") not in ("built", "built-tuned", "bundle-built") or rec.get("sha256") != sha:
+        return ""
+    try:
+        with open(os.path.join(SYSTEM, LOGIN_UI_TRUST.lstrip("/"))) as f:
+            trusted = json.load(f).get("built")
+        if isinstance(trusted, list) and sha in trusted:
+            return ""
+    except (OSError, ValueError, AttributeError):
+        pass  # (none yet, or unreadable: root decides)
+    return sha
+
+
 def root_command(plan, broker):
     """pkexec's arguments for the root part: the installed helper, or this
     folder's (by path, run by Python) when it's missing or out of date."""
@@ -993,6 +1022,9 @@ def root_command(plan, broker):
             cmd += ["--" + k, ",".join(plan[k])]
     if plan["setup"]:
         cmd += ["--setup", plan.get("setup_dir") or SHELL]
+        # (this folder's helper only, which knows it: see login_ui_build)
+        if plan.get("trust_built"):
+            cmd += ["--trust-built", plan["trust_built"]]
     if plan.get("lock"):
         cmd += ["--lock", plan["lock"]]
     # (only the features with a part of root's: the rest are packages, or done as you)
@@ -1532,6 +1564,9 @@ def plan_of(a, fake=False):
     p["setup_dir"] = (stage_incoming(incoming) if incoming and not fake else None) or SHELL
     # (and the login screen's tessera-ui, when yours is another program now)
     p["setup"] = not fake and (not helper_current(p["setup_dir"]) or login_ui_stale())
+    # (a tessera-ui this computer built, not in root's record yet: the root
+    # step records it first, so the login screen follows a local build)
+    p["trust_built"] = login_ui_build() if p["setup"] else ""
     # A Tessera version's package lock (an absolute path; the root helper reads and checks it)
     lock = a[a.index("--lock") + 1] if "--lock" in a and a.index("--lock") + 1 < len(a) else ""
     p["lock"] = lock if lock.startswith("/") and os.path.isfile(lock) else ""
