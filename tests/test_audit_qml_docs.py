@@ -102,8 +102,12 @@ class FallbackKeepsRustOnlySettings(unittest.TestCase):
         for p in (ROOT / "native/tessera-ui").rglob("*.rs"):
             if {"target", "vendor", "review"} & set(p.relative_to(ROOT).parts):
                 continue
-            written |= set(re.findall(r'(?:set_config|config_set)\(\s*"(\w+)\.(\w+)"', p.read_text(encoding="utf-8", errors="replace")))
+            # (also what Settings pages write through their context: cx.set,
+            # toggle, pick, pick_values, num, text; audit #672)
+            written |= set(re.findall(r'(?:set_config|config_set|\bcx\.(?:set|toggle|pick|pick_values|num|text))\(\s*"(\w+)\.(\w+)"',
+                                      p.read_text(encoding="utf-8", errors="replace")))
         self.assertIn(("performance", "gpu"), written)
+        self.assertIn(("dock", "iconSize"), written)
         have = self.declared()
         missing = sorted(f"{s}.{k}" for s, k in written if k not in have.get(s, set()))
         self.assertEqual(missing, [], "keys the Rust shell writes that the QML fallback would drop")
