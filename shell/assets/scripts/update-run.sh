@@ -333,6 +333,9 @@ elif [[ $up == 0 ]]; then
 else
     status done 100 "Update installed"
 fi
+# The update is over: the repository lock goes now, not after the error
+# screen's Close (up to ten minutes in which every other update was refused)
+exec 8>&-
 # The screen closes itself (done) or waits for Close (error); then clean up
 # (locked: there's no screen; the new shell's Software Update says how it went)
 [[ -n $LOCKED ]] && { rm -rf "$T/ui" "$T/choices.json"; echo "finished: ${err:-ok}"; exit 0; }

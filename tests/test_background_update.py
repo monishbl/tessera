@@ -367,6 +367,8 @@ class BuildScript(unittest.TestCase):
         for l in starts:
             self.assertIn("8>&-", l, l.strip())
         self.assertIn("exec 9>&- 6>&- 8>&-", sh)
+        # (and it's let go before the error screen's wait for Close: audit #709)
+        self.assertLess(sh.index("\nexec 8>&-\n"), sh.index('pgrep -f -- "-p $T/ui"'))
 
     def test_build_progress_records_the_units_used(self):
         bp = load("bg_build_progress", ROOT / "tools/build-progress.py")
