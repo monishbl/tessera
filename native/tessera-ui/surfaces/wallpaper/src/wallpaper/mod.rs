@@ -142,12 +142,18 @@ pub fn panel_width(screen: u32) -> u32 {
     screen.saturating_sub(80).min(1200) + 2 * M
 }
 
-/// Its bottom margin: above the dock when there is one (as the QML: the
-/// dock's icons, its padding and gap, then 12), less the shadow's room
-pub fn bottom_margin(cfg: &serde_json::Value) -> i32 {
+/// How far the dock reaches up from the screen's bottom edge, in each look
+/// (dock/src/layout.rs's Metrics: bar_h + bottom_gap)
+fn dock_reach(cfg: &serde_json::Value, material: bool) -> i32 {
+    let icon = (cfg["dock"]["iconSize"].as_f64().unwrap_or(48.0) as f32).clamp(16.0, 160.0);
+    (if material { icon.clamp(36.0, 56.0).round() + 2.0 * 8.0 + 16.0 } else { icon.round() + 2.0 * (icon.round() * 0.26).round() + 6.0 }) as i32
+}
+
+/// Its bottom margin: 16 px clear of the dock when there is one (it met the
+/// dock's top edge), 12 from the edge without, less the shadow's room
+pub fn bottom_margin(cfg: &serde_json::Value, material: bool) -> i32 {
     let dock = cfg["dock"]["enabled"].as_bool().unwrap_or(true);
-    let icon = cfg["dock"]["iconSize"].as_i64().unwrap_or(48) as i32;
-    (if dock { icon + 14 + 6 + 12 } else { 12 }) - M as i32
+    (if dock { dock_reach(cfg, material) + 16 } else { 12 }) - M as i32
 }
 
 /// The thumbnails to have: the ones in view and AHEAD either side (in view
@@ -237,7 +243,7 @@ impl WallpaperPicker {
         let material = st.shell.look.material;
         let w = self.win.as_mut().unwrap();
         w.ui.set_on_glass(st.shell.plugin && !material);
-        w.surface.layer.set_margin(0, 0, bottom_margin(&st.shell.cfg), 0);
+        w.surface.layer.set_margin(0, 0, bottom_margin(&st.shell.cfg, material), 0);
         w.surface.layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         let width = st.output_named(&output).map_or(1200 + 2 * M, |o| panel_width(logical_width(st, &o)));
         w.surface.show(width, HEIGHT);
@@ -560,9 +566,10 @@ mod tests {
         assert_eq!(panel_width(1920), 1200 + 48);
         assert_eq!(panel_width(1280), 1200 + 48);
         assert_eq!(panel_width(1000), 920 + 48);
-        assert_eq!(bottom_margin(&json!({})), 48 + 14 + 6 + 12 - 24);
-        assert_eq!(bottom_margin(&json!({"dock": {"iconSize": 64}})), 64 + 14 + 6 + 12 - 24);
-        assert_eq!(bottom_margin(&json!({"dock": {"enabled": false}})), -12);
+        assert_eq!(bottom_margin(&json!({}), false), 48 + 24 + 6 + 16 - 24);
+        assert_eq!(bottom_margin(&json!({}), true), 48 + 16 + 16 + 16 - 24);
+        assert_eq!(bottom_margin(&json!({"dock": {"iconSize": 64}}), false), 64 + 34 + 6 + 16 - 24);
+        assert_eq!(bottom_margin(&json!({"dock": {"enabled": false}}), true), -12);
     }
 
     #[test]
