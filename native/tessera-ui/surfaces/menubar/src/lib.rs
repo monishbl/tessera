@@ -1694,10 +1694,15 @@ impl Menubar {
                 return;
             }
             let Some(item) = st.shell.get::<Tray>().and_then(|t| t.items.iter().find(|i| i.key == key).cloned()) else { return };
+            // (where to put a popup an app draws itself: under the item,
+            // not the screen's top-left corner)
+            let (ax, ay) = (x.round() as i32, BAR_H as i32);
             if !right && !item.item_is_menu {
-                tray::activate(key, 0, 0);
+                tray::activate(key, ax, ay);
             } else if !item.menu.is_empty() {
                 self.open_menu(st, output, MenuKind::Tray(item.key.clone(), item.menu.clone()), x);
+            } else if right {
+                tray::context_menu(key, ax, ay);
             }
             return;
         }
