@@ -437,6 +437,8 @@ pub fn parse_ics(text: &str) -> Vec<IcsEvent> {
 }
 
 const DAYS: [&str; 7] = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
+/// The largest INTERVAL followed (a bigger one: the first date only)
+const MAX_INTERVAL: i64 = 1000;
 
 #[derive(Clone, Copy)]
 struct ByDay {
@@ -509,7 +511,9 @@ pub fn expand(ev: &IcsEvent, from: i64, to: i64) -> Vec<(i64, i64)> {
         && !(bymonthday.is_some() && freq == "WEEKLY")
         && !(bysetpos.is_some() && (freq == "DAILY" || freq == "WEEKLY"))
         && !(freq == "YEARLY" && bymonth.is_none() && (byday.is_some() || bymonthday.is_some()));
-    if !supported {
+    // (an INTERVAL past any real rule, e.g. 99999999 from a subscribed file,
+    // would overflow the date sums: shown once, like other rules this can't follow)
+    if !supported || interval > MAX_INTERVAL {
         return once;
     }
     let flat = |l: &Option<Vec<Option<i64>>>| l.as_ref().map(|l| l.iter().map(|x| x.unwrap_or(0)).collect::<Vec<i64>>());
@@ -591,11 +595,11 @@ pub fn expand(ev: &IcsEvent, from: i64, to: i64) -> Vec<(i64, i64)> {
     let mut i = i0;
     // (a guard: a rule this can't step through ends rather than spins)
     while n < count && i - i0 < 100_000 {
-        let ii = i as i32;
-        let iv = interval as i32;
+        let ii = i32::try_from(i).unwrap_or(i32::MAX);
+        let iv = interval as i32; // (≤ MAX_INTERVAL)
         let (period, candidates): (i64, Vec<i64>) = match freq {
             "DAILY" => {
-                let d = at(s0.y, s0.mo, s0.d + ii * iv);
+                let d = at(s0.y, s0.mo, s0.d.saturating_add(ii.saturating_mul(iv)));
                 let t = local(d);
                 let last = last_of(t.y, t.mo);
                 let ok = byday.as_ref().is_none_or(|b| b.iter().any(|x| x.d == t.wday))
@@ -604,16 +608,19 @@ pub fn expand(ev: &IcsEvent, from: i64, to: i64) -> Vec<(i64, i64)> {
                 (d, if ok { vec![d] } else { Vec::new() })
             }
             "WEEKLY" => {
-                let p = at(s0.y, s0.mo, s0.d - (s0.wday - wkst + 7) % 7 + ii * 7 * iv);
+                let p = at(s0.y, s0.mo, (s0.d - (s0.wday - wkst + 7) % 7).saturating_add(ii.saturating_mul(7).saturating_mul(iv)));
                 let pt = local(p);
                 let days: Vec<i32> = byday.as_ref().map_or_else(|| vec![s0.wday], |b| b.iter().map(|x| x.d).collect());
                 let mut c: Vec<i64> = days.iter().map(|d| at(pt.y, pt.mo, pt.d + (d - wkst + 7) % 7)).filter(|d| bymonth.as_ref().is_none_or(|b| b.contains(&(local(*d).mo as i64 + 1)))).collect();
                 c.sort();
                 (p, c)
             }
-            "MONTHLY" => (make(s0.y, s0.mo + ii * iv, 1, 0, 0, 0), setpos(month_days(s0.y, s0.mo + ii * iv))),
+            "MONTHLY" => {
+                let mo = s0.mo.saturating_add(ii.saturating_mul(iv));
+                (make(s0.y, mo, 1, 0, 0, 0), setpos(month_days(s0.y, mo)))
+            }
             _ => {
-                let year = s0.y + ii * iv;
+                let year = s0.y.saturating_add(ii.saturating_mul(iv));
                 let months: Vec<i64> = bymonth.clone().unwrap_or_else(|| vec![s0.mo as i64 + 1]);
                 let mut c: Vec<i64> = months.iter().flat_map(|m| month_days(year, *m as i32 - 1)).collect();
                 c.sort();
@@ -923,6 +930,11 @@ BEGIN:VEVENT\r\nUID:d\r\nSUMMARY:Long\r\n  title\r\nDTSTART:20261105T150000\r\nD
         let (a, b) = win((2026, 1, 1), (2026, 1, 20));
         assert_eq!(days(&expand(&ev(s, e, "FREQ=DAILY;BYHOUR=9"), a, b)), vec![(2026, 1, 5)]);
         assert!(expand(&ev(s, e, "FREQ=DAILY;INTERVAL=0"), a, b).is_empty());
+        // a huge INTERVAL doesn't overflow the date sums: the first date only
+        for r in ["FREQ=DAILY;INTERVAL=99999999", "FREQ=MONTHLY;INTERVAL=1000000000000000000", "FREQ=YEARLY;INTERVAL=1001"] {
+            assert_eq!(days(&expand(&ev(s, e, r), a, b)), vec![(2026, 1, 5)], "{r}");
+        }
+        assert_eq!(days(&expand(&ev(s, e, "FREQ=DAILY;INTERVAL=1000;COUNT=2"), a, b)), vec![(2026, 1, 5)]);
     }
 
     #[test]
