@@ -979,7 +979,7 @@ mod tests {
         let mut f = new_form("", true, "psk");
         assert_eq!(form_problem(&f), "Type the network name.");
         f["name"] = json!("Cafe");
-        assert_eq!(form_problem(&f), "Wi-Fi passwords are 8 to 63 characters.");
+        assert_eq!(form_problem(&f), "Wi-Fi passwords are 8 to 63 characters (or a 64-digit key).");
         f["psk"] = json!("12345678");
         assert_eq!(form_problem(&f), "");
         assert_eq!(form_request(&f)["ssid"], json!("Cafe"));
