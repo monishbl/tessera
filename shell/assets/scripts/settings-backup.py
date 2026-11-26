@@ -186,6 +186,24 @@ def find_bundled(shell, name):
     return ""
 
 
+def same_picture(folder, data):
+    """A file in FOLDER with exactly these bytes, or "" """
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError:
+        return ""
+    for n in names:
+        p = os.path.join(folder, n)
+        try:
+            if os.path.isfile(p) and not os.path.islink(p) and os.path.getsize(p) == len(data):
+                with open(p, "rb") as f:
+                    if f.read() == data:
+                        return p
+        except OSError:
+            continue
+    return ""
+
+
 def unique(folder, name):
     base, ext = os.path.splitext(name)
     p, n = os.path.join(folder, name), 2
@@ -418,8 +436,12 @@ def restore(path, config_dir, shell=None, pictures_dir=None, undo=True):
             target = find_bundled(shell, os.path.basename(how["bundled"]))
         elif how.get("file") in parsed["pictures"]:
             os.makedirs(pictures_dir, exist_ok=True)
-            target = unique(pictures_dir, how["file"].split("/", 1)[1].split("-", 1)[-1])
-            write_whole(target, parsed["pictures"][how["file"]], 0o600)
+            data = parsed["pictures"][how["file"]]
+            # (restored before: that same picture, not another copy of it)
+            target = same_picture(pictures_dir, data)
+            if not target:
+                target = unique(pictures_dir, how["file"].split("/", 1)[1].split("-", 1)[-1])
+                write_whole(target, data, 0o600)
         placed[where] = target
     wp = config.get("wallpaper")
     if isinstance(wp, dict):
