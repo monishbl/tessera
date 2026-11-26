@@ -207,6 +207,11 @@ fn color(s: &str) -> slint::Color {
     }
 }
 
+/// A red alert colour (the island's is_red): kept red in Material
+fn is_red(c: slint::Color) -> bool {
+    c.red() as f32 / 255.0 > 0.8 && (c.green() as f32 / 255.0) < 0.45 && (c.blue() as f32 / 255.0) < 0.45
+}
+
 /// An alert's glyph: the island sends a Phosphor name ("usb"); one already a
 /// glyph (a single private-use character) is kept
 pub(crate) fn alert_glyph(name: &str) -> String {
@@ -473,6 +478,9 @@ impl Notifications {
                 // draws the Phosphor glyph, which the name alone left blank)
                 glyph: alert_glyph(&a.glyph).into(),
                 glyph_color: color(&a.color),
+                // (Material: in the scheme's colours, as the island shows it,
+                // not the service's orange; a red alert stays red)
+                alert_tonal: st.shell.look.material && !is_red(color(&a.color)),
                 ..Default::default()
             };
         }
