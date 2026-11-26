@@ -1,5 +1,15 @@
 # Porting a surface to Rust
 
+> **Partly historical (written 5 November 2026).** Since 7 November
+> tessera-ui runs on its own and the QML shell is a frozen crash fallback:
+> nothing in `shell/` is edited for a Rust surface. So "The rule" (previews
+> behind `rust.surfaces`), the QML-twin and `RustUi.qml` rows of the table, and
+> "Panels" (the stdin bridge) describe the hybrid shell that no longer ships.
+> Today a surface is a `Part` (`core/src/shell.rs`) in `surfaces/<name>/`; a
+> part asks the shell's services with `shell::ask` (the host crates,
+> `host/*`); IPC targets are in `host/shell/src/ipc.rs`. "The workspace", "A
+> part" and "Testing" still hold; the b19b699 migration is history.
+
 How one of the shell's surfaces (the dock, the OSD, notifications, …) moves from QML to `tessera-ui` (native/tessera-ui, Slint). The plan and the order are in [rust-ui-plan.md](rust-ui-plan.md); the toolkit's measurements in [rust-ui-spike-slint.md](rust-ui-spike-slint.md). The menu bar (`surfaces/menubar/`) is the worked example. Paths below are inside native/tessera-ui, a Cargo workspace: "The workspace" below.
 
 ## The rule
@@ -149,7 +159,7 @@ Read the QML surface and everything it imports (its module folder, `shell/common
 2. `python3 -m pytest -q tests/test_rust_ui.py` (the QML twin steps aside; nothing moves by default) and the whole suite before merging.
 3. **The hidden sandbox only, never the user's screen:** `TESSERA_ARENA=<your arena> ./dev.sh …` (arenas are hidden and silent; never set `TESSERA_VISIBLE` or `TESSERA_HOST_AUDIO`). site/film/tessera/capture/lib.sh has the helpers (`setup glass|material <wallpaper> 1`, `inbox` to run inside, `dev shot` for screenshots). Install the release build into the arena's data dir (`.sandbox/arena-N/home/.local/share/tessera/bin/tessera-ui`), set `rust.surfaces` in the arena's config, screenshot the QML surface and the Rust one in the same state, both looks, and compare. Kill only processes whose `/proc/PID/environ` names your arena; never `pkill`/`killall` (PIDs are shared with the user's session). Bring the arena down when done (the laptop runs hot).
 4. Build release once at the end (`cargo build --release --locked --bin tessera-ui`, about 1–2 minutes incremental).
-5. **Never run a binary of this workspace with the live display.** Run `cargo test`, any test binary and `tessera-ui` itself with `env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET -u DISPLAY …`, or inside an arena. Don't run the files in `target/*/deps/` by hand: the programs there (`tessera_ui-…`, `fake_ime-…`) sit beside the test binaries, and a program started on the real session draws on it. As a guard, `tessera-ui` refuses any argument it doesn't know (`--list`…) before it opens a display, and `fake-ime` runs only inside an arena (`TESSERA_ARENA`/`TESSERA_ARENA` set), with no arguments.
+5. **Never run a binary of this workspace with the live display.** Run `cargo test`, any test binary and `tessera-ui` itself with `env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET -u DISPLAY …`, or inside an arena. Don't run the files in `target/*/deps/` by hand: the programs there (`tessera_ui-…`, `fake_ime-…`) sit beside the test binaries, and a program started on the real session draws on it. As a guard, `tessera-ui` refuses any argument it doesn't know (`--list`…) before it opens a display, and `fake-ime` runs only inside an arena (`TESSERA_ARENA` set), with no arguments.
 
 ## Moving a branch from before the split
 

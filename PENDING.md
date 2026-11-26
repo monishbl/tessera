@@ -33,4 +33,3 @@ tests pending" or "needs a real session". At the time of writing:
 - **Website media**: check the hero film and screenshots for the old product
   names ("App Store", "Spotlight", "Control Center") and re-render any that
   still show them.
-- The Material sound pack's source is still unknown (SECURITY-AUDIT.md §6, the licence checklist).

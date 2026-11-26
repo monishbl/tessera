@@ -229,7 +229,7 @@ Status: **Fixed** means fixed in this branch. **Decide** means it needs your dec
 
 ## 6. Licence checklist
 
-**Status (3 Nov 2026):** Tessera is now GPL-3.0-or-later (`LICENSE`), with `THIRD_PARTY_NOTICES.md` and the licence texts in `LICENSES/`; the MaterialColor.js path and the Material Symbols modification notice are fixed. The Material sound pack's source is still unknown (PENDING.md).
+**Status (3 Nov 2026):** Tessera is now GPL-3.0-or-later (`LICENSE`), with `THIRD_PARTY_NOTICES.md` and the licence texts in `LICENSES/`; the MaterialColor.js path and the Material Symbols modification notice are fixed. The Material sound pack was replaced on 4 November by sounds Tessera makes itself (`tools/make-sounds.py material`, 2aac440d; THIRD_PARTY_NOTICES.md).
 
 | Item | Licence | In the repo | What it needs | Status |
 |---|---|---|---|---|

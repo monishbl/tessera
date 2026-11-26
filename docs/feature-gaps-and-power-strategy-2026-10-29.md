@@ -2,6 +2,14 @@
 
 Date: **29 October 2026**, Asia/Kolkata. Reviewed source: **`483d6eb`**.
 
+> **Historical: the QML shell, 29 October 2026.** Superseded by the Rust shell
+> (`native/tessera-ui`, [RUST-ONLY.md](../native/tessera-ui/RUST-ONLY.md)) and
+> [PENDING.md](../PENDING.md). Source links point into the frozen QML. Since
+> shipped, among the gaps below: Software (G30), Back up and restore (G33),
+> idle and sleep settings and one power policy (G05, G07; see
+> [battery-saver.md](battery-saver.md)), the minimal login screen (G35), and
+> Quick Share is Tessera's own, not Packet's.
+
 This document complements the [bug audit](bug-audit-2026-10-28.md). It records missing or incomplete capabilities, investigates the reported sleep/lock and window-layout failures, and proposes a product and engineering direction. **Implementation code and live power/window settings were not changed.** Suggestions below are proposed behavior, not features already delivered.
 
 **Implementation follow-up (29 October):** the bug-fix pass now implements the idle/pre-sleep lock path, floating/tiled rule fixes, truthful notification capabilities and the approved minimal TTY-style greeter. See the [audit implementation status](bug-audit-2026-10-28.md#implementation-status--29-october-2026) for each correction and test limits. The original analysis below is historical evidence. Lid/suspend hardware acceptance remains pending; the proposed unified power policy, lid-closed frequency tuning and competitive-feature roadmap are still proposals, not delivered features.
@@ -26,7 +34,7 @@ Evidence levels used here:
 - **Proposal:** recommended future behavior; no measured benefit is claimed yet.
 - **External integration:** delivered through another application/service, with its own capabilities and limitations.
 
-The active shell runs from `/home/user/Tessera`; that checkout reports the same reviewed commit, and the window-rules service and TTY startup file match the corresponding files in this workspace. Its settings come from that checkout's `.sandbox/home`, rather than the usual `~/.config/tessera` directory. That distinction matters when checking whether a setting has taken effect.
+The shell that was inspected ran from a TTY session checkout with its settings in that checkout's `.sandbox/home`, rather than the usual `~/.config/tessera` directory. That distinction matters when checking whether a setting has taken effect.
 
 No real suspend, lid-close action, compositor reload, frequency write, daemon installation, or window rearrangement was initiated for this analysis. The window-rules experiments ran offscreen with a fake `hyprctl` and a stub Hyprland event source. A candidate correction was tested only in a temporary copy. The previous audit's syntax checks and 27 passing tests remain historical evidence; they were not relabelled as new end-to-end tests here.
 
@@ -36,20 +44,7 @@ The literal-reference inventory initially flagged `startupFile` and `chargingFil
 
 ### 3.1 What the laptop was actually doing
 
-Read-only snapshot taken at approximately **08:15 IST on 29 October**:
-
-| Observation | Result | Meaning |
-|---|---|---|
-| Active compositor configuration | `sandbox/hypr/tty.lua` | This is the TTY/login-session path, not the installed configuration's `execs.lua` path. |
-| Shell environment | `TESSERA_TTY=1`; `TESSERA_SANDBOX` absent | Real session; power operations are not merely sandbox notifications. |
-| Idle/standalone lock processes | No `hypridle`, `hyprlock`, or `swaylock` process found | Tessera has its own locker, but the ordinary sleep/idle integration daemon is absent. |
-| Saved Caffeine state | Enabled indefinitely (`until: 0`) | Current keep-awake preference is active; this snapshot does not prove its state at every earlier suspend. |
-| Tessera inhibitor | `idle`, block mode | It prevents idle handling, not arbitrary explicit suspend or low-level lid-switch handling. |
-| Effective logind lid action | `suspend`; docked action `ignore` | The system, rather than Tessera, currently decides lid behavior. |
-| Session lock hint | Unlocked at inspection | Expected while working; the hint alone is not evidence of whether the session was secure during an earlier resume. |
-| Recent logind journal | Lid-close suspends and completed resumes around 07:51–07:52 IST | Sleep itself is happening. The failure is the missing lock integration around it. |
-
-The inspected main logind configuration had no active custom lid override. Effective D-Bus properties were checked rather than relying only on commented defaults. In logind, idle inhibition, sleep inhibition, and taking ownership of lid-switch handling are distinct mechanisms. [systemd logind configuration](https://www.freedesktop.org/software/systemd/man/latest/logind.conf.html)
+A read-only snapshot of the session at the time (compositor config, lock and idle processes, inhibitors, logind's lid settings and recent suspends) was taken; it is left out of the public copy. Its conclusion: sleep itself was happening, the TTY session had no idle/sleep locker, and logind, not Tessera, decided what the lid did.
 
 ### 3.2 The missing chain
 
@@ -132,7 +127,7 @@ The candidate was not copied into the repository or applied to the live desktop.
 | Display management | Resolution/rate/scale/rotation/mirroring/placement and confirmation/revert flow. | [Displays](../shell/services/Displays.qml) |
 | Window workflows | Snap layouts, restore, workspace handling, Stage Manager, grouping, and app rules exist. | [Tiling](../shell/services/Tiling.qml), [WindowRules](../shell/services/WindowRules.qml) |
 | Focus | Scheduled modes, timers, notification allowlists, appearance/wallpaper effects. | [Focus](../shell/services/Focus.qml) |
-| Sharing | LocalSend sending and receiving; Quick Share delegates to Packet. | [LocalSend](../shell/services/LocalSend.qml), [QuickShare](../shell/services/QuickShare.qml) |
+| Sharing | LocalSend sending and receiving; Quick Share delegated to Packet (Tessera's own since November). | [LocalSend](../shell/services/LocalSend.qml), [QuickShare](../shell/services/QuickShare.qml) |
 | Input and accessibility groundwork | Layout switching, on-screen keyboard, trackpad controls, contrast/transparency options; some controls have keyboard support. | [KeyboardLayout](../shell/services/KeyboardLayout.qml), [Switch](../shell/common/Switch.qml) |
 | Recovery groundwork | Repair Shell, updater backups/conflict choices, display rollback, and native-helper fallback exist, with limitations recorded in the bug audit. | [update helper](../tools/tessera-update.py), [repair helper](../shell/assets/scripts/repair-shell.sh) |
 
@@ -194,16 +189,7 @@ Priorities: **P0** release-blocking trust/security/reliability; **P1** next core
 
 ### 7.1 Capabilities observed on this laptop
 
-| Capability | Observed value | Implication |
-|---|---|---|
-| CPU scaling | `intel_pstate`; governor `powersave` | This driver-specific governor is adaptive; its name does not mean fixed minimum frequency. |
-| EPP | `power`; several preferences available | Energy preference is a usable lever, subject to backend ownership. |
-| Policy 0 frequency bounds | 400 MHz minimum, 4.8 GHz maximum | These are reported bounds, not proof of current frequency or that a particular cap saves energy. |
-| Active profile/backend | `power-saver`; power-profiles-daemon 0.30 | A profile service is already present; do not install multiple competing profile managers. |
-| Other policy managers | TLP/tuned/auto-cpufreq commands absent | No observed reason to layer another daemon over the current owner. |
-| Feral GameMode | `gamemoded` absent | Current Tessera Game Mode is not a hidden Feral GameMode integration. |
-| Suspend modes | Only `[s2idle]` exposed in `mem_sleep` | Do not offer a working S3/deep-sleep switch on this evidence. Measure s2idle drain instead. |
-| Kernel sleep states | `freeze mem disk` | `disk` alone does not prove hibernation/resume is correctly configured. |
+(The machine's own readings, CPU driver and frequency bounds, profile service, sleep states, are left out of the public copy. The conclusions stand: one profile service, no second power manager on top, measure s2idle drain rather than offer deep sleep.)
 
 Under `intel_pstate`, `powersave` can select changing performance states. Reducing clocks indiscriminately can lengthen work and need not reduce total energy. Prefer measured profiles/EPP and workload budgets, then evaluate optional caps with task-energy and responsiveness measurements. [Intel P-state documentation](https://www.kernel.org/doc/html/latest/admin-guide/pm/intel_pstate.html), [CPU frequency scaling](https://www.kernel.org/doc/html/latest/admin-guide/pm/cpufreq.html)
 
@@ -377,13 +363,7 @@ Every delivered capability should have a manifest/status entry recording: implem
 
 ## 11. Reproduction evidence and remaining limits
 
-Temporary evidence from this analysis:
-
-- `/tmp/tessera-deep-analysis-2026-10-29/runtime-evidence.json`: session launch path, relevant shell environment, effective lid properties, lock-process and inhibitor snapshot.
-- `/tmp/tessera-deep-analysis-2026-10-29/power-capabilities.json`: backend/profile and CPU/sleep capability reads.
-- `/tmp/tessera-deep-analysis-2026-10-29/source-inventory.json` and `settings-surface.json`: source/configuration and Settings-surface inventory.
-- `/tmp/tessera-deep-analysis-2026-10-29/window-rules-probe.py`: actual-service offscreen test with fake commands and event source.
-- `window-rules-probe-result.json` and `window-rules-candidate-result.json` in that directory: current/candidate policy generation and startup-rule results.
+The analysis's temporary evidence files weren't kept.
 
 The important observations and expected/actual results are embedded above so this document remains useful if `/tmp` is cleaned. The candidate experiment validates policy generation and persistence under the isolated setup; it is not a substitute for the real-window and sleep/resume acceptance tests. No battery-life improvement, GPU performance lead, or distribution ranking was measured in this analysis.
 

@@ -29,4 +29,4 @@ Screenshot/recording/OCR/AI region selections clip drag and window bounds to the
 
 ## Verification status
 
-The native plugin compiles against the installed Hyprland 0.56.2 headers. Automated tests cover corner/resistance geometry, negative display coordinates, scaled logical bounds, focus actions and screenshot clipping. Isolated Quickshell tests cover focus event routing, lock suppression and boundary IPC. The active machine exposed only one monitor during implementation, so actual shared-edge feel, cross-monitor focus and workspace-chip appearance still require multi-monitor validation. The test plugin was built under `/tmp`; the live compositor was not hot-reloaded.
+The boundary geometry (shared corners, resistance, negative display coordinates, scaled logical bounds) is covered by `tests/test_pointer_policy.py`, against the plugin's own code. How crossing feels on two real displays isn't covered by a test.

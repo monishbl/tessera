@@ -1,5 +1,14 @@
 # The interface in Rust: plan
 
+> **Historical: the plan as of 4–6 November 2026.** Since 7 November
+> tessera-ui is the whole shell (`--standalone`, no Quickshell beside it), and
+> the QML shell is a frozen crash fallback (compatibility fixes only). There
+> are no previews behind `rust.surfaces` any more, no stdin bridge to the QML
+> shell, and the paths below (`src/surfaces/…`, services/RustUi.qml) are from
+> the single-crate layout: today's code is `core/`, `host/*` (the shell's
+> services and IPC, `host/shell/src/ipc.rs`) and `surfaces/*`. What the Rust
+> shell does differently: [RUST-ONLY.md](../native/tessera-ui/RUST-ONLY.md).
+
 Decided 4 November 2026: Tessera's interface moves from Quickshell/QML to Rust, all of it, both looks. This file is the plan; it changes as we learn.
 
 ## Why, and what we expect
