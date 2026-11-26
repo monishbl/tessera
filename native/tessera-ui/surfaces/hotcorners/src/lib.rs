@@ -90,6 +90,9 @@ struct Corner {
     enters: u32,
     pressed: bool,
     dwell: slint::Timer,
+    /// clicks pass through it (its screen shows a fullscreen window, where
+    /// it does nothing: the app keeps the pointer in that corner)
+    passthrough: bool,
 }
 
 struct Screen {
@@ -117,7 +120,9 @@ impl HotCorners {
                 namespace: NS,
                 output: Some((output, name)),
                 anchor: anchor(corner),
-                size: (3, 3),
+                // (1 px: the pointer thrown into the corner still lands on it,
+                // and a click near the corner reaches what is there)
+                size: (1, 1),
                 exclusive: -1,
                 keyboard: KeyboardInteractivity::None,
                 margin_left: 0,
@@ -127,7 +132,7 @@ impl HotCorners {
             let n = name.to_string();
             ui.on_press(move || to(Box::new(Msg::Press(n.clone(), corner))));
             ui.show().expect("show hot corner");
-            corners.push(Corner { corner, action, surface, ui, hovered: false, enters: 0, pressed: false, dwell: slint::Timer::default() });
+            corners.push(Corner { corner, action, surface, ui, hovered: false, enters: 0, pressed: false, dwell: slint::Timer::default(), passthrough: false });
         }
         self.screens.push(Screen { output: name.to_string(), corners });
     }
@@ -223,7 +228,21 @@ impl Part for HotCorners {
         }
     }
 
-    fn data(&mut self, _: &mut State, _: TypeId) {}
+    /// Hyprland's state changed: a corner over a fullscreen window lets the
+    /// pointer through
+    fn data(&mut self, st: &mut State, what: TypeId) {
+        if what != TypeId::of::<Snapshot>() {
+            return;
+        }
+        let Some(h) = st.shell.get::<Snapshot>() else { return };
+        for s in &mut self.screens {
+            let full = fullscreen(h, &s.output);
+            for c in s.corners.iter_mut().filter(|c| c.passthrough != full) {
+                c.passthrough = full;
+                st.set_input_region(&c.surface, if full { Some(&[]) } else { None });
+            }
+        }
+    }
 
     fn message(&mut self, st: &mut State, msg: Box<dyn Any + Send>) {
         let msg = match msg.downcast::<Fire>() {
