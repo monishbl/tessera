@@ -172,7 +172,9 @@ impl Sounds {
             return;
         }
         let own = hints["sound-file"].as_str().unwrap_or("");
-        if own.starts_with('/') {
+        // (an app's own sound: a plain file of at most 2 MB, played for at most
+        // 10 s; anything else, a FIFO or an hour of audio, gets ours instead)
+        if own_sound_ok(own) {
             let now = now_ms();
             if now - self.last_played.get("notifications").copied().unwrap_or(0) < spacing("notifications") {
                 return;
@@ -180,7 +182,9 @@ impl Sounds {
             self.last_played.insert("notifications".into(), now);
             let cmd = command(cfg, own, None);
             if !cmd.is_empty() {
-                run_owned(cmd);
+                let mut timed: Vec<String> = vec!["timeout".into(), "-s".into(), "KILL".into(), "10".into()];
+                timed.extend(cmd);
+                run_owned(timed);
             }
             return;
         }
@@ -200,6 +204,11 @@ impl Sounds {
         self.play(h, "startup", false);
         h.ask("lock.sessionStarted", json!([]));
     }
+}
+
+/// An app's `sound-file` hint is fit to play: an absolute path to a regular file of at most 2 MB
+pub fn own_sound_ok(path: &str) -> bool {
+    path.starts_with('/') && std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() <= 2 * 1024 * 1024)
 }
 
 impl Service for Sounds {
@@ -308,6 +317,20 @@ impl Service for Sounds {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_apps_own_sound_must_be_a_small_plain_file() {
+        assert!(!own_sound_ok(""));
+        assert!(!own_sound_ok("relative.oga"));
+        assert!(!own_sound_ok("/nonexistent/x.oga"));
+        // (a device or a folder is not a sound file)
+        assert!(!own_sound_ok("/dev/zero"));
+        assert!(!own_sound_ok("/"));
+        let f = std::env::temp_dir().join(format!("tessera-own-sound-{}.oga", std::process::id()));
+        std::fs::write(&f, b"OggS").unwrap();
+        assert!(own_sound_ok(f.to_str().unwrap()));
+        let _ = std::fs::remove_file(&f);
+    }
 
     #[test]
     fn the_set_follows_the_look_and_the_choice() {

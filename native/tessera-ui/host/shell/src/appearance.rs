@@ -27,7 +27,7 @@ enum Msg {
     Blur(i64, i64),
     /// hyprctl -j monitors
     Monitors(Value),
-    #[allow(dead_code)]
+    /// Hyprland reloaded its config (its blur and rates are the file's again)
     Reapply,
     /// the 30 s ping for a plugin that is missing
     Ping,
@@ -294,6 +294,24 @@ impl Service for Appearance {
         });
         let send = h.sender("Appearance");
         self.ping_timer.start(slint::TimerMode::Repeated, std::time::Duration::from_secs(30), move || send(Box::new(Msg::Ping)));
+        // A config reload puts back the file's blur and refresh rates: cool-down
+        // applies its own again (as System does for its settings)
+        let send = h.sender("Appearance");
+        std::thread::Builder::new()
+            .name("appearance-reload".into())
+            .spawn(move || loop {
+                use std::io::BufRead;
+                let Some(path) = tessera_core::services::hypr::dir().map(|d| d.join(".socket2.sock")) else { return };
+                if let Ok(s) = std::os::unix::net::UnixStream::connect(path) {
+                    for l in std::io::BufReader::new(s).lines().map_while(Result::ok) {
+                        if l.starts_with("configreloaded>>") {
+                            send(Box::new(Msg::Reapply));
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_secs(3));
+            })
+            .ok();
         self.read_tone(h);
         self.changed(h);
         // (once: puts back what a restart left, if cool-down has ended meanwhile)
@@ -388,6 +406,10 @@ impl Service for Appearance {
             }
             Msg::Monitors(v) => self.monitors(h, v),
             Msg::Reapply => {
+                // (only while cool-down holds them: else there is nothing to put back)
+                if !self.cool.active(h.cfg()) {
+                    return;
+                }
                 self.saved_blur = None;
                 self.apply_blur(h);
                 self.apply_rates(h);

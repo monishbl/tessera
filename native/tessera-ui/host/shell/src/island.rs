@@ -313,10 +313,13 @@ impl Island {
             let again = was.as_ref().map_or(true, |w| live::realert(w, &new) || (up.is_none() && new.at - w.at >= live::THREAD_MS)) && resolved == live::Resolve::No;
             if !again && was.is_some() {
                 let hid = self.record(h, e, 0);
+                // (record() let its history button go: a quiet change keeps it)
+                let (a, a2, more) = Self::take_actions(e);
+                let kind = s(e, "kind");
+                self.keep_act(h, hid, e, &kind, &a);
                 match up {
                     // its card is up: changed in place, quietly (its time as it was)
                     Some(i) => {
-                        let (a, a2, more) = Self::take_actions(e);
                         let al = &mut self.alerts[i];
                         al.event = e.clone();
                         (al.on_action, al.on_action2, al.more, al.hid) = (a, a2, more, hid);
@@ -1123,9 +1126,9 @@ impl Service for Island {
                         _ => None,
                     };
                     self.run(h, &f);
-                } else if let Some((_, act)) = self.history_acts.get(&uid).cloned() {
-                    self.run(h, &Some(act));
                 }
+                // (an alert already gone does nothing: its uid is no history id,
+                // which is alertAct's, so no other line's button may run)
                 self.dismiss(h, since);
             }
             // Notification Center's alert rows (the history): one more press of its button, forget it, clear all
