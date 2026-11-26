@@ -97,6 +97,27 @@ def parse_ip_addr(text):
     return out
 
 
+def joined_phone(offered, link):
+    """Where to reach the phone on the network just joined: the address its
+    offer says, only when it is on that network (an offer could name a host
+    on the wired LAN, or 127.0.0.1), else the network's DHCP gateway; "" when
+    neither is"""
+    try:
+        net = ipaddress.IPv4Network(link.get("network") or "", strict=False)
+    except ValueError:
+        net = None
+    for cand in (offered, link.get("gateway")):
+        try:
+            a = ipaddress.IPv4Address(cand or "")
+        except ValueError:
+            continue
+        if a.is_unspecified or str(a) == link.get("ip") or (a.is_loopback and not (net and net.is_loopback)):
+            continue
+        if net is not None and net.prefixlen < 32 and a in net:
+            return str(a)
+    return ""
+
+
 def same_network(ours, phone_ip):
     """Our address on the phone's network (as bytes), or None."""
     try:
@@ -363,7 +384,10 @@ class WifiHelper:
         try:
             line = await asyncio.wait_for(self.proc.stdout.readline(), AUTH_TIMEOUT)
         except asyncio.TimeoutError:
-            await self.close()
+            # (pkexec still waits for the password: ended, so its prompt goes
+            # too. It's still the user's own process until it authenticated;
+            # a password typed later started a helper that read EOF)
+            await self.close(stop=True)
             raise WifiUnavailable("No password was given for the direct Wi-Fi link.") from None
         if not line:
             code = await self.proc.wait()
@@ -418,15 +442,31 @@ class WifiHelper:
         self._idle = None
         await self.close()
 
-    async def close(self):
+    async def close(self, stop=False):
+        """Ends the helper: EOF on its input (it tears everything down then),
+        or with `stop` (pkexec still asking for the password) a SIGTERM.
+        One that doesn't end in time is sent SIGTERM too: as root it may
+        refuse, which is logged."""
         p, self.proc = self.proc, None
         if p is None or p.returncode is not None:
             return
         try:
             p.stdin.close()  # (the helper tears everything down on EOF)
-            await asyncio.wait_for(p.wait(), 15)
-        except (OSError, asyncio.TimeoutError):
+        except OSError:
             pass
+        if not stop:
+            try:
+                await asyncio.wait_for(p.wait(), 15)
+                return
+            except asyncio.TimeoutError:
+                pass
+        try:
+            p.terminate()
+            await asyncio.wait_for(p.wait(), 5)
+        except ProcessLookupError:
+            pass
+        except (OSError, asyncio.TimeoutError) as e:
+            _log(f"the Wi-Fi helper didn't end ({e.__class__.__name__}); left to end on its own")
 
 
 # ── Through NetworkManager: no root, no password ─────────────────────────
@@ -598,7 +638,7 @@ class NmWifi:
             raise WifiUnavailable("the phone's Wi-Fi gave this computer no address")
         code, out, _ = await _nmcli("-g", "IP4.GATEWAY,DHCP4.OPTION", "device", "show", sta, timeout=5)
         gateway = next((w for w in out.replace("|", " ").split() if w.count(".") == 3 and w[0].isdigit()), "")
-        return {"ip": str(addrs[0].ip), "gateway": gateway, "iface": sta}
+        return {"ip": str(addrs[0].ip), "network": str(addrs[0].network), "gateway": gateway, "iface": sta}
 
     async def restore(self):
         """Back to the connection the Wi-Fi had (or none)."""
@@ -813,11 +853,12 @@ async def join(info, helper, net, helper_ok=True, timeout=15, nm=None):
         medium = "wifi_direct" if info.medium == PATH.WIFI_DIRECT else "wifi_hotspot"
         if nm is not None:
             link = await nm.join(net, c.ssid, c.password)
-            gateway = c.gateway if c.gateway and c.gateway != "0.0.0.0" else link.get("gateway")
+            gateway = joined_phone(c.gateway, link)
             try:
                 if not gateway:
                     raise WifiUnavailable("the phone's Wi-Fi gave no address to connect to")
-                return await StreamTransport.connect(gateway, c.port, timeout=timeout, medium=medium)
+                return await StreamTransport.connect(gateway, c.port, timeout=timeout, medium=medium,
+                                                     local_address=link.get("ip"))
             except BaseException:
                 await nm.restore()  # (the transfer stays on Bluetooth: the Wi-Fi comes back now)
                 raise

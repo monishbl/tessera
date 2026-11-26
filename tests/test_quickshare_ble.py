@@ -826,6 +826,9 @@ class WifiHelper(unittest.TestCase):
         self.assertEqual((offer["yiaddr"], offer["type"]), ("192.168.49.10", 2))
         self.assertEqual(helper.prefix_len("255.255.255.0"), 24)
         self.assertIsNone(helper.parse_dhcp(b"short"))
+        # (an empty message-type option, or one cut short, didn't end the root helper)
+        self.assertEqual(helper.parse_dhcp(helper.dhcp_packet(1, 1, mac, options=[(53, b"")]))["type"], 0)
+        self.assertIsNone(helper.parse_dhcp(helper.dhcp_packet(1, 1, mac, options=[])[:-1] + bytes([53, 9, 1])))
 
 
 class FakeWpa:
@@ -1131,6 +1134,16 @@ class Shield(unittest.TestCase):
 
 
 class WifiPaths(unittest.TestCase):
+    def test_the_phone_is_reached_on_the_network_just_joined(self):
+        link = {"ip": "192.168.49.20", "network": "192.168.49.0/24", "gateway": "192.168.49.1"}
+        self.assertEqual(wifi.joined_phone("192.168.49.1", link), "192.168.49.1")
+        # (an offer naming another network, or this computer: the DHCP gateway)
+        self.assertEqual(wifi.joined_phone("10.0.0.5", link), "192.168.49.1")
+        self.assertEqual(wifi.joined_phone("127.0.0.1", link), "192.168.49.1")
+        self.assertEqual(wifi.joined_phone("192.168.49.20", link), "192.168.49.1")
+        self.assertEqual(wifi.joined_phone("10.0.0.5", dict(link, gateway="10.0.0.1")), "")
+        self.assertEqual(wifi.joined_phone("", {}), "")
+
     def test_network_parsing(self):
         ip = ('[{"ifname":"lo","addr_info":[{"family":"inet","local":"127.0.0.1","prefixlen":8}]},'
               '{"ifname":"wlan0","addr_info":[{"family":"inet","local":"192.168.1.20","prefixlen":24}]}]')

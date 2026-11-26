@@ -295,10 +295,12 @@ def parse_dhcp(raw):
         if i + 1 >= len(raw):
             break
         code, n = raw[i], raw[i + 1]
+        if i + 2 + n > len(raw):
+            return None  # (an option cut short: not a packet to answer)
         opts[code] = raw[i + 2:i + 2 + n]
         i += 2 + n
     return {"op": op, "xid": xid, "flags": flags, "chaddr": raw[28:34], "ciaddr": socket.inet_ntoa(raw[12:16]),
-            "yiaddr": socket.inet_ntoa(raw[16:20]), "type": opts.get(53, b"\0")[0], "options": opts}
+            "yiaddr": socket.inet_ntoa(raw[16:20]), "type": (opts.get(53) or b"\0")[0], "options": opts}
 
 
 def _dhcp_socket(iface, port):
@@ -984,7 +986,7 @@ def main():
             except Refused as e:
                 links.teardown()
                 answer({"ok": False, "error": str(e)})
-            except (ValueError, AttributeError, OSError, subprocess.SubprocessError) as e:
+            except (ValueError, AttributeError, LookupError, TypeError, OSError, subprocess.SubprocessError) as e:
                 links.teardown()
                 answer({"ok": False, "error": f"the Wi-Fi link failed ({e})"})
     finally:

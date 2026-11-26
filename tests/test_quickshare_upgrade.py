@@ -96,7 +96,7 @@ class FakeNm:
 
     async def join(self, net, ssid, passphrase):
         self.joined = (ssid, passphrase)
-        return {"ip": "127.0.0.1", "gateway": "127.0.0.1", "iface": "wlan0"}
+        return {"ip": "127.0.0.2", "network": "127.0.0.0/8", "gateway": "127.0.0.1", "iface": "wlan0"}
 
     async def restore(self):
         self.restored += 1
