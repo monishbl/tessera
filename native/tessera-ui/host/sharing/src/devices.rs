@@ -107,6 +107,20 @@ pub fn merge(localsend: &[(String, String, String)], quickshare: &[(String, Stri
     out
 }
 
+/// The name key a transfer's peer has for this entry: a same-name second
+/// ("Pixel 8 (2)", keyed "via:id") is "pixel8", as its own sends name it
+pub fn base_key(name: &str, key: &str) -> String {
+    if key.contains(':') {
+        if let Some(i) = name.rfind(" (") {
+            let n = &name[i + 2..];
+            if n.len() > 1 && n.ends_with(')') && n[..n.len() - 1].bytes().all(|b| b.is_ascii_digit()) {
+                return name_key(&name[..i]);
+            }
+        }
+    }
+    name_key(name)
+}
+
 /// The send in flight to this device, if any (LocalSend and Quick Share both
 /// name an outgoing transfer's peer): the transfer item
 pub fn progress_for<'a>(items: &'a [Value], device_name: &str) -> Option<&'a Value> {
@@ -237,5 +251,8 @@ mod tests {
         let items = vec![json!({"kind": "send", "peer": "Ada's Laptop", "done": 1, "total": 2})];
         assert!(progress_for(&items, "ada's laptop").is_some());
         assert!(progress_for(&items, "other").is_none());
+        assert_eq!(base_key("Pixel 8 (2)", "quickshare:Q2"), "pixel8");
+        assert_eq!(base_key("Pixel 8", "pixel8"), "pixel8");
+        assert_eq!(base_key("Room (2)", "room2"), "room2");
     }
 }

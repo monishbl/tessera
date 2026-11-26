@@ -52,10 +52,22 @@ pub fn parts(b: &Value) -> Value {
     for (label, k) in [("L", "left"), ("R", "right"), ("Case", "case")] {
         let x = &b[k];
         if !x.is_null() {
-            out.push(json!({"label": label, "value": x["level"].as_f64().unwrap_or(0.0) / 100.0, "charging": x["charging"].as_bool().unwrap_or(false)}));
+            out.push(json!({"label": label, "value": x["level"].as_f64().unwrap_or(0.0).clamp(0.0, 100.0) / 100.0, "charging": x["charging"].as_bool().unwrap_or(false)}));
         }
     }
     Value::Array(out)
+}
+
+/// An advertised name as shown: no control or direction characters (a
+/// right-to-left override could dress it as another device's), one line,
+/// at most 40 characters
+pub fn clean_name(s: &str) -> String {
+    let kept: String = s
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .filter(|c| !matches!(*c as u32, 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x2069 | 0xFEFF))
+        .collect();
+    kept.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(40).collect()
 }
 
 /// LE adverts carry no name: an address isn't one
@@ -136,12 +148,23 @@ impl Sharing {
             let show_ui = d["showUi"].as_bool() != Some(false);
             let has_battery = !d["battery"].is_null();
             let known = !d["known"].is_null();
-            if d["pairing"].as_bool().unwrap_or(false) && rssi.is_some_and(|r| r > -70.0) && now - self.fast.offered.get(&id).copied().unwrap_or(0) > 600_000 && !self.fast.busy && !self.paired_now(h, &d) {
+            // (an address is the sender's to pick, and one that changes it
+            // per advert was a new card each time: also once per model and
+            // name, and strangers' offers at most one per 3 minutes)
+            let model_key = format!("model:{}:{}", js(&d["model"]), clean_name(&js(&d["name"])));
+            let quiet = |k: &str, ms: i64| now - self.fast.offered.get(k).copied().unwrap_or(0) > ms;
+            let may_offer = quiet(&id, 600_000) && (known || (quiet(&model_key, 600_000) && quiet("*stranger", 180_000)));
+            if d["pairing"].as_bool().unwrap_or(false) && rssi.is_some_and(|r| r > -70.0) && may_offer && !self.fast.busy && !self.paired_now(h, &d) {
                 self.fast.offered.insert(id.clone(), now);
+                if !known {
+                    self.fast.offered.insert(model_key, now);
+                    self.fast.offered.insert("*stranger".into(), now);
+                }
                 // (`known`: paired with this computer before, from another
                 // address: they're connected, not paired again)
-                let kname = js(&d["known"]["name"]);
-                let title = if !kname.is_empty() { kname } else if !js(&d["name"]).is_empty() { js(&d["name"]) } else { "Earbuds nearby".into() };
+                let kname = clean_name(&js(&d["known"]["name"]));
+                let aname = clean_name(&js(&d["name"]));
+                let title = if !kname.is_empty() { kname } else if !aname.is_empty() { aname } else { "Earbuds nearby".into() };
                 self.island(
                     h,
                     json!({"kind": "custom", "key": format!("bt:{id}"), "icon": "headphones", "title": title,
@@ -149,8 +172,11 @@ impl Sharing {
                         "action": "Connect", "onAction": act("share.fastConnect", json!([d]))}),
                     15000,
                 );
-            } else if has_battery && known {
-                // (our own earbuds: their levels, and their own card)
+            } else if has_battery && known && (known_addr.eq_ignore_ascii_case(&js(&d["address"])) || (d["known"]["connected"].as_bool() == Some(true) && rssi.is_some_and(|r| r > -60.0))) {
+                // (our own earbuds: their levels, and their own card. Only
+                // when the advert is theirs, or they're connected and the
+                // advert is right here: a colleague's of the same brand or
+                // name passed as ours, and their levels were shown as ours)
                 let a = known_addr.clone();
                 let mut lv = d["battery"].clone();
                 lv["at"] = json!(now);
@@ -244,6 +270,14 @@ impl Sharing {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn advertised_names_are_cleaned_and_levels_kept_to_100() {
+        assert_eq!(clean_name("Buds\u{202e}spaM\n  Pro"), "BudsspaM Pro");
+        assert_eq!(clean_name(&"x".repeat(90)).len(), 40);
+        let b = json!({"left": {"level": 126}});
+        assert_eq!(parts(&b)[0]["value"], 1.0);
+    }
 
     #[test]
     fn batteries_read_as_text() {

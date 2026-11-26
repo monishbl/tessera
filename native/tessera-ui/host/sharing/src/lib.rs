@@ -353,10 +353,11 @@ impl Sharing {
         let items = self.sharing_items();
         let mut devs: Vec<Value> = Vec::new();
         let one = |name: &str, key: &str, kind: &str, cast: bool, cast_icon: &str, prefer: &str| -> Value {
-            let s = devices::progress_for(&items, name);
+            let s = self.sending_for(&items, name, key);
+            let s = s.as_ref();
             json!({"key": key, "name": name, "type": kind, "cast": cast, "castIcon": cast_icon, "prefer": prefer,
                 "sending": s.map(|s| json!({"done": s["done"].as_f64().unwrap_or(0.0), "total": s["total"].as_f64().unwrap_or(0.0), "waiting": s["waiting"].as_bool().unwrap_or(false)})),
-                "ended": if s.is_some() { String::new() } else { self.outcome_for(name) }})
+                "ended": if s.is_some() { String::new() } else { self.ended_for(name, key) }})
         };
         for d in self.devices() {
             devs.push(one(&d.name, &d.key, &d.kind, false, "", &d.prefer));
@@ -647,7 +648,7 @@ impl Sharing {
         // the shell state the other hosts read (Control Center, Settings, the island, the dock)
         let devs = self.devices();
         let sharing = json!({"level": self.level(), "mixed": self.mixed(), "on": self.level() != "off", "levelText": self.level_text(), "minutesLeft": self.minutes_left(), "looking": self.looking(),
-            "devices": devs.iter().map(|d| json!({"key": d.key, "name": d.name, "type": d.kind, "prefer": d.prefer, "sending": self.progress_for(d), "ended": self.outcome_for(&d.name)})).collect::<Vec<_>>(),
+            "devices": devs.iter().map(|d| json!({"key": d.key, "name": d.name, "type": d.kind, "prefer": d.prefer, "sending": self.progress_for(d), "ended": self.ended_for(&d.name, &d.key)})).collect::<Vec<_>>(),
             "ports": {"error": self.ports.error, "failedWith": self.ports.failed_with, "busy": self.ports.running}});
         h.set_state("sharing", sharing);
         h.set_state("quickshare", json!({"available": self.quick_available(), "error": self.quick.error, "name": self.my_name(), "trusted": self.quick.trusted, "trustBusy": self.quick.trust_busy,

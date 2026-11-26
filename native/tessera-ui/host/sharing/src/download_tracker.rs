@@ -36,6 +36,7 @@ pub struct Gone {
     pub at: i64,
 }
 
+#[derive(Clone)]
 pub struct File {
     pub path: String,
     pub bytes: f64,
@@ -105,10 +106,23 @@ pub fn update(tracked: &HashMap<String, Seen>, entries: &[(String, f64)], now: i
     (next, items, gone)
 }
 
+/// "report (1).pdf" or "report(2).pdf" for "report.pdf": the same file
+/// that a browser renamed because the name was taken
+fn renamed_copy(file: &str, name: &str) -> bool {
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if i > 0 => (&name[..i], &name[i..]),
+        _ => (name, ""),
+    };
+    let Some(mid) = file.strip_prefix(stem).and_then(|r| r.strip_suffix(ext)) else { return false };
+    let mid = mid.strip_prefix(' ').unwrap_or(mid);
+    mid.len() > 2 && mid.starts_with('(') && mid.ends_with(')') && mid[1..mid.len() - 1].bytes().all(|b| b.is_ascii_digit())
+}
+
 /// The finished file for a download that went away: the same name without the
-/// partial suffix, else (Chromium's "Unconfirmed" ones, or a browser that
-/// renamed it) the newest file changed since it was last seen growing that's
-/// at least as big. "" when nothing fits (it was cancelled).
+/// partial suffix (or that name with a browser's " (1)"), else, for
+/// Chromium's "Unconfirmed" ones only, the newest file changed since it was
+/// last seen growing that's at least as big. "" when nothing fits (it was
+/// cancelled: another file that landed meanwhile is not it).
 pub fn final_file(g: &Gone, files: &[File]) -> String {
     let dir = g.path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
     let mut best: Option<&File> = None;
@@ -116,8 +130,14 @@ pub fn final_file(g: &Gone, files: &[File]) -> String {
         if is_partial(&f.path) {
             continue;
         }
-        if !g.unconfirmed && f.path == format!("{dir}/{}", g.name) {
-            return f.path.clone();
+        if !g.unconfirmed {
+            if f.path == format!("{dir}/{}", g.name) {
+                return f.path.clone();
+            }
+            let Some(base) = f.path.strip_prefix(dir).and_then(|r| r.strip_prefix('/')) else { continue };
+            if !renamed_copy(base, &g.name) {
+                continue;
+            }
         }
         if f.bytes >= g.bytes && f.mtime >= g.at - 2000 && best.map_or(true, |b| f.mtime > b.mtime) {
             best = Some(f);
@@ -167,5 +187,17 @@ mod tests {
             File { path: "/d/newer.part".into(), bytes: 120.0, mtime: 7000 },
         ];
         assert_eq!(final_file(&g, &files), "/d/new.bin");
+    }
+
+    #[test]
+    fn a_cancelled_named_download_is_not_another_file() {
+        let g = Gone { path: "/d/a.zip.part".into(), name: "a.zip".into(), unconfirmed: false, bytes: 100.0, at: 5000 };
+        let other = File { path: "/d/photo.jpg".into(), bytes: 900.0, mtime: 6000 };
+        assert_eq!(final_file(&g, &[other.clone()]), "");
+        let renamed = File { path: "/d/a (1).zip".into(), bytes: 100.0, mtime: 6000 };
+        assert_eq!(final_file(&g, &[other, renamed]), "/d/a (1).zip");
+        assert!(renamed_copy("a(2).zip", "a.zip"));
+        assert!(!renamed_copy("a ().zip", "a.zip"));
+        assert!(!renamed_copy("ab.zip", "a.zip"));
     }
 }
