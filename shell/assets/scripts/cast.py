@@ -193,6 +193,12 @@ class _FileHandler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 return
             end = min(end, size - 1)
+            if end < start:
+                # ("bytes=9-2": a negative length otherwise)
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.end_headers()
+                return
             self.send_response(206)
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         else:
@@ -234,6 +240,9 @@ def resolve(url, run=subprocess.run):
     if r.returncode != 0 or not media:
         raise CastError("Couldn't find a video in that page to cast.")
     return media[0], "video/mp4"
+
+
+MAX_MESSAGE = 1 << 20  # (bytes in one Cast message, at most)
 
 
 class CastError(Exception):
@@ -289,6 +298,10 @@ class Session:
         while True:
             if len(self.buf) >= 4:
                 n = struct.unpack(">I", self.buf[:4])[0]
+                # (a device that announces 4 GB isn't buffered: Cast
+                # messages are small)
+                if n > MAX_MESSAGE:
+                    raise CastError("The device sent something that isn't a Cast message.")
                 if len(self.buf) >= 4 + n:
                     body, self.buf = self.buf[4:4 + n], self.buf[4 + n:]
                     msg = decode(body)
@@ -469,8 +482,9 @@ class Session:
             # (yt-dlp took too long to find the video)
             self.report(state="error", error="The video's site didn't answer in time. Try again.")
             return 1
-        except (ValueError, AttributeError, TypeError, KeyError):
-            # (a request that isn't what it should be: still a status line)
+        except (ValueError, AttributeError, TypeError, LookupError):
+            # (a request that isn't what it should be, or a cut-off message
+            # from the device (IndexError): still a status line)
             self.report(state="error", error="That couldn't be cast. Try again.")
             return 1
         except (OSError, ssl.SSLError) as e:

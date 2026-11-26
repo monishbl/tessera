@@ -140,13 +140,32 @@ class SharedSettingsCarryNoAccount(unittest.TestCase):
                            "cloud": {"hiddenCalendars": ["y"]}, "lock": {"faceDevice": "/dev/video2", "faceCount": 2, "face": True},
                            "sharing": {"name": "Someone's laptop"}})
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(d["google"], {"other": 1})
-        self.assertEqual(d["cloud"], {})
-        self.assertEqual(d["lock"], {"face": True})
-        self.assertEqual(d["sharing"]["name"], "")
+        # (the look only: accounts, sharing and face unlock aren't carried at all)
+        for sec in ("google", "cloud", "sharing"):
+            self.assertNotIn(sec, d)
+        self.assertEqual(d["lock"], {})
+
+    def test_only_the_look_is_carried(self):
+        r, d = self.scrub({"appearance": {"accent": "blue"}, "dock": {"iconSize": 48}, "welcome": {"done": True},
+                           "power": {"lidAc": "sleep"}, "mouse": {"focus": "hover"}, "ai": {"model": "x"},
+                           "lock": {"clockFace": "a", "face": True, "fingerprint": True, "previews": True}})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(sorted(d), ["appearance", "dock", "lock"])
+        self.assertEqual(d["lock"], {"clockFace": "a"})
+
+    def test_the_published_package_is_the_kept_one(self):
+        import tarfile
+        tar = ROOT / "site/public/config/tessera-config.tar.gz"
+        if not tar.exists():
+            self.skipTest("site/build.sh hasn't been run here (the package is built at deploy)")
+        with tarfile.open(tar) as t:
+            got = json.load(t.extractfile("tessera-config/config.json"))
+        self.assertEqual(got, json.loads(read("site/package/config.json")))
+        self.assertNotIn("welcome", got)
+        self.assertNotIn("face", got.get("lock", {}))
 
     def test_an_account_id_elsewhere_stops_the_build(self):
-        r, _ = self.scrub({"calendar": {"default": "google|me@example.com|primary"}})
+        r, _ = self.scrub({"desktop": {"calendar": "google|me@example.com|primary"}})
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("account", r.stderr)
 

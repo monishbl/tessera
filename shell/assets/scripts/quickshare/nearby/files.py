@@ -52,6 +52,15 @@ class FileSink:
         self.written = 0
         self.path = None  # where it landed, once finished
         os.makedirs(folder, exist_ok=True)
+        # (the hidden part file is made at the first chunk: a share of ~1000
+        # photos held a descriptor per file from the start and hit the limit)
+        self._part = None
+        self._file = None
+
+    def _open(self):
+        if self._file is not None:
+            return
+        folder = self.folder
         fd = None
         for _ in range(100):
             part = os.path.join(folder, f".{os.urandom(6).hex()}.quickshare-part")
@@ -66,6 +75,7 @@ class FileSink:
         self._file = os.fdopen(fd, "wb")
 
     def write(self, offset, data):
+        self._open()
         if offset != self.written:
             raise ValueError("file chunks out of order")
         if self.written + len(data) > self.size:
@@ -77,6 +87,7 @@ class FileSink:
         if self.written != self.size:
             self.fail()
             raise ValueError("the file ended early")
+        self._open()  # (an empty file had no chunk to make it)
         self._file.close()
         os.chmod(self._part, 0o644)
         # A hard link only succeeds on a free name, so a file that appeared
@@ -100,11 +111,13 @@ class FileSink:
         self.path = final
 
     def fail(self):
-        try:
-            self._file.close()
-        except OSError:
-            pass
-        try:
-            os.unlink(self._part)
-        except FileNotFoundError:
-            pass
+        if self._file is not None:
+            try:
+                self._file.close()
+            except OSError:
+                pass
+        if self._part is not None:
+            try:
+                os.unlink(self._part)
+            except FileNotFoundError:
+                pass

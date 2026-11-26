@@ -102,6 +102,17 @@ pub fn file(u: &str) -> String {
     }
 }
 
+/// A Flathub app id as flatpak takes it (reverse-DNS, three parts or more,
+/// as appstore.py checks too): nothing it would read as an option, such as
+/// "--all", reaches its command line
+pub fn flatpak_id_ok(id: &str) -> bool {
+    let parts: Vec<&str> = id.split('.').collect();
+    id.len() <= 255
+        && parts.len() >= 3
+        && parts.iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'))
+        && !id.starts_with('-')
+}
+
 pub fn source_name(app: &Value) -> &'static str {
     match app["source"].as_str().unwrap_or("") {
         "repo" => "Arch repos",
@@ -122,7 +133,16 @@ pub fn icon_for(app: &Value) -> String {
     let names: Vec<String> = if app["source"] == "aur" { vec![js(&app["iconName"])] } else { vec![js(&app["iconName"]), js(&app["pkg"])] };
     for n in names.into_iter().filter(|n| !n.is_empty() && !n.contains('/')) {
         let last = n.rsplit('.').next().unwrap_or(&n).to_string();
-        for v in [n.clone(), n.to_lowercase(), last.clone(), last.to_lowercase(), n.split_whitespace().collect::<Vec<_>>().join("-").to_lowercase()] {
+        // (a Flathub app not installed here is matched by its whole id
+        // only: io.github.someone.firefox would wear the installed Firefox's
+        // icon by its last word)
+        let whole_only = app["source"] == "flathub" && !app["installed"].as_bool().unwrap_or(false);
+        let tries: Vec<String> = if whole_only {
+            vec![n.clone(), n.to_lowercase()]
+        } else {
+            vec![n.clone(), n.to_lowercase(), last.clone(), last.to_lowercase(), n.split_whitespace().collect::<Vec<_>>().join("-").to_lowercase()]
+        };
+        for v in tries {
             if let Some(p) = tessera_core::icon_theme::find(&v, None) {
                 return format!("file://{}", p.to_string_lossy());
             }
@@ -214,9 +234,28 @@ impl Sharing {
             }
         }
     }
-    pub fn store_exit(&mut self, gen: u64) {
+    pub fn store_exit(&mut self, h: &mut Host, gen: u64) {
         let wanted = self.store.wanted;
-        self.store.backend.ended(&mut self.sched, gen, wanted, 10_000);
+        if !self.store.backend.ended(&mut self.sched, gen, wanted, 10_000) {
+            return;
+        }
+        // (what was asked of the helper that ended is never answered: a view
+        // would load for ever, and Spotlight's row too. Lines still queued
+        // go to the next helper, so theirs stay)
+        let queued: Vec<i64> = self.store.queued.iter().filter_map(|l| json_line(l)).filter_map(|v| v["id"].as_i64()).collect();
+        let lost: Vec<i64> = self.store.waiting.keys().copied().filter(|id| !queued.contains(id)).collect();
+        for id in lost {
+            match self.store.waiting.remove(&id) {
+                Some(Pending::Load(token)) => {
+                    h.tell("appstore", json!({"answer": {"token": token, "error": "The store stopped. Try again.", "apps": [], "sections": []}}));
+                }
+                Some(Pending::Quick(_)) if self.store.quick_loading => {
+                    self.store.quick_loading = false;
+                    self.store.quick_revision += 1;
+                }
+                _ => {}
+            }
+        }
     }
     pub fn store_line(&mut self, h: &mut Host, gen: u64, line: &str) {
         if !self.store.backend.is(gen) {
@@ -386,12 +425,16 @@ impl Sharing {
             self.update_run("flatpak", &["--install", "flatpak"]);
             return;
         }
-        self.set_job(&key, Some(json!({"state": if op == "install" { "installing" } else { "removing" }})));
         let pkg = js(&app["pkg"]);
+        if !flatpak_id_ok(&pkg) {
+            self.set_job(&key, Some(json!({"state": "", "error": "That isn't a Flathub app id."})));
+            return;
+        }
+        self.set_job(&key, Some(json!({"state": if op == "install" { "installing" } else { "removing" }})));
         let cmd = if op == "install" {
-            crate::proc::s(&["sh", "-c", "flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo && flatpak install --user -y --noninteractive flathub \"$1\"", "sh", &pkg])
+            crate::proc::s(&["sh", "-c", "flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo && flatpak install --user -y --noninteractive -- flathub \"$1\"", "sh", &pkg])
         } else {
-            crate::proc::s(&["flatpak", "uninstall", "--user", "-y", "--noninteractive", &pkg])
+            crate::proc::s(&["flatpak", "uninstall", "--user", "-y", "--noninteractive", "--", &pkg])
         };
         self.store.flatpak_running = true;
         self.run(h, Job::Flatpak { app: app.clone(), op: op.into() }, &cmd, None);
@@ -431,7 +474,7 @@ impl Sharing {
         if let Some(p) = entry {
             let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
             crate::proc::detach(&["gtk-launch", &stem]);
-        } else if app["source"] == "flathub" {
+        } else if app["source"] == "flathub" && flatpak_id_ok(&js(&app["pkg"])) {
             crate::proc::detach(&["flatpak", "run", &js(&app["pkg"])]);
         } else if !id.is_empty() {
             crate::proc::detach(&["gtk-launch", &id]);
@@ -520,6 +563,19 @@ impl Sharing {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_real_flathub_ids_reach_flatpak() {
+        assert!(flatpak_id_ok("org.mozilla.firefox"));
+        assert!(flatpak_id_ok("app.zen_browser.zen"));
+        assert!(flatpak_id_ok("io.github.some-one.App"));
+        assert!(!flatpak_id_ok("--all"));
+        assert!(!flatpak_id_ok("-x.y.z"));
+        assert!(!flatpak_id_ok("org.mozilla"));
+        assert!(!flatpak_id_ok("org..firefox"));
+        assert!(!flatpak_id_ok("org.moz illa.firefox"));
+        assert!(!flatpak_id_ok(""));
+    }
 
     #[test]
     fn a_logo_is_a_file_or_flathubs_address() {

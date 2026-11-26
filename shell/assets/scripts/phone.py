@@ -27,9 +27,9 @@ import secrets
 import select
 import shutil
 import signal
+import stat
 import subprocess
 import sys
-import tempfile
 import time
 
 
@@ -92,6 +92,21 @@ def watch():
         emit({"devices": [], "error": "adb isn't installed (android-tools)."})
         return 1
     proc = subprocess.Popen([exe, "track-devices", "-l"], stdout=subprocess.PIPE)
+    try:
+        return follow(proc)
+    finally:
+        # (Stopped, on SIGTERM, is a BaseException: this runs then too. The
+        # child sat blocked on adb's server, one left per stop)
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+
+
+def follow(proc):
     buf, devices, last = b"", [], 0.0
     while True:
         r, _, _ = select.select([proc.stdout], [], [], 5)
@@ -120,11 +135,40 @@ def qr_svg(text):
     exe = shutil.which("qrencode")
     if not exe:
         return ""
-    d = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(), "tessera")
-    os.makedirs(d, mode=0o700, exist_ok=True)
+    d = private_dir()
+    if not d:
+        return ""
     path = os.path.join(d, "phone-pair-" + secrets.token_hex(4) + ".svg")
-    r = subprocess.run([exe, "-t", "SVG", "-m", "1", "-o", path], input=text, text=True, capture_output=True)
-    return path if r.returncode == 0 else ""
+    # (the code holds the pairing password: made owner-only first, and
+    # exclusively, then written into)
+    try:
+        os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600))
+        r = subprocess.run([exe, "-t", "SVG", "-m", "1", "-o", path], input=text, text=True, capture_output=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        r = None
+    if r is None or r.returncode != 0:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        return ""
+    return path
+
+
+def private_dir():
+    """Our own 0700 folder: in the runtime folder, else the user's cache,
+    never a shared /tmp (a folder another user made first there could be
+    read, or hold links). "" when it isn't ours alone."""
+    base = os.environ.get("XDG_RUNTIME_DIR") or os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    d = os.path.join(base, "tessera")
+    try:
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        st = os.lstat(d)
+    except OSError:
+        return ""
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o077:
+        return ""
+    return d
 
 
 def browse(service, name=None, timeout=1.0):
@@ -154,6 +198,7 @@ def pair(limit=180):
         return 1
     emit({"qr": path})
     end = time.monotonic() + limit
+    paired = False
     try:
         while time.monotonic() < end:
             found = browse("_adb-tls-pairing._tcp", name)
@@ -173,6 +218,7 @@ def pair(limit=180):
             if r.returncode != 0 or "Successfully paired" not in r.stdout:
                 emit({"ok": False, "error": "The phone refused the pairing. Try again."})
                 return 1
+            paired = True
             emit({"stage": "connecting"})
             # its connect service, from the same address
             while time.monotonic() < end:
@@ -189,7 +235,11 @@ def pair(limit=180):
                         emit({"ok": True, "error": ""})
                         return 0
                 time.sleep(1)
-        emit({"ok": False, "error": "No phone answered. On the phone, open Wireless debugging and choose Pair device with QR code."})
+        if paired:
+            # (pairing is done: not sent to pair again)
+            emit({"ok": False, "error": "Paired, but the phone didn't connect. Connect it with a cable once, or pair again."})
+        else:
+            emit({"ok": False, "error": "No phone answered. On the phone, open Wireless debugging and choose Pair device with QR code."})
         return 1
     finally:
         try:

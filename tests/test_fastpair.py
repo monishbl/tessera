@@ -27,6 +27,19 @@ class Parse(unittest.TestCase):
         self.assertFalse(r["showUi"])
         self.assertEqual(r["battery"]["case"], {"level": 20, "charging": True})
 
+    def test_levels_over_100_are_not_levels(self):
+        r = fp.parse(bytes([0x00, 0x33, 126, 101, 100]))
+        self.assertEqual(r["battery"], {"case": {"level": 100, "charging": False}})
+
+    def test_known_is_worked_out_once_per_snapshot(self):
+        w = object.__new__(fp.Watcher)
+        w.cached, w.known_cache, asked = (0, {}), {}, []
+        objs = {"/d/x": {"org.bluez.Device1": {"Address": "11:22:33:44:55:66"}}}
+        w.objects = lambda: (asked.append(1), objs)[1]
+        self.assertIsNone(w.known("/d/x", 60))
+        self.assertIsNone(w.known("/d/x", 60))
+        self.assertEqual(len(asked), 1)
+
     def test_no_battery(self):
         self.assertEqual(fp.parse(bytes([0x00, 0x20, 9, 9])), {"pairing": False})
 

@@ -124,8 +124,8 @@ def remember(d, ip):
         if fp not in peers and len(peers) >= 512:
             return False
         new = fp not in peers
-        peers[fp] = {"alias": str(d.get("alias", "Device"))[:200], "type": str(d.get("deviceType") or "mobile"),
-                     "model": str(d.get("deviceModel") or ""), "fingerprint": fp,
+        peers[fp] = {"alias": clean_alias(d.get("alias"), "Device"), "type": device_type(d.get("deviceType")),
+                     "model": clean_alias(d.get("deviceModel"), "", 32), "fingerprint": fp,
                      "ip": ip, "port": port, "protocol": d.get("protocol") or "https", "seen": time.time()}
         return new
 
@@ -273,6 +273,49 @@ def listen():
 MAX_NAME_BYTES = 200  # (room for " (99)" within a file system's 255)
 
 
+DEVICE_TYPES = ("mobile", "desktop", "web", "headless", "server")
+
+
+asker_rest = {}  # address -> (may ask again at, the rest it had), under session_lock
+
+
+def asker_may_ask(ip, now):
+    """Whether `ip` may ask again (its rest after a no is over)"""
+    if not ip:
+        return True
+    if len(asker_rest) > 512:
+        for k in [k for k, (until, _) in asker_rest.items() if until <= now]:
+            asker_rest.pop(k, None)
+    until, _ = asker_rest.get(ip, (0, 0))
+    return now >= until
+
+
+def asker_refused(ip, now):
+    """A no, or no answer, for `ip`: a rest before it may ask again, 30 s,
+    doubling for each one in a row (at most 10 minutes)"""
+    if not ip:
+        return
+    _, last = asker_rest.get(ip, (0, 0))
+    rest = min(600, last * 2) if last else 30
+    asker_rest[ip] = (now + rest, rest)
+
+
+def clean_alias(alias, fallback, limit=64):
+    """A device's announced name as shown (the sheet, the request card, the
+    island): no control or invisible formatting characters (a right-to-left
+    override or a newline could dress it as another device), one line, at
+    most `limit` characters; `fallback` when nothing is left"""
+    text = "".join(" " if c.isspace() else c for c in str(alias or "") if c.isspace() or unicodedata.category(c)[0] != "C")
+    text = " ".join(text.split())[:limit].strip()
+    return text or fallback
+
+
+def device_type(t):
+    """LocalSend's deviceType, one of its known ones ("mobile" otherwise)"""
+    t = str(t or "").strip().lower()
+    return t if t in DEVICE_TYPES else "mobile"
+
+
 def clean_name(name):
     """A sender's file name, safe to save and to show: its last part only, no
     control or invisible formatting characters (a right-to-left override
@@ -375,12 +418,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except (KeyError, TypeError, ValueError, OSError):
             return self.reply(400)
         sid = secrets.token_hex(16)
+        ip = (getattr(self, "client_address", None) or ("",))[0]
         with session_lock:
             if len(sessions) >= MAX_SESSIONS:
                 return self.reply(429)
-            s = {"id": sid, "from": str(sender.get("alias", "Someone"))[:200], "files": files, "tokens": {},
+            # (one question at a time from an address, and a rest after a
+            # no or no answer: one device could keep a card up for ever)
+            if not asker_may_ask(ip, time.monotonic()):
+                return self.reply(429, {"message": "Wait a little before asking again"})
+            if any(x.get("ip") == ip and x["accepted"] is None for x in sessions.values()):
+                return self.reply(429, {"message": "Already asking"})
+            s = {"id": sid, "from": clean_alias(sender.get("alias"), "Someone"), "files": files, "tokens": {},
                  "paths": [], "done": 0, "total": total, "accepted": None, "cancelled": False,
-                 "claimed": set(), "touched": time.monotonic()}
+                 "claimed": set(), "touched": time.monotonic(), "ip": ip}
             sessions[sid] = s
             ev = answers[sid] = threading.Event()
         emit("incoming", session=sid, **{"from": s["from"]}, type=sender.get("deviceType") or "mobile",
@@ -392,6 +442,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.reply(403)
             if not s["accepted"]:
                 sessions.pop(sid, None)
+                asker_refused(ip, time.monotonic())
                 # expired: nobody answered in time (else it was declined here)
                 emit("declined", session=sid, dir="in", **{"from": s["from"]}, expired=s["accepted"] is None)
                 return self.reply(403, {"message": "Declined or timed out"})

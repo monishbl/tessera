@@ -96,7 +96,11 @@ impl Sharing {
         } else {
             let last = stderr.trim().lines().last().unwrap_or("").to_string();
             self.air.error = if last.is_empty() { "AirPlay couldn't start.".into() } else { last };
+            return;
         }
+        // (turned off again while it was starting: stop it now. Not after a
+        // failure, which would start it again at once)
+        self.air_apply(h);
     }
     pub fn air_child_exit(&mut self, gen: u64, code: i32, stderr: &str) {
         if gen != self.air.child.gen {

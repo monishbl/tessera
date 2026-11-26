@@ -65,7 +65,7 @@ def parse(data):
             bat = {}
             for n, b in zip(names, body):
                 level = b & 0x7F
-                if level != 0x7F:
+                if level <= 100:  # (0x7F: unknown; 101-126 aren't levels)
                     bat[n] = {"level": level, "charging": bool(b & 0x80)}
             if bat:
                 out["battery"] = bat
@@ -219,6 +219,7 @@ class Watcher:
         self.subscribed = False  # (to every device's signals: scanning only)
         self.watching = {}  # path -> signal subscription (with a monitor: only its devices)
         self.cached = (0, {})
+        self.known_cache = {}  # path -> (snapshot time, known())
 
     def call(self, path, iface, method, args=None, sig=None, timeout=10000):
         params = self.GLib.Variant(sig, args) if sig else None
@@ -260,28 +261,37 @@ class Watcher:
     def objects(self):
         return self.call("/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects")[0]
 
-    def recent_objects(self):
-        """objects(), at most 5 s old (asked only while earbuds are in pairing
-        mode nearby)"""
+    def recent_objects(self, max_age=5):
+        """objects(), at most `max_age` s old: 5 while earbuds are in pairing
+        mode nearby, a minute for battery adverts alone (any open case in a
+        train or an office sends them all day, and the whole object tree was
+        asked for every 5 s)"""
         at, objs = self.cached
-        if time.monotonic() - at > 5:
+        if time.monotonic() - at > max_age:
             objs = self.objects()
             self.cached = (time.monotonic(), objs)
         return objs
 
-    def known(self, path):
+    def known(self, path, max_age=5):
         """The paired earbuds the advert at `path` comes from: {"address",
-        "name", "connected"}, or None."""
-        objs = self.recent_objects()
+        "name", "connected"}, or None. Worked out once per object snapshot."""
+        objs = self.recent_objects(max_age)
+        at = self.cached[0]
+        hit = self.known_cache.get(path)
+        if hit and hit[0] == at:
+            return hit[1]
+        if len(self.known_cache) > 500:
+            self.known_cache.clear()
+        out = None
         advert = objs.get(path, {}).get("org.bluez.Device1")
-        if not advert:
-            return None
-        devices = [(p, i["org.bluez.Device1"]) for p, i in objs.items() if "org.bluez.Device1" in i]
-        twin = pick_known(devices, advert)
-        if not twin:
-            return None
-        d = objs[twin]["org.bluez.Device1"]
-        return {"address": d.get("Address", ""), "name": d.get("Alias") or d.get("Name") or "", "connected": bool(d.get("Connected"))}
+        if advert:
+            devices = [(p, i["org.bluez.Device1"]) for p, i in objs.items() if "org.bluez.Device1" in i]
+            twin = pick_known(devices, advert)
+            if twin:
+                d = objs[twin]["org.bluez.Device1"]
+                out = {"address": d.get("Address", ""), "name": d.get("Alias") or d.get("Name") or "", "connected": bool(d.get("Connected"))}
+        self.known_cache[path] = (at, out)
+        return out
 
     def find_adapter(self):
         for path, ifaces in self.objects().items():
@@ -356,7 +366,7 @@ class Watcher:
             # left / right / case levels these are)
             if d.get("pairing") or d.get("battery"):
                 try:
-                    out["known"] = self.known(path)
+                    out["known"] = self.known(path, 5 if d.get("pairing") else 60)
                 except Exception:  # noqa: BLE001
                     out["known"] = None
             state.append(out)

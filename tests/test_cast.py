@@ -41,6 +41,17 @@ class Messages(unittest.TestCase):
         self.assertEqual(json.loads(cast.decode(raw[4:])["payload"])["x"], "y" * 5000)
 
 
+    def test_a_cut_off_message_is_a_lookup_error(self):
+        with self.assertRaises(LookupError):
+            cast.decode(bytes([0x08]))  # (a varint field with no value)
+
+    def test_a_huge_announced_length_is_refused(self):
+        s = object.__new__(cast.Session)
+        s.buf = struct.pack(">I", 1 << 31) + b"x"
+        with self.assertRaises(cast.CastError):
+            s.read(0.1)
+
+
 class Discovery(unittest.TestCase):
     def test_avahi(self):
         out = "\n".join([

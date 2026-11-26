@@ -26,6 +26,10 @@ pub struct Share {
     pub requests: Vec<Value>,
     /// nameKey -> (sent | declined | failed, at ms)
     pub outcomes: HashMap<String, (String, i64)>,
+    /// nameKey -> the key of the entry last sent to under that name: of two
+    /// devices both called "Pixel 8", only the one pressed shows the ring
+    /// and "Sent" (transfers name their peer, not the entry)
+    pub targets: HashMap<String, String>,
     pub last_real: bool,
     /// who sent the hidden requests a helper's end dropped: said once in the
     /// island on the next turn (helper_ended has no Host)
@@ -125,6 +129,7 @@ impl Sharing {
         if paths.is_empty() {
             return;
         }
+        self.share.targets.insert(devices::base_key(&d.name, &d.key), d.key.clone());
         if d.prefer == "quickshare" {
             if let Some(id) = d.quickshare.clone() {
                 self.quick_send(&id, paths);
@@ -146,7 +151,25 @@ impl Sharing {
     }
     /// The send to this device in flight, for its progress ring
     pub fn progress_for(&self, d: &Device) -> Option<Value> {
-        devices::progress_for(&self.sharing_items(), &d.name).cloned()
+        self.sending_for(&self.sharing_items(), &d.name, &d.key)
+    }
+    /// Whether what is said under this name (a transfer's peer) belongs to
+    /// this entry: yes unless a same-name other entry was the one sent to
+    fn is_target(&self, name: &str, key: &str) -> bool {
+        self.share.targets.get(&devices::base_key(name, key)).is_none_or(|t| t == key)
+    }
+    pub fn sending_for(&self, items: &[Value], name: &str, key: &str) -> Option<Value> {
+        if !self.is_target(name, key) {
+            return None;
+        }
+        let k = devices::base_key(name, key);
+        items.iter().find(|it| it["kind"] == "send" && devices::name_key(it["peer"].as_str().unwrap_or("")) == k).cloned()
+    }
+    pub fn ended_for(&self, name: &str, key: &str) -> String {
+        if !self.is_target(name, key) {
+            return String::new();
+        }
+        self.outcome_for_key(&devices::base_key(name, key))
     }
 
     // ── Text ────────────────────────────────────────────────────────────
@@ -336,7 +359,10 @@ impl Sharing {
         self.share.outcomes.insert(devices::name_key(name), (state.to_string(), tessera_core::util::now_ms()));
     }
     pub fn outcome_for(&self, name: &str) -> String {
-        match self.share.outcomes.get(&devices::name_key(name)) {
+        self.outcome_for_key(&devices::name_key(name))
+    }
+    fn outcome_for_key(&self, k: &str) -> String {
+        match self.share.outcomes.get(k) {
             Some((s, at)) if tessera_core::util::now_ms() - at < 60000 => s.clone(),
             _ => String::new(),
         }
@@ -539,6 +565,23 @@ mod tests {
         assert_eq!(text_file_name("/d", "Text 1", |_| false), "/d/Text 1.txt");
         let taken = ["/d/Text 1.txt".to_string(), "/d/Text 1 (2).txt".to_string()];
         assert_eq!(text_file_name("/d", "Text 1", |f| taken.iter().any(|t| t == f)), "/d/Text 1 (3).txt");
+    }
+
+    #[test]
+    fn of_two_same_name_devices_only_the_pressed_one_shows_its_send() {
+        let mut s = with(json!({"quickShare": "off"}));
+        let q = |n: &str, id: &str| (n.to_string(), "phone".to_string(), id.to_string());
+        let devs = devices::merge(&[], &[q("Pixel 8", "Q1"), q("Pixel 8", "Q2")]);
+        assert_eq!(devs[1].name, "Pixel 8 (2)");
+        let items = vec![json!({"kind": "send", "peer": "Pixel 8", "done": 1, "total": 2})];
+        // (nothing sent from here yet: both names match, as before)
+        assert!(s.sending_for(&items, &devs[0].name, &devs[0].key).is_some());
+        s.send_to(&devs[1], &["/tmp/a.jpg".to_string()]);
+        assert!(s.sending_for(&items, &devs[0].name, &devs[0].key).is_none());
+        assert!(s.sending_for(&items, &devs[1].name, &devs[1].key).is_some());
+        s.outcome("Pixel 8", "sent");
+        assert_eq!(s.ended_for(&devs[1].name, &devs[1].key), "sent");
+        assert_eq!(s.ended_for(&devs[0].name, &devs[0].key), "");
     }
 
     #[test]

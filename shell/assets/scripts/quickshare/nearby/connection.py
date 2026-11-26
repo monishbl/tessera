@@ -43,6 +43,11 @@ PT = offline.PayloadTransferFrame
 LAST_CHUNK = PT.PayloadChunk.LAST_CHUNK
 CHUNK = 512 * 1024  # what Nearby itself sends files in
 MAX_BYTES_PAYLOAD = 1024 * 1024  # control messages and shared text are small
+# Message payloads open at once, and their bytes together: a stranger that
+# only finished the handshake could otherwise start thousands and never end
+# them, growing the helper's memory before anything was accepted
+MAX_OPEN_BYTES_PAYLOADS = 8
+MAX_OPEN_BYTES_TOTAL = 4 * 1024 * 1024
 HANDSHAKE_TIMEOUT = 15
 KEEP_ALIVE = 10  # seconds between our keep-alives
 IDLE_TIMEOUT = 45  # no frame at all for this long: the other side is gone
@@ -535,17 +540,29 @@ class Connection:
         if h.type == PT.PayloadHeader.BYTES:
             if h.total_size > MAX_BYTES_PAYLOAD:
                 raise ProtocolError("a message payload is too big")
-            buf = self._incoming.setdefault(pid, bytearray())
+            buf = self._incoming.get(pid)
+            if buf is None:
+                buffers = [b for b in self._incoming.values() if isinstance(b, bytearray)]
+                if len(buffers) >= MAX_OPEN_BYTES_PAYLOADS:
+                    raise ProtocolError("too many message payloads at once")
+                buf = self._incoming[pid] = bytearray()
+            elif not isinstance(buf, bytearray):
+                raise ProtocolError("message bytes for a file payload")
             if chunk.offset != len(buf):
                 raise ProtocolError("message payload chunks out of order")
             buf += chunk.body
             if len(buf) > MAX_BYTES_PAYLOAD:
                 raise ProtocolError("a message payload is too big")
+            if sum(len(b) for b in self._incoming.values() if isinstance(b, bytearray)) > MAX_OPEN_BYTES_TOTAL:
+                raise ProtocolError("too much message data at once")
             if last:
                 del self._incoming[pid]
                 self.on_bytes(pid, bytes(buf))
         elif h.type == PT.PayloadHeader.FILE:
-            sink = self._incoming.get(pid) or self._sinks.pop(pid, None)
+            sink = self._incoming.get(pid)
+            if isinstance(sink, bytearray):
+                raise ProtocolError("file bytes for a message payload")
+            sink = sink or self._sinks.pop(pid, None)
             if sink is None:
                 raise ProtocolError("a file arrived that wasn't announced or accepted")
             self._incoming[pid] = sink

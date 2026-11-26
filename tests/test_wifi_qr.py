@@ -134,5 +134,13 @@ class Share(unittest.TestCase):
         self.assertEqual(self.run_script("scan", str(png))["found"], [])
 
 
+
+class SlowTools(unittest.TestCase):
+    def test_a_reader_that_takes_too_long_is_an_answer(self):
+        from unittest import mock
+        with mock.patch.object(wq.shutil, "which", return_value="/usr/bin/zbarimg"), \
+                mock.patch.object(wq.subprocess, "run", side_effect=subprocess.TimeoutExpired("zbarimg", 20)):
+            self.assertEqual(wq.scan("/x.png"), {"ok": True, "found": []})
+
 if __name__ == "__main__":
     unittest.main()

@@ -257,8 +257,14 @@ class Receive(Session):
             await self._respond(RESP.REJECT)
             raise Declined("declined")
 
-        sinks = {f.payload_id: FileSink(self.folder, f.name, f.size) for f in files}
+        sinks = {}
         try:
+            # (inside the cleanup: one that fails midway leaves no part
+            # files behind; two files with one payload id are refused)
+            for f in files:
+                if f.payload_id in sinks:
+                    raise ProtocolError("two files with the same payload id")
+                sinks[f.payload_id] = FileSink(self.folder, f.name, f.size)
             for pid, sink in sinks.items():
                 self.conn.expect_file(pid, sink)
             self._expected_bytes = {t.payload_id for t in texts} | {w.payload_id for w in wifi}

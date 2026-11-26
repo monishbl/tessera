@@ -142,6 +142,24 @@ class LocalSendAsksFirst(unittest.TestCase):
             self.assertEqual(got, safe_name(raw, "file") if safe_name(raw, "file") else "file")
         self.assertTrue(self.m.clean_name("x" * 300 + ".jpg").endswith(".jpg"))
 
+    def test_a_device_told_no_rests_before_asking_again(self):
+        self.m.asker_rest.clear()
+        self.assertTrue(self.m.asker_may_ask("10.0.0.9", 100))
+        self.m.asker_refused("10.0.0.9", 100)
+        self.assertFalse(self.m.asker_may_ask("10.0.0.9", 120))
+        self.assertTrue(self.m.asker_may_ask("10.0.0.8", 120))
+        self.assertTrue(self.m.asker_may_ask("10.0.0.9", 131))
+        self.m.asker_refused("10.0.0.9", 131)  # (again: twice as long)
+        self.assertFalse(self.m.asker_may_ask("10.0.0.9", 180))
+        self.assertTrue(self.m.asker_may_ask("10.0.0.9", 192))
+
+    def test_device_names_are_shown_clean(self):
+        self.assertEqual(self.m.clean_alias("Ada\u202e's\nphone  ", "Device"), "Ada's phone")
+        self.assertEqual(self.m.clean_alias("\u200b", "Device"), "Device")
+        self.assertEqual(len(self.m.clean_alias("x" * 500, "Device")), 64)
+        self.assertEqual(self.m.device_type("Desktop"), "desktop")
+        self.assertEqual(self.m.device_type("x" * 9000), "mobile")
+
     def test_received_files_are_not_executable(self):
         s = dict(id="s", files={"f": dict(fileName="run.sh", size=4)}, tokens={"f": "t"}, paths=[], done=0, total=4,
                  cancelled=False, claimed=set(), touched=time.monotonic(), **{"from": "x"})
@@ -160,9 +178,11 @@ class QuickShareFiles(unittest.TestCase):
         from nearby.files import FileSink
         with tempfile.TemporaryDirectory() as d:
             sink = FileSink(d, "../evil.sh", 4)
+            self.assertEqual(os.listdir(d), [])  # (made at the first chunk)
+            sink.write(0, b"ec")
             part = sink._part
             self.assertEqual(os.stat(part).st_mode & 0o777, 0o600)
-            sink.write(0, b"echo")
+            sink.write(2, b"ho")
             sink.finish()
             self.assertEqual(os.path.dirname(sink.path), d)
             self.assertEqual(os.path.basename(sink.path), "evil.sh")
@@ -214,7 +234,7 @@ class LinkShare(unittest.TestCase):
             self.assertEqual(self.post(base + "/wrong/upload?name=a.txt", b"x"), 404)
             self.assertEqual(os.listdir(d), [])
             for _ in range(LINK.MAX_STRANGERS):
-                share.check("/guess/")
+                share.check("/guessguessguessguess/")  # (a try at the secret: browsers' own /favicon.ico don't count)
             self.assertTrue(share.stop.is_set())
 
     def test_an_upload_is_cleaned_never_replaces_and_isnt_executable(self):

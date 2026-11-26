@@ -16,6 +16,16 @@ mkdir -p "$work/tessera-config" "$OUT"
 python3 - "$SRC" "$work/tessera-config/config.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
+# The look only, by name: the whole settings file also carried power and lid
+# actions, pointer and trackpad, hot corners, sounds, an AI model, sharing,
+# and welcome.done (an importer before first start never saw the welcome)
+LOOK = {"defaultsVersion", "appearance", "controlCenter", "desktop", "dock", "island", "lock", "menubar",
+        "notificationCenter", "overview", "stageManager", "wallpaper"}
+d = {k: v for k, v in d.items() if k in LOOK}
+# (and of the lock screen, its look: not face or fingerprint unlock, nor
+# what notifications show on it)
+for key in ("face", "fingerprint", "notifications", "previews", "faceDevice", "faceCount"):
+    d.get("lock", {}).pop(key, None)
 d.get("desktop", {}).pop("widgets", None)
 d.get("desktop", {}).pop("iconPositions", None)
 w = d.get("wallpaper", {})
@@ -48,7 +58,8 @@ def account_ids(v):
         yield v
 assert not list(account_ids(d)), "an account's calendar or list id slipped into the shared settings"
 PY
-[[ "$SRC" == "$SAVED" ]] || cp "$work/tessera-config/config.json" "$SAVED"
+# (the kept copy is always the cleaned one, even when it was the source)
+cp "$work/tessera-config/config.json" "$SAVED"
 cp "$HERE/package/import.sh" "$HERE/package/README.txt" "$work/tessera-config/"
 chmod +x "$work/tessera-config/import.sh"
 tar czf "$OUT/tessera-config.tar.gz" -C "$work" tessera-config

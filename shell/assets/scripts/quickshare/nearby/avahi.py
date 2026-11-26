@@ -39,6 +39,8 @@ class Avahi:
         self.gloop = GLib.MainLoop.new(self.ctx, False)
         self.bus = None
         self.group = None
+        self.published = None  # (name, kind, port, txt) while announced
+        self.owner_sub = None
         self.browser = None
         self.subscriptions = []
         ready = threading.Event()
@@ -88,21 +90,58 @@ class Avahi:
         return r.unpack() if r is not None else None
 
     # ── Publishing ───────────────────────────────────────────────────────
+    def _announce(self, name, kind, port, txt):
+        """In the GLib thread: the service into our entry group (a new one
+        when the old is gone: avahi-daemon restarted, and Reset on the dead
+        path failed every later time)"""
+        records = [f"{k}={v}".encode() for k, v in txt.items()]
+        for attempt in (0, 1):
+            try:
+                if self.group is None:
+                    (self.group,) = self._call("/", "org.freedesktop.Avahi.Server", "EntryGroupNew", None, "(o)")
+                else:
+                    self._call(self.group, "org.freedesktop.Avahi.EntryGroup", "Reset", None)
+                self._call(self.group, "org.freedesktop.Avahi.EntryGroup", "AddService",
+                           ("(iiussssqaay)", (IF_UNSPEC, PROTO_INET, 0, name, kind, "", "", port, records)))
+                self._call(self.group, "org.freedesktop.Avahi.EntryGroup", "Commit", None)
+                return
+            except Exception:  # noqa: BLE001 (GLib.Error: the group is gone)
+                self.group = None
+                if attempt:
+                    raise
+
+    def _watch_owner(self):
+        """In the GLib thread: when avahi-daemon comes back (a restart, an
+        update), what was announced is announced again; phones stopped
+        seeing the computer while the tile still said Everyone"""
+        if self.owner_sub is not None:
+            return
+
+        def on_owner(conn, sender, path, iface, signal, params):
+            _, old, new = params.unpack()
+            if old:
+                self.group = None  # (the daemon that had it is gone)
+            if new and self.published:
+                try:
+                    self._announce(*self.published)
+                except Exception:  # noqa: BLE001 (tried again at the next publish)
+                    pass
+
+        self.owner_sub = self.bus.signal_subscribe(
+            "org.freedesktop.DBus", "org.freedesktop.DBus", "NameOwnerChanged", "/org/freedesktop/DBus", AVAHI,
+            self.Gio.DBusSignalFlags.NONE, on_owner)
+
     async def publish(self, name, kind, port, txt):
         """Announces (or re-announces) one service; replaces the last one."""
         def go():
-            if self.group is None:
-                (self.group,) = self._call("/", "org.freedesktop.Avahi.Server", "EntryGroupNew", None, "(o)")
-            else:
-                self._call(self.group, "org.freedesktop.Avahi.EntryGroup", "Reset", None)
-            records = [f"{k}={v}".encode() for k, v in txt.items()]
-            self._call(self.group, "org.freedesktop.Avahi.EntryGroup", "AddService",
-                       ("(iiussssqaay)", (IF_UNSPEC, PROTO_INET, 0, name, kind, "", "", port, records)))
-            self._call(self.group, "org.freedesktop.Avahi.EntryGroup", "Commit", None)
+            self._watch_owner()
+            self.published = (name, kind, port, dict(txt))
+            self._announce(name, kind, port, txt)
         await self._in_glib(go)
 
     async def unpublish(self):
         def go():
+            self.published = None
             if self.group is not None:
                 try:
                     self._call(self.group, "org.freedesktop.Avahi.EntryGroup", "Free", None)

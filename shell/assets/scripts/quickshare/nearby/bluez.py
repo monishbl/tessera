@@ -84,6 +84,9 @@ OM_IFACE = {"methods": {"GetManagedObjects": ("", "a{oa{sa{sv}}}")},
             "signals": {"InterfacesAdded": "oa{sa{sv}}", "InterfacesRemoved": "oas"}}
 
 
+SESSION_QUIET = 10  # s without a packet before another device may take over the GATT session
+
+
 def _bytes(v):
     return bytes(v) if v is not None else b""
 
@@ -189,6 +192,7 @@ class Bluetooth:
         self.notify_value = b""
         self.pending = []  # packets for the phone before it subscribed
         self.session = None  # (device path, WeaveSocket) of the phone connected to us
+        self.session_at = 0.0  # (loop time of its last packet)
         self.scanning = False
         self.waking = False  # the "someone is sharing" broadcast is on
         self.seen = {}  # device path → {"endpoint_id", "endpoint_info", "psm", "address", "type", "at"}
@@ -227,8 +231,30 @@ class Bluetooth:
         self._subs.append(self.bus.subscribe(BLUEZ, PROPS, "PropertiesChanged", None, self._changed))
         self._subs.append(self.bus.subscribe(BLUEZ, OM, "InterfacesAdded", None, self._added))
         self._subs.append(self.bus.subscribe(BLUEZ, OM, "InterfacesRemoved", None, self._removed))
+        self._subs.append(self.bus.subscribe("org.freedesktop.DBus", "org.freedesktop.DBus", "NameOwnerChanged",
+                                             "/org/freedesktop/DBus", self._owner, arg0=BLUEZ))
         await self.refresh()
         return self.adapter is not None
+
+    def _owner(self, path, signal, args):
+        """bluetoothd went or came back (an update, "Restart Bluetooth and
+        try again"): it forgot our advertisements, GATT application and
+        discovery. All is dropped here, and when it's back the adapter is
+        found afresh, which makes the service advertise (and scan) again."""
+        name, old, new = args
+        if name != BLUEZ:
+            return
+        if old:
+            self._log("bluetoothd went away")
+            self._end_session("Bluetooth restarted")
+            self._scan_lost()
+            had = self.adapter is not None
+            self.adapter, self.powered = None, False
+            self.advertising, self.served = [], False
+            if had:
+                self.on_state(self.state())
+        if new:
+            asyncio.ensure_future(self.refresh())
 
     async def refresh(self):
         try:
@@ -265,6 +291,9 @@ class Bluetooth:
             self.on_state(self.state())
             if not self.powered:
                 self._end_session("Bluetooth was turned off")
+                # (BlueZ dropped the discovery: scan() starts it again when
+                # power returns, instead of answering "already scanning")
+                self._scan_lost()
         elif iface == DEVICE:
             noted = {k: changed[k] for k in ("Connected", "Paired", "Bonded", "Trusted", "ServicesResolved")
                      if k in changed}
@@ -290,6 +319,7 @@ class Bluetooth:
     def _removed(self, path, signal, args):
         obj, ifaces = args
         if ADAPTER in ifaces and obj == self.adapter:
+            self._scan_lost()
             self.adapter, self.powered = None, False
             self.advertising, self.served = [], False
             self.on_state(self.state())
@@ -461,6 +491,14 @@ class Bluetooth:
         device = options.get("device", "")
         if self.session and self.session[1].closed:
             self.session = None
+        now = asyncio.get_running_loop().time()
+        # (another device first: its connection request ended a phone's
+        # transfer under way. A phone that gave up may come back from a new
+        # random address, so another device may start over only once the
+        # session has been quiet for SESSION_QUIET seconds)
+        if (self.session and device and self.session[0] and device != self.session[0]
+                and now - self.session_at < SESSION_QUIET):
+            raise DBusError("org.bluez.Error.InProgress", "busy with another phone")
         request = bool(packet) and packet[0] == CONTROL_REQUEST
         if request and self.session is not None:
             self._end_session("the phone started a new connection")
@@ -472,6 +510,7 @@ class Bluetooth:
             sock = WeaveSocket(_NotifyLink(self), is_client=False,
                                max_packet=mtu - 3 if mtu > 23 else MIN_PACKET, log=self._log)
             self.session = (device, sock)
+            self.session_at = now
             self._log(f"phone connected over GATT (MTU {mtu or 'unknown'}, "
                       f"{'subscribed' if self.notifying else 'not subscribed yet'})")
             asyncio.ensure_future(self._await_subscription(sock))
@@ -482,6 +521,7 @@ class Bluetooth:
             return
         if device and self.session[0] and device != self.session[0]:
             raise DBusError("org.bluez.Error.InProgress", "busy with another phone")
+        self.session_at = now
         await self.session[1].feed(packet)
 
     async def _await_subscription(self, sock):
@@ -521,8 +561,24 @@ class Bluetooth:
                 await self._look_at(path, ifaces[DEVICE])
         return True
 
+    def _scan_lost(self):
+        """BlueZ ended the scan itself (power off, the adapter gone, a
+        restart): nothing to tell it, only our side to clear"""
+        if not self.scanning:
+            return
+        self.scanning = self.waking = False
+        if self._prune:
+            self._prune.cancel()
+        if ADV_WAKE in self.advertising:
+            self.advertising.remove(ADV_WAKE)
+        for path in list(self.seen):
+            self._forget(path)
+
     async def stop_scan(self):
         if not self.scanning:
+            return
+        if self.adapter is None:
+            self._scan_lost()
             return
         self.scanning = False
         if self._prune:
@@ -646,7 +702,7 @@ class Bluetooth:
         try:
             await self.bus.call(BLUEZ, notify, GATT_CHAR, "StartNotify")
             await sock.connect()
-        except (DBusError, WeaveError) as e:
+        except (DBusError, WeaveError, TransportClosed, asyncio.TimeoutError) as e:
             self.bus.unsubscribe(vsub)
             await self._disconnect(path)
             raise TransportClosed(f"the Bluetooth connection didn't start ({e})") from e
@@ -669,8 +725,14 @@ class Bluetooth:
                     pass
                 await outer._disconnect(path)
 
-        transport = BleSocketTransport(_Messages(), is_client=True, peer=path, log=self._log)
-        await transport.start()
+        messages = _Messages()
+        transport = BleSocketTransport(messages, is_client=True, peer=path, log=self._log)
+        try:
+            await transport.start()
+        except BaseException:
+            # (the subscription and the link to the phone stayed up)
+            await messages.close()
+            raise
         return transport
 
     async def _disconnect(self, path):
@@ -846,6 +908,11 @@ class L2capServer:
             self._log(f"L2CAP channel dropped before the data connection ({e or 'no request'})")
             await messages.close()
             return
+        except asyncio.CancelledError:
+            # (visibility turned off mid-handshake: the socket was left open,
+            # its reader still on the loop)
+            await messages.close()
+            raise
         self._log("phone connected over L2CAP")
         transport = BleSocketTransport(messages, is_client=False, acks=True, peer="l2cap", log=self._log, medium="ble")
         self.on_session(transport)

@@ -203,3 +203,20 @@ test("only Tessera's own JSON posts: a web page's (Origin, no JSON type) is refu
     });
     assert.equal((await worker.fetch(plain, env)).status, 415);
 });
+
+test("system info can't mention anyone or leave its table", () => {
+    const r = validate({ title: "T", happened: "H", sysinfo: { "@someone": "x", "GPU": "a\n| b @c", "Kernel": "6.1" } });
+    assert.deepEqual(Object.keys(r.sysinfo), ["GPU", "Kernel"]);
+    const body = issueBody(r, "0".repeat(32), "https://x");
+    assert.match(body, /\| GPU \| a \/ b @​c \|/);
+});
+
+test("a database that fails is a reason in JSON, and an unfiled report says so", async () => {
+    const db = new FakeD1();
+    db.prepare = () => { throw new Error("D1 paused"); };
+    let res = await worker.fetch(post({ title: "T", happened: "H" }), { DB: db });
+    assert.equal(res.status, 503);
+    assert.match((await res.json()).error, /trouble/);
+    res = await worker.fetch(post({ title: "T", happened: "H" }), { DB: new FakeD1() });
+    assert.match((await res.json()).note, /not filed on GitHub/);
+});

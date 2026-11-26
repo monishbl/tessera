@@ -17,8 +17,12 @@
 //!   the card    while the feed has a request (Sharing.request): centred
 //!               on the screen you're using, who, what, the PIN, Decline /
 //!               Accept, then a ring (Material: a wavy bar) while it
-//!               arrives, then Open / Show in Files. Enter accepts, Esc
-//!               declines (or puts it away).
+//!               arrives, then Open / Show in Files. It never takes the
+//!               keyboard (CARD_KEYBOARD): it is answered by a click, a
+//!               screen reader's default action, or without a pointer by
+//!               `tessera-ui ipc call sharing accept | decline` (bindable to
+//!               a key). Its key handling (card_key) is for a layer given
+//!               the keyboard on purpose, which none is today.
 //!   QR card     while LinkShare shares (an iPhone, or any phone's
 //!               browser): the code, what to do, how it's going, Done.
 //!
@@ -334,7 +338,9 @@ pub fn photos(files: &[FileInfo]) -> bool {
 pub fn incoming_what(r: &Request) -> String {
     match r.files.len() {
         0 => r.what.clone(),
-        1 => format!("“{}”", r.files[0].name),
+        // (the middle elided, never the end: the card wraps to three lines
+        // and cut a long name's extension, ".desktop" or ".sh", off)
+        1 => format!("“{}”", elide_middle(&r.files[0].name, 48)),
         n => format!("{n} {}", if photos(&r.files) { "photos" } else { "files" }),
     }
 }
@@ -422,6 +428,23 @@ pub enum Act {
     Show,
     Open,
     Drop,
+}
+
+/// A received file that runs or scripts when opened: Show in Files is the
+/// button to press for it, not Open
+pub fn runnable(path: &str) -> bool {
+    let low = path.to_lowercase();
+    let ext = low.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+    !ext.contains('/') && ["desktop", "sh", "bash", "zsh", "fish", "html", "htm", "svg", "jar", "appimage", "py", "pl", "rb", "run", "bin", "exe", "msi", "bat", "cmd", "js"].contains(&ext)
+}
+
+/// card_buttons, with Show in Files filled (on the right) for one received
+/// file that would run or script when opened
+pub fn card_buttons_for(state: &str, paths: &[String]) -> Vec<(&'static str, bool, Act)> {
+    if state == "done" && paths.len() == 1 && runnable(&paths[0]) {
+        return vec![("Open", false, Act::Open), ("Show in Files", true, Act::Show)];
+    }
+    card_buttons(state, paths.len())
 }
 
 /// The card's buttons by state (iOS alert buttons: the one to do on the right)
@@ -579,6 +602,23 @@ struct Win<T> {
     up: bool,
 }
 
+/// The QR card's error offers to install qrencode
+fn link_install_shown(l: &Link) -> bool {
+    l.stage == "error" && l.error.contains("qrencode")
+}
+
+/// Tab on the QR card: Install (2, when shown) then Done (1); Backtab the other way
+fn link_next_focus(at: u8, install: bool, back: bool) -> u8 {
+    let order: &[u8] = if install { &[2, 1] } else { &[1] };
+    let i = order.iter().position(|x| *x == at);
+    match (i, back) {
+        (None, false) => order[0],
+        (None, true) => order[order.len() - 1],
+        (Some(i), false) => order[(i + 1) % order.len()],
+        (Some(i), true) => order[(i + order.len() - 1) % order.len()],
+    }
+}
+
 #[derive(Default)]
 pub struct Share {
     sheet: Option<Win<ui::ShareSheet>>,
@@ -589,7 +629,8 @@ pub struct Share {
     /// keyboard: 0 the ×, 1.. the devices, then the other ways (-1 none)
     focus: i32,
     card_focus: i32,
-    link_focus: bool,
+    /// the QR card's keyboard: 0 none, 1 Done (Stop Sharing), 2 Install qrencode
+    link_focus: u8,
     /// the header's picture: (its path, decoded) once asked for
     thumb: Option<(String, Option<slint::Image>)>,
     icons: HashMap<String, Option<slint::Image>>,
@@ -939,7 +980,7 @@ impl Share {
             let a11y = crate::a11y::A11y::new(&surface, st.tx.clone());
             self.card = Some(Win { output: output.clone(), surface, ui, a11y, glass_sent: String::new(), size: (0, 0), up: false });
         }
-        let buttons = card_buttons(&r.state, r.paths.len());
+        let buttons = card_buttons_for(&r.state, &r.paths);
         if self.card_focus >= buttons.len() as i32 {
             self.card_focus = -1;
         }
@@ -978,7 +1019,7 @@ impl Share {
 
     fn card_button(&mut self, i: i32) {
         let Some(r) = &self.feed.request else { return };
-        let list = card_buttons(&r.state, r.paths.len());
+        let list = card_buttons_for(&r.state, &r.paths);
         let Some((_, _, act)) = usize::try_from(i).ok().and_then(|i| list.get(i)) else { return };
         crate::shell::ask("share", act_call(*act, &r.id));
     }
@@ -986,7 +1027,7 @@ impl Share {
     fn card_key(&mut self, text: &str) {
         let is = |key: Key| text == SharedString::from(key).as_str();
         let Some(r) = self.feed.request.clone() else { return };
-        let n = card_buttons(&r.state, r.paths.len()).len();
+        let n = card_buttons_for(&r.state, &r.paths).len();
         if is(Key::Return) {
             if self.card_focus >= 0 {
                 self.card_button(self.card_focus);
@@ -1017,7 +1058,7 @@ impl Share {
                     w.size = (0, 0);
                 }
             }
-            self.link_focus = false;
+            self.link_focus = 0;
             // (a new code next time, even at the same path)
             self.qr = None;
             return;
@@ -1080,7 +1121,11 @@ impl Share {
         ui.set_status_strong(l.busy || l.count > 0.0);
         ui.set_busy(l.busy);
         ui.set_motion(motion);
-        ui.set_button_focused(self.link_focus);
+        if self.link_focus == 2 && !link_install_shown(&l) {
+            self.link_focus = 1;
+        }
+        ui.set_button_focused(self.link_focus == 1);
+        ui.set_install_focused(self.link_focus == 2);
         Self::fit(w);
         if !w.up {
             w.up = true;
@@ -1090,12 +1135,20 @@ impl Share {
 
     fn link_key(&mut self, text: &str) {
         let is = |key: Key| text == SharedString::from(key).as_str();
-        if is(Key::Escape) || is(Key::Return) || (text == " " && self.link_focus) {
+        let install = self.feed.link.as_ref().is_some_and(link_install_shown);
+        if (is(Key::Return) || text == " ") && self.link_focus == 2 {
+            if self.feed.link.as_ref().is_some_and(|l| !l.updates && !l.installing) {
+                crate::shell::ask("share", json!(["installQr"]));
+            }
+        } else if is(Key::Escape) || is(Key::Return) || (text == " " && self.link_focus == 1) {
             crate::shell::ask("share", json!(["linkClose"]));
         } else if is(Key::Tab) || is(Key::Backtab) {
-            self.link_focus = !self.link_focus;
+            // (Install, above Done, has a turn too when it's there: the one
+            // action that fixes the error needed a pointer)
+            self.link_focus = link_next_focus(self.link_focus, install, is(Key::Backtab));
             if let Some(w) = &self.link {
-                w.ui.set_button_focused(self.link_focus);
+                w.ui.set_button_focused(self.link_focus == 1);
+                w.ui.set_install_focused(self.link_focus == 2);
             }
         }
     }
@@ -1390,6 +1443,17 @@ impl Part for Share {
 mod tests {
     use super::*;
 
+    #[test]
+    fn tab_on_the_qr_card_reaches_install_when_it_is_there() {
+        assert_eq!(link_next_focus(0, false, false), 1);
+        assert_eq!(link_next_focus(1, false, false), 1);
+        assert_eq!(link_next_focus(0, true, false), 2);
+        assert_eq!(link_next_focus(2, true, false), 1);
+        assert_eq!(link_next_focus(1, true, false), 2);
+        assert_eq!(link_next_focus(0, true, true), 1);
+        assert_eq!(link_next_focus(1, true, true), 2);
+    }
+
     fn dev(name: &str, kind: &str) -> Device {
         Device { key: name.to_lowercase(), name: name.into(), kind: kind.into(), ..Default::default() }
     }
@@ -1527,6 +1591,10 @@ mod tests {
         assert!(card_buttons("asking", 0)[1].1 && !card_buttons("asking", 0)[0].1);
         assert_eq!(act_call(Act::Answer(true), "qs:in-1"), json!(["answer", "qs:in-1", true]));
         assert_eq!(act_call(Act::Show, "x"), json!(["show", "x"]));
+        let one = |p: &str| card_buttons_for("done", &[p.to_string()]).iter().map(|b| (b.0, b.1)).collect::<Vec<_>>();
+        assert_eq!(one("/d/a.jpg"), [("Show in Files", false), ("Open", true)]);
+        assert_eq!(one("/d/Invoice.pdf.desktop"), [("Open", false), ("Show in Files", true)]);
+        assert_eq!(one("/d/run.SH"), [("Open", false), ("Show in Files", true)]);
     }
 
     #[test]

@@ -137,13 +137,24 @@ class Server(unittest.TestCase):
             base = ready["url"].rsplit("/", 2)[0]
             for i in range(ls.MAX_STRANGERS):
                 try:
-                    urllib.request.urlopen(f"{base}/guess{i}/", timeout=5)
+                    urllib.request.urlopen(f"{base}/guessguessguess{i:04d}/", timeout=5)
                 except urllib.error.HTTPError:
                     pass
             self.proc.wait(10)
             evs = [json.loads(line) for line in self.proc.stdout.read().splitlines()]
             self.assertEqual(evs[-1], {"ev": "closed", "why": "closed"})
             self.assertTrue(any(e["ev"] == "error" and "guessing" in e["message"] for e in evs))
+
+
+    def test_a_browsers_own_requests_are_not_guesses(self):
+        share = object.__new__(ls.Share)
+        share.token, share.strangers, share.lock = "A" * 22, 0, __import__("threading").Lock()
+        for p in ("/favicon.ico", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png", "/robots.txt", "/"):
+            self.assertIsNone(share.check(p))
+        self.assertEqual(share.strangers, 0)
+        self.assertIsNone(share.check("/" + "B" * 22 + "/"))
+        self.assertEqual(share.strangers, 1)
+        self.assertEqual(share.check("/" + "A" * 22 + "/f/0"), "f/0")
 
 
 if __name__ == "__main__":

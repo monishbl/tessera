@@ -151,9 +151,12 @@ def share(ssid):
     path = os.path.join(runtime_dir(), f"wifi-qr-{secrets.token_hex(6)}.svg")
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     os.close(fd)
-    p = subprocess.run(["qrencode", "-t", "SVG", "-m", "2", "-l", "M", "-o", path],
-                       input=wifi_text(ssid, security, password, hidden), text=True, capture_output=True, timeout=10)
-    if p.returncode != 0:
+    try:
+        p = subprocess.run(["qrencode", "-t", "SVG", "-m", "2", "-l", "M", "-o", path],
+                           input=wifi_text(ssid, security, password, hidden), text=True, capture_output=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        p = None  # (an answer all the same, and the empty file goes)
+    if p is None or p.returncode != 0:
         forget(path)
         return {"ok": False, "error": "The code couldn't be made (qrencode failed)."}
     return {"ok": True, "ssid": ssid, "security": security, "password": password, "hidden": hidden, "qr": path}
@@ -175,8 +178,11 @@ def scan(image):
         return {"ok": True, "found": []}  # (nothing to read codes with: nothing found)
     # (-Sbinary: the bytes as they are; zbar's own guess at the character set
     # turns UTF-8 names like "Café" into Japanese)
-    p = subprocess.run(["zbarimg", "-q", "--raw", "--nodbus", "-Sdisable", "-Sqrcode.enable", "-Sbinary", image],
-                       capture_output=True, timeout=20)
+    try:
+        p = subprocess.run(["zbarimg", "-q", "--raw", "--nodbus", "-Sdisable", "-Sqrcode.enable", "-Sbinary", image],
+                           capture_output=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"ok": True, "found": []}  # (a slow or missing reader: nothing found, said)
     text = p.stdout.decode("utf-8", "replace")
     found, seen = [], set()
     # (a code's text can run over several lines: split on each WIFI: start)

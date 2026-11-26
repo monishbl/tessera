@@ -229,6 +229,26 @@ class PersistenceAndIdentity(unittest.TestCase):
             self.assertEqual(len(list(p.glob('state.json.corrupt-*'))), 1)
             self.assertEqual(list((p/'pending').iterdir()), [])
 
+    def test_a_settled_bad_journal_is_set_aside_whole(self):
+        m = load('state-merge')
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d); (p/'pending').mkdir()
+            # (a good key, then one whose revision can't be compared: none of it applied)
+            bad = p/'pending/j-1.json'
+            bad.write_text(json.dumps({'a': {'revision': [1, 'j', 1], 'value': 1}, 'b': {'revision': 'x', 'value': 2}}))
+            fresh = p/'pending/j-2.json'
+            fresh.write_text('{half')
+            old=time.time()-120; os.utime(bad,(old,old))
+            m.merge(d)
+            state = json.loads((p/'state.json').read_text())
+            self.assertNotIn('a', state)
+            self.assertEqual([q.name for q in (p/'pending/bad').iterdir()], ['j-1.json'])
+            self.assertTrue(fresh.exists())  # (maybe still being written: left for the next merge)
+            for i in range(5):
+                (p/'state.json').write_text('{not json')
+                m.merge(d)
+            self.assertLessEqual(len(list(p.glob('state.json.corrupt-*'))), m.KEEP_CORRUPT)
+
     def test_reused_process_identity_never_signalled(self):
         m = load('process-identity')
         child = subprocess.Popen(['sleep', '10'], start_new_session=True)

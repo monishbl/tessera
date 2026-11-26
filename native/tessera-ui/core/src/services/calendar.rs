@@ -389,8 +389,11 @@ pub fn parse_ics(text: &str) -> Vec<IcsEvent> {
         }
         let Some(colon) = line.find(':') else { continue };
         let (head, value) = (&line[..colon], &line[colon + 1..]);
-        let name = head.split(';').next().unwrap_or("").to_uppercase();
-        let params = &head[name.len().min(head.len())..];
+        // (the length is the original's: upper-casing can change a name's
+        // byte length, and slicing at that length could split a character)
+        let raw = head.split(';').next().unwrap_or("");
+        let params = &head[raw.len()..];
+        let name = raw.to_uppercase();
         match name.as_str() {
             "UID" => e.uid = value.to_string(),
             "SUMMARY" => e.title = unescape(value),
@@ -886,6 +889,15 @@ mod tests {
         assert_eq!(fetch_url("https://a.b/c.ics").as_deref(), Some("https://a.b/c.ics"));
         assert_eq!(fetch_url("ftp://a.b/c.ics"), None);
         assert_ne!(link_cache("https://a/1.ics"), link_cache("https://a/2.ics"));
+    }
+
+    #[test]
+    fn a_name_that_changes_length_when_upper_cased_does_not_panic() {
+        // (U+FB01 is 3 bytes and upper-cases to "FI", 2 bytes)
+        let text = "BEGIN:VEVENT\r\nUID:z\r\n\u{fb01}\u{e9};X=1:x\r\nSUMMARY:Kept\r\nDTSTART:20261105T150000\r\nEND:VEVENT\r\n";
+        let evs = parse_ics(text);
+        assert_eq!(evs.len(), 1);
+        assert_eq!(evs[0].title, "Kept");
     }
 
     #[test]

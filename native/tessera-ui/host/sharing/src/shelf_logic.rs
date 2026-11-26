@@ -20,6 +20,16 @@ pub fn kind_of(path: &str) -> &'static str {
     }
 }
 
+/// Folders told apart by asking the disk (`is_dir`): file managers' URIs for
+/// folders carry no trailing slash, so kind_of called them files
+pub fn mark_folders(items: &mut [Value], is_dir: impl Fn(&str) -> bool) {
+    for it in items.iter_mut() {
+        if it["kind"] == "file" && it["path"].as_str().is_some_and(|p| !p.is_empty() && is_dir(p)) {
+            it["kind"] = json!("folder");
+        }
+    }
+}
+
 /// The shelf after a drop: file URLs (once each), else the text. Returns the
 /// items and how many came.
 pub fn drop(items: &[Value], urls: &[String], text: &str) -> (Vec<Value>, usize) {
@@ -89,6 +99,14 @@ pub fn shaken(samples: &[(i64, f64)], reach: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dropped_folders_are_folders() {
+        let (mut items, _) = drop(&[], &["file:///home/a/Docs".to_string(), "file:///home/a/x.txt".to_string()], "");
+        mark_folders(&mut items, |p| p == "/home/a/Docs");
+        assert_eq!(items[0]["kind"], "folder");
+        assert_eq!(items[1]["kind"], "file");
+    }
 
     #[test]
     fn kinds_come_from_the_name() {

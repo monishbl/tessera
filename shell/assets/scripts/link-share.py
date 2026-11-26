@@ -22,7 +22,7 @@ Secure by default:
     after MAX_STRANGERS wrong ones it stops
   - up only while the card shows, at most LIFETIME
   - receiving: names are cleaned (no folders, no hidden files, nothing
-    overwritten), each file at most MAX_UPLOAD, MAX_FILES per visit, a
+    overwritten), each file at most MAX_UPLOAD, MAX_FILES per code, a
     partial file is removed; nothing runs or opens by itself
   - pages: a strict Content-Security-Policy (the one script by nonce), not
     cached, not sniffed, no referrer
@@ -51,6 +51,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 LIFETIME = 10 * 60
 MAX_UPLOAD = 4 * 1024 ** 3
 MAX_FILES = 200
+GUESS = re.compile(r"[A-Za-z0-9_-]{16,}")  # (a path part that could be a try at the secret)
 MAX_STRANGERS = 20
 KEEP_FREE = 512 * 1024 ** 2  # receiving: never fills the disk past this
 PORTS = (53320, 53319)  # (the firewall lets them in while the card shows: SharingPorts.qml)
@@ -225,6 +226,11 @@ class Share:
         parts = path.split("?", 1)[0].lstrip("/").split("/", 1)
         if parts and hmac.compare_digest(parts[0].encode(), self.token.encode()):
             return parts[1] if len(parts) > 1 else ""
+        # (only what could be a try at the secret counts: browsers ask for
+        # /favicon.ico, /apple-touch-icon.png and the like by themselves, and
+        # a few reloads stopped the share with nobody guessing)
+        if not GUESS.fullmatch(parts[0] if parts else ""):
+            return None
         with self.lock:
             self.strangers += 1
             if self.strangers >= MAX_STRANGERS:
@@ -355,16 +361,23 @@ def handler_for(share):
             if length < 0 or length > MAX_UPLOAD:
                 return self._text(413, "That file is too big (4 GB at most).")
             with share.lock:
-                if share.received >= MAX_FILES:
-                    return self._text(429, "That's enough files for one go. Open the link again for more.")
-                os.makedirs(share.folder, exist_ok=True)
-                # (the disk keeps room to spare: a phone never fills it)
-                if length + share.incoming + KEEP_FREE > shutil.disk_usage(share.folder).free:
-                    return self._text(507, "That computer doesn't have room for this file. Free some space on it, then try again.")
-                tmp = os.path.join(share.folder, f".tessera-incoming-{secrets.token_hex(6)}.part")
-                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+                # (finished ones and those under way: a failed upload doesn't
+                # use one up. The count is the code's, so a new code resets it)
+                if share.received + len(share.parts) >= MAX_FILES:
+                    return self._text(429, "That's enough files for one code. Make a new code on the computer for more.")
+                try:
+                    os.makedirs(share.folder, exist_ok=True)
+                    # (the disk keeps room to spare: a phone never fills it)
+                    if length + share.incoming + KEEP_FREE > shutil.disk_usage(share.folder).free:
+                        return self._text(507, "That computer doesn't have room for this file. Free some space on it, then try again.")
+                    tmp = os.path.join(share.folder, f".tessera-incoming-{secrets.token_hex(6)}.part")
+                    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+                except OSError:
+                    # (the folder is on a drive that's gone, or read-only: said
+                    # on both ends, not a dropped connection)
+                    emit({"ev": "error", "message": "The folder for received files can't be written to. Pick another one in Settings, then try again."})
+                    return self._text(507, "That computer can't save files right now.")
                 share.parts.add(tmp)
-                share.received += 1
                 share.incoming += length
             done = 0
             try:
@@ -378,6 +391,7 @@ def handler_for(share):
                         emit({"ev": "progress", "dir": "in", "name": name, "done": done, "total": length})
                 with share.lock:
                     path = publish(tmp, share.folder, name)
+                    share.received += 1
             except (OSError, ConnectionError):
                 try:
                     os.unlink(tmp)
