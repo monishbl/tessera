@@ -259,7 +259,8 @@ export component QuickLook inherits Window {
         opacity: progress;
         transform-scale: 0.94 + 0.06 * progress;
         border-radius: Theme.material ? Theme.radius-panel : 20px;
-        background: Theme.material ? Theme.m3-surface-container : Theme.panel;
+        // (Glass on the plugin: only its glass; Theme.panel over it made it darker than the other Glass panels)
+        background: Theme.material ? Theme.m3-surface-container : Theme.plugin ? transparent : Theme.panel;
         drop-shadow-blur: Theme.material ? 24px : 0;
         drop-shadow-offset-y: Theme.material ? 6px : 0;
         drop-shadow-color: Theme.material ? Theme.m3-shadow.with-alpha(Theme.dark ? 0.4 : 0.16) : transparent;

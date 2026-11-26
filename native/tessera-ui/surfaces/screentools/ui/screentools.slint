@@ -91,6 +91,9 @@ export component EditorButton inherits Rectangle {
     in property <bool> selected;
     in property <bool> busy;
     in property <bool> tip-below: true;
+    // (a button at the window's right edge: its tooltip ends at the button's
+    // right, not centred on it, so it isn't cut off by the edge)
+    in property <bool> tip-end;
     in property <bool> vibrant;
     in property <bool> enabled: true;
     in property <int> glyph;
@@ -211,7 +214,7 @@ export component EditorButton inherits Rectangle {
         visible: self.opacity > 0;
         opacity: tip-ready && touch.has-hover && tooltip != "" ? 1 : 0;
         animate opacity { duration: Theme.hover; }
-        x: (root.width - self.width) / 2;
+        x: tip-end ? root.width - self.width : (root.width - self.width) / 2;
         y: tip-below ? root.height + 8px : -self.height - 8px;
         width: tip-row.preferred-width + 16px;
         height: Theme.material ? 24px : 26px;
@@ -752,8 +755,9 @@ export component ScreenToolbar inherits Window {
         // ── Options, above the bar ──
         opts := Rectangle {
             visible: options-open;
-            width: 340px;
-            height: list.preferred-height + 28px;
+            width: 360px;
+            // (no taller than the room above the bar: many microphones scroll)
+            height: min(list.preferred-height + 28px, max(160px, bar.y - 8px - 16px));
             x: (root.width - self.width) / 2;
             y: bar.y - 8px - self.height;
             border-radius: Theme.radius-popover;
@@ -765,6 +769,12 @@ export component ScreenToolbar inherits Window {
             accessible-role: groupbox;
             accessible-label: "Options";
             TouchArea { }
+            Flickable {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+                viewport-height: list.preferred-height + 28px;
             list := VerticalLayout {
                 x: 14px;
                 y: 14px;
@@ -815,7 +825,8 @@ export component ScreenToolbar inherits Window {
                 }
                 if gsr: SegmentRow {
                     text: "Quality";
-                    segment-width: 232px;
+                    // (room for "Very high" in each of the four)
+                    segment-width: 262px;
                     options: ["Medium", "High", "Very high", "Ultra"];
                     current: quality;
                     selected(i) => { root.set-quality(i); }
@@ -857,6 +868,7 @@ export component ScreenToolbar inherits Window {
                     top: 4px;
                     text: available ? "Install gpu-screen-recorder to pause recordings and record the microphone together with system audio." : "Install gpu-screen-recorder to record the screen.";
                 }
+            }
             }
         }
 
@@ -1147,7 +1159,8 @@ export component RecordCountdown inherits Window {
         width: 120px;
         height: 120px;
         border-radius: 60px;
-        background: Theme.panel;
+        // (Glass on the plugin: only its glass; Theme.panel over it made it darker than the other Glass panels)
+        background: Theme.plugin ? transparent : Theme.panel;
     }
     if Theme.material: Path {
         x: 24px;
@@ -1215,7 +1228,8 @@ export component TranslationCard inherits Window {
         x: max(24px, min(area-x, root.width - self.width - 24px));
         y: max(30px + 24px, min(area-y + area-h + 8px, root.height - self.height - 24px));
         border-radius: Theme.material ? 24px : 20px;
-        background: Theme.material ? Theme.m3-surface-container-high : Theme.panel;
+        // (Glass on the plugin: only its glass; Theme.panel over it made it darker than the other Glass panels)
+        background: Theme.material ? Theme.m3-surface-container-high : Theme.plugin ? transparent : Theme.panel;
         drop-shadow-blur: Theme.material ? 16px : 0;
         drop-shadow-offset-y: Theme.material ? 4px : 0;
         drop-shadow-color: Theme.material ? Theme.m3-shadow.with-alpha(Theme.dark ? 0.4 : 0.16) : transparent;
@@ -1269,11 +1283,17 @@ export component TranslationCard inherits Window {
                     }
                 }
             }
-            Text {
-                text: busy ? "Translating…" : error != "" ? error : root.text;
-                wrap: word-wrap;
-                color: error != "" ? Theme.danger : Theme.label;
-                font-size: Theme.title;
+            // (a long translation scrolls: the card stays on screen)
+            Flickable {
+                height: min(said.preferred-height, max(80px, root.height - 220px));
+                viewport-height: said.preferred-height;
+                said := Text {
+                    width: parent.width;
+                    text: busy ? "Translating…" : error != "" ? error : root.text;
+                    wrap: word-wrap;
+                    color: error != "" ? Theme.danger : Theme.label;
+                    font-size: Theme.title;
+                }
             }
             if source != "": Text {
                 text: source;
