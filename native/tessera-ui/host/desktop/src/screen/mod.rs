@@ -7,6 +7,7 @@
 pub mod captions;
 pub mod clipboard;
 pub mod dictation;
+pub mod dictation_live;
 pub mod files;
 pub mod livetext;
 pub mod ocr;

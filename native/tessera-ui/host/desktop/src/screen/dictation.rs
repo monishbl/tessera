@@ -12,8 +12,15 @@
 //! Keybinds call the IPC target `dictation`: `pressed` / `released` for that
 //! shortcut, `toggle | start | stop | cancel` (the QML's own handler), and the
 //! Settings page's `status | install | download <name> [use] | cancelDownload |
-//! removeModel <name>`. What Settings shows is in the host state, `dictation`.
+//! removeModel <name>`, and the island's `language <code>`. What Settings and
+//! the island show is in the host state, `dictation`.
+//!
+//! The island's live activity (dictation_live.rs): while you speak, the
+//! microphone's level (told to the menu bar, 20 a second) and the words so
+//! far (drafts, in the state as `partial`); after you stop, "Writing…"; then,
+//! for a moment, the first words it typed (stage `done`).
 
+use super::dictation_live::{self as live, Tap};
 use super::util;
 use serde_json::{json, Value};
 use std::process::{Command, Stdio};
@@ -21,12 +28,18 @@ use tessera_core::host::{Host, Service};
 
 const HOLD_MS: i64 = 400; // held longer than this: it stops on release
 const MAX_SECONDS: u64 = 120;
+/// How long the island shows the first words it typed
+const DONE_MS: u64 = 1400;
+/// How many of them
+const DONE_WORDS: usize = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Stage {
     Idle,
     Listening,
     Writing,
+    /// typed: the island shows the first words for a moment (DONE_MS)
+    Done,
 }
 
 // Messages from its threads
@@ -41,6 +54,23 @@ struct TypeFailed;
 /// wl-copy didn't take the words
 struct CopyFailed;
 struct InstallDone(bool);
+/// the typed words' moment is over (for that dictation)
+struct DoneEnd(u64);
+
+/// The first few words of what was typed, for the island ("Send the report…")
+pub fn first_words(text: &str, n: usize) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.len() <= n {
+        words.join(" ")
+    } else {
+        format!("{}…", words[..n].join(" "))
+    }
+}
+
+/// A language code the island may set: "" (the system's), "auto" or a code
+fn language_ok(code: &str) -> bool {
+    code.len() <= 8 && code.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+}
 
 pub struct DictationSvc {
     pub info: Value,
@@ -66,6 +96,15 @@ pub struct DictationSvc {
     last_download: String,
     /// the screen was locked when last looked (dictation stops on lock)
     locked: bool,
+    /// each dictation's number (its level and drafts say which they're for)
+    session: u64,
+    /// the live side while listening: levels and drafts (stopped when dropped)
+    tap: Option<Tap>,
+    /// the words so far (a draft) and, once typed, the first few
+    partial: String,
+    typed: String,
+    /// a language picked in the island, until the settings file says it too
+    lang_now: Option<String>,
 }
 
 impl DictationSvc {
@@ -91,6 +130,11 @@ impl DictationSvc {
             install_error: String::new(),
             last_download: String::new(),
             locked: false,
+            session: 0,
+            tap: None,
+            partial: String::new(),
+            typed: String::new(),
+            lang_now: None,
         }
     }
 
@@ -114,7 +158,8 @@ impl DictationSvc {
 
     /// The language whisper listens for: the setting, or the system's
     fn language(&self, h: &Host) -> String {
-        let set = h.cfg()["dictation"]["language"].as_str().unwrap_or("");
+        let set = self.language_set(h);
+        let set = set.as_str();
         if !set.is_empty() {
             return set.into();
         }
@@ -125,6 +170,11 @@ impl DictationSvc {
         } else {
             "auto".into()
         }
+    }
+
+    /// The language setting ("" the system's): the island's pick until the file has it
+    fn language_set(&self, h: &Host) -> String {
+        self.lang_now.clone().unwrap_or_else(|| h.cfg()["dictation"]["language"].as_str().unwrap_or("").to_string())
     }
 
     pub fn refresh(&self, h: &Host) {
@@ -144,8 +194,14 @@ impl DictationSvc {
         h.set_state(
             "dictation",
             json!({
-                "stage": match self.stage { Stage::Idle => "", Stage::Listening => "listening", Stage::Writing => "writing" },
+                "stage": match self.stage { Stage::Idle => "", Stage::Listening => "listening", Stage::Writing => "writing", Stage::Done => "done" },
                 "startedAt": self.started_at,
+                "maxSeconds": MAX_SECONDS,
+                "session": self.session,
+                // (the shortcut still held: it stops when let go; else a second press stops it)
+                "mode": if self.stage == Stage::Listening && self.pressed_at != 0 { "hold" } else { "toggle" },
+                "partial": self.partial, "typed": self.typed,
+                "language": self.language(h), "languageSet": self.language_set(h),
                 "info": self.info, "ready": ready, "hasBinary": self.has_binary(), "model": self.model(h),
                 "error": self.error, "downloading": self.downloading, "downloadProgress": self.progress,
                 "downloadError": self.download_error, "installing": self.install_asked,
@@ -165,7 +221,7 @@ impl DictationSvc {
         match self.stage {
             Stage::Listening => return self.stop(h),
             Stage::Writing => return,
-            Stage::Idle => {}
+            Stage::Idle | Stage::Done => {}
         }
         self.pressed_at = tessera_core::util::now_ms();
         self.start(h);
@@ -180,14 +236,20 @@ impl DictationSvc {
         self.pressed_at = 0;
         if held >= HOLD_MS && self.stage == Stage::Listening {
             self.stop(h);
+        } else if self.stage == Stage::Listening {
+            self.publish(h); // (a tap: "Press again to stop")
         }
     }
 
     pub fn start(&mut self, h: &mut Host) {
         // (not while the screen is locked: nothing to type into, and the
         // microphone would listen in an empty room)
-        if self.stage != Stage::Idle || self.rec_pid.is_some() || self.tr_pid.is_some() || h.state("locked").as_bool().unwrap_or(false) {
+        if !matches!(self.stage, Stage::Idle | Stage::Done) || self.rec_pid.is_some() || self.tr_pid.is_some() || h.state("locked").as_bool().unwrap_or(false) {
             return;
+        }
+        // (the island's language pick is in the settings file by now)
+        if self.lang_now.as_deref() == h.cfg()["dictation"]["language"].as_str() {
+            self.lang_now = None;
         }
         if !self.ready(h) {
             self.refresh(h);
@@ -230,6 +292,14 @@ impl DictationSvc {
         self.started_at = tessera_core::util::now_ms();
         self.stage = Stage::Listening;
         self.gen += 1;
+        // the live side: the level for the island's wave, the words so far
+        self.session += 1;
+        self.partial.clear();
+        self.typed.clear();
+        let pick = live::Pick { model: live::draft_model(&self.model(h), &self.info["models"]), lang: self.language(h) };
+        let helper: Vec<String> = ["setpriv", "--pdeathsig", "TERM", "--", "python3", "-I"].iter().map(|s| s.to_string()).chain([util::script("dictate.py"), "stream".to_string()]).collect();
+        let draft = format!("{}/tessera/dictation-partial-{}.wav", util::runtime(), self.session);
+        self.tap = Some(Tap::spawn(self.wav.clone(), self.session, pick, h.sender("Dictation"), helper, draft));
         self.tick(h);
         util::later(h.sender("Dictation"), MAX_SECONDS * 1000, Box::new(Limit(self.gen)));
         self.publish(h);
@@ -241,10 +311,12 @@ impl DictationSvc {
             return;
         }
         self.gen += 1; // (the limit timer is void)
+        self.tap = None; // (no more levels or drafts: the words are written from the whole recording)
         self.stage = Stage::Writing;
         self.tick(h);
         if tessera_core::util::now_ms() - self.started_at < 500 || self.rec_pid.is_none() {
             self.stage = Stage::Idle; // (too short to hold any words: dropped quietly)
+            self.partial.clear();
         }
         if let Some(p) = self.rec_pid {
             unsafe { libc::kill(p, libc::SIGINT) };
@@ -258,6 +330,9 @@ impl DictationSvc {
             return;
         }
         self.gen += 1;
+        self.tap = None;
+        self.partial.clear();
+        self.typed.clear();
         if let Some(p) = self.rec_pid {
             self.cancelled = true;
             unsafe { libc::kill(p, libc::SIGINT) };
@@ -273,6 +348,7 @@ impl DictationSvc {
 
     fn recorder_exited(&mut self, h: &mut Host, file: String) {
         self.rec_pid = None;
+        self.tap = None;
         if self.cancelled || self.stage != Stage::Writing {
             self.cancelled = false;
             util::detached(&["rm", "-f", &file]);
@@ -314,12 +390,18 @@ impl DictationSvc {
 
     /// Type it where the cursor is
     fn finish(&mut self, h: &mut Host, text: String) {
-        self.stage = Stage::Idle;
-        self.publish(h);
+        self.partial.clear();
         if text.is_empty() {
+            self.stage = Stage::Idle;
+            self.publish(h);
             util::island_post(h, json!({"kind": "custom", "icon": "microphone", "title": "Didn't catch that", "subtitle": "Speak a little closer to the microphone, then try again", "color": "secondary"}), 3000);
             return;
         }
+        // (the island ticks, with the first words, for a moment)
+        self.stage = Stage::Done;
+        self.typed = first_words(&text, DONE_WORDS);
+        self.publish(h);
+        util::later(h.sender("Dictation"), DONE_MS, Box::new(DoneEnd(self.session)));
         // (through wl-copy's input: a command line can be read by any
         // program; waited for, so the paste gets these words)
         let send = h.sender("Dictation");
@@ -343,6 +425,9 @@ impl DictationSvc {
 
     fn fail(&mut self, h: &mut Host, why: &str) {
         self.stage = Stage::Idle;
+        self.tap = None;
+        self.partial.clear();
+        self.typed.clear();
         self.error = why.into();
         util::island_post(h, json!({"kind": "custom", "icon": "microphone-slash", "title": "Dictation didn't work", "subtitle": why, "color": "danger"}), 6000);
         self.publish(h);
@@ -457,6 +542,26 @@ impl Service for DictationSvc {
             "cancel" => self.cancel(h),
             "pressed" => self.pressed(h),
             "released" => self.released(h),
+            // the island's mic and language line: the language picked there
+            // (kept in the settings, used for these words and the next ones)
+            "language" => {
+                let code = args.first().cloned().unwrap_or_default();
+                if language_ok(&code) {
+                    util::cfg_set("dictation.language", json!(code));
+                    self.lang_now = Some(code);
+                    let lang = self.language(h);
+                    if let Some(t) = &self.tap {
+                        t.set_lang(&lang);
+                    }
+                    self.publish(h);
+                }
+            }
+            // Esc anywhere while dictating (a non-consuming bind: hypr/tessera/keybinds.lua)
+            "escape" => {
+                if matches!(self.stage, Stage::Listening | Stage::Writing) {
+                    self.cancel(h);
+                }
+            }
             "status" => return Some(self.info.to_string()),
             "install" => self.install(h),
             "installDone" => {
@@ -490,6 +595,38 @@ impl Service for DictationSvc {
         None
     }
     fn message(&mut self, h: &mut Host, msg: Box<dyn std::any::Any + Send>) {
+        // (the live side: many a second while listening, so first)
+        let msg = match msg.downcast::<live::Level>() {
+            Ok(l) => {
+                if l.0 == self.session && self.stage == Stage::Listening {
+                    h.tell("menubar", json!({"dictation": {"level": l.1, "session": l.0}}));
+                }
+                return;
+            }
+            Err(m) => m,
+        };
+        let msg = match msg.downcast::<live::Partial>() {
+            Ok(p) => {
+                // (a draft still on its way when you stopped is newer than the last: kept)
+                if p.0 == self.session && matches!(self.stage, Stage::Listening | Stage::Writing) && p.1 != self.partial {
+                    self.partial = p.1;
+                    self.publish(h);
+                }
+                return;
+            }
+            Err(m) => m,
+        };
+        let msg = match msg.downcast::<DoneEnd>() {
+            Ok(d) => {
+                if d.0 == self.session && self.stage == Stage::Done {
+                    self.stage = Stage::Idle;
+                    self.typed.clear();
+                    self.publish(h);
+                }
+                return;
+            }
+            Err(m) => m,
+        };
         let msg = match msg.downcast::<Status>() {
             Ok(s) => {
                 self.info = s.0;
@@ -556,5 +693,36 @@ impl Service for DictationSvc {
         if msg.downcast::<InstallDone>().is_ok() {
             self.refresh(h);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_first_words_typed() {
+        assert_eq!(first_words("Send the report today.", 6), "Send the report today.");
+        assert_eq!(first_words("  one two three four five six seven  ", 6), "one two three four five six…");
+        assert_eq!(first_words("", 6), "");
+    }
+
+    #[test]
+    fn languages_the_island_may_set() {
+        for ok in ["", "auto", "en", "zh", "pt-br"] {
+            assert!(language_ok(ok), "{ok}");
+        }
+        for bad in ["EN", "en;rm", "../x", "a very long code"] {
+            assert!(!language_ok(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_new_dictation_may_start_while_the_last_one_shows_its_words() {
+        // (Done is only the island's moment: the shortcut starts the next one)
+        let mut d = DictationSvc::new();
+        assert!(d.tap.is_none() && d.session == 0);
+        d.stage = Stage::Done;
+        assert!(matches!(d.stage, Stage::Idle | Stage::Done));
     }
 }

@@ -109,17 +109,32 @@ pub fn derive(h: &Host, now: i64) -> Vec<(&'static str, Option<Value>)> {
     out.push((
         "dictation",
         (!stage.is_empty()).then(|| {
-            let writing = stage == "writing";
-            json!({
-                "icon": if writing { "text-aa" } else { "microphone" }, "color": accent("red"),
-                "title": if writing { "Writing…" } else { "Listening" },
-                "time": if writing { String::new() } else { since(dc["startedAt"].as_f64().unwrap_or(0.0) as i64, now) },
-                "detail": if writing { "Turning your words into text" } else { "Press Super+H again when you're done" },
-                "progress": -1.0,
-                "controls": [
+            // (the menu bar draws its own card from the state: the wave, the
+            // words so far, the time limit; this is the pill and the rows)
+            let (writing, done) = (stage == "writing", stage == "done");
+            let controls = if done {
+                vec![]
+            } else {
+                vec![
                     ctl("cancel", "x", false, true, false, "Cancel dictation", call("dictation.cancel", json!([]))),
                     ctl("stop", "check", true, stage == "listening", false, "Stop and type it", call("dictation.stop", json!([]))),
-                ],
+                ]
+            };
+            json!({
+                "icon": if done { "check" } else if writing { "text-aa" } else { "microphone" }, "color": accent("red"),
+                "title": if done { "Typed" } else if writing { "Writing…" } else { "Listening" },
+                "time": if writing || done { String::new() } else { since(dc["startedAt"].as_f64().unwrap_or(0.0) as i64, now) },
+                "detail": if done {
+                    str_of(dc, "typed")
+                } else if writing {
+                    "Turning your words into text".to_string()
+                } else if str_of(dc, "mode") == "hold" {
+                    "Release to type · Esc to cancel".to_string()
+                } else {
+                    "Press again to stop · Esc to cancel".to_string()
+                },
+                "progress": -1.0,
+                "controls": controls,
             })
         }),
     ));
