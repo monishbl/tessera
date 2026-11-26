@@ -854,7 +854,8 @@ impl ControlCenter {
         for (minutes, title) in [(60, "For 1 hour"), (120, "For 2 hours"), (0, "Until turned off")] {
             let active = bs(&sys, "keepAwake") && sys["keepAwakeMinutes"].as_i64().unwrap_or(0) == minutes;
             blocks.push(row(json!({"id": format!("c:{minutes}"), "icon": if minutes > 0 { "timer" } else { "coffee" }, "title": title, "hl": active,
-                "status": if active { ss(&sys, "keepAwakeStatus") } else { "" }, "trail": if active { "check" } else { "" }})));
+                // (the end time under a timed choice; "Until turned off" would only repeat its title)
+                "status": if active && minutes > 0 { ss(&sys, "keepAwakeStatus") } else { "" }, "trail": if active { "check" } else { "" }})));
         }
         blocks.push(json!({"t": "gap", "h": 6}));
         blocks.push(note("The screen won't dim, lock or sleep while you're away. Closing the lid still sleeps.", "tertiary", false));
