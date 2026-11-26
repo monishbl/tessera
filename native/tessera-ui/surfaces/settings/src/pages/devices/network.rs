@@ -28,10 +28,15 @@ pub fn strength_icon(s: f64) -> &'static str {
     }
 }
 
-/// A Wi-Fi password the network can take (WifiList.passwordOk)
-pub fn password_ok(t: &str) -> bool {
+/// A Wi-Fi password the network can take: WPA's 8 to 63 characters or a
+/// 64-hex-digit key; WEP's 5, 10, 13 or 26 only on a WEP network (a short
+/// typo on a WPA one is caught here, not by a failed connection)
+pub fn password_ok(t: &str, wep: bool) -> bool {
     let n = t.chars().count();
-    (8..=63).contains(&n) || [5, 10, 13, 26].contains(&n)
+    if wep {
+        return [5, 10, 13, 26].contains(&n);
+    }
+    (8..=63).contains(&n) || (n == 64 && t.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// What a network's row says under its name
@@ -136,11 +141,11 @@ pub fn form_problem(f: &Value) -> String {
     let name = if hidden { g("name") } else { g("ssid") };
     let sec = g("security");
     let tls = g("eap") == "tls";
-    let psk = g("psk").chars().count();
+    let psk = g("psk");
     if name.trim().is_empty() {
         "Type the network name.".into()
-    } else if sec == "psk" && !(8..=63).contains(&psk) {
-        "Wi-Fi passwords are 8 to 63 characters.".into()
+    } else if sec == "psk" && !password_ok(&psk, false) {
+        "Wi-Fi passwords are 8 to 63 characters (or a 64-digit key).".into()
     } else if sec == "enterprise" && g("identity").trim().is_empty() {
         "Type your username (often your email address).".into()
     } else if sec == "enterprise" && !tls && g("password").is_empty() {
@@ -583,7 +588,8 @@ pub fn network(cx: &mut Ctx, p: &mut Page) {
                 rows.push(wifi_list_rows(cx, &nets, 0, i + 1, true, false));
                 // The password row under the network (WifiList's `asking`)
                 let typed = cx.local_s("wifi.typed");
-                let ready = password_ok(&typed);
+                let wep = nets[i]["wep"].as_bool().unwrap_or(false);
+                let ready = password_ok(&typed, wep);
                 let name = asking.clone();
                 let id = cx.on(move |cx, a| match a.s.as_str() {
                     "other" => {
@@ -600,8 +606,14 @@ pub fn network(cx: &mut Ctx, p: &mut Page) {
                             return;
                         }
                         let pw = cx.local_s("wifi.typed");
-                        if !password_ok(&pw) {
-                            cx.local_set("wifi.hint", if pw.is_empty() { "Type the password first." } else { "Wi-Fi passwords are at least 8 characters." });
+                        if !password_ok(&pw, wep) {
+                            cx.local_set("wifi.hint", if pw.is_empty() {
+                                "Type the password first."
+                            } else if wep {
+                                "WEP keys are 5, 10, 13 or 26 characters."
+                            } else {
+                                "Wi-Fi passwords are 8 to 63 characters (or a 64-digit key)."
+                            });
                             return;
                         }
                         ask(cx, "wifiJoin", json!([name, pw]));
@@ -954,7 +966,10 @@ mod tests {
         assert_eq!(wifi_status(&json!({"connected": true})), "Connected");
         assert_eq!(wifi_status(&json!({"known": true, "failed": true})), "Couldn't connect");
         assert_eq!(wifi_status(&json!({"known": true})), "Known network");
-        assert!(password_ok("12345678") && password_ok("12345") && !password_ok("1234567"));
+        assert!(password_ok("12345678", false) && !password_ok("1234567", false));
+        // (WEP lengths only on a WEP network; a 64-hex-digit WPA key passes)
+        assert!(!password_ok("12345", false) && password_ok("12345", true) && !password_ok("12345678", true));
+        assert!(password_ok(&"a1".repeat(32), false) && !password_ok(&"zz".repeat(32), false));
         let m: Vec<&str> = wifi_menu(&json!({"known": true, "secured": true})).iter().map(|x| x.1).collect();
         assert_eq!(m, ["connect", "password", "share", "copy", "forget"]);
     }
