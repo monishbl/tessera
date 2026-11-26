@@ -330,6 +330,7 @@ export component StatusMenus inherits Window {
     callback volume(float);
     callback mode(int);
     callback stop-sharing();
+    callback power-settings(); // the battery menu's last row: Settings → Battery & Power
     callback np-do(string);
     callback np-seek(float);
     callback np-pick(int);
@@ -605,6 +606,30 @@ export component StatusMenus inherits Window {
                             accent-glyph: accent-glyph;
                             do(what, text) => {
                                 if what == "seg" { mode(text.to-float()); }
+                            }
+                        }
+                        // (the page with the rest, and where a missing piece is
+                        // put right: as the Bluetooth and Sound menus end)
+                        Rectangle {
+                            height: m3 ? 40px : 26px;
+                            border-radius: m3 ? 20px : Theme.radius-control;
+                            background: pst.pressed ? Theme.label.with-alpha(0.12) : pst.has-hover ? Theme.label.with-alpha(0.08) : transparent;
+                            accessible-role: button;
+                            accessible-label: "Battery and power settings";
+                            accessible-action-default => { power-settings(); }
+                            Text {
+                                x: m3 ? 12px : 6px;
+                                height: parent.height;
+                                vertical-alignment: center;
+                                text: "Battery & Power settings…";
+                                color: m3 ? Theme.m3-primary : Theme.label;
+                                font-size: m3 ? 14px : Theme.body;
+                                font-weight: m3 ? 500 : 400;
+                                accessible-role: none;
+                            }
+                            pst := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { power-settings(); }
                             }
                         }
                     }

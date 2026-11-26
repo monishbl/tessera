@@ -107,7 +107,7 @@ pub fn backends(found: &BTreeMap<String, String>, ready: bool) -> Value {
         "system76-power" => "system76-power",
         o => o,
     };
-    let power_short = if ppd { String::new() } else if !power_daemon.is_empty() { format!("Managed by {power_name}") } else { "Needs power-profiles-daemon".into() };
+    let power_short = if ppd { String::new() } else if !power_daemon.is_empty() { format!("Managed by {power_name}") } else { "Energy modes need power-profiles-daemon".into() };
     let power_reason = if ppd {
         String::new()
     } else if !power_daemon.is_empty() {
@@ -982,7 +982,7 @@ mod tests {
         assert_eq!(b["btState"], "stopped");
         assert_eq!(b["btFix"], "start");
         assert_eq!(b["btFixLabel"], "Start Bluetooth");
-        assert_eq!(backends(&parse_stack("ppd=0\n"), true)["powerShort"], "Needs power-profiles-daemon");
+        assert_eq!(backends(&parse_stack("ppd=0\n"), true)["powerShort"], "Energy modes need power-profiles-daemon");
         assert_eq!(backends(&parse_stack("bt_hard=1\n"), true)["btState"], "hard-blocked");
         assert_eq!(backends(&parse_stack("bt_hardware=1\nbt_installed=1\nbt_running=1\n"), true)["btState"], "ok");
         // (BlueZ up, but no bluetoothctl to switch or pair with)

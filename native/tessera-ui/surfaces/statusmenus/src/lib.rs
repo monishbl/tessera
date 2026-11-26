@@ -103,6 +103,7 @@ enum M {
     Volume(f32),
     Mode(i32),
     StopSharing,
+    PowerSettings,
     Np(String),
     Seek(f32),
     Pick(i32),
@@ -326,6 +327,7 @@ impl StatusMenus {
         ui.set_sound_blocks(self.sound_rows.model());
         on!(on_mode, |i| M::Mode(i));
         on!(on_stop_sharing, | | M::StopSharing);
+        on!(on_power_settings, | | M::PowerSettings);
         on!(on_np_do, |w| M::Np(w.to_string()));
         on!(on_np_seek, |v| M::Seek(v));
         on!(on_np_pick, |i| M::Pick(i));
@@ -576,7 +578,7 @@ impl StatusMenus {
         // power-profiles-daemon: the shell's Backends (state `backends`, or the feed's)
         let ppd = power["ppd"].as_bool().or_else(|| state.get("power.ppd").as_bool()).or_else(|| state.get("backends.ppd").as_bool()).unwrap_or(false);
         let short = power["short"].as_str().filter(|s| !s.is_empty()).unwrap_or(state.str("backends.powerShort")).to_string();
-        let short = if short.is_empty() { "Needs power-profiles-daemon".to_string() } else { short };
+        let short = if short.is_empty() { "Energy modes need power-profiles-daemon".to_string() } else { short };
         let perf = power["hasPerformance"].as_bool().unwrap_or(state.bool("power.performance"));
         let profile = power["profile"].as_str().filter(|s| !s.is_empty()).unwrap_or(state.str("power.profile")).to_string();
         w.ui.set_ppd(ppd);
@@ -990,6 +992,10 @@ impl Part for StatusMenus {
                 }
             }
             M::StopSharing => shell::ask("statusmenus", json!(["stopSharing"])),
+            M::PowerSettings => {
+                shell::ask("panels.openSettings", json!(["power", ""]));
+                self.close(st, true);
+            }
             M::Np(w) => self.np_do(st, &w),
             M::Seek(v) => self.seek(st, v),
             M::Pick(i) => self.pick(st, i),
