@@ -194,7 +194,7 @@ fn handles(c: KeyCtx, text: &str, shift: bool, ctrl: bool) -> bool {
         return true;
     }
     if is(Key::Backtab) {
-        return !c.material;
+        return true;
     }
     if c.focus != 0 && text == " " {
         return true;
@@ -611,7 +611,17 @@ impl Spotlight {
         }
         self.answering = false;
         self.quick = Quick::default();
+        // (a lookup stopped before it was asked is forgotten too: else the
+        // same text typed again never asks it, as the query looks seen)
         for t in [T_ANSWER, T_CONV, T_DEF, T_FILES] {
+            if self.timers[t].running() {
+                match t {
+                    T_ANSWER => self.ans_query.clear(),
+                    T_CONV => self.conv_query.clear(),
+                    T_DEF => self.def_word.clear(),
+                    _ => self.file_query.clear(),
+                }
+            }
             self.timers[t].stop();
         }
         if let Some(w) = &self.win {
@@ -1089,7 +1099,8 @@ impl Spotlight {
         } else if is(Key::Tab) || is(Key::Backtab) {
             let back = is(Key::Backtab) || shift;
             if m {
-                let i = (self.sel + 1) % self.rows.len().max(1);
+                let n = self.rows.len().max(1);
+                let i = if back { (self.sel + n - 1) % n } else { (self.sel + 1) % n };
                 self.select(st, i);
                 return;
             }
@@ -1528,7 +1539,8 @@ mod tests {
             assert!(handles(glass, &k(key), false, false) && handles(material, &k(key), false, false));
         }
         assert!(handles(glass, &k(Key::Backtab), true, false));
-        assert!(!handles(material, &k(Key::Backtab), true, false));
+        // (Material: Shift+Tab steps back through the results)
+        assert!(handles(material, &k(Key::Backtab), true, false));
         assert!(!handles(glass, "a", false, false) && !handles(glass, &k(Key::Backspace), false, false));
         // Quick Look only for a file
         assert!(!handles(glass, " ", true, false));

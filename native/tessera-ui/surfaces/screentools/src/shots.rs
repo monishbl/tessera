@@ -46,7 +46,9 @@ pub(crate) enum Sm {
     ThumbDragOut,
     ThumbHover(bool),
     EdClosed,
-    Flattened(&'static str, Option<String>),
+    /// (the action, the file written, and the picture it was made from:
+    /// a result for a picture no longer open is dropped)
+    Flattened(&'static str, Option<String>, String),
     Copied(bool),
     SaidGone,
     LiveSaidGone,
@@ -907,7 +909,7 @@ impl Core {
             }
             let font: Option<LabelFont> = if items.iter().any(|a| matches!(a, Ann::Text { .. })) { draw::label_font(material) } else { None };
             let ok = draw::flatten(&base, &items, crop, font.as_ref()).is_some_and(|img| draw::write_png(&img, &target));
-            to_msg(&tx, Sm::Flattened(action, ok.then_some(target)));
+            to_msg(&tx, Sm::Flattened(action, ok.then_some(target), path));
         });
     }
 
@@ -1664,7 +1666,13 @@ impl Shots {
                     let thumbs = Self::thumbnails(st);
                     c.editor_closed(thumbs);
                 }
-                Sm::Flattened(action, file) => c.flattened(action, file, &screen),
+                Sm::Flattened(action, file, from) => {
+                    // (its editor session ended meanwhile: not applied to
+                    // whatever is open now)
+                    if from == c.s.path {
+                        c.flattened(action, file, &screen);
+                    }
+                }
                 Sm::Copied(ok) => {
                     if c.busy == "copy" {
                         c.copied(ok);

@@ -153,7 +153,24 @@ fn stroke(width: f32, cap: LineCap) -> Stroke {
 }
 
 fn xml_escape(s: &str) -> String {
+    // (characters XML can't hold, control ones but tab and newlines, would
+    // fail the whole label's parse: they go)
+    let s: String = s.chars().filter(|&c| !matches!(c, '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{fffe}' | '\u{ffff}')).collect();
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+/// A stroke's layer in the picture: its bounds grown by the stroke's width,
+/// in whole pixels, inside the w x h picture (left, top, width, height)
+fn layer_box(b: tiny_skia::Rect, width: f32, w: u32, h: u32) -> Option<(i32, i32, u32, u32)> {
+    let pad = width.max(1.0) + 2.0;
+    let x0 = (b.left() - pad).floor().max(0.0);
+    let y0 = (b.top() - pad).floor().max(0.0);
+    let x1 = (b.right() + pad).ceil().min(w as f32);
+    let y1 = (b.bottom() + pad).ceil().min(h as f32);
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    Some((x0 as i32, y0 as i32, (x1 - x0) as u32, (y1 - y0) as u32))
 }
 
 /// The image as shown (markup over it, then the crop), at native pixels
@@ -190,10 +207,12 @@ pub fn flatten(base: &RgbaImage, items: &[Ann], crop: Rect, font: Option<&LabelF
                     pm.stroke_path(&path, &paint(color), &stroke(*width, LineCap::Round), Transform::identity(), None);
                 } else {
                     // opaque in its own layer, then faded as a whole (it
-                    // doesn't darken where it crosses itself)
-                    let Some(mut layer) = Pixmap::new(w, h) else { continue };
-                    layer.stroke_path(&path, &paint(color), &stroke(*width, LineCap::Butt), Transform::identity(), None);
-                    pm.draw_pixmap(0, 0, layer.as_ref(), &PixmapPaint { opacity: 0.4, ..Default::default() }, Transform::identity(), None);
+                    // doesn't darken where it crosses itself); the layer is the
+                    // stroke's box, not the whole picture
+                    let Some((x0, y0, lw, lh)) = layer_box(path.bounds(), *width, w, h) else { continue };
+                    let Some(mut layer) = Pixmap::new(lw, lh) else { continue };
+                    layer.stroke_path(&path, &paint(color), &stroke(*width, LineCap::Butt), Transform::from_translate(-(x0 as f32), -(y0 as f32)), None);
+                    pm.draw_pixmap(x0, y0, layer.as_ref(), &PixmapPaint { opacity: 0.4, ..Default::default() }, Transform::identity(), None);
                 }
             }
             Ann::Arrow { x1, y1, x2, y2, color, width } => {
@@ -251,9 +270,10 @@ pub fn flatten(base: &RgbaImage, items: &[Ann], crop: Rect, font: Option<&LabelF
                 let mut opt = resvg::usvg::Options::default();
                 opt.fontdb = std::sync::Arc::new(db.clone());
                 opt.font_family = family;
-                if let Ok(tree) = resvg::usvg::Tree::from_str(&svg, &opt) {
-                    resvg::render(&tree, Transform::identity(), &mut pm.as_mut());
-                }
+                // (a label that can't be drawn fails the save: the editor shows
+                // it, so a picture without it must not pass as saved)
+                let tree = resvg::usvg::Tree::from_str(&svg, &opt).ok()?;
+                resvg::render(&tree, Transform::identity(), &mut pm.as_mut());
             }
             Ann::Pixelate { r, block } => {
                 let (cols, rows, px) = pixelate(base, *r, *block);
@@ -297,6 +317,22 @@ pub fn write_png(img: &RgbaImage, path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn labels_drop_what_xml_cannot_hold() {
+        assert_eq!(xml_escape("a\u{c}b\u{1b}<c>\td"), "ab&lt;c&gt;\td");
+    }
+
+    #[test]
+    fn a_highlighter_layer_is_its_box() {
+        let b = tiny_skia::Rect::from_ltrb(10.0, 20.0, 30.0, 25.0).unwrap();
+        assert_eq!(layer_box(b, 4.0, 100, 100), Some((4, 14, 32, 17)));
+        // (kept inside the picture)
+        let b = tiny_skia::Rect::from_ltrb(-50.0, 90.0, 5.0, 200.0).unwrap();
+        assert_eq!(layer_box(b, 4.0, 100, 100), Some((0, 84, 11, 16)));
+        let b = tiny_skia::Rect::from_ltrb(150.0, 150.0, 160.0, 160.0).unwrap();
+        assert_eq!(layer_box(b, 4.0, 100, 100), None);
+    }
 
     #[test]
     fn arrows_heads_and_shapes() {
