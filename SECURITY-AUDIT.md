@@ -78,7 +78,7 @@ Status: **Fixed** means fixed in this branch. **Decide** means it needs your dec
 - **Sharing is off until you turn it on.** Defaults: `sharing.receiving: "off"` (LocalSend) and `sharing.quickShare: "off"`; the Quick Share service starts invisible. *Tested.*
 - **Nothing is saved before you say yes.**
   - Quick Share: the transfer frames are read only after ACCEPT, and data sent early is refused. LocalSend: no upload token exists until you accept.
-  - The incoming card takes the keyboard only when clicked (`OnDemand`), so a stray Enter can't accept.
+  - The incoming card never takes the keyboard (`KeyboardInteractivity::None`), so a stray Enter or Escape can't answer it. It is answered by a click, a screen reader's default action, or `tessera-ui ipc call sharing accept | decline` (which can be bound to a key).
   - Received links open only on your click, and only `https?://`.
   - Wi-Fi credentials are only offered as "Copy password".
   - *Tested.*
@@ -91,6 +91,7 @@ Status: **Fixed** means fixed in this branch. **Decide** means it needs your dec
   - Messages are AES-256-CBC with HMAC-SHA256 (encrypt-then-MAC), compared with `hmac.compare_digest`.
   - Strict sequence numbers stop replay and reordering.
   - Peers aren't authenticated (the "Everyone" mode, as on Android); the PIN on both screens is the check against a man in the middle.
+  - One exception, as on Android: after a bandwidth upgrade to a phone's Wi-Fi Direct group or hotspot, the new channel can carry plain frames when the phone asks (`connection.py` `_plain`). That link is WPA2 between the two devices alone; on the shared Wi-Fi this side always refuses and both encrypt.
 - **LocalSend.**
   - TLS 1.2 or later; the client pins the certificate fingerprint learned in discovery (`compare_digest`).
   - Its key is 0600 in a 0700 folder.
@@ -174,7 +175,7 @@ Status: **Fixed** means fixed in this branch. **Decide** means it needs your dec
 | Listener | Port and bind | When | Accepts without asking | Limits |
 |---|---|---|---|---|
 | Quick Share | TCP 53318 on 0.0.0.0, mDNS, BLE advertising and GATT, L2CAP | only while visible (off by default) | the handshake only; files, text and Wi-Fi after Accept | 3 at once, 8 MB frames, 1000 items, disk space checked |
-| Quick Share upgrade | TCP 53319 (`wifi.Listener`) | during an accepted transfer | the same session's Nearby re-introduction | per transfer |
+| Quick Share upgrade | TCP 53319 (`wifi.Listener`) on **every interface** (`0.0.0.0`) | during an accepted transfer | the same session's Nearby re-introduction | per transfer |
 | Wi-Fi helper (root) | DHCP 67 on its own group or AP interface; WPA2 with a random 12-character passphrase | during an accepted transfer | DHCP from the phone | interface-bound |
 | LocalSend | UDP 53317 multicast; HTTPS 53317 on 0.0.0.0 | always running; receiving off by default | `/info`, `/register` (L7) | 1 MB bodies, 8 sessions, 16 connections |
 | Link sharing | HTTP 53320 or 53319 on **one RFC 1918 address** | while the card shows, 10 minutes at most | uploads with the secret link (receive mode: that's the feature) | 4 GB per file, 200 files, 512 MB kept free, 20 wrong guesses |

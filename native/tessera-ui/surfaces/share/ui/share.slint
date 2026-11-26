@@ -217,7 +217,10 @@ component DeviceItem inherits Rectangle {
             width: 22px;
             height: 22px;
             border-radius: 11px;
-            background: Theme.material ? (d.ended == "sent" ? Theme.m3-primary : Theme.m3-surface-container-highest) : d.ended == "sent" ? Theme.success : Theme.secondary;
+            // (Glass: solid discs made for a white mark. Theme.secondary is a
+            // text colour, translucent white in dark mode: white on it was
+            // barely there)
+            background: Theme.material ? (d.ended == "sent" ? Theme.m3-primary : Theme.m3-surface-container-highest) : d.ended == "sent" ? Theme.success : d.ended == "failed" ? Theme.danger : #8e8e93;
             border-width: 2px;
             border-color: Theme.material ? Theme.m3-surface-container-high : Theme.glass-solid;
             SymIcon {
@@ -261,6 +264,31 @@ component DeviceItem inherits Rectangle {
         clicked => {
             if !d.sending { root.clicked(); }
         }
+    }
+}
+
+// More devices than fit (four): a round arrow at the edge that has more,
+// which pages the row (a mouse wheel doesn't move a sideways row)
+component PeopleEdge inherits Rectangle {
+    in property <bool> left;
+    callback clicked();
+    width: 28px;
+    height: 28px;
+    border-radius: 14px;
+    background: Theme.material ? Theme.m3-surface-container-highest : Theme.glass-solid;
+    drop-shadow-blur: 6px;
+    drop-shadow-color: #0000003a;
+    accessible-role: button;
+    accessible-label: left ? "Earlier devices" : "More devices";
+    accessible-action-default => { clicked(); }
+    SymIcon {
+        text: left ? "\u{e138}" : "\u{e13a}";
+        font-size: 14px;
+        color: Theme.material ? Theme.m3-on-surface-variant : Theme.label;
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
     }
 }
 
@@ -508,21 +536,41 @@ export component ShareSheet inherits Window {
             }
 
             // ── Nearby (iOS's AirDrop row: round avatars, names under) ──
-            if devices.length > 0: Flickable {
-                height: Theme.material ? 128px : 118px;
-                content-width: max(self.width, devices.length * 96px - 4px);
-                content-height: self.height;
-                content-x <=> root.people-x;
-                interactive: devices.length * 96px - 4px > self.width;
-                for dev[i] in root.devices: DeviceItem {
-                    x: i * 96px;
-                    y: 0;
-                    height: parent.height;
-                    d: dev;
-                    focused: root.focus-at == i + 1;
-                    hover-shape: root.hover-shape;
-                    circle-shape: root.circle-shape;
-                    clicked => { root.send(i); }
+            if devices.length > 0: Rectangle {
+                // (room for the avatar, Material's bar, a name on two lines
+                // and the status under it: 118 / 128 cut the status off
+                // under a two-line name)
+                height: Theme.material ? 134px : 124px;
+                flick := Flickable {
+                    width: 100%;
+                    height: 100%;
+                    content-width: max(self.width, devices.length * 96px - 4px);
+                    content-height: self.height;
+                    content-x <=> root.people-x;
+                    interactive: devices.length * 96px - 4px > self.width;
+                    for dev[i] in root.devices: DeviceItem {
+                        x: i * 96px;
+                        y: 0;
+                        height: parent.height;
+                        d: dev;
+                        focused: root.focus-at == i + 1;
+                        hover-shape: root.hover-shape;
+                        circle-shape: root.circle-shape;
+                        clicked => { root.send(i); }
+                    }
+                }
+                // (a fifth device was out of view with nothing to say so)
+                if flick.content-x < -1px: PeopleEdge {
+                    x: 0;
+                    y: 22px;
+                    left: true;
+                    clicked => { root.people-x = min(0px, root.people-x + 3 * 96px); }
+                }
+                if flick.content-x > flick.width - flick.content-width + 1px: PeopleEdge {
+                    x: parent.width - self.width;
+                    y: 22px;
+                    left: false;
+                    clicked => { root.people-x = max(flick.width - flick.content-width, root.people-x - 3 * 96px); }
                 }
             }
 
@@ -626,7 +674,7 @@ component CardButton inherits Rectangle {
     // (MaterialSpring fast: springFast 12.8/0.54 → 222 ms spring(0.4))
     animate border-radius { duration: 222ms; easing: spring(0.4); }
     background: Theme.material ? (b.primary ? Theme.m3-primary : Theme.m3-secondary-container).mix(ink, ta.pressed ? 0.9 : ta.has-hover ? 0.92 : 1)
-        : b.primary ? (ta.pressed ? Theme.accent.darker(0.13) : Theme.accent) : ta.pressed ? Theme.fill-pressed : ta.has-hover ? Theme.fill-hover : Theme.fill;
+        : b.primary ? (ta.pressed ? Theme.accent.darker(0.13) : ta.has-hover ? Theme.accent.darker(0.06) : Theme.accent) : ta.pressed ? Theme.fill-pressed : ta.has-hover ? Theme.fill-hover : Theme.fill;
     // (Material: ElasticControl's swell, 1 + min(6 %, 10 px / its width), on
     // springPress, 290 ms spring(0.57); Glass: 0.97, 100 ms linear)
     transform-scale: ta.pressed ? (Theme.material ? 1 + min(0.06, 10px / max(1px, self.width)) : 0.97) : 1;
@@ -710,7 +758,7 @@ export component ShareCard inherits Window {
         x: 24px;
         y: 24px;
         width: Theme.material ? 312px : 300px;
-        height: body.preferred-height + 2 * pad-x;
+        height: body.preferred-height + 2 * pad-y;
         opacity: max(0, min(1, shown));
         transform-scale: 0.9 + 0.1 * shown;
         transform-origin: { x: self.width / 2, y: self.height / 2 };
@@ -895,6 +943,7 @@ export component LinkCard inherits Window {
     in property <bool> busy;
     in property <float> motion: 1;
     in property <bool> button-focused;
+    in property <bool> install-focused;
     property <bool> up;
     out property <float> shown: up ? 1 : 0;
     out property <length> card-width: card.width;
@@ -1018,6 +1067,7 @@ export component LinkCard inherits Window {
                         accessible-role: button;
                         accessible-label: install-label.text;
                         accessible-action-default => { if install-enabled && !installing { install(); } }
+                        if install-focused: Ring2 { pw: parent.width; ph: parent.height; radius: Theme.material ? 20px : 12px; }
                         install-label := Text {
                             text: installing ? "Installing…" : "Install qrencode";
                             color: Theme.label;
@@ -1053,7 +1103,10 @@ export component LinkCard inherits Window {
             Rectangle {
                 height: 40px;
                 border-radius: 20px;
-                background: done-ta.pressed ? Theme.accent.darker(0.13) : Theme.accent;
+                // (as the request card's primary button: Material's primary,
+                // darkened on hover and press)
+                background: Theme.material ? Theme.m3-primary.mix(Theme.m3-on-primary, done-ta.pressed ? 0.9 : done-ta.has-hover ? 0.92 : 1)
+                    : done-ta.pressed ? Theme.accent.darker(0.13) : done-ta.has-hover ? Theme.accent.darker(0.06) : Theme.accent;
                 transform-scale: done-ta.pressed ? 0.97 : 1;
                 transform-origin: { x: self.width / 2, y: self.height / 2 };
                 animate transform-scale { duration: 100ms; }
@@ -1063,7 +1116,7 @@ export component LinkCard inherits Window {
                 if button-focused: Ring2 { pw: parent.width; ph: parent.height; radius: 24px; }
                 Text {
                     text: busy ? "Stop Sharing" : "Done";
-                    color: Theme.on-accent;
+                    color: Theme.material ? Theme.m3-on-primary : Theme.on-accent;
                     font-size: Theme.body;
                     font-weight: 600;
                     accessible-role: none;
