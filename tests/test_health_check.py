@@ -475,5 +475,22 @@ class HealthCheck(unittest.TestCase):
         self.assertNotIn(str(self.home), out.stdout)
 
 
+class LoginFixError(unittest.TestCase):
+    """The login Fix's error: words from boot-check's record, not its JSON (audit #788)"""
+    def test_words_not_json(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("health_check_fix", SCRIPT)
+        hc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hc)
+        rec = {"ok": False, "problems": [{"id": "pam:greetd", "what": "greetd's PAM file has no password path"}],
+               "found": [], "did": ["took out the fingerprint line"]}
+        self.assertEqual(hc.login_fix_error(json.dumps(rec)),
+                         "Still a problem: greetd's PAM file has no password path; Undone: took out the fingerprint line")
+        self.assertEqual(hc.login_fix_error("not json"), "")
+        self.assertEqual(hc.login_fix_error(""), "")
+        self.assertEqual(hc.login_fix_error(json.dumps({"ok": False, "problems": [], "did": []})), "")
+        self.assertNotIn("asks for your password)", " ".join(hc.LOGIN_STEPS))
+
+
 if __name__ == "__main__":
     unittest.main()

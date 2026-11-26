@@ -427,7 +427,7 @@ def check_polkit(opts):
 
 
 LOGIN_STEPS = ["Don't log out or restart until this is fixed",
-               "Press Fix: Tessera checks again and undoes its own change that's in the way (it asks for your password)",
+               "Press Fix and give your password: Tessera checks again and undoes its own change that's in the way",
                "Still failing: see docs/RECOVERY.md. If there's no login screen later, Ctrl+Alt+F2 gives a console: "
                "log in there and run sudo /usr/lib/tessera/tessera-root rescue"]
 RESTORE_STEPS = [TERMINAL + "pkexec /usr/lib/tessera/tessera-root rescue undo (puts back what was taken out, "
@@ -803,6 +803,25 @@ def as_text(rows):
     return bug.scrub("\n".join(lines), bug.personal_names())
 
 
+def login_fix_error(stdout):
+    """boot-check --repair prints its whole record as JSON: the first problem
+    still there, in words (and what it undid), not a fragment of the JSON."""
+    try:
+        rec = json.loads((stdout or "").strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return ""
+    if not isinstance(rec, dict):
+        return ""
+    left = [p.get("what") for p in rec.get("problems") or [] if isinstance(p, dict) and isinstance(p.get("what"), str)]
+    did = [d for d in rec.get("did") or [] if isinstance(d, str)]
+    if not left and not did:
+        return ""
+    out = ("Still a problem: " + left[0]) if left else ""
+    if did:
+        out += ("; " if out else "") + "Undone: " + "; ".join(did[:2])
+    return out[:300]
+
+
 def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", nargs="?", default="check", choices=["check", "text", "fix"])
@@ -838,6 +857,8 @@ def main(argv):
             code, out = None, "It took too long; try the command in a terminal"
         if cmd[0] == "pkexec" and code in (126, 127):
             err = "Cancelled: no password was given" if code == 126 else "Not allowed: your account can't do this; try the command in a terminal"
+        elif code != 0 and opts.id == "login" and login_fix_error(p.stdout if code is not None else ""):
+            err = login_fix_error(p.stdout)
         else:
             err = "" if code == 0 else (out.strip()[:200] or "It didn't work; try the command in a terminal")
         print(json.dumps({"ok": code == 0, "error": err}))
@@ -848,4 +869,9 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    rc = main(sys.argv[1:])
+    # (a check still waiting on a hung service mustn't keep the page's
+    # spinner past the answer: its thread would be joined at exit)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(rc)
