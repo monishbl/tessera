@@ -1,20 +1,4 @@
 {
-  "ai": {
-    "customInstructions": "",
-    "effort": "low",
-    "extraModels": [],
-    "historyDays": 0,
-    "keepHistory": true,
-    "model": "aistudio|gemini-2.5-flash||apiKey||",
-    "models": [
-      "{\"id\":\"gemini-2.5-flash\",\"name\":\"gemini-2.5-flash\",\"provider\":\"aistudio\",\"endpoint\":\"\",\"project\":\"\",\"location\":\"\",\"auth\":\"apiKey\",\"thinking\":false,\"maxTokens\":0,\"key\":\"aistudio|gemini-2.5-flash||apiKey||\"}"
-    ],
-    "modelsMigrated": true,
-    "ollamaUrl": "http://localhost:11434",
-    "showThinking": true,
-    "style": "balanced",
-    "systemPrompt": "You are a helpful assistant in a Linux desktop sidebar (Hyprland). Be concise and direct. Use Markdown: short paragraphs, lists where they help, and fenced code blocks for commands or code."
-  },
   "appearance": {
     "accent": "wallpaper",
     "appTheme": "wallpaper",
@@ -67,17 +51,6 @@
     "windowRadius": 20,
     "windowTabs": "finder"
   },
-  "audio": {
-    "airplay": false
-  },
-  "captions": {
-    "barX": 280,
-    "barY": 512,
-    "enabled": false,
-    "language": "auto",
-    "placement": "bar"
-  },
-  "cloud": {},
   "controlCenter": {
     "background": false,
     "layout": [
@@ -110,25 +83,6 @@
       "warp"
     ]
   },
-  "cooling": {
-    "glass": "frosted",
-    "hotAction": "ask",
-    "lightBlur": true,
-    "onBattery": false,
-    "pauseLiveWallpaper": true,
-    "refreshDrop": false,
-    "shortAnimations": true,
-    "whenHot": true
-  },
-  "defaultApps": {
-    "browser": "",
-    "code": "",
-    "mixer": "",
-    "office": "",
-    "tasks": "",
-    "terminal": "",
-    "text": ""
-  },
   "defaultsVersion": 3,
   "desktop": {
     "clock": false,
@@ -157,16 +111,6 @@
       "Sydney|Australia/Sydney"
     ]
   },
-  "dictation": {
-    "language": "",
-    "model": "base",
-    "sounds": true
-  },
-  "displays": {
-    "connectAnimation": "extend",
-    "directionalSound": true,
-    "monitors": []
-  },
   "dock": {
     "appNames": true,
     "appsButton": true,
@@ -180,26 +124,6 @@
     "pinned": [],
     "recentApps": true,
     "trash": true
-  },
-  "emoji": {
-    "gifFilter": "medium",
-    "klipyKey": "",
-    "style": "windows"
-  },
-  "fastPair": {
-    "enabled": false
-  },
-  "findPointer": {
-    "enabled": true,
-    "style": "ring"
-  },
-  "google": {},
-  "hotCorners": {
-    "bottomLeft": "none",
-    "bottomRight": "none",
-    "delay": 200,
-    "topLeft": "desktop",
-    "topRight": "none"
   },
   "island": {
     "activityLayout": "replace",
@@ -254,24 +178,17 @@
     "playerArt": "island",
     "playerLayout": "overlay"
   },
-  "keyboard": {
-    "superTap": "overview"
-  },
   "lock": {
     "clockFace": "wide",
     "clockRound": true,
     "clockSize": "dynamic",
     "clockWeight": 640,
     "clockWidth": 112,
-    "face": true,
-    "fingerprint": true,
     "layout": "macos",
     "lockTransition": "fade",
     "loginIntro": false,
     "loginStyle": "look",
     "material": "system",
-    "notifications": "shelf",
-    "previews": false,
     "standby": true,
     "standbyClockOpacity": 0.5,
     "standbyClockWeight": "thin",
@@ -282,9 +199,6 @@
     "standbyWakeOnMouse": true,
     "text": "auto",
     "unlockTransition": "zoom"
-  },
-  "loginItems": {
-    "startAtLogin": true
   },
   "menubar": {
     "ai": false,
@@ -316,28 +230,8 @@
     "workspaceOverflow": "arrows",
     "workspaces": "dots"
   },
-  "mouse": {
-    "accelProfile": "adaptive",
-    "boundaryMode": "corners",
-    "cornerSize": 24,
-    "focus": "hover",
-    "leftHanded": false,
-    "middleEmulation": false,
-    "naturalScroll": false,
-    "scrollSpeed": 1,
-    "speed": 0
-  },
-  "network": {
-    "speedTest": "cloudflare"
-  },
-  "notes": {
-    "folder": ""
-  },
   "notificationCenter": {
     "background": false
-  },
-  "overlays": {
-    "gaming": false
   },
   "overview": {
     "displays": "rows",
@@ -345,124 +239,9 @@
     "style": "grid",
     "wallpapers": false
   },
-  "performance": {
-    "keepPanelsLoaded": false
-  },
-  "phone": {
-    "camera": "back",
-    "dock": true,
-    "enabled": true,
-    "screenOff": true
-  },
-  "power": {
-    "appEnergy": true,
-    "batterySaver": true,
-    "batterySaverAuto": false,
-    "batterySaverLevel": 20,
-    "critical": true,
-    "gamePerformance": true,
-    "idleDimAc": 300,
-    "idleDimBattery": 120,
-    "idleLockAc": 600,
-    "idleLockBattery": 300,
-    "idleOffAc": 600,
-    "idleOffBattery": 300,
-    "idleSleepAc": 0,
-    "idleSleepBattery": 900,
-    "lidAc": "sleep",
-    "lidBattery": "sleep",
-    "lidCaffeine": "lock",
-    "lidExternal": "nothing",
-    "mode": "balanced",
-    "passwordAfterSleep": 0
-  },
-  "privacy": {
-    "screenShareIndicator": "island"
-  },
-  "recorder": {
-    "area": "screen",
-    "codec": "h264",
-    "countdown": 0,
-    "cursor": true,
-    "folder": "",
-    "fps": 60,
-    "mic": "",
-    "quality": "high",
-    "systemAudio": true
-  },
-  "resources": {
-    "graphStyle": "area"
-  },
-  "screenshot": {
-    "editor": "tessera",
-    "markup": true,
-    "textSearch": true,
-    "thumbnail": true
-  },
-  "sharing": {
-    "name": "",
-    "quickShare": "off",
-    "quickShareFolder": "",
-    "quickShareHotspot": true,
-    "receiving": "off"
-  },
-  "shelf": {
-    "edge": true,
-    "menubar": true,
-    "shake": true
-  },
-  "sidebar": {
-    "booru": false,
-    "booruNsfw": false,
-    "booruProvider": "yandere",
-    "translateTarget": "en"
-  },
-  "sounds": {
-    "battery": true,
-    "charging": true,
-    "chargingFile": "",
-    "displays": true,
-    "displaysFile": "",
-    "enabled": true,
-    "error": true,
-    "lock": true,
-    "notifications": true,
-    "pack": "marimba",
-    "received": true,
-    "recording": true,
-    "screenshot": true,
-    "startup": true,
-    "startupFile": "",
-    "startupSound": "",
-    "startupVolume": 0.9,
-    "today": true,
-    "trash": true,
-    "usb": true,
-    "volume": 0.24959161931818183,
-    "volumeKeys": true
-  },
   "stageManager": {
     "enabled": false,
     "strip": true
-  },
-  "switcher": {
-    "enabled": true
-  },
-  "today": {
-    "entrance": "bloom",
-    "mode": "ask",
-    "name": ""
-  },
-  "trackpad": {
-    "disableWhileTyping": false,
-    "dragLock": false,
-    "middleClick": false,
-    "naturalScroll": true,
-    "rightClick": "twoFingers",
-    "scrollSpeed": 0.7,
-    "speed": 0,
-    "tapAndDrag": true,
-    "tapToClick": true
   },
   "wallpaper": {
     "darkPath": "",
@@ -473,21 +252,5 @@
     "live": "",
     "livePauseOnBattery": false,
     "path": ""
-  },
-  "weather": {
-    "location": "",
-    "units": "metric"
-  },
-  "welcome": {
-    "done": true
-  },
-  "windowRules": {
-    "defaultLayout": "tiled",
-    "rules": []
-  },
-  "workspaces": {
-    "dimOthers": true,
-    "switchCue": "glow",
-    "warpPointer": true
   }
 }
