@@ -5,12 +5,14 @@ Several runs of a side (run.sh's two rounds, the arenas swapped) are merged:
 counts, times, CPU and memory averaged, panics and restarts summed, the
 worst stall the worst, alive only if alive in every run.
 Writes <out>/report.json and <out>/report.md; exit 0 = pass, 1 = fail,
-3 = unreliable (the machine's load above GATE_MAX_LOAD, 8, during a run).
+3 = unreliable (the machine's load above GATE_MAX_LOAD, 8, during a run, or
+the two sides' notes differ: they didn't run the same script).
 Budgets and tolerances: thresholds.json beside this file (docs/gate.md says
 how they were calibrated). A budget with "gate": false is reported, never fails.
 """
 import json
 import os
+import re
 import sys
 
 base_p, cand_p, out = sys.argv[1:4]
@@ -47,6 +49,9 @@ def merge(paths):
     m["panics"]["count"] = sum(r["panics"]["count"] for r in runs)
     m["panics"]["lines"] = [l for r in runs for l in r["panics"]["lines"]][:10]
     m["restarts"] = sum(r["restarts"] for r in runs)
+    m["errors"] = {"count": sum((r.get("errors") or {}).get("count", 0) for r in runs),
+                   "lines": [l for r in runs for l in (r.get("errors") or {}).get("lines", [])][:10]}
+    m["notes"] = [n for r in runs for n in r.get("notes", [])]
     m["alive_at_end"] = all(r["alive_at_end"] for r in runs)
     for k in ("idle_rss_mb", "end_rss_mb", "end_pss_mb", "idle_anon_mb", "end_anon_mb", "script_anon_mb", "rss_slope_mb_per_rep"):
         m["mem"][k] = avg_opt(lambda r: r["mem"].get(k))
@@ -90,9 +95,13 @@ check("script_cpu_pct", B["script"]["cpu_pct"], C["script"]["cpu_pct"], "% of a 
 check("idle_wakeups_per_s", B["idle"]["wakeups_per_s_median"], C["idle"]["wakeups_per_s_median"], "/s")
 check("worst_stall_ms", B["stalls"]["worst_ms"], C["stalls"]["worst_ms"], "ms")
 
-# no new panics or restarts, the shell still there at the end: no tolerance
+# no new panics, restarts or render errors ("render failed", "can't draw": a
+# part that draws nothing also costs less), the shell still there at the
+# end: no tolerance
+errors = lambda R: (R.get("errors") or {}).get("count", 0)
 for name, b, c in [("panics", B["panics"]["count"], C["panics"]["count"]),
-                   ("restarts", B["restarts"], C["restarts"])]:
+                   ("restarts", B["restarts"], C["restarts"]),
+                   ("render_errors", errors(B), errors(C))]:
     rows.append({"budget": name, "baseline": b, "candidate": c, "delta": c - b, "allowed": 0, "unit": "",
                  "pass": c <= b, "gates": True, "note": ""})
 rows.append({"budget": "alive_at_end", "baseline": B["alive_at_end"], "candidate": C["alive_at_end"], "delta": "",
@@ -128,7 +137,17 @@ loads = {side: busy_of(R) for side, R in (("baseline", B), ("candidate", C))}
 busy = {lab: l for lab, l in loads.items() if l is None or l > max_load}
 if busy:
     verdict = "UNRELIABLE"
-report = {"verdict": verdict, "busy": loads, "max_load": max_load, "baseline": labels[0], "candidate": labels[1], "budgets": rows,
+# The two sides must have run the same script: a note one side has and the
+# other hasn't (a window that never mapped, no terminal, the seeded settings
+# changed by the shell: gate.sh, scenario.sh) means they didn't, so the
+# numbers can't be compared (the numbers in a note, a pid, don't count)
+note_set = lambda R: sorted({re.sub(r"[0-9]+", "N", n) for n in R.get("notes", [])})
+mismatch = {lab: note_set(R) for lab, R in (("baseline", B), ("candidate", C))}
+if mismatch["baseline"] == mismatch["candidate"]:
+    mismatch = {}
+else:
+    verdict = "UNRELIABLE"
+report = {"verdict": verdict, "busy": loads, "notes_differ": mismatch, "max_load": max_load, "baseline": labels[0], "candidate": labels[1], "budgets": rows,
           "failed": [r["budget"] for r in failed], "warnings": [r["budget"] for r in warned],
           "baseline_run": B, "candidate_run": C}
 os.makedirs(out, exist_ok=True)
@@ -143,7 +162,10 @@ def fmt(v):
 
 md = [f"# Gate: {verdict}", "", f"baseline `{labels[0]}` vs candidate `{labels[1]}`", "",
       f"Machine busy (tasks running on average while measuring, builds paused): {', '.join(f'{k} {v}' for k, v in loads.items())}"
-      + (f" — above {max_load:g}: the numbers below are not trusted; run again when the machine is quiet" if busy else ""), "",
+      + (f" — above {max_load:g}: the numbers below are not trusted; run again when the machine is quiet" if busy else ""), ""]
+if mismatch:
+    md += [f"The two sides didn't run the same script (notes: {', '.join(f'{k} {v}' for k, v in mismatch.items())}): the numbers below are not trusted.", ""]
+md += [
       "| budget | baseline | candidate | delta | allowed | result |", "|---|---:|---:|---:|---:|---|"]
 for r in rows:
     res = "pass" if r["pass"] else ("FAIL" if r["gates"] else "warn")
@@ -173,5 +195,6 @@ for lab, R in ((labels[0], B), (labels[1], C)):
         md.append(f"Panics ({lab}):")
         md += ["    " + l[:200] for l in R["panics"]["lines"]]
 open(os.path.join(out, "report.md"), "w").write("\n".join(md) + "\n")
-print(verdict + (": " + ", ".join(report["failed"]) if failed else "") + (f" (load {busy})" if busy else ""))
-sys.exit(3 if busy else 0 if not failed else 1)
+print(verdict + (": " + ", ".join(report["failed"]) if failed else "") + (f" (load {busy})" if busy else "")
+      + (f" (notes differ: {mismatch})" if mismatch else ""))
+sys.exit(3 if busy or mismatch else 0 if not failed else 1)

@@ -69,7 +69,7 @@ sleep 4
 mark setup-start
 rm -f "$HOMEDIR/.local/state/tessera/standalone-starts"
 setup glass "$WALL" 1 >/dev/null 2>&1
-python3 -I "$GATE/config.py" "$HOMEDIR/.config/tessera/config.json" "$WALL" --check || say "seeded settings changed by the shell"
+python3 -I "$GATE/config.py" "$HOMEDIR/.config/tessera/config.json" "$WALL" --check || { say "seeded settings changed by the shell"; mark note "seeded settings changed by the shell"; }
 mark setup-end
 inbox 'ipc lock unlock; ipc panels close; ipc island clearHistory' >/dev/null 2>&1
 
