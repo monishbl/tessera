@@ -150,7 +150,7 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
     let login = cx.link("about/loginitems", "");
     let bug = cx.link("about/bugreport", "");
     p.group("")
-        .row(Row::link("System health", "health")
+        .row(Row::link("Health", "health")
             .icon("heartbeat")
             .detail("Whether the services Tessera uses are working, and how to fix them")
             .value(if checks == 0 { String::new() } else if attention == 0 { "All good".into() } else { format!("{attention} to check") })
