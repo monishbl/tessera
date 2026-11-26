@@ -1541,7 +1541,7 @@ impl Desktop {
                 let chosen: Vec<String> = self.feed.shortcut_buttons.get(&id).cloned().unwrap_or_else(|| feed::SHORTCUT_DEFAULTS.iter().map(|s| s.to_string()).collect());
                 rows.push(sep());
                 for a in &self.feed.actions {
-                    rows.push(row(check(chosen.contains(&a.title), a.title.trim_end_matches('…')), Act::Button(id.clone(), a.title.clone())));
+                    rows.push(row(check(chosen.contains(&a.title), &tessera_core::rank::shown(a.title.trim_end_matches('…'))), Act::Button(id.clone(), a.title.clone())));
                 }
             }
             _ => {}
