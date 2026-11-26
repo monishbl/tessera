@@ -953,13 +953,14 @@ impl Overview {
         self.selected = i;
         let Some(w) = self.wins.iter().find(|w| w.output == self.key_out) else { return };
         w.ui.set_selected(i as i32);
-        // keep it in view (the list shows 420 px)
+        // keep it in view (the list shows up to 420 px: less on a short screen)
+        let shown = (w.ui.get_res_h() - 56.0).clamp(40.0, 420.0);
         let top = i as f32 * 40.0;
         let cur = -w.ui.get_results_y();
         if top < cur {
             w.ui.set_results_y(-top);
-        } else if top + 40.0 > cur + 420.0 {
-            w.ui.set_results_y(-(top + 40.0 - 420.0));
+        } else if top + 40.0 > cur + shown {
+            w.ui.set_results_y(-(top + 40.0 - shown));
         }
     }
 

@@ -178,7 +178,9 @@ export component OverviewPanel inherits Window {
     out property <float> openness: shown ? 1 : 0;
     out property <length> sx: round((root.width - 600px) / 2 / 1px) * 1px;
     out property <length> sy: (mac ? round(root.height * 0.36 / 1px) * 1px : 64px);
-    out property <length> res-h: results.length > 0 ? min(results.length * 40px, 420px) + 56px : 0;
+    // (the list at most 420 px, and never past the screen's bottom: the
+    // macOS style's field sits at 36 % of the height)
+    out property <length> res-h: results.length > 0 ? min(results.length * 40px, 420px, max(40px, floor((root.height - res-y - 60px - 56px) / 40px) * 40px)) + 56px : 0;
     out property <length> res-y: sy + 62px;
     out property <float> content-scale: 0.97 + 0.03 * openness;
 
@@ -569,7 +571,10 @@ export component OverviewPanel inherits Window {
             border-color: Theme.accent;
             accessible-role: button;
             accessible-label: z.label;
+            // (y: 0 on both: a layout with a height but no y is centred, and
+            // slid down over the chips when an open zone grew)
             if z.vertical: VerticalLayout {
+                y: 0;
                 height: z.head-h;
                 alignment: center;
                 spacing: 4px;
@@ -590,6 +595,7 @@ export component OverviewPanel inherits Window {
                 }
             }
             if !z.vertical: HorizontalLayout {
+                y: 0;
                 height: z.head-h;
                 alignment: center;
                 spacing: 8px;
@@ -756,7 +762,7 @@ export component OverviewPanel inherits Window {
                 y: i * 40px;
                 height: 40px;
                 border-radius: Theme.radius-control;
-                background: i == selected ? Theme.accent : rt.has-hover ? Theme.fill : transparent;
+                background: i == selected ? Theme.accent : rt.pressed ? Theme.fill-pressed : rt.has-hover ? Theme.fill : transparent;
                 accessible-role: list-item;
                 accessible-label: r.title;
                 accessible-item-selected: i == selected;

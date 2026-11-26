@@ -60,8 +60,9 @@ export component SearchField inherits Rectangle {
     height: 36px;
     border-radius: Theme.material ? self.height / 2 : Theme.radius-control;
     background: Theme.material ? Theme.m3-surface-container-high : Theme.fill;
-    border-width: Theme.material ? 0 : 1px;
-    border-color: input.has-focus ? Theme.accent : transparent;
+    // (focused: outlined in both looks, Material 2 px primary, Glass 1 px accent)
+    border-width: Theme.material ? (input.has-focus ? 2px : 0) : 1px;
+    border-color: input.has-focus ? (Theme.material ? Theme.m3-primary : Theme.accent) : transparent;
 
     Icon {
         x: Theme.material ? 14px : 10px;

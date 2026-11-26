@@ -744,7 +744,7 @@ export component CalendarTab {
                         width: 4px;
                         height: 4px;
                         border-radius: 1px;
-                        background: Theme.material ? Theme.m3-tertiary : #ff9f0a;
+                        background: Theme.material ? Theme.m3-tertiary : Theme.warning;
                     }
                 }
                 touch := TouchArea {
@@ -803,7 +803,7 @@ export component CalendarTab {
                         Rectangle {
                             width: 3px;
                             border-radius: 1.5px;
-                            background: e.event ? e.color : #ff9f0a;
+                            background: e.event ? e.color : Theme.material ? Theme.m3-tertiary : Theme.warning;
                         }
                         Text {
                             text: e.title + (e.sub != "" ? " · " + e.sub : "");
@@ -872,7 +872,7 @@ export component CalendarTab {
                 property <bool> lifted: root.dragging && root.drag-key == it.key;
                 height: Theme.material ? 44px : 36px;
                 border-radius: Theme.material ? 12px : 8px;
-                background: Theme.material ? (rt.has-hover ? Theme.fill-hover : Theme.fill) : rt.has-hover ? Theme.fill : transparent;
+                background: Theme.material ? (rt.has-hover ? Theme.fill-hover : Theme.fill) : rt.pressed ? Theme.fill-pressed : rt.has-hover ? Theme.fill : transparent;
                 opacity: lifted ? 0.5 : 1;
                 // click: edit; drag (the movable ones): to another date
                 rt := TouchArea {
@@ -888,6 +888,12 @@ export component CalendarTab {
                             if root.drop-key != "" && root.drop-key != it.day {
                                 root.move(it.key, root.drop-key, -1);
                             }
+                            root.drop-key = "";
+                        }
+                        // (the grab taken away: the panel closed, another
+                        // surface took the pointer) the ghost goes, nothing moves
+                        if e.kind == PointerEventKind.cancel && root.dragging && root.drag-key == it.key {
+                            root.dragging = false;
                             root.drop-key = "";
                         }
                     }
@@ -922,8 +928,8 @@ export component CalendarTab {
                     x: Theme.material ? 10px : 4px;
                     y: (parent.height - self.height) / 2;
                     checked: it.done;
-                    tint: #ff9f0a;
-                    ring: #ff9f0a;
+                    tint: Theme.material ? Theme.m3-tertiary : Theme.warning;
+                    ring: Theme.material ? Theme.m3-tertiary : Theme.warning;
                     label: it.title;
                     toggled => { todo-toggle(it.key); }
                 }
@@ -1311,7 +1317,8 @@ export component TodoTab {
             height: Theme.material ? 40px : 32px;
             border-radius: Theme.material ? self.height / 2 : Theme.radius-control;
             background: Theme.fill;
-            border-width: Theme.material && input.has-focus ? 2px : 0;
+            // (focused: outlined in both looks, as the search field)
+            border-width: input.has-focus ? (Theme.material ? 2px : 1px) : 0;
             border-color: Theme.material ? Theme.m3-primary : Theme.accent;
             Icon {
                 x: Theme.material ? 14px : 10px;

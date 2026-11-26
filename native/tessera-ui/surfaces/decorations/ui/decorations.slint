@@ -262,7 +262,7 @@ export component WindowControls inherits Window {
                     width: 44px;
                     height: 32px;
                     border-radius: Theme.radius-item + 2px;
-                    background: tt.has-hover ? (Theme.material ? Theme.highlight : Theme.accent) : transparent;
+                    background: tt.has-hover ? (Theme.material ? Theme.highlight : Theme.accent).darker(tt.pressed ? 0.15 : 0) : transparent;
                     accessible-role: button;
                     accessible-label: tz.name;
                     accessible-action-default => { tiling = false; snap(tz.name); tiling-off(); }
