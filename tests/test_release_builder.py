@@ -360,6 +360,22 @@ class Health(unittest.TestCase):
             except self.pr.Refused as e:
                 self.assertNotIn("others", str(e))  # (on to the next need: minisign, gh)
 
+    def test_the_gitlab_mirror_prunes_bundles_too(self):
+        # (audit #721: only program sets were pruned; bundles piled up)
+        f, n = [], [0]
+
+        def add(name, t):
+            n[0] += 1
+            f.append({"id": n[0], "file_name": name, "created_at": f"2026-11-{t:02d}T00:00:00Z"})
+        for day, c in enumerate("abcde", 1):
+            add(f"tessera-{c * 40}.bundle.json", day)
+            add(f"tessera-{c * 40}-x86-64-v3.bundle.tar.zst", day)
+        add("tessera-latest.bundle.json", 5)
+        add(f"tessera-ui-{'1' * 40}.manifest.json", 1)
+        add(f"tessera-ui-{'1' * 40}-generic.tar.zst", 1)
+        gone = {x["file_name"] for x in f if x["id"] in self.pr.gitlab_pruned(f, "1" * 40, "a" * 40)}
+        self.assertEqual(gone, {f"tessera-{c * 40}{s}" for c in "b" for s in (".bundle.json", "-x86-64-v3.bundle.tar.zst")})
+
     def test_a_set_out_but_not_marked_is_only_marked_next_time(self):
         # (audit #722: one ssh failing after the uploads made it "not
         # published" and re-uploaded every 2 minutes)

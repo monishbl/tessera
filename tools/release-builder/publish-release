@@ -682,12 +682,37 @@ def gitlab(method, url, token, data=None):
     return json.loads(body) if body[:1] in (b"[", b"{") else None
 
 
+def gitlab_pruned(files, tree, commit=None):
+    """The ids of the GitLab package files to delete: program sets beyond the
+    KEEP newest trees, bundles beyond the KEEP newest commits (as GitHub
+    keeps them; the one just published stays either way), and older copies
+    of a file uploaded again"""
+    files = sorted(files, key=lambda x: x["created_at"], reverse=True)
+    trees, commits = [], []
+    for x in files:
+        mm, mb = MANIFEST_RE.match(x["file_name"]), BUNDLE_MANIFEST_RE.match(x["file_name"])
+        if mm and mm[1] not in trees:
+            trees.append(mm[1])
+        if mb and mb[1] not in commits:
+            commits.append(mb[1])
+    keep_trees = set(trees[:KEEP]) | {tree}
+    keep_commits = set(commits[:KEEP]) | ({commit} if commit else set())
+    out, seen = [], set()
+    for x in files:
+        n = x["file_name"]
+        mm, mb = re.match(r"^tessera-ui-([0-9a-f]{40})", n), re.match(r"^tessera-([0-9a-f]{40})", n)
+        if (mm and mm[1] not in keep_trees) or (mb and mb[1] not in keep_commits) or n in seen:
+            out.append(x["id"])
+        seen.add(n)
+    return out
+
+
 def publish_gitlab(s, dest):
     """Like the workflow's Mirror step: skipped quietly without a token;
     a failure is a warning (GitHub's release is already out)."""
     if not os.path.exists(GITLAB_TOKEN_FILE):
         return
-    tag, tree = s["tag"], s["tree"]
+    tag, tree = s["tag"], s.get("tree")
     with open(GITLAB_TOKEN_FILE) as f:
         token = f.read().strip()
     project = "monishbl/tessera"
@@ -705,19 +730,8 @@ def publish_gitlab(s, dest):
             pkg = next((p["id"] for p in pkgs if p.get("version") == tag), None)
             if pkg:
                 files = gitlab("GET", f"{api}/packages/{pkg}/package_files?per_page=100", token) or []
-                files.sort(key=lambda x: x["created_at"], reverse=True)
-                keep = []
-                for x in files:
-                    mm = MANIFEST_RE.match(x["file_name"])
-                    if mm and mm[1] not in keep:
-                        keep.append(mm[1])
-                keep = set(keep[:KEEP]) | {tree}
-                seen = set()
-                for x in files:
-                    mm = re.match(r"^tessera-ui-([0-9a-f]{40})", x["file_name"])
-                    if (mm and mm[1] not in keep) or x["file_name"] in seen:
-                        gitlab("DELETE", f"{api}/packages/{pkg}/package_files/{x['id']}", token)
-                    seen.add(x["file_name"])
+                for fid in gitlab_pruned(files, tree, s.get("commit") if is_bundle(s) else None):
+                    gitlab("DELETE", f"{api}/packages/{pkg}/package_files/{fid}", token)
         log(f"{tag}: mirrored to GitLab ({project}, tessera-ui/{tag})")
     except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
         log(f"{tag}: warning: the GitLab mirror failed ({e}); GitHub's release is out")
