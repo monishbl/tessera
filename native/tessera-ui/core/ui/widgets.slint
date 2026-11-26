@@ -13,10 +13,13 @@ export component IconButton inherits Rectangle {
     in property <color> icon-color: Theme.secondary;
     in property <length> icon-size: 16px;
     in property <string> label;
+    // (off: greyed, no hover or press look, not pressable)
+    in property <bool> enabled: true;
     out property <bool> hovered: touch.has-hover;
     callback clicked();
     width: 28px;
     height: 28px;
+    opacity: enabled ? 1 : Theme.material ? 0.38 : 0.4;
     border-radius: Theme.material ? (touch.pressed ? min(8px, self.height / 2) : self.height / 2) : Theme.radius-control - 2px;
     background: Theme.material ? (touch.pressed ? Theme.m3-on-surface-variant.with-alpha(0.1) : touch.has-hover ? Theme.m3-on-surface-variant.with-alpha(0.08) : transparent)
         : touch.pressed ? Theme.fill-pressed : touch.has-hover ? Theme.fill : transparent;
@@ -24,7 +27,8 @@ export component IconButton inherits Rectangle {
     animate border-radius { duration: 150ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     accessible-role: button;
     accessible-label: label;
-    accessible-action-default => { clicked(); }
+    accessible-enabled: enabled;
+    accessible-action-default => { if enabled { clicked(); } }
     Icon {
         text: icon;
         fill: root.fill;
@@ -32,6 +36,7 @@ export component IconButton inherits Rectangle {
         font-size: icon-size;
     }
     touch := TouchArea {
+        enabled: root.enabled;
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
@@ -217,7 +222,10 @@ export component StateShape inherits Rectangle {
 export component TextButton inherits Rectangle {
     in property <string> text;
     in property <bool> primary;
+    // (off: greyed, no hover or press look, not pressable)
+    in property <bool> enabled: true;
     callback clicked();
+    opacity: enabled ? 1 : Theme.material ? 0.38 : 0.4;
     property <color> ink: Theme.material ? (primary ? Theme.m3-on-primary : Theme.m3-on-secondary-container) : primary ? Theme.on-accent : Theme.label;
     width: label.preferred-width + (Theme.material ? 40px : 32px);
     height: Theme.material ? 40px : 36px;
@@ -233,7 +241,8 @@ export component TextButton inherits Rectangle {
     animate background { duration: 150ms; }
     accessible-role: button;
     accessible-label: text;
-    accessible-action-default => { clicked(); }
+    accessible-enabled: enabled;
+    accessible-action-default => { if enabled { clicked(); } }
     label := Text {
         text: root.text;
         color: ink;
@@ -242,6 +251,7 @@ export component TextButton inherits Rectangle {
         accessible-role: none;
     }
     touch := TouchArea {
+        enabled: root.enabled;
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
