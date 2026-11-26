@@ -491,6 +491,20 @@ class BuildEnv(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_two_writers_of_the_status_keep_each_others_changes(self):
+        # (audit #724: --mark-published wrote its stale copy over a build's)
+        rb = self.rb
+        rb.status(state="building", tree="t1")
+        other = json.loads(Path(rb.STATUS).read_text())
+        other["targets"] = {"beta": {"result": "published"}}
+        Path(rb.STATUS).write_text(json.dumps(other))  # (the other process's write)
+        rb.target_result("main", result="ready")
+        got = json.loads(Path(rb.STATUS).read_text())
+        self.assertEqual(got["state"], "building")
+        self.assertEqual(got["targets"]["beta"], {"result": "published"})
+        self.assertEqual(got["targets"]["main"]["result"], "ready")
+        self.assertFalse([n for n in os.listdir(self.tmp.name) if ".tmp" in n])
+
     def test_channel_variant_kind_commit_and_date(self):
         for channel in ("stable", "beta", "release"):
             t = {"name": "x", "kind": "branch", "tag": "t", "channel": channel, "commit": self.commit}
