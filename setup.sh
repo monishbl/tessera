@@ -82,6 +82,9 @@ update() {
     return 1
 }
 
+# (all of it in main, run on the last line: streamed into bash, nothing runs
+# until the whole file has arrived, never half of it)
+main() {
 [[ $EUID == 0 ]] && die "Run this as your normal user (not root); it asks for sudo when it needs it."
 command -v pacman >/dev/null || die "Tessera installs on Arch Linux (and Arch-based systems with pacman)."
 
@@ -93,6 +96,19 @@ fi
 
 if [[ -d "$DIR/.git" ]]; then
     echo "Updating Tessera in $DIR"
+    # (a copy following Beta stays on Beta, unless TESSERA_BRANCH says)
+    if [[ -z "${TESSERA_BRANCH:-}" && "$(git -C "$DIR" symbolic-ref --short -q HEAD 2>/dev/null)" == beta ]]; then
+        BRANCH=beta
+    fi
+    # Commits of yours that no remote has are kept on a branch of their own,
+    # never only in the reflog (asked before the download: its shallow
+    # history wouldn't reach them)
+    if [[ -n "$(git -C "$DIR" rev-list -n 1 HEAD --not --remotes 2>/dev/null)" ]]; then
+        kept="tessera-setup-kept-$(date '+%Y%m%d-%H%M%S')"
+        git -C "$DIR" branch "$kept" HEAD ||
+            die "Your commits in $DIR couldn't be kept on a branch, so nothing changed. Push them, or update with Software Update."
+        echo "  Your commits in $DIR are kept on the branch $kept (git -C \"$DIR\" log $kept)."
+    fi
     update || die "Couldn't download Tessera from any source (${SOURCES[*]}). Check the connection and run this again."
     # Edits of yours in that checkout are kept aside first, never thrown
     # away (Software Update keeps them too): git stash list shows them
@@ -122,3 +138,5 @@ if [[ -t 0 ]]; then
 else
     exec "$DIR/install.sh" "$@" </dev/tty
 fi
+}
+main "$@"
