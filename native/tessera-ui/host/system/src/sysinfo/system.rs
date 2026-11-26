@@ -319,7 +319,24 @@ impl System {
         tessera_core::services::bridge::run(&["systemctl", "suspend"]);
     }
 
-    pub fn power(&mut self, h: &mut Host, action: &str) {
+    /// `anyway`: Shut Down Anyway (#305), past what holds it up. Without it,
+    /// Shut Down, Restart and Log Out first ask logind what holds them up
+    /// (the power menu asked already; Search, scripts and the menu bar
+    /// didn't): when something does, the power menu opens on that action
+    /// and lists it, instead of the action failing with no word
+    pub fn power(&mut self, h: &mut Host, action: &str, anyway: bool) {
+        if power_asks(action) && !anyway && !sandboxed() {
+            let (t, a) = (self.tx().clone(), action.to_string());
+            tessera_core::work::spawn(move || {
+                let held = tessera_core::inhibit::held_up();
+                t(Box::new(Checked(a, held)));
+            });
+            return;
+        }
+        self.power_now(h, action, anyway);
+    }
+
+    fn power_now(&mut self, h: &mut Host, action: &str, anyway: bool) {
         if action == "logout" {
             tessera_core::services::bridge::run(&["hyprctl", "dispatch", "hl.dsp.exit()"]);
             return;
@@ -328,10 +345,14 @@ impl System {
             self.set_locked(h, true);
             return;
         }
-        let cmd: &[&str] = match action {
-            "sleep" => &["systemctl", "suspend"],
-            "restart" => &["systemctl", "reboot"],
-            "shutdown" => &["systemctl", "poweroff"],
+        let cmd: &[&str] = match (action, anyway) {
+            ("sleep", _) => &["systemctl", "suspend"],
+            // (-i: past block inhibitors; logind still asks polkit whether
+            // this user may, so nothing more privileged than they're allowed)
+            ("restart", true) => &["systemctl", "reboot", "-i"],
+            ("restart", false) => &["systemctl", "reboot"],
+            ("shutdown", true) => &["systemctl", "poweroff", "-i"],
+            ("shutdown", false) => &["systemctl", "poweroff"],
             _ => return,
         };
         if sandboxed() {
@@ -346,7 +367,7 @@ impl System {
                 self.t_sleep.once(self.tx(), 3000);
             }
         } else {
-            tessera_core::services::bridge::run(cmd);
+            run_power(cmd, action);
         }
     }
 
@@ -575,7 +596,8 @@ impl Service for System {
             }
             "power" => {
                 let a = args.get(0).and_then(Value::as_str).or(args.as_str()).unwrap_or("").to_string();
-                self.power(h, &a);
+                let anyway = args.get(1).and_then(Value::as_bool).unwrap_or(false);
+                self.power(h, &a, anyway);
             }
             "repairShell" => {
                 // a separate script (it outlives this shell): removes leftover and
@@ -743,6 +765,19 @@ impl Service for System {
             }
             Err(m) => m,
         };
+        let msg = match msg.downcast::<Checked>() {
+            Ok(c) => {
+                let Checked(action, held) = *c;
+                if held {
+                    // (the power menu, on this action: Enter or a click lists what holds it up)
+                    h.ask("panels.showSession", json!([action]));
+                } else {
+                    self.power_now(h, &action, false);
+                }
+                return;
+            }
+            Err(m) => m,
+        };
         let msg = match msg.downcast::<Warp>() {
             Ok(w) => {
                 self.warp = w.0;
@@ -779,10 +814,76 @@ struct Warp(bool);
 struct Reloaded;
 /// logind's answer to the idle inhibitor asked for as ask number .0
 struct Inhibited(u64, Option<zbus::zvariant::OwnedFd>);
+/// whether anything holds power action .0 up (#305)
+struct Checked(String, bool);
+
+/// The power actions that look for what holds them up first (#305)
+fn power_asks(action: &str) -> bool {
+    matches!(action, "shutdown" | "restart" | "logout")
+}
+
+/// What to say when systemctl refuses a restart or shutdown (it exits
+/// non-zero with a reason on stderr; before #305 the menu closed and
+/// nothing happened, with no word): (title, body)
+fn refused(action: &str, stderr: &str) -> (String, String) {
+    let (title, again) = match action {
+        "restart" => ("Didn't restart", "Restart"),
+        "sleep" => ("Didn't sleep", "Sleep"),
+        _ => ("Didn't shut down", "Shut Down"),
+    };
+    let line = stderr.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let body = if line.to_lowercase().contains("inhibit") {
+        format!("An app is holding it up. Choose {again} again to see which, and to {} anyway.", again.to_lowercase())
+    } else if line.is_empty() {
+        "systemctl stopped with an error.".to_string()
+    } else {
+        line.chars().take(200).collect()
+    };
+    (title.to_string(), body)
+}
+
+/// Run a restart or shutdown on a thread; when it's refused, say why
+fn run_power(cmd: &[&str], action: &str) {
+    let cmd: Vec<String> = cmd.iter().map(|s| s.to_string()).collect();
+    let action = action.to_string();
+    std::thread::spawn(move || {
+        let mut c = Command::new(&cmd[0]);
+        c.args(&cmd[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
+        {
+            // (signals unblocked in the child, as bridge::run, audit #104)
+            use std::os::unix::process::CommandExt;
+            unsafe {
+                c.pre_exec(|| {
+                    tessera_core::util::child_signals();
+                    Ok(())
+                });
+            }
+        }
+        let err = match c.output() {
+            Ok(o) if o.status.success() => return,
+            Ok(o) => String::from_utf8_lossy(&o.stderr).into_owned(),
+            Err(e) => e.to_string(),
+        };
+        eprintln!("tessera-ui: system: {} refused: {}", cmd.join(" "), err.trim());
+        let (title, body) = refused(&action, &err);
+        helpers::notify_send(&["-a", "Tessera", "-i", "system-shutdown", &title, &body]);
+    });
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_refused_shutdown_says_why() {
+        assert!(power_asks("shutdown") && power_asks("restart") && power_asks("logout"));
+        assert!(!power_asks("sleep") && !power_asks("lock"));
+        let (t, b) = refused("shutdown", "Operation inhibited by \"Firefox\" (PID 42 \"firefox\", user me), reason is \"Downloading\".\nPlease retry operation after closing inhibitors and logging out other users.\n");
+        assert_eq!(t, "Didn't shut down");
+        assert_eq!(b, "An app is holding it up. Choose Shut Down again to see which, and to shut down anyway.");
+        let (t, b) = refused("restart", "\nCall to Reboot failed: Access denied\n");
+        assert_eq!((t.as_str(), b.as_str()), ("Didn't restart", "Call to Reboot failed: Access denied"));
+        assert_eq!(refused("shutdown", "").1, "systemctl stopped with an error.");
+    }
     #[test]
     fn an_ended_child_is_told_from_a_running_one() {
         assert!(stat_zombie("4242 (hyprsunset) Z 1 4242 4242 0 -1"));

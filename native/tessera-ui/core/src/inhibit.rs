@@ -76,6 +76,60 @@ fn take(what: &str, why: &str, mode: &str) -> Option<OwnedFd> {
     reply.body().deserialize::<OwnedFd>().ok()
 }
 
+/// One of logind's inhibitors (ListInhibitors): `what` is colon-separated
+/// ("shutdown:sleep"), `who` the app's own name for itself, `why` its
+/// reason, `mode` block | block-weak | delay
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Inhibitor {
+    pub what: String,
+    pub who: String,
+    pub why: String,
+    pub mode: String,
+    pub uid: u32,
+    pub pid: u32,
+}
+
+/// Every inhibitor logind holds now (None: no logind). Only a read: it
+/// changes nothing. Call it off the UI thread (#305: the power menu asks
+/// before Shut Down, Restart and Log Out)
+pub fn list() -> Option<Vec<Inhibitor>> {
+    let conn = system()?;
+    let reply = answer(conn.call_method(Some(DEST), PATH, Some(IFACE), "ListInhibitors", &()))?;
+    let v: Vec<(String, String, String, String, u32, u32)> = reply.body().deserialize().ok()?;
+    Some(v.into_iter().map(|(what, who, why, mode, uid, pid)| Inhibitor { what, who, why, mode, uid, pid }).collect())
+}
+
+/// Does this inhibitor hold up a shutdown, restart or logout (#305)?
+/// (`me_pid`, `me_uid`: this shell's own process and user.) A "shutdown"
+/// one in block mode, anyone's (a disc or firmware write, a package tool),
+/// or in delay mode when it's one of your own apps; a "sleep" one in block
+/// mode from your own apps. Never Tessera's own (the lock's sleep delay,
+/// Caffeine), and never a system service's delay: it only waits a few
+/// seconds, and nothing of yours is lost
+pub fn holds_up(i: &Inhibitor, me_pid: u32, me_uid: u32) -> bool {
+    if i.pid == me_pid || i.who == "Tessera" {
+        return false;
+    }
+    let what: Vec<&str> = i.what.split(':').map(str::trim).collect();
+    // (block and block-weak; delay only waits)
+    let block = i.mode.starts_with("block");
+    let mine = i.uid == me_uid;
+    (what.contains(&"shutdown") && (block || mine)) || (what.contains(&"sleep") && block && mine)
+}
+
+/// This process's user
+pub fn my_uid() -> u32 {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata("/proc/self").map(|m| m.uid()).unwrap_or(u32::MAX)
+}
+
+/// Is anything holding up a shutdown, restart or logout now? (false when
+/// logind doesn't answer.) Blocking: off the UI thread
+pub fn held_up() -> bool {
+    let me = (std::process::id(), my_uid());
+    list().is_some_and(|l| l.iter().any(|i| holds_up(i, me.0, me.1)))
+}
+
 /// logind's LidClosed now (None: no lid, or no logind)
 pub fn lid_closed() -> Option<bool> {
     let conn = system()?;
@@ -87,6 +141,29 @@ pub fn lid_closed() -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn which_inhibitors_hold_up_a_shutdown() {
+        let inh = |what: &str, who: &str, mode: &str, uid: u32, pid: u32| Inhibitor { what: what.into(), who: who.into(), why: String::new(), mode: mode.into(), uid, pid };
+        let me = (100, 1000);
+        // a block on shutdown: anyone's
+        assert!(holds_up(&inh("shutdown", "Firefox", "block", 1000, 5), me.0, me.1));
+        assert!(holds_up(&inh("sleep:shutdown", "fwupd", "block", 0, 6), me.0, me.1));
+        assert!(holds_up(&inh("shutdown", "x", "block-weak", 0, 6), me.0, me.1));
+        // a delay: only your own apps'
+        assert!(holds_up(&inh("shutdown", "Writer", "delay", 1000, 7), me.0, me.1));
+        assert!(!holds_up(&inh("shutdown", "Unattended Upgrades", "delay", 0, 8), me.0, me.1));
+        // sleep: only a block by your own apps
+        assert!(holds_up(&inh("sleep", "Backup", "block", 1000, 9), me.0, me.1));
+        assert!(!holds_up(&inh("sleep", "NetworkManager", "delay", 0, 10), me.0, me.1));
+        assert!(!holds_up(&inh("sleep", "Backup", "delay", 1000, 9), me.0, me.1));
+        assert!(!holds_up(&inh("sleep", "udisks", "block", 0, 9), me.0, me.1));
+        // not ones that don't touch power, and never Tessera's own
+        assert!(!holds_up(&inh("idle", "mpv", "block", 1000, 11), me.0, me.1));
+        assert!(!holds_up(&inh("handle-lid-switch", "x", "block", 1000, 11), me.0, me.1));
+        assert!(!holds_up(&inh("shutdown", "Tessera", "block", 1000, 12), me.0, me.1));
+        assert!(!holds_up(&inh("shutdown", "helper", "block", 1000, 100), me.0, me.1));
+    }
 
     #[test]
     fn a_dead_system_connection_is_made_again() {
