@@ -28,8 +28,12 @@ pcall(dofile, dir .. "/tessera/vm.lua") -- only in a virtual machine (written by
 pcall(dofile, dir .. "/tessera/gpu.lua") -- only with an NVIDIA GPU (written by the installer)
 dofile(dir .. "/tessera/rules.lua")
 pcall(dofile, TESSERA_USER_DIR .. "/window-rules.lua") -- per-app rules from Settings → Window Rules
-dofile(dir .. "/tessera/keybinds.lua")
-dofile(dir .. "/tessera/gestures.lua")
+-- (a broken entry in your keybinds.json is reported, never stops the rest:
+-- the shell is started below)
+for _, name in ipairs({ "keybinds.lua", "gestures.lua" }) do
+    local ok, err = pcall(dofile, dir .. "/tessera/" .. name)
+    if not ok then print("Tessera: error in " .. name .. ": " .. tostring(err)) end
+end
 dofile(dir .. "/tessera/execs.lua")
 pcall(dofile, dir .. "/tessera/titlebars.lua") -- only does anything with hyprbars
 pcall(dofile, dir .. "/tessera/glass.lua") -- Liquid Glass plugin, if built

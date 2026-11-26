@@ -40,7 +40,7 @@ function TESSERA_HOLD(fingers)
     if run then run() end
 end
 
-local function add(g)
+local function addOne(g)
     local action = actionOf(g.action)
     if not action or not g.fingers or not g.direction then
         log("skipped " .. tostring(g.id))
@@ -57,12 +57,20 @@ local function add(g)
     local ok, err = pcall(hl.gesture, { fingers = g.fingers, direction = FINGERS[g.direction] or g.direction, action = action })
     if not ok then log("couldn't add " .. tostring(g.id) .. ": " .. tostring(err)) end
 end
+-- (a wrong-typed entry in keybinds.json is logged and skipped, never an
+-- error that stops the rest of the config)
+local function add(g)
+    local ok, err = pcall(addOne, g)
+    if not ok then log("skipped " .. tostring(g.id) .. ": " .. tostring(err)) end
+end
 
 local defaults = json.read(here .. "/gestures.json") or {}
-local user = (json.read(userDir .. "/keybinds.json") or {}).gestures or {}
-local changes = user.changes or {}
-for _, g in ipairs(defaults) do
+local file = json.read(userDir .. "/keybinds.json")
+local user = type(file) == "table" and type(file.gestures) == "table" and file.gestures or {}
+local changes = type(user.changes) == "table" and user.changes or {}
+for _, g in ipairs(type(defaults) == "table" and defaults or {}) do
     local c = changes[g.id]
+    if type(c) ~= "table" then c = nil end
     if not (c and c.disabled) then
         if c then
             for k, v in pairs(c) do g[k] = v end
@@ -70,7 +78,7 @@ for _, g in ipairs(defaults) do
         add(g)
     end
 end
-for _, g in ipairs(user.custom or {}) do
+for _, g in ipairs(type(user.custom) == "table" and user.custom or {}) do
     if type(g) == "table" and not g.disabled then add(g) end
 end
 

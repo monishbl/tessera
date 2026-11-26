@@ -26,8 +26,12 @@ pcall(dofile, root .. "/hypr/tessera/findpointer.lua") -- shake to find the poin
 pcall(dofile, root .. "/hypr/tessera/tabs.lua") -- window tabs
 dofile(root .. "/hypr/tessera/rules.lua")
 pcall(dofile, appDir(os.getenv("XDG_CONFIG_HOME") or (os.getenv("HOME") .. "/.config")) .. "/window-rules.lua")
-dofile(root .. "/hypr/tessera/keybinds.lua")
-dofile(root .. "/hypr/tessera/gestures.lua")
+-- (a broken entry in your keybinds.json is reported, never stops the rest:
+-- the shell is started below)
+for _, name in ipairs({ "keybinds.lua", "gestures.lua" }) do
+    local ok, err = pcall(dofile, root .. "/hypr/tessera/" .. name)
+    if not ok then print("Tessera: error in " .. name .. ": " .. tostring(err)) end
+end
 pcall(dofile, root .. "/hypr/tessera/titlebars.lua") -- only with the hyprbars plugin
 -- Liquid Glass plugin straight from the repo build (make -C hypr/plugin/tessera-glass)
 TESSERA_GLASS_PLUGIN = { root .. "/hypr/plugin/tessera-glass/tessera-glass.so" }
