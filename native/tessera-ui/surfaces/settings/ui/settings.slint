@@ -995,7 +995,9 @@ export component SettingsWindow inherits Window {
                             }
                         }
                         if search-input.text == "": Text {
-                            width: 100%;
+                            // (2px in: the caret at x 0 stays off the first letter)
+                            x: 2px;
+                            width: parent.width - 2px;
                             height: 100%;
                             vertical-alignment: center;
                             text: Theme.material ? "Search settings" : "Search";
