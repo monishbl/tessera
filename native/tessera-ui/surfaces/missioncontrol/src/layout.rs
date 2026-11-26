@@ -16,12 +16,19 @@ pub fn card_h(screen: (f32, f32)) -> f32 {
     (screen.1 * CARD_W / screen.0.max(1.0)).round()
 }
 
-/// The cards, centred, 16 px apart
+/// The narrowest a card gets when many spaces share the bar
+pub const CARD_MIN_W: f32 = 90.0;
+
+/// The cards, centred, 16 px apart; narrower (to 90 px) when 150 px ones
+/// would run off the screen's sides
 pub fn cards(n: usize, screen: (f32, f32)) -> Vec<Rect> {
-    let h = card_h(screen);
-    let total = n as f32 * CARD_W + (n.max(1) - 1) as f32 * 16.0;
+    let gaps = (n.max(1) - 1) as f32 * 16.0;
+    let fit = ((screen.0 - 32.0 - gaps) / n.max(1) as f32).floor();
+    let w = CARD_W.min(fit).max(CARD_MIN_W);
+    let h = (screen.1 * w / screen.0.max(1.0)).round();
+    let total = n as f32 * w + gaps;
     let x0 = ((screen.0 - total) / 2.0).round();
-    (0..n).map(|i| Rect { x: x0 + i as f32 * (CARD_W + 16.0), y: BAR_Y, w: CARD_W, h }).collect()
+    (0..n).map(|i| Rect { x: x0 + i as f32 * (w + 16.0), y: BAR_Y, w, h }).collect()
 }
 
 /// Where the windows go: below the bar, 48 px in from the edges
@@ -81,6 +88,15 @@ mod tests {
         assert_eq!(c[1].x - c[0].x, 166.0);
         let s = stage((1920.0, 1080.0));
         assert_eq!((s.x, s.y, s.w), (48.0, 44.0 + 84.0 + 6.0 + 15.0 + 40.0, 1824.0));
+    }
+
+    #[test]
+    fn many_spaces_narrow_the_cards_to_stay_on_screen() {
+        // nine on 1366 px: 150 px ones would need 1478 px
+        let c = cards(9, (1366.0, 768.0));
+        assert!(c[0].w < CARD_W && c[0].w >= CARD_MIN_W);
+        assert!(c[0].x >= 0.0 && c[8].x + c[8].w <= 1366.0);
+        assert_eq!(c[0].h, (768.0 * c[0].w / 1366.0f32).round());
     }
 
     #[test]

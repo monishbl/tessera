@@ -64,7 +64,20 @@ pub fn cell_w(w: f32, h: f32, columns: usize, rows_mode: bool, side_reserve: f32
     let c = columns.max(1) as f32;
     let by_width = (w - 160.0 - side_reserve - (c - 1.0) * 24.0) / c;
     if !rows_mode {
-        return 300f32.min(by_width);
+        let width = 300f32.min(by_width);
+        if rows.is_empty() {
+            return width;
+        }
+        // (one display: fitted to the height too, so many spaces don't run
+        // off the bottom; grid() starts them 40 px under the search)
+        let avail = h - (search_y(false, h) + SEARCH_H + 2.0 * SEARCH_M + 40.0) - 48.0;
+        let (mut fixed, mut per_w) = (32.0 * (rows.len() - 1) as f32, 0.0);
+        for (n, aspect) in rows {
+            let lines = ((*n).max(1) as f32 / c).ceil();
+            fixed += lines * (8.0 + SMALL_H) + (lines - 1.0) * 24.0;
+            per_w += lines * aspect;
+        }
+        return 80f32.max(width.min((avail - fixed) / per_w.max(0.1)));
     }
     // rows below the search: label 28, title 26 + gap 24 a line, 32 between rows
     let avail = h - 64.0 - 52.0 - 40.0 - 48.0;
@@ -352,6 +365,14 @@ mod tests {
         assert_eq!(columns(true, 9), 6);
         assert_eq!(cell_w(1920.0, 1080.0, 5, false, 0.0, &[]), 300.0);
         assert_eq!(cell_w(1280.0, 800.0, 5, false, 0.0, &[]), (1280.0 - 160.0 - 96.0) / 5.0);
+        // one display, sixteen spaces on 1366x768: the four lines fit the height
+        let a = 768.0 / 1366.0;
+        let cw = cell_w(1366.0, 768.0, 5, false, 0.0, &[(16, a)]);
+        let lines = 4.0;
+        let total = lines * (cw * a + 8.0 + SMALL_H) + (lines - 1.0) * 24.0;
+        assert!(64.0 + SEARCH_H + 2.0 * SEARCH_M + 40.0 + total <= 768.0 - 48.0 + 0.01, "{cw} {total}");
+        // a few spaces: as wide as before
+        assert_eq!(cell_w(1920.0, 1080.0, 5, false, 0.0, &[(3, 1080.0 / 1920.0)]), 300.0);
         let rows = vec![("DP-1".to_string(), vec![1, 2, 3, 4, 5, 6, 7], 0.5625)];
         let gr = grid(1920.0, 1080.0, &rows, 5, 300.0, false, false);
         let c = &gr[0].cells;

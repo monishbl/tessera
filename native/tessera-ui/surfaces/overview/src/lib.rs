@@ -78,6 +78,9 @@ use std::rc::Rc;
 use std::time::Duration;
 
 const NAME: &str = "overview";
+
+/// The window pictures that arrived meanwhile are shown (one rebuild for them)
+struct ShotsDue;
 pub const NS: &str = "tessera:overview";
 /// how far the pointer goes before a press is a drag
 const DRAG: f32 = 10.0;
@@ -253,6 +256,11 @@ fn keyed_lists<K: std::hash::Hash + Eq + Clone, T: Clone + PartialEq + 'static>(
 pub struct Overview {
     wins: Vec<Win>,
     open: bool,
+    /// window pictures arrived and the layout not rebuilt for them yet: one
+    /// rebuild per 50 ms at most (live previews ask every window 30 times a
+    /// second, and each picture rebuilt the whole Overview)
+    shots_due: bool,
+    shots_timer: slint::Timer,
     /// focus the field again once the keyboard is on the window: focused
     /// before the window was active, the caret stayed hidden until typing
     /// (the QML shows it at once)
@@ -1696,7 +1704,20 @@ impl Part for Overview {
         };
         let msg = match msg.downcast::<Shot>() {
             Ok(s) => {
-                if self.thumbs.got(*s) && self.open {
+                if self.thumbs.got(*s) && self.open && !self.shots_due {
+                    self.shots_due = true;
+                    let to = st.shell.sender(NAME);
+                    self.shots_timer.start(slint::TimerMode::SingleShot, std::time::Duration::from_millis(50), move || to(Box::new(ShotsDue)));
+                }
+                return;
+            }
+            Err(m) => m,
+        };
+        let msg = match msg.downcast::<ShotsDue>() {
+            Ok(_) => {
+                self.shots_due = false;
+                // (not mid-drag, as data(): the layout under the pointer stays put)
+                if self.open && self.wins.iter().all(|w| matches!(w.press, Press::None)) {
                     self.rebuild(st);
                 }
                 return;
