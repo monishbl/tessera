@@ -1802,7 +1802,9 @@ export component DeskMenu inherits Window {
         }
         panel := Rectangle {
             width: root.menu-width;
-            height: rows-layout.preferred-height;
+            // (never taller than the screen: the rows scroll, so the last ones
+            // (Edit Widgets…, Remove Widget) stay in reach on a short screen)
+            height: min(rows-layout.preferred-height, root.height - 16px);
             x: max(8px, min(root.width - self.width - 8px, root.point-x));
             y: root.point-y + self.height + 8px > root.height ? max(8px, root.point-y - self.height) : root.point-y;
             opacity: min(1, root.progress);
@@ -1818,7 +1820,12 @@ export component DeskMenu inherits Window {
             accessible-role: list;
             accessible-label: "Desktop menu";
             TouchArea {}
+            Flickable {
+                width: parent.width;
+                height: parent.height;
+                viewport-height: rows-layout.preferred-height;
             rows-layout := VerticalLayout {
+                width: parent.width;
                 padding: 5px;
                 for r[i] in rows: Rectangle {
                     height: r.separator ? 11px : 28px;
@@ -1851,6 +1858,7 @@ export component DeskMenu inherits Window {
                         }
                     }
                 }
+            }
             }
         }
     }

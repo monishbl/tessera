@@ -471,7 +471,21 @@ export component OverviewPanel inherits Window {
                             accessible-role: none;
                         }
                     }
-                    if c.wins.length == 0: Text {
+                    // (on a small chip over the wallpaper: plain grey text on a
+                    // grey or busy picture couldn't be read)
+                    if c.wins.length == 0 && wallpapers: Rectangle {
+                        width: nw.preferred-width + 16px;
+                        height: nw.preferred-height + 6px;
+                        border-radius: self.height / 2;
+                        background: Theme.material ? Theme.m3-surface-container-high.with-alpha(0.85) : Theme.dark ? #1A1A1Dcc : #F4F4F5d9;
+                        nw := Text {
+                            text: "No windows";
+                            color: Theme.material ? Theme.m3-on-surface-variant : Theme.dark ? #C7C7CC : #48484A;
+                            font-size: Theme.small;
+                            accessible-role: none;
+                        }
+                    }
+                    if c.wins.length == 0 && !wallpapers: Text {
                         text: "No windows";
                         color: Theme.material ? (c.current ? Theme.m3-on-secondary-container : Theme.m3-on-surface-variant) : Theme.dark ? #94949D : #6B6B74;
                         font-size: Theme.small;

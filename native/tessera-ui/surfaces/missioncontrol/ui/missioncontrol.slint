@@ -267,7 +267,9 @@ export component MissionControlPanel inherits Window {
             // (Material: a recents card, outlined in primary when hovered)
             Rectangle {
                 border-radius: Theme.material ? Theme.radius-tile : 12px;
-                background: Theme.material ? Theme.m3-surface-container-highest : #1a1a1f;
+                // (a fill for the light look too: the cards flashed black
+                // before their pictures came)
+                background: Theme.material ? Theme.m3-surface-container-highest : Theme.dark ? #1a1a1f : #e4e4e7;
                 transform-scale: tile.hot ? 1.02 : 1;
                 animate transform-scale { duration: 150ms; }
                 transform-origin: { x: self.width / 2, y: self.height / 2 };
@@ -278,6 +280,15 @@ export component MissionControlPanel inherits Window {
                     source: t.picture;
                     image-fit: fill;
                     visible: t.has-picture;
+                    accessible-role: none;
+                }
+                // (no picture yet, or none to be had: the app's icon in the
+                // middle, as the Overview's and the switcher's previews show)
+                if !t.has-picture && t.has-icon: Image {
+                    width: min(48px, parent.width * 0.4);
+                    height: self.width;
+                    source: t.icon;
+                    image-rendering: smooth;
                     accessible-role: none;
                 }
                 Rectangle {
