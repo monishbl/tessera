@@ -705,7 +705,10 @@ impl Part for Greeter {
             M::Quit => st.exit = true,
             M::Tick => {
                 self.push_clock(st);
-                return;
+                // (a power choice left waiting runs out: the field's back)
+                if !self.model.drop_stale_power() {
+                    return;
+                }
             }
             M::Picture(name, buf) => {
                 self.pictures.insert(name, buf.map(slint::Image::from_rgba8));

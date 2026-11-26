@@ -74,6 +74,8 @@ pub enum Effect {
 /// refuses before asking: /etc/nologin…) before the screen stops reopening
 /// them by itself (every 300 ms otherwise, for as long as it lasts)
 const QUIET_FAILS: u32 = 3;
+/// How long a power choice waits for its second click or Enter
+pub const POWER_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
@@ -103,6 +105,9 @@ pub struct Model {
     pub finger: Finger,
     /// "" | suspend | reboot | poweroff: chosen once, done on a second click or Enter
     pub power_choice: String,
+    /// when it was chosen: dropped after POWER_WAIT (a stray click, someone
+    /// walked away: the next Enter shut the computer down)
+    power_at: Option<std::time::Instant>,
     /// the text style's row: 0 session, 1 login, 2 password
     pub row: i32,
     /// PAM's next question after an answer (a new password, a one-time
@@ -529,8 +534,12 @@ impl Model {
 
     /// Enter: a power choice to confirm, else log in
     pub fn submit(&mut self, password: &str) {
-        if !self.power_choice.is_empty() {
+        if self.drop_stale_power() {
+            // (it had run out: this Enter does nothing, the field's back)
+            self.out.push(Effect::FocusPassword);
+        } else if !self.power_choice.is_empty() {
             let action = std::mem::take(&mut self.power_choice);
+            self.power_at = None;
             self.out.push(Effect::Power(action));
         } else if !self.busy {
             self.login(password);
@@ -546,14 +555,31 @@ impl Model {
             self.submit("");
         } else {
             self.power_choice = action.to_string();
+            self.power_at = Some(std::time::Instant::now());
         }
         self.out.push(Effect::FocusPassword);
+    }
+
+    /// A power choice older than POWER_WAIT dropped (the clock's tick and
+    /// Enter ask); true when it was
+    pub fn drop_stale_power(&mut self) -> bool {
+        self.drop_power_after(POWER_WAIT)
+    }
+
+    fn drop_power_after(&mut self, wait: std::time::Duration) -> bool {
+        if self.power_choice.is_empty() || !self.power_at.is_some_and(|t| t.elapsed() >= wait) {
+            return false;
+        }
+        self.power_choice.clear();
+        self.power_at = None;
+        true
     }
 
     /// Escape: drops a power choice, else quits a preview, else clears the field
     pub fn cancel(&mut self) {
         if !self.power_choice.is_empty() {
             self.power_choice.clear();
+            self.power_at = None;
         } else if self.mock {
             self.out.push(Effect::Quit);
         } else {
@@ -916,6 +942,14 @@ mod tests {
         assert!(!m.take().contains(&Effect::Quit), "Esc dropped the choice, didn't quit");
         m.choose_power("rm -rf");
         assert!(m.power_choice.is_empty());
+        // a choice left waiting runs out: the next Enter does nothing
+        m.choose_power("poweroff");
+        assert!(!m.drop_stale_power(), "not yet");
+        assert!(m.drop_power_after(std::time::Duration::ZERO));
+        assert!(m.power_choice.is_empty());
+        m.take();
+        m.submit("");
+        assert!(!m.take().contains(&Effect::Power("poweroff".into())));
         // nothing while busy
         m.busy = true;
         m.choose_power("reboot");
