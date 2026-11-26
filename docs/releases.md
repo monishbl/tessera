@@ -546,7 +546,7 @@ switch, switch back.
 
 | Releases | When | Where | How long it stays |
 |---|---|---|---|
-| **Stable** | the release builder finds a new `native/` tree on `main` | the prerelease `tessera-ui-latest`, one asset set per tree | The **three newest** builds. Older ones are deleted, so an older commit's build is gone soon after main moves on. Installing or updating to such a commit builds locally: that's what the fallback is for. Updating right after a push, before the build is out (server1 looks every 10 minutes and builds for about an hour; the laptop publishes within 10 minutes after), also builds locally, and the check says so. |
+| **Stable** | the release builder finds a new `native/` tree on `main` | the prerelease `tessera-ui-latest`, one asset set per tree | The **three newest** builds. Older ones are deleted, so an older commit's build is gone soon after main moves on. Installing or updating to such a commit builds locally: that's what the fallback is for. Updating right after a push, before the build is out (server1 looks every 10 minutes and builds for about an hour; the laptop publishes within 2 minutes after), also builds locally, and the check says so. |
 | **Beta** | the same, for `beta` | the prerelease `tessera-ui-beta`, the same way | The three newest builds of beta. |
 | **Tags** | the release builder finds a `v*` tag without a build | that tag's own release | As long as the release exists. |
 

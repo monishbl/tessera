@@ -5,8 +5,8 @@
 #
 # NOT THE RELEASE BUILDER TODAY: the GitHub account's Actions are locked
 # (billing), so releases are made by the release builder instead: server1
-# builds (tools/release-builder/tessera-release), the user's laptop signs and
-# publishes (tools/release-builder/publish-release), each every 10 minutes
+# builds (tools/release-builder/tessera-release, every 10 minutes), the user's
+# laptop signs and publishes (tools/release-builder/publish-release, every 2 minutes)
 # (docs/releases.md, "The release builder"). They make exactly what this
 # workflow made. So that the two never publish the same tree twice (two
 # builds of one tree differ byte for byte, and a manifest from one with an
