@@ -359,9 +359,19 @@ impl State {
         if let Some(p) = parts.iter_mut().find(|p| p.name() == name) {
             let n = p.name();
             crate::perf::time(|| format!("part {name}"), || crate::contain::guard(n, || f(p.as_mut(), self)));
+        } else if parts.is_empty() && crate::env::is_set("DEBUG") {
+            // (the list is out while a part runs: a part calling this from its
+            // own code reaches nothing; State::send_part does)
+            eprintln!("debug: part {name} not found (called from inside a part? use send_part)");
         }
         parts.append(&mut self.parts);
         self.parts = parts;
+    }
+
+    /// A message for the part `name`, handed over right after the current
+    /// call (from inside a part, where State::part reaches no other part)
+    pub fn send_part(&self, name: &'static str, m: Box<dyn std::any::Any + Send>) {
+        let _ = self.tx.send(Msg::Part(name, m));
     }
 
     /// Every output there is now, by name

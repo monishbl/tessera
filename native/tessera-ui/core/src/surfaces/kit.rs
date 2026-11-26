@@ -77,18 +77,23 @@ pub fn hex(s: &str) -> slint::Color {
     }
 }
 
-/// The wall clock as the shell writes hours and minutes (TimeFormat.hmShort:
-/// "HH:mm" with the 24-hour setting, else "h:mm": Qt's h without AP is the
-/// hour 0–23 unpadded ("9:05", "21:05")
+/// The wall clock as the shell writes hours and minutes, short: "HH:mm"
+/// with the 24-hour setting, else the 12-hour hour unpadded, no AM/PM
+/// ("9:05", "4:41"; TimeFormat.hmShort's "h:mm" gave the 24-hour hour,
+/// "16:41" beside a menu bar saying 4:41 PM: audit #862)
 pub fn hm_short(cfg: &serde_json::Value) -> String {
     let h24 = cfg["appearance"]["clock24"].as_bool().unwrap_or(false);
-    let t = crate::util::now("%H:%M");
+    hm_short_of(&crate::util::now("%H:%M"), h24)
+}
+
+/// hm_short for a "HH:MM" time
+pub fn hm_short_of(t: &str, h24: bool) -> String {
     if h24 {
-        return t;
+        return t.to_string();
     }
     let (h, m) = t.split_once(':').unwrap_or(("0", "00"));
     let h: u32 = h.parse().unwrap_or(0);
-    format!("{h}:{m}")
+    format!("{}:{m}", (h + 11) % 12 + 1)
 }
 
 /// /proc/meminfo: "6.1 of 15.4 GB" (Resources' memory detail)

@@ -199,6 +199,18 @@ pub fn hints_from(h: &HashMap<String, OwnedValue>) -> Hints {
 
 /// The picture an app sent as pixels (image-data, or its older names): its
 /// size and RGBA bytes
+/// The most a notification keeps: its title's and body's characters, an
+/// action's label's, and its picture's side (px)
+const MAX_SUMMARY: usize = 200;
+const MAX_BODY: usize = 4096;
+const MAX_ACTION: usize = 64;
+const MAX_PICTURE: u32 = 512;
+
+/// `s`'s first `max` characters
+fn cap(s: &str, max: usize) -> &str {
+    s.char_indices().nth(max).map_or(s, |(i, _)| &s[..i])
+}
+
 pub fn image_data(h: &HashMap<String, OwnedValue>) -> Option<(u32, u32, Vec<u8>)> {
     let v = ["image-data", "image_data", "icon_data"].iter().find_map(|k| h.get(*k))?;
     let Value::Structure(s) = &**v else { return None };
@@ -301,7 +313,14 @@ impl Server {
         if let (Some((w, hh, px)), Some(n)) = (pixels, saved_n) {
             let dir = pictures_dir();
             let file = dir.join(format!("{id}-{}-{n}.png", std::process::id()));
-            let saved = std::fs::create_dir_all(&dir).is_ok() && image::RgbaImage::from_raw(w, hh, px).is_some_and(|img| img.save(&file).is_ok());
+            // (a card shows it small: a big one is made 512 px at most before
+            // it's encoded, which keeps the encode, and the file, small)
+            let saved = std::fs::create_dir_all(&dir).is_ok()
+                && image::RgbaImage::from_raw(w, hh, px).is_some_and(|img| {
+                    let img = image::DynamicImage::ImageRgba8(img);
+                    let img = if w > MAX_PICTURE || hh > MAX_PICTURE { img.thumbnail(MAX_PICTURE, MAX_PICTURE) } else { img };
+                    img.save(&file).is_ok()
+                });
             if saved {
                 // (closed while it was saved: the file goes too)
                 let kept = match self.ids.lock() {
@@ -320,7 +339,10 @@ impl Server {
                 }
             }
         }
-        let mut n = model::note_from(id, app_name, app_icon, summary, body, &actions, &h, expire_timeout, &picture, now);
+        // (what any app sends, kept to what a card can show: copied into the
+        // history and parsed again on the UI thread)
+        let actions: Vec<String> = actions.iter().enumerate().map(|(i, a)| if i % 2 == 1 { cap(a, MAX_ACTION).to_string() } else { a.clone() }).collect();
+        let mut n = model::note_from(id, app_name, app_icon, cap(summary, MAX_SUMMARY), cap(body, MAX_BODY), &actions, &h, expire_timeout, &picture, now);
         n.merged = merged;
         let _ = self.tx.send(Msg::Data(Box::new(Event::Notify(n))));
         id
@@ -375,6 +397,16 @@ pub fn spawn(tx: Sender<Msg>) {
             for n in &kept.list {
                 if n.image.starts_with(dir.to_string_lossy().as_ref()) {
                     i.pictures.insert(n.id, PathBuf::from(&n.image));
+                }
+            }
+            // Pictures no kept entry names (a run that crashed before its list
+            // was saved, another session bus's) go: nothing else removes them.
+            // (before serving: no picture of this run is there yet)
+            let named: std::collections::HashSet<PathBuf> = i.pictures.values().cloned().collect();
+            for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                let p = e.path();
+                if !named.contains(&p) && p.extension().is_some_and(|x| x == "png") {
+                    let _ = std::fs::remove_file(&p);
                 }
             }
         }
@@ -449,6 +481,13 @@ pub fn spawn(tx: Sender<Msg>) {
 mod tests {
     use super::*;
     use zbus::zvariant::{Structure, StructureBuilder};
+
+    #[test]
+    fn what_an_app_sends_is_capped_by_characters() {
+        assert_eq!(cap("héllo", 2), "hé");
+        assert_eq!(cap("hi", 200), "hi");
+        assert_eq!(cap(&"é".repeat(5000), MAX_BODY).chars().count(), MAX_BODY);
+    }
 
     fn ov(v: Value<'static>) -> OwnedValue {
         OwnedValue::try_from(v).unwrap()

@@ -15,7 +15,7 @@ use crate::Msg;
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use zbus::blocking::{proxy::Builder, Connection, MessageIterator, Proxy};
 use zbus::proxy::CacheProperties;
@@ -293,11 +293,17 @@ fn serve_watcher(conn: &Connection) -> zbus::Result<bool> {
 
 // ── The host ────────────────────────────────────────────────────────────────
 
-fn conn() -> Option<&'static Connection> {
-    static C: OnceLock<Option<Connection>> = OnceLock::new();
-    // (every call to an app answers within 2 s, or is given up: one frozen
-    // tray app stopped the whole tray; audit #194)
-    C.get_or_init(|| zbus::blocking::connection::Builder::session().map(|b| b.method_timeout(std::time::Duration::from_secs(2))).and_then(|b| b.build()).ok()).as_ref()
+fn conn() -> Option<Connection> {
+    // (kept once made; a failure isn't: the bus not up yet at login is
+    // tried again, not given up on for the session)
+    static C: Mutex<Option<Connection>> = Mutex::new(None);
+    let mut c = C.lock().unwrap_or_else(|e| e.into_inner());
+    if c.is_none() {
+        // (every call to an app answers within 2 s, or is given up: one frozen
+        // tray app stopped the whole tray; audit #194)
+        *c = zbus::blocking::connection::Builder::session().map(|b| b.method_timeout(std::time::Duration::from_secs(2))).and_then(|b| b.build()).ok();
+    }
+    c.clone()
 }
 
 fn proxy<'a>(c: &Connection, dest: &'a str, path: &'a str, iface: &'a str) -> zbus::Result<Proxy<'a>> {
@@ -462,7 +468,8 @@ fn watch_rule(c: &Connection, rule: MatchRule<'static>, why: Why, dirty: mpsc::S
 pub fn spawn(tx: Sender<Msg>) {
     std::thread::spawn(move || loop {
         let run = || -> zbus::Result<()> {
-            let c = conn().ok_or(zbus::Error::Failure("no session bus".into()))?.clone();
+            // (not Failure, which says the UI is gone: this run is tried again)
+            let c = conn().ok_or(zbus::Error::Address("no session bus".into()))?;
             let ours = serve_watcher(&c).unwrap_or(false);
             let host = format!("org.kde.StatusNotifierHost-{}-tessera", std::process::id());
             let _ = c.request_name(host.as_str());
@@ -528,7 +535,7 @@ pub fn activate(key: &str, x: i32, y: i32) {
     std::thread::spawn(move || {
         let Some(c) = conn() else { return };
         let (svc, path) = parse_address(&key, "");
-        if let Ok(p) = proxy(c, &svc, &path, ITEM) {
+        if let Ok(p) = proxy(&c, &svc, &path, ITEM) {
             let _: zbus::Result<()> = p.call("Activate", &(x, y));
         };
     });
@@ -540,7 +547,7 @@ pub fn menu(key: &str, menu_path: &str, reply: impl Fn(Box<dyn std::any::Any + S
     std::thread::spawn(move || {
         let Some(c) = conn() else { return };
         let (svc, _) = parse_address(&key, "");
-        let Ok(p) = proxy(c, &svc, &menu_path, MENU) else { return };
+        let Ok(p) = proxy(&c, &svc, &menu_path, MENU) else { return };
         let _: zbus::Result<bool> = p.call("AboutToShow", &(0i32,));
         let Ok(m) = p.call_method("GetLayout", &(0i32, -1i32, Vec::<String>::new())) else { return };
         if let Some(root) = layout_of(&m) {
@@ -555,7 +562,7 @@ pub fn submenu(key: &str, menu_path: &str, id: i32, reply: impl Fn(Box<dyn std::
     std::thread::spawn(move || {
         let Some(c) = conn() else { return };
         let (svc, _) = parse_address(&key, "");
-        let Ok(p) = proxy(c, &svc, &menu_path, MENU) else { return };
+        let Ok(p) = proxy(&c, &svc, &menu_path, MENU) else { return };
         let _: zbus::Result<bool> = p.call("AboutToShow", &(id,));
         let Ok(m) = p.call_method("GetLayout", &(id, -1i32, Vec::<String>::new())) else { return };
         if let Some(root) = layout_of(&m) {
@@ -570,7 +577,7 @@ pub fn menu_event(key: &str, menu_path: &str, id: i32) {
     std::thread::spawn(move || {
         let Some(c) = conn() else { return };
         let (svc, _) = parse_address(&key, "");
-        if let Ok(p) = proxy(c, &svc, &menu_path, MENU) {
+        if let Ok(p) = proxy(&c, &svc, &menu_path, MENU) {
             let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as u32).unwrap_or(0);
             let _: zbus::Result<()> = p.call("Event", &(id, "clicked", Value::from(0i32), t));
         };

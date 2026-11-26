@@ -55,11 +55,11 @@ pub fn decode_entities(s: &str) -> String {
                 _ if name.starts_with('#') => name[1..].parse::<u32>().ok().and_then(char::from_u32),
                 _ => None,
             };
-            c.map(|c| (c, e + 1))
+            c.map(|c| (shown(c), e + 1))
         });
         match decoded {
             Some((c, len)) => {
-                out.push(c);
+                out.extend(c);
                 rest = &tail[len..];
             }
             None => {
@@ -70,6 +70,30 @@ pub fn decode_entities(s: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// What a character reference may put into the shown text: a line break
+/// as a space (breaks are <br> and the body's own lines), no other control
+/// character and no direction override (text shown reordered)
+fn shown(c: char) -> Option<char> {
+    match c {
+        '\n' | '\r' => Some(' '),
+        '\t' => Some('\t'),
+        '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' => None,
+        c if c.is_control() => None,
+        c => Some(c),
+    }
+}
+
+/// `line` with `marks` closed: whitespace before them moved after them
+/// (CommonMark doesn't close ** after a space: "**Alice: **" showed its stars)
+fn close_marks(line: &mut String, marks: impl Iterator<Item = Tag>) {
+    let keep = line.trim_end().len();
+    let ws = line.split_off(keep);
+    for t in marks {
+        line.push_str(&close_mark(&t));
+    }
+    line.push_str(&ws);
 }
 
 fn parse(body: &str) -> Vec<Piece> {
@@ -216,14 +240,27 @@ pub fn markdown(body: &str) -> String {
     // the styles written so far on this line (some may wait for text)
     let mut written: Vec<Tag> = Vec::new();
     let end_line = |line: &mut String, written: &mut Vec<Tag>, lines: &mut Vec<String>| {
-        for t in written.drain(..).rev() {
-            line.push_str(&close_mark(&t));
+        if !written.is_empty() {
+            close_marks(line, written.drain(..).rev());
         }
         lines.push(std::mem::take(line));
     };
     for p in pieces {
         match p {
-            Piece::Text(t) => {
+            Piece::Text(mut t) => {
+                // (a style opens before its first text that isn't
+                // whitespace: CommonMark doesn't open ** before a space)
+                if written.len() < open.len() {
+                    let lead = t.len() - t.trim_start().len();
+                    if lead > 0 {
+                        let at_start = line.chars().all(|c| c == '*' || c == '[') && !line.contains("<u>");
+                        line.push_str(&escape(&t[..lead], at_start));
+                        t = t[lead..].to_string();
+                    }
+                    if t.is_empty() {
+                        continue;
+                    }
+                }
                 // the styles open now, written before their first text
                 while written.len() < open.len() {
                     let t = open[written.len()].clone();
@@ -239,9 +276,9 @@ pub fn markdown(body: &str) -> String {
                 let same = |a: &Tag| std::mem::discriminant(a) == std::mem::discriminant(&t);
                 if let Some(i) = open.iter().rposition(same) {
                     open.truncate(i);
-                    while written.len() > open.len() {
-                        let w = written.pop().unwrap();
-                        line.push_str(&close_mark(&w));
+                    if written.len() > open.len() {
+                        let closing: Vec<Tag> = written.drain(open.len()..).rev().collect();
+                        close_marks(&mut line, closing.into_iter());
                     }
                 }
             }
@@ -267,6 +304,22 @@ pub fn styled(body: &str) -> slint::StyledText {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spaces_inside_a_style_go_outside_its_marks() {
+        // (audit #851: "**Alice: **hello" showed its stars)
+        assert_eq!(markdown("<b>Alice: </b>hello"), "**Alice\\:** hello");
+        assert_eq!(markdown("x<b> New mail </b>y"), "x **New mail** y");
+        assert_eq!(markdown("<i>note </i>"), "*note*");
+        assert_eq!(markdown("a<b> </b>b"), "a b");
+    }
+
+    #[test]
+    fn references_cant_hide_or_reorder_text() {
+        // (audit #850) direction overrides and NUL dropped, a line feed a space
+        assert_eq!(plain("a&#x202E;b&#0;c&#10;d"), "abc d");
+        assert_eq!(plain("tab&#9;x"), "tab\tx");
+    }
 
     #[test]
     fn plain_text_stays() {

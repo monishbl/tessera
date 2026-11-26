@@ -69,9 +69,22 @@ pub fn bind(st: &mut State, qh: &QueueHandle<State>, seat: &smithay_client_toolk
 
 /// The seat lost touch
 pub fn unbind() {
-    FINGER.with(|f| f.borrow_mut().take());
+    // (the screen went mid-drag: let go of what the finger held, as a cancel)
+    let_go();
     if let Some(t) = TOUCH.with(|t| t.borrow_mut().take()) {
         t.release();
+    }
+}
+
+/// The finger is gone without lifting (a cancel, the touchscreen gone): a
+/// drag's press is released where nothing is, and the pointer leaves
+fn let_go() {
+    if let Some(f) = FINGER.with(|f| f.borrow_mut().take()) {
+        if f.phase == Phase::Dragging {
+            // (released far outside: nothing under the finger is clicked)
+            send(&f.surface, WindowEvent::PointerReleased { position: LogicalPosition::new(-1e5, -1e5), button: PointerEventButton::Left });
+        }
+        send(&f.surface, WindowEvent::PointerExited);
     }
 }
 
@@ -184,13 +197,7 @@ impl TouchHandler for State {
     fn orientation(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlTouch, _: i32, _: f64) {}
 
     fn cancel(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlTouch) {
-        if let Some(f) = FINGER.with(|f| f.borrow_mut().take()) {
-            if f.phase == Phase::Dragging {
-                // (released far outside: nothing under the finger is clicked)
-                send(&f.surface, WindowEvent::PointerReleased { position: LogicalPosition::new(-1e5, -1e5), button: PointerEventButton::Left });
-            }
-            send(&f.surface, WindowEvent::PointerExited);
-        }
+        let_go();
     }
 }
 

@@ -204,18 +204,37 @@ pub fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()>
     let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = path.with_file_name(format!(".{name}.tmp-{}-{n}", std::process::id()));
     let done = (|| {
-        let mut f = std::fs::File::create(&tmp)?;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        // (made private, and given its mode before any byte is in it: the
+        // old file's, else what a new file gets under the umask; a 0600
+        // file's content is never readable under the temporary name)
+        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
+        let mode = std::fs::metadata(&path).map(|m| m.permissions().mode() & 0o7777).unwrap_or_else(|_| 0o644 & !umask());
+        f.set_permissions(std::fs::Permissions::from_mode(mode))?;
         f.write_all(bytes)?;
-        if let Ok(m) = std::fs::metadata(&path) {
-            let _ = f.set_permissions(m.permissions());
-        }
         f.sync_all()?;
-        std::fs::rename(&tmp, &path)
+        std::fs::rename(&tmp, &path)?;
+        // (the new name on disk too, after a power cut)
+        if let Some(d) = path.parent() {
+            if let Ok(dir) = std::fs::File::open(d) {
+                let _ = dir.sync_all();
+            }
+        }
+        Ok(())
     })();
     if done.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
     done
+}
+
+/// This process's umask (from /proc: reading it with umask() would change it
+/// for every thread meanwhile); 022 when it can't be read
+fn umask() -> u32 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| s.lines().find_map(|l| l.strip_prefix("Umask:").and_then(|v| u32::from_str_radix(v.trim(), 8).ok())))
+        .unwrap_or(0o022)
 }
 
 /// The file a path names: the one a symbolic link points at (followed to
@@ -402,13 +421,19 @@ pub fn entry_field(text: &str, key: &str) -> Option<String> {
 pub fn desktop_entry(class: &str) -> Option<std::path::PathBuf> {
     use std::collections::HashMap;
     use std::sync::Mutex;
-    static CACHE: Mutex<Option<HashMap<String, Option<std::path::PathBuf>>>> = Mutex::new(None);
-    if let Some(hit) = CACHE.lock().ok().and_then(|c| c.as_ref().and_then(|m| m.get(class).cloned())) {
-        return hit;
+    // (a miss is kept a minute only: the app may be installed later in the
+    // session, and a miss reads every desktop file again)
+    const MISS_FOR: std::time::Duration = std::time::Duration::from_secs(60);
+    static CACHE: Mutex<Option<HashMap<String, (Option<std::path::PathBuf>, std::time::Instant)>>> = Mutex::new(None);
+    let hit = CACHE.lock().ok().and_then(|c| c.as_ref().and_then(|m| m.get(class).cloned()));
+    if let Some((found, at)) = hit {
+        if found.is_some() || at.elapsed() < MISS_FOR {
+            return found;
+        }
     }
     let found = find_entry(class);
     if let Ok(mut c) = CACHE.lock() {
-        c.get_or_insert_with(HashMap::new).insert(class.to_string(), found.clone());
+        c.get_or_insert_with(HashMap::new).insert(class.to_string(), (found.clone(), std::time::Instant::now()));
     }
     found
 }
