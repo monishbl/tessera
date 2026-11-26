@@ -326,7 +326,7 @@ export component ClipboardPanel inherits Window {
                             x: 8px;
                             height: 152px;
                             width: pic-w;
-                            border-radius: Theme.material ? 12px : 10px;
+                            border-radius: Theme.radius-control;
                             background: Theme.fill;
                             clip: true;
                             if it.has-image: Image {
@@ -426,7 +426,7 @@ export component ClipboardPanel inherits Window {
                             y: self.x;
                             width: parent.width - 2 * self.x;
                             height: parent.height - 2 * self.y;
-                            border-radius: Theme.material ? 12px : 10px;
+                            border-radius: Theme.radius-control;
                             background: Theme.fill;
                             clip: true;
                             if it.has-image: Image {

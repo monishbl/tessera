@@ -430,7 +430,7 @@ export component ShareSheet inherits Window {
         opacity: max(0, min(1, progress));
         transform-scale: 0.94 + 0.06 * max(0, min(1, progress));
         transform-origin: { x: self.width / 2, y: self.height / 2 };
-        border-radius: Theme.material ? 28px : Theme.radius-panel;
+        border-radius: Theme.radius-panel;
         background: Theme.material ? Theme.m3-surface-container-high : Theme.panel;
         drop-shadow-blur: Theme.material ? 32px : 0;
         drop-shadow-offset-y: Theme.material ? 8px : 0;
@@ -762,7 +762,7 @@ export component ShareCard inherits Window {
         opacity: max(0, min(1, shown));
         transform-scale: 0.9 + 0.1 * shown;
         transform-origin: { x: self.width / 2, y: self.height / 2 };
-        border-radius: Theme.material ? 28px : Theme.radius-panel;
+        border-radius: Theme.radius-panel;
         background: Theme.material ? Theme.m3-surface-container-high : Theme.panel;
         accessible-role: groupbox;
         accessible-label: sender-name;
@@ -990,7 +990,7 @@ export component LinkCard inherits Window {
         opacity: max(0, min(1, shown));
         transform-scale: 0.96 + 0.04 * shown;
         transform-origin: { x: self.width / 2, y: self.height / 2 };
-        border-radius: Theme.material ? 28px : Theme.radius-panel;
+        border-radius: Theme.radius-panel;
         background: Theme.material ? Theme.m3-surface-container-high : Theme.panel;
         accessible-role: groupbox;
         accessible-label: heading;

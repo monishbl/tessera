@@ -1965,8 +1965,8 @@ component PageHeader {
             overflow: elide;
             text: title;
             color: Theme.label;
-            font-size: Theme.title;
-            font-weight: 600;
+            font-size: Theme.menu-title;
+            font-weight: Theme.menu-title-weight;
             vertical-alignment: center;
             height: parent.height;
         }
@@ -2039,7 +2039,7 @@ component PageHeader {
             overflow: elide;
             text: title;
             color: Theme.m3-on-surface;
-            font-size: 22px;
+            font-size: Theme.menu-title;
         }
         if refresh: GhostButton {
             x: parent.width - 40px;

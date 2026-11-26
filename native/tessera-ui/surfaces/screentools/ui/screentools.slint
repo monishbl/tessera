@@ -1227,7 +1227,7 @@ export component TranslationCard inherits Window {
         height: content.preferred-height + 28px;
         x: max(24px, min(area-x, root.width - self.width - 24px));
         y: max(30px + 24px, min(area-y + area-h + 8px, root.height - self.height - 24px));
-        border-radius: Theme.material ? 24px : 20px;
+        border-radius: Theme.radius-card;
         // (Glass on the plugin: only its glass; Theme.panel over it made it darker than the other Glass panels)
         background: Theme.material ? Theme.m3-surface-container-high : Theme.plugin ? transparent : Theme.panel;
         drop-shadow-blur: Theme.material ? 16px : 0;

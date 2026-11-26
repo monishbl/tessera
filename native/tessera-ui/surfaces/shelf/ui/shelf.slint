@@ -220,7 +220,7 @@ export component ShelfCard inherits Window {
         width: 240px;
         height: card-h;
         opacity: fade;
-        border-radius: Theme.material ? 24px : 20px;
+        border-radius: Theme.radius-card;
         // (Glass: the panel's tint over the plugin's glass; Material: its own surface)
         background: Theme.material ? Theme.m3-surface-container.with-alpha(Theme.panel-alpha) : Theme.panel;
         border-width: Theme.material ? 0 : 0.5px;
@@ -403,7 +403,7 @@ export component ShelfCard inherits Window {
 
         // Its outline while something's over it with items already there
         if drag-over && count > 0: Rectangle {
-            border-radius: Theme.material ? 24px : 20px;
+            border-radius: Theme.radius-card;
             background: Theme.accent.with-alpha(0.08);
             border-width: 2px;
             border-color: Theme.accent;
