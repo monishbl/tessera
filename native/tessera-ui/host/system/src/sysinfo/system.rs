@@ -258,6 +258,13 @@ impl System {
         }
     }
 
+    /// (UiState.data.nightLight: a shell restart in this boot keeps it, an
+    /// update's restart at the lock, a crash; a new boot starts with it off)
+    fn remember_night_light(&self, h: &mut Host) {
+        let v = if self.night_light { json!({"on": true, "temp": self.night_temp, "boot": boot_id()}) } else { Value::Null };
+        h.ask("uistate.set", json!(["nightLight", v]));
+    }
+
     fn sunset_update(&mut self) {
         if let Some(mut c) = self.sunset.take() {
             let _ = c.kill();
@@ -427,6 +434,7 @@ impl System {
                 if on != self.night_light {
                     self.night_light = on;
                     self.sunset_update();
+                    self.remember_night_light(h);
                 }
             }
             "nightLightTemp" => {
@@ -436,6 +444,7 @@ impl System {
                     if self.night_light {
                         self.sunset_update();
                     }
+                    self.remember_night_light(h);
                 }
             }
             "gameMode" => {
@@ -471,9 +480,21 @@ fn arg_i(a: &Value, i: usize, key: &str) -> i64 {
     a.get(i).and_then(Value::as_i64).or_else(|| a.get(key).and_then(Value::as_i64)).unwrap_or(0)
 }
 
+/// This boot's id (/proc/sys/kernel/random/boot_id)
+fn boot_id() -> String {
+    std::fs::read_to_string("/proc/sys/kernel/random/boot_id").map(|s| s.trim().to_string()).unwrap_or_default()
+}
+
 impl Service for System {
     fn name(&self) -> &'static str {
         "System"
+    }
+    /// Caffeine 'for an hour' by the wall clock: its timer stops while the
+    /// computer sleeps, so a wake past the end ends it here
+    fn every_second(&mut self, h: &mut Host, _n: u64) {
+        if self.keep_awake && self.keep_until > 0.0 && helpers::now_ms() >= self.keep_until {
+            self.set_keep_awake(h, false, 0);
+        }
     }
     fn calls(&self) -> &'static [&'static str] {
         &["system"]
@@ -499,6 +520,13 @@ impl Service for System {
                 self.keep_awake = true;
                 self.after_keep_awake();
             }
+        }
+        // Night Light too, within the same boot
+        let nl = &state["nightLight"];
+        if nl["on"] == true && nl["boot"].as_str().is_some_and(|b| !b.is_empty() && b == boot_id()) {
+            self.night_temp = nl["temp"].as_i64().unwrap_or(4500);
+            self.night_light = true;
+            self.sunset_update();
         }
         // A shell that restarts while the screen is locked locks again
         let mark = lock_mark();

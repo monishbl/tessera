@@ -539,7 +539,7 @@ impl Input {
         let p = expand(&self.home, &path);
         let send = h.sender("Input");
         std::thread::spawn(move || {
-            let r = std::fs::read_to_string(&p);
+            let r = crate::util::read_small(&p, 5 << 20);
             let err = r.as_ref().err().map(|e| format!("{p}: {}", e.to_string().split(" (os").next().unwrap_or(""))).unwrap_or_default();
             send(Box::new(M::Read { gestures, path, secs, ok: r.is_ok(), text: r.unwrap_or_default(), err }));
         });

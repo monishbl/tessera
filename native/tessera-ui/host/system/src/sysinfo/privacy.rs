@@ -180,6 +180,9 @@ pub struct Privacy {
     /// it starts again grows while it keeps ending at once
     camera_run: (f64, u32),
     location_run: (f64, u32),
+    share_run: (f64, u32),
+    /// a microphone look asked for while one ran: another follows it
+    mic_again: bool,
 }
 
 /// After a watcher that started at `started` ended at `now` having ended
@@ -210,6 +213,8 @@ impl Default for Privacy {
             location_retry: Ticker::new("locationRetry"),
             camera_run: (0.0, 0),
             location_run: (0.0, 0),
+            share_run: (0.0, 0),
+            mic_again: false,
         }
     }
 }
@@ -267,6 +272,8 @@ impl Privacy {
 
     fn mic_list(&mut self) {
         if self.mic_busy {
+            // (a change while a look runs: looked at again when it ends)
+            self.mic_again = true;
             return;
         }
         self.mic_busy = true;
@@ -294,7 +301,8 @@ impl Privacy {
         helpers::watch(vec![util::script("location.sh")], move |l| tx(Box::new(Ev::Location(list_line(&l).iter().map(|a| a.to_string()).collect()))), move || tx2(Box::new(Ev::LocationDead)));
     }
 
-    fn watch_share(&self) {
+    fn watch_share(&mut self) {
+        self.share_run.0 = helpers::now_ms();
         let tx = self.tx.clone().unwrap();
         let tx2 = tx.clone();
         helpers::watch(
@@ -484,6 +492,9 @@ impl Service for Privacy {
                 self.mic_apps = a;
                 self.mic_streams = s;
                 self.publish(h);
+                if std::mem::take(&mut self.mic_again) {
+                    self.mic_list();
+                }
             }
             Ev::Camera(a) => {
                 self.camera_apps = a.iter().map(|x| nice(x)).collect();
@@ -515,7 +526,10 @@ impl Service for Privacy {
             }
             Ev::ShareDead => {
                 // PipeWire restarted: forget the shares in 5 s, then watch again
-                self.share_retry.once(self.tx.as_ref().unwrap(), 5000);
+                // (longer each time it ends at once: pw-dump missing, no PipeWire)
+                let (quick, wait) = rest_after_end(self.share_run.0, helpers::now_ms(), self.share_run.1);
+                self.share_run.1 = quick;
+                self.share_retry.once(self.tx.as_ref().unwrap(), wait);
             }
             Ev::CastRaw(data) => {
                 // screencast>>STATE,OWNER  (newer: screencastv2>>STATE,OWNER,NAME)

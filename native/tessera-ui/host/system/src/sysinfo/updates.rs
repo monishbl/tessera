@@ -27,6 +27,11 @@ pub enum Ev {
     Check(String, i32),
 }
 
+/// A check's exit code that means it failed rather than found nothing (see refresh)
+pub fn check_failed(code: i32) -> bool {
+    code == 4 || code == 5 || code < 0
+}
+
 pub struct Updates {
     pub count: usize,
     pub list: Vec<Value>, // [{ name, from, to }]
@@ -34,6 +39,9 @@ pub struct Updates {
     pub aur_list: Vec<Value>,
     pub available: bool,
     pub checking: bool,
+    /// the last check failed (offline, a mirror's error) or ran out of time: its
+    /// empty list isn't 'up to date' (the list before it stays)
+    pub check_failed: bool,
     pub fake: bool,
     pub dir: String,
     pub script: String,
@@ -64,6 +72,7 @@ impl Default for Updates {
             aur_list: vec![],
             available: false,
             checking: false,
+            check_failed: false,
             fake: helpers::env_is("SANDBOX") || std::env::var("TESSERA_FAKE_SYSUPDATE").map(|v| v == "1").unwrap_or(false),
             dir: format!("{run}/tessera-sysupdate"),
             script: util::script("sysupdate.py"),
@@ -145,7 +154,7 @@ impl Updates {
     pub fn publish(&self) {
         crate::bus::put(
             "updates",
-            json!({"running": self.running(), "count": self.count, "aurCount": self.aur_count, "total": self.total(), "checking": self.checking, "available": self.available, "interrupted": self.interrupted, "fake": self.fake,
+            json!({"running": self.running(), "count": self.count, "aurCount": self.aur_count, "total": self.total(), "checking": self.checking, "checkFailed": self.check_failed, "available": self.available, "interrupted": self.interrupted, "fake": self.fake,
                 // (the island's activity while it runs: LiveInfo's sysupdate)
                 "job": self.job.clone().unwrap_or(Value::Null), "progress": self.progress(), "cancellable": self.cancellable(),
                 "step": super::software_update::step_name(self.job.as_ref().and_then(|j| j["step"].as_str()).filter(|s| !s.is_empty()).unwrap_or("system"))}),
@@ -213,8 +222,10 @@ impl Updates {
         self.checking = true;
         let tx = tx.clone();
         std::thread::spawn(move || {
-            let o = util::sh("command -v checkupdates >/dev/null || exit 3; checkupdates 2>/dev/null; echo '--aur--'; h=$(command -v yay || command -v paru) && \"$h\" -Qua 2>/dev/null; exit 0", Duration::from_secs(300));
-            let (code, out) = o.unwrap_or((3, String::new()));
+            // (checkupdates: 0 updates, 2 none, 1 failed: 4 here; no answer at all,
+            // a time-out or no sh: 5; 3 stays 'checkupdates isn't installed')
+            let o = util::sh("command -v checkupdates >/dev/null || exit 3; checkupdates 2>/dev/null; c=$?; echo '--aur--'; h=$(command -v yay || command -v paru) && \"$h\" -Qua 2>/dev/null; [ \"$c\" = 1 ] && exit 4; exit 0", Duration::from_secs(300));
+            let (code, out) = o.unwrap_or((5, String::new()));
             tx(Box::new(Ev::Check(out, code)));
         });
     }
@@ -266,7 +277,9 @@ impl Updates {
                     self.lock_busy = true;
                     let (tx, lock) = (tx.clone(), format!("{}/lock", self.dir));
                     std::thread::spawn(move || {
-                        let c = util::capture(&["flock", "-n", &lock, "true"], Duration::from_secs(5)).map(|(c, _)| c).unwrap_or(-1);
+                        // (no job folder yet: nothing holds its lock, as a lock nobody holds)
+                        let folder = std::path::Path::new(&lock).parent().is_some_and(|d| d.is_dir());
+                        let c = if !folder { 0 } else { util::capture(&["flock", "-n", &lock, "true"], Duration::from_secs(5)).map(|(c, _)| c).unwrap_or(-1) };
                         tx(Box::new(Ev::Lock(c)));
                     });
                 }
@@ -317,7 +330,12 @@ impl Updates {
                 self.log = keep.join("\n");
                 self.log_size = size;
             }
+            Ev::Check(_, code) if check_failed(code) => {
+                self.check_failed = true;
+                self.checking = false;
+            }
             Ev::Check(out, code) => {
+                self.check_failed = false;
                 let (repo, aur) = (format!("{out}\n")).split_once("--aur--\n").map(|(a, b)| (a.to_string(), b.to_string())).unwrap_or((out.clone(), String::new()));
                 self.list = parse_list(&repo);
                 self.count = self.list.len();
@@ -399,6 +417,11 @@ impl Updates {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_failed_check_is_not_up_to_date() {
+        assert!(check_failed(4) && check_failed(5) && check_failed(-1));
+        assert!(!check_failed(0) && !check_failed(3));
+    }
     #[test]
     fn lists() {
         let l = parse_list("hyprland 0.55.0-1 -> 0.56.2-1\nbad line\nfoo 1 -> 2\n");

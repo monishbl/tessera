@@ -376,6 +376,8 @@ impl SystemBridge {
                 }
             }
             "faceTry" => ask("face.tryIt", json!([])),
+            // (a Stop for a check that runs: Face answers stopTry)
+            "faceStopTry" => ask("face.stopTry", json!([])),
             "faceAdmin" => ask("face.setAdmin", json!([a0.as_bool().unwrap_or(false)])),
             // Sharing's trust and the firewall's ports
             "quickShareTrust" => ask("quickshare.setTrusted", json!([a0.as_bool().unwrap_or(false)])),

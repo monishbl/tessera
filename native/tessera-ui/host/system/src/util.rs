@@ -164,9 +164,35 @@ pub fn b(v: &Value, k: &str) -> bool {
     v[k].as_bool().unwrap_or(false)
 }
 
+/// A typed path's text for an import: a plain file of at most `max` bytes only
+/// (/dev/zero would grow the shell until it's killed, a FIFO would hang for ever)
+pub fn read_small(path: &str, max: u64) -> std::io::Result<String> {
+    use std::io::Read;
+    let m = std::fs::metadata(path)?;
+    if !m.is_file() {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "not a file"));
+    }
+    if m.len() > max {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "too big for a settings file"));
+    }
+    let mut s = String::new();
+    std::fs::File::open(path)?.take(max).read_to_string(&mut s)?;
+    Ok(s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn imports_read_only_small_plain_files() {
+        assert!(read_small("/dev/zero", 1 << 20).is_err());
+        assert!(read_small("/", 1 << 20).is_err());
+        let f = std::env::temp_dir().join(format!("tessera-read-small-{}", std::process::id()));
+        std::fs::write(&f, "{}").unwrap();
+        assert_eq!(read_small(f.to_str().unwrap(), 10).unwrap(), "{}");
+        assert!(read_small(f.to_str().unwrap(), 1).is_err());
+        let _ = std::fs::remove_file(&f);
+    }
     #[test]
     fn capture_runs_and_times_out() {
         let (c, o) = capture(&["echo", "hi"], Duration::from_secs(2)).unwrap();
