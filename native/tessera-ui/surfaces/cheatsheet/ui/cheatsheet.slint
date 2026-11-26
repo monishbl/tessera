@@ -176,6 +176,15 @@ export component Cheatsheet inherits Window {
     property <length> ch: min(max(660px, 36px + 18px + list-need), root.height - 200px);
     property <float> progress: shown ? 1 : 0;
     property <int> hovered: -1;
+    // the shortcuts' scroll, kept here for the keys (the list is made with
+    // its tab): how far down (<= 0), how far it can go, a page
+    property <length> list-y: 0;
+    property <length> list-span: 0;
+    property <length> list-page: 0;
+    changed tab => { list-y = 0; }
+    function scroll-by(d: length) {
+        list-y = max(-list-span, min(0px, list-y - d));
+    }
     animate progress {
         // (Dialog.qml: Material ω 20.1 ζ 0.90, Glass ω 16.2 ζ 0.77; closes in
         // panel × 0.6 on the look's exit curve)
@@ -203,6 +212,15 @@ export component Cheatsheet inherits Window {
         key-pressed(e) => {
             if e.text == Key.Escape { root.dismissed(); return accept; }
             if e.text == Key.Tab || e.text == Key.Backtab { tab = 1 - tab; return accept; }
+            // (the shortcuts below the fold, from the keyboard too)
+            if tab == 0 {
+                if e.text == Key.DownArrow { scroll-by(40px); return accept; }
+                if e.text == Key.UpArrow { scroll-by(-40px); return accept; }
+                if e.text == Key.PageDown || (e.text == " " && !e.modifiers.shift) { scroll-by(list-page * 0.9); return accept; }
+                if e.text == Key.PageUp || (e.text == " " && e.modifiers.shift) { scroll-by(-list-page * 0.9); return accept; }
+                if e.text == Key.Home { list-y = 0; return accept; }
+                if e.text == Key.End { list-y = -list-span; return accept; }
+            }
             reject
         }
 
@@ -268,12 +286,16 @@ export component Cheatsheet inherits Window {
                     // (the room the list needs, for the dialog's height: set,
                     // not bound, so the dialog's height doesn't loop through it)
                     property <length> need: flow.preferred-height;
-                    init => { root.list-need = need; }
+                    init => { root.list-need = need; root.list-span = span; root.list-page = list.height; }
                     changed need => { root.list-need = need; }
+                    changed span => { root.list-span = span; }
+                    property <length> page: list.height;
+                    changed page => { root.list-page = page; }
                     list := Flickable {
                         width: parent.width;
                         height: flow.preferred-height <= parent.height ? parent.height : min(parent.height, whole);
                         content-height: flow.preferred-height;
+                        viewport-y <=> root.list-y;
                         flow := VerticalLayout {
                             width: parent.width;
                             spacing: 24px;
@@ -288,6 +310,15 @@ export component Cheatsheet inherits Window {
                                 }
                             }
                         }
+                    }
+                    // (none yet, or Hyprland gave none with a description)
+                    if rows.length == 0: Text {
+                        y: 24px;
+                        width: parent.width;
+                        horizontal-alignment: center;
+                        text: "No shortcuts to show yet";
+                        color: Theme.material ? Theme.m3-on-surface-variant : Theme.secondary;
+                        font-size: Theme.body;
                     }
                     // (on the plugin's glass the dialog has no colour of its
                     // own to fade into: the scroll bar alone says it)
