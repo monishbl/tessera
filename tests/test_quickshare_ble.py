@@ -548,8 +548,13 @@ class BlueZ(unittest.IsolatedAsyncioTestCase):
         await ble.advertise(ble_format.advertisement("AB12", endpoint.endpoint_info("D"), b"\0\0"))
         await bus.exported[bluez.NOTIFY_PATH][2][(bluez.GATT_CHAR, "StartNotify")]((), ":1.9")
         write = bus.exported[bluez.WRITE_PATH][2][(bluez.GATT_CHAR, "WriteValue")]
-        for dev in ("/org/bluez/hci0/dev_AA", "/org/bluez/hci0/dev_BB"):
-            await write((list(weave.connection_request(509)), {"device": dev, "mtu": 247}), ":1.9")
+        await write((list(weave.connection_request(509)), {"device": "/org/bluez/hci0/dev_AA", "mtu": 247}), ":1.9")
+        # (another device while the session is live: refused, the transfer goes on)
+        with self.assertRaises(DBusError):
+            await write((list(weave.connection_request(509)), {"device": "/org/bluez/hci0/dev_CC", "mtu": 247}), ":1.9")
+        self.assertEqual((len(sessions), ended), (1, []))
+        ble.session_at -= bluez.SESSION_QUIET  # (gone quiet: the phone gave up)
+        await write((list(weave.connection_request(509)), {"device": "/org/bluez/hci0/dev_BB", "mtu": 247}), ":1.9")
         self.assertEqual(len(sessions), 2)
         self.assertEqual(ended, [True])
         self.assertEqual(ble.session[0], "/org/bluez/hci0/dev_BB")
@@ -693,6 +698,69 @@ Wiphy phy0
 			* 5745 MHz [149] (22.0 dBm)
 			* 5865 MHz [173] (disabled)
 """
+
+
+class BlueZComesBack(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self._l2cap = bluez.L2capServer
+        bluez.L2capServer = FakeL2capServer
+
+    def tearDown(self):
+        bluez.L2capServer = self._l2cap
+
+    async def test_power_off_ends_the_scan_so_it_starts_again(self):
+        bus = FakeBus(dict(ADAPTER))
+        ble = bluez.Bluetooth(bus)
+        await ble.start()
+        self.assertTrue(await ble.scan(lambda *a: None, lambda *a: None))
+        bus.signal("/org/bluez/hci0", bluez.PROPS, "PropertiesChanged", (bluez.ADAPTER, {"Powered": False}, []))
+        self.assertFalse(ble.scanning)
+        bus.signal("/org/bluez/hci0", bluez.PROPS, "PropertiesChanged", (bluez.ADAPTER, {"Powered": True}, []))
+        self.assertTrue(await ble.scan(lambda *a: None, lambda *a: None))
+        self.assertEqual([c[2] for c in bus.calls].count("StartDiscovery"), 2)
+
+    async def test_a_scan_stopped_without_an_adapter_does_not_raise(self):
+        bus = FakeBus(dict(ADAPTER))
+        ble = bluez.Bluetooth(bus)
+        await ble.start()
+        await ble.scan(lambda *a: None, lambda *a: None)
+        bus.signal("/", bluez.OM, "InterfacesRemoved", ("/org/bluez/hci0", [bluez.ADAPTER]))
+        await ble.stop_scan()
+        self.assertFalse(ble.scanning)
+
+    async def test_bluetoothd_restarting_serves_again(self):
+        bus = FakeBus(dict(ADAPTER))
+        states = []
+        ble = bluez.Bluetooth(bus, on_state=states.append)
+        await ble.start()
+        await ble.advertise(ble_format.advertisement("AB12", endpoint.endpoint_info("D"), b"\0\0"))
+        self.assertTrue(ble.served)
+        bus.signal("/org/freedesktop/DBus", "org.freedesktop.DBus", "NameOwnerChanged", (bluez.BLUEZ, ":1.4", ""))
+        self.assertFalse(ble.served)
+        self.assertEqual(states[-1], {"available": False, "powered": False})
+        bus.signal("/org/freedesktop/DBus", "org.freedesktop.DBus", "NameOwnerChanged", (bluez.BLUEZ, "", ":1.9"))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        self.assertEqual(states[-1], {"available": True, "powered": True})
+
+
+class AvahiComesBack(unittest.TestCase):
+    """avahi-daemon restarted: the dead group is dropped and a new one made"""
+
+    def test_a_dead_group_is_replaced_once(self):
+        from nearby import avahi
+        a = object.__new__(avahi.Avahi)
+        a.group, calls = "/old", []
+
+        def call(path, iface, method, args, reply=None):
+            calls.append((path, method))
+            if path == "/old":
+                raise RuntimeError("gone")
+            return ("/new",) if method == "EntryGroupNew" else None
+        a._call = call
+        a._announce("Tessera", "_FC9F5ED42C8A._tcp", 53318, {"n": "x"})
+        self.assertEqual(a.group, "/new")
+        self.assertEqual([m for _, m in calls], ["Reset", "EntryGroupNew", "AddService", "Commit"])
 
 
 class WifiHelper(unittest.TestCase):
