@@ -8,6 +8,7 @@
 
 import { Theme } from "@tessera/theme.slint";
 import { Squircle } from "@tessera/squircle.slint";
+import { ScrollIndicator } from "@tessera/widgets.slint";
 
 // An icon: Phosphor, or in Material the matching Material Symbols glyph (sym)
 export struct CcIc {
@@ -2178,6 +2179,15 @@ export component PageView {
                 slide(v) => { block-slide(i, v); }
             }
         }
+      }
+      // (the shared ScrollIndicator, as the Wi-Fi menu's list has)
+      if list.interactive: ScrollIndicator {
+        x: root.width - 12px;
+        y: 0;
+        height: list.height;
+        content-y: list.content-y;
+        content-height: list.content-height;
+        view-height: list.height;
       }
     }
 }

@@ -265,3 +265,38 @@ export component TextButton inherits Rectangle {
         clicked => { root.clicked(); }
     }
 }
+
+// The one scroll indicator (ScrollIndicator.qml): a thin bar over a list's
+// right edge while it scrolls, gone 0.9 s after it stops. Lay it over the
+// Flickable (same y and height, at its right edge) and hand it the
+// Flickable's numbers; it shows only when there is more than fits.
+export component ScrollIndicator inherits Rectangle {
+    in property <length> content-y;
+    in property <length> content-height;
+    in property <length> view-height;
+    width: 12px;
+    visible: content-height > view-height + 1px;
+    property <bool> moving;
+    property <bool> moved;
+    changed content-y => {
+        moving = true;
+        moved = true;
+    }
+    Timer {
+        interval: 900ms;
+        running: root.moving;
+        triggered => {
+            if root.moved { root.moved = false; } else { root.moving = false; }
+        }
+    }
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        width: 6px;
+        border-radius: self.width / 2;
+        height: max(28px, root.view-height * root.view-height / max(1px, root.content-height));
+        y: (root.view-height - self.height) * max(0, min(1, -root.content-y / max(1px, root.content-height - root.view-height)));
+        background: Theme.dark ? #ffffff52 : #00000052;
+        opacity: root.moving ? 1 : 0;
+        animate opacity { duration: root.moving ? Theme.hover : 400ms; easing: ease-out; }
+    }
+}

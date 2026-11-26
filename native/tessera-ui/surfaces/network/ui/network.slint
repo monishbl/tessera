@@ -12,6 +12,7 @@
 
 import { Theme } from "@tessera/theme.slint";
 import { SymIcon } from "@tessera/symbols.slint";
+import { ScrollIndicator } from "@tessera/widgets.slint";
 
 // Phosphor glyphs (SymIcon draws Material Symbols for them in Material)
 export struct NetGlyphs {
@@ -1016,31 +1017,13 @@ export component WifiMenu inherits Window {
                                     }
                                 }
                             }
-                            // (ScrollIndicator: a thin bar while it scrolls,
-                            // hidden 0.9 s after it stops)
-                            if fl.interactive: sb := Rectangle {
+                            // (the shared ScrollIndicator: a thin bar while
+                            // it scrolls, hidden 0.9 s after it stops)
+                            if fl.interactive: ScrollIndicator {
                                 x: parent.width - 12px;
-                                width: 12px;
-                                property <length> at: fl.content-y;
-                                property <bool> moving;
-                                property <bool> moved;
-                                changed at => { moving = true; moved = true; }
-                                Timer {
-                                    interval: 900ms;
-                                    running: moving;
-                                    triggered => { if moved { moved = false; } else { moving = false; } }
-                                }
-                                Rectangle {
-                                    x: (parent.width - self.width) / 2;
-                                    width: 6px;
-                                    border-radius: self.width / 2;
-                                    property <float> frac: fl.height / max(1px, fl.content-height);
-                                    height: max(28px, fl.height * frac);
-                                    y: (fl.height - self.height) * (-fl.content-y / max(1px, fl.content-height - fl.height));
-                                    background: Theme.dark ? #ffffff52 : #00000052;
-                                    opacity: sb.moving ? 1 : 0;
-                                    animate opacity { duration: sb.moving ? 150ms : 400ms; easing: ease-out; }
-                                }
+                                content-y: fl.content-y;
+                                content-height: fl.content-height;
+                                view-height: fl.height;
                             }
                         }
 
