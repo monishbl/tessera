@@ -15,9 +15,29 @@ def save(path, content):
             out.write(content)
             out.flush()
             os.fsync(out.fileno())
-        os.link(temporary, path)  # atomic publication; fails if destination exists
+        try:
+            os.link(temporary, path)  # atomic publication; fails if destination exists
+        except FileExistsError:
+            raise
+        except OSError:
+            # (no hard links: exFAT/FAT sticks, FUSE mounts such as the
+            # Google Drive and OneDrive folders) created only if it isn't
+            # there, then written: never replaces another note
+            exclusive_write(path, content)
     finally:
         os.unlink(temporary)
+
+
+def exclusive_write(path, content):
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        with os.fdopen(fd, 'w') as out:
+            out.write(content)
+            out.flush()
+            os.fsync(out.fileno())
+    except BaseException:
+        os.unlink(path)  # (half a note is no note)
+        raise
 
 
 if __name__ == '__main__':

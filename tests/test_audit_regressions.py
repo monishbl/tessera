@@ -156,6 +156,17 @@ class PersistenceAndIdentity(unittest.TestCase):
             self.assertEqual(p.stat().st_mode & 0o777, 0o600)
             self.assertEqual(list(Path(d).iterdir()), [p])
 
+    def test_note_saves_where_hard_links_are_not_supported(self):
+        # (audit #337: exFAT sticks and FUSE mounts answer link() with EPERM)
+        from unittest import mock
+        m = load('save-note')
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(m.os, 'link', side_effect=PermissionError(1, 'no links')):
+            p = Path(d)/'note.md'; m.save(p, 'original')
+            self.assertEqual(p.read_text(), 'original')
+            with self.assertRaises(FileExistsError): m.save(p, 'different')
+            self.assertEqual(p.read_text(), 'original')
+            self.assertEqual(list(Path(d).iterdir()), [p])
+
     def test_download_filenames_with_control_characters_are_listed_intact(self):
         # services/Transfers.qml lists partial downloads with this find and
         # splits its NUL-separated "size<TAB>path" entries
