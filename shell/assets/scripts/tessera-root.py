@@ -2778,7 +2778,12 @@ def login_switch_on(src, look_text, uid, prefix=None, run=subprocess.run, which=
         ensure_greeter_user(run)
     install_login_copy(repo, look, uid, prefix, run)
     conf = _at(prefix, GREETD_CONFIG)
-    if os.path.isfile(conf) and not os.path.lexists(conf + ".pre-tessera"):
+    # (kept once, and again whenever the config there now is someone else's,
+    # not Tessera's: a switch back then restores the latest one, not the
+    # first-ever copy. The PAM file's backup below stays the first: audit #803)
+    current = read_text(conf) if os.path.isfile(conf) else None
+    if current is not None and (not os.path.lexists(conf + ".pre-tessera")
+                                or (current.strip() and "/usr/share/tessera/" not in current)):
         copy_file(conf, conf + ".pre-tessera")
     write_root(conf, GREETD_TOML, 0o644)
     # (the copy under the old name: greetd starts Tessera's now)
