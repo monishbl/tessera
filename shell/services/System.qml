@@ -173,17 +173,19 @@ Singleton {
     // (in the runtime folder, /run/user/<uid> without XDG_RUNTIME_DIR as the
     // Rust shell and keep-shell.sh have it; never /tmp: compat, audit #669)
     readonly property string lockMark: "tessera-locked-" + (Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") || "none")
-    readonly property string runDir: "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
     onLockedChanged: {
         if (!locked) {
             sleepPending = false;
             sleepGuard.stop();
         }
-        Quickshell.execDetached(["sh", "-c", (locked ? "touch -- " : "rm -f -- ") + "\"" + runDir + "/$1\"", "sh", lockMark]);
+        if (locked)
+            Quickshell.execDetached(["sh", "-c", "touch -- \"${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/$1\"", "sh", lockMark]);
+        else
+            Quickshell.execDetached(["sh", "-c", "rm -f -- \"${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/$1\"", "sh", lockMark]);
     }
     Process {
         running: true
-        command: ["sh", "-c", "[ -e \"" + root.runDir + "/$1\" ]", "sh", root.lockMark]
+        command: ["sh", "-c", "[ -e \"${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/$1\" ]", "sh", root.lockMark]
         onExited: code => {
             if (code === 0)
                 root.locked = true;
