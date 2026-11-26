@@ -426,9 +426,13 @@ class LoginRescue(Machine):
         if shutil.which("systemd-analyze"):
             d = tempfile.mkdtemp()
             self.addCleanup(shutil.rmtree, d)
-            Path(d, "tessera-login-rescue.service").write_text(unit)
+            # (the helper may not be installed here: a copy that runs /bin/true,
+            # and only what verify says about this unit, not the host's others)
+            Path(d, "tessera-login-rescue.service").write_text(
+                unit.replace("ExecStart=/usr/lib/tessera/tessera-root login-rescue", "ExecStart=/bin/true login-rescue"))
             p = subprocess.run(["systemd-analyze", "verify", str(Path(d, "tessera-login-rescue.service"))], capture_output=True, text=True)
-            self.assertEqual(p.stderr.strip(), "")
+            ours = [l for l in p.stderr.splitlines() if "tessera-login-rescue" in l]
+            self.assertEqual(ours, [], p.stderr)
 
     def test_uninstall_removes_them(self):
         text = (ROOT / "uninstall.sh").read_text()
