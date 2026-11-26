@@ -23,8 +23,8 @@ Allowed on purpose:
     search's former names (SettingsMap.formerNames, and the Rust Settings'
     `FORMER` table in surfaces/settings/src/map.rs), so a search for an old
     name still finds the feature;
-  - Apple's own wallpaper files, named as Apple names them ("Tahoe Light.jpg")
-    when Tessera downloads or looks for them;
+  - shell/assets/scripts/apple-wallpapers.py, which names Apple's wallpaper
+    files only to remove them from an install from before 3 November;
   - ids, config keys, IPC names and file names (spotlight, missionControl,
     stageManager, standby, tahoe-day.jpg): they're lower or camel case and
     never shown, and renaming them would break people's settings.
@@ -66,10 +66,6 @@ MARK_RX = re.compile("|".join(f"(?:{p})" for p in MARKS.values()))
 
 # Descriptive uses that may contain a mark: removed before checking
 ALLOWED = [
-    # Apple's wallpapers, as Apple names the files (downloaded on request)
-    r"Tahoe (?:Light|Dark)\b",
-    r"Tahoe Beach",
-    r"\b\d+-Tahoe-[\w-]+\.png",
     # a module's file path (TesseraShell's Twin loaders), never shown
     r"^modules/[\w/]+\.qml$",
 ]
@@ -269,7 +265,9 @@ class UserFacingText(unittest.TestCase):
     def test_python(self):
         found = []
         for p in files("tools/**/*.py", "shell/assets/scripts/**/*.py", "material/assets/scripts/**/*.py", "site/tools/*.py"):
-            if p.name.endswith("_pb2.py"):
+            # (apple-wallpapers.py names Apple's files only to remove them
+            # from an older install; it shows nothing)
+            if p.name.endswith("_pb2.py") or p.name == "apple-wallpapers.py":
                 continue
             for no, s in python_strings(p.read_text(encoding="utf-8")):
                 found.append((f"{rel(p)}:{no}", s, hits(s)))
@@ -362,7 +360,7 @@ class UserFacingText(unittest.TestCase):
         # (so a broken scanner can't pass quietly)
         self.assertTrue(hits('text: "Open Spotlight"'))
         self.assertTrue(hits("Liquid glass, like macOS"))
-        self.assertFalse(hits('"Tahoe Light.jpg"'))
+        self.assertTrue(hits('"Tahoe Light.jpg"'))
         self.assertFalse(hits("panel: spotlight; missionControl; stageManager"))
         lits = [s for _, s in literals('a: "x Spotlight" // "Mission Control"\n/* "StandBy" */ b: \'App Store\'')]
         self.assertEqual(lits, ["x Spotlight", "App Store"])
