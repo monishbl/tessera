@@ -46,7 +46,8 @@ export component PolkitDialog inherits Window {
     out property <length> body-w: 340px;
     out property <length> body-h: col.preferred-height + 2 * pad;
     out property <length> body-x: (root.width - body-w) / 2 + shake;
-    out property <length> body-y: (root.height - body-h) / 2 - 40px;
+    // (never above the screen's top, however long the message)
+    out property <length> body-y: max(16px, (root.height - body-h) / 2 - 40px);
     out property <float> body-scale: 0.96 + 0.04 * progress;
     out property <float> body-opacity: progress;
 
@@ -192,7 +193,8 @@ export component PolkitDialog inherits Window {
                         height: 100%;
                         vertical-alignment: center;
                         input-type: secret ? InputType.password : numeric ? InputType.number : InputType.text;
-                        enabled: !waiting;
+                        // (read-only, not disabled: it keeps the focus, so Escape still cancels while "Checking…")
+                        read-only: waiting;
                         single-line: true;
                         color: Theme.label;
                         font-size: Theme.material ? 16px : Theme.body;
@@ -242,11 +244,13 @@ export component PolkitDialog inherits Window {
                     border-radius: Theme.material ? (ta.pressed && !off ? 8px : self.height / 2) : 17px;
                     animate border-radius { duration: 222ms; easing: spring(0.4); } // (springFast)
                     background: Theme.material ? (off ? base : base.mix(ink, ta.pressed ? 0.9 : ta.has-hover ? 0.92 : 1))
-                        : b.p ? Theme.accent : ta.has-hover ? Theme.fill-hover : Theme.fill;
+                        : b.p ? (off ? Theme.accent : ta.pressed ? Theme.accent.darker(0.2) : ta.has-hover ? Theme.accent.darker(0.1) : Theme.accent)
+                        : ta.pressed ? Theme.fill-hover.darker(0.1) : ta.has-hover ? Theme.fill-hover : Theme.fill;
                     opacity: !Theme.material && off ? 0.5 : 1;
                     accessible-role: button;
                     accessible-label: b.t;
-                    accessible-action-default => { if b.p { root.submit(root.text); } else { root.cancel(); } }
+                    accessible-enabled: !off;
+                    accessible-action-default => { if !off { if b.p { root.submit(root.text); } else { root.cancel(); } } }
                     Text {
                         text: b.t;
                         color: ink;
@@ -254,7 +258,8 @@ export component PolkitDialog inherits Window {
                         font-weight: Theme.material ? 500 : 600;
                     }
                     ta := TouchArea {
-                        mouse-cursor: pointer;
+                        enabled: !off;
+                        mouse-cursor: off ? MouseCursor.default : MouseCursor.pointer;
                         clicked => { if b.p { root.submit(root.text); } else { root.cancel(); } }
                     }
                 }

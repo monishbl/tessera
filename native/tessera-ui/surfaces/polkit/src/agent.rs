@@ -301,8 +301,14 @@ impl Session {
     pub fn respond(&self, text: &str) {
         if let Ok(mut w) = self.writer.lock() {
             if let Some(w) = w.as_mut() {
-                let _ = w.write_all(format!("{text}\n").as_bytes());
+                // (the answer with its newline, overwritten once it's sent)
+                let mut line = Vec::with_capacity(text.len() + 1);
+                line.extend_from_slice(text.as_bytes());
+                line.push(b'\n');
+                let _ = w.write_all(&line);
                 let _ = w.flush();
+                line.iter_mut().for_each(|b| *b = 0);
+                std::hint::black_box(&line);
             }
         }
     }
