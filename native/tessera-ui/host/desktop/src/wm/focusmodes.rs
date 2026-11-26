@@ -415,5 +415,33 @@ mod tests {
     fn hh_mm_reads_as_minutes() {
         assert_eq!(minutes("22:30"), 1350);
         assert_eq!(minutes("7"), 420);
+        // (out of range: kept to a time the clock reaches)
+        assert_eq!(minutes("25:99"), 23 * 60 + 59);
+        assert_eq!(minutes("-3:-5"), 0);
+    }
+
+    #[test]
+    fn the_same_start_and_end_is_the_whole_day() {
+        let m = mode("00:00", "00:00", json!([2]));
+        assert!(scheduled_at(&m, 0, 2) && scheduled_at(&m, 23 * 60 + 59, 2));
+        assert!(!scheduled_at(&m, 12 * 60, 3));
+    }
+
+    #[test]
+    fn skips_are_kept_by_mode() {
+        let s = skip_of(&json!({"dnd": 5000, "sleep": 7000}));
+        assert_eq!(s.get("dnd"), Some(&5000));
+        assert_eq!(s.get("sleep"), Some(&7000));
+        // an older file's single number holds for every mode
+        assert_eq!(skip_of(&json!(9000)).get("*"), Some(&9000));
+        assert!(skip_of(&json!(0)).is_empty() && skip_of(&Value::Null).is_empty());
+    }
+
+    #[test]
+    fn local_at_is_that_wall_clock_time() {
+        let base = cal::make(2026, 2, 29, 12, 0, 0) / 1000; // the day Europe's clocks go forward
+        let t = cal::local(local_at(base, 0, 19 * 60) * 1000);
+        assert_eq!((t.y, t.mo, t.d), (2026, 2, 29));
+        assert_eq!(strftime("%H:%M", local_at(base, 1, 7 * 60)), "07:00");
     }
 }
