@@ -454,9 +454,7 @@ impl Keymap {
 
     /// An app from its desktop entry, as a bind action
     pub fn app_action(entry_id: &str, argv: &[String], has_gtk_launch: bool) -> Value {
-        if has_gtk_launch {
-            return json!({"exec": format!("gtk-launch {entry_id}"), "desktop": entry_id});
-        }
+        // (the line runs in a shell: every word quoted, the desktop id too)
         let q = |s: &str| {
             if !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_' || "@%+=:,./-".contains(c)) {
                 s.to_string()
@@ -464,6 +462,9 @@ impl Keymap {
                 format!("'{}'", s.replace('\'', "'\\''"))
             }
         };
+        if has_gtk_launch {
+            return json!({"exec": format!("gtk-launch {}", q(entry_id)), "desktop": entry_id});
+        }
         json!({"exec": argv.iter().map(|a| q(a)).collect::<Vec<_>>().join(" "), "desktop": entry_id})
     }
 
@@ -550,7 +551,15 @@ impl Keymap {
                 let arr = u["shortcuts"].as_array().cloned().unwrap_or_default();
                 let i = sid.and_then(|sid| arr.iter().position(|x| x["id"] == sid));
                 let dup = arr.iter().any(|x| canonical(x["keys"].as_str().unwrap_or("")) == canonical(s["keys"].as_str().unwrap_or("")) && Self::same_action(&x["action"], &s["action"]));
-                let label_of = |n: &Value| n["label"].as_str().filter(|l| !l.is_empty()).map(String::from).unwrap_or_else(|| self.describe(&n["action"]));
+                // (the file's label alone could say 'Open Terminal' over any command:
+                // what it will really do is always shown beside it)
+                let label_of = |n: &Value| {
+                    let does = self.describe(&n["action"]);
+                    match n["label"].as_str().filter(|l| !l.is_empty() && *l != does) {
+                        Some(l) => format!("{l} ({does})"),
+                        None => does,
+                    }
+                };
                 if let Some(i) = i {
                     let next = Self::clean_shortcut(s);
                     if arr[i].to_string() == next.to_string() {
@@ -838,6 +847,13 @@ fn js_str(v: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_shortcuts_quote_the_desktop_id() {
+        assert_eq!(Keymap::app_action("org.gnome.Nautilus", &[], true)["exec"], "gtk-launch org.gnome.Nautilus");
+        assert_eq!(Keymap::app_action("wine-Programs-Some App", &[], true)["exec"], "gtk-launch 'wine-Programs-Some App'");
+        assert_eq!(Keymap::app_action("a;$(rm x)'b", &[], true)["exec"], "gtk-launch 'a;$(rm x)'\\''b'");
+    }
 
     fn km() -> Keymap {
         let mut k = Keymap::default();

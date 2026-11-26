@@ -338,6 +338,23 @@ fn py(sub: &[&str], input: Option<String>, then: impl FnOnce(Option<Value>) + Se
     });
 }
 
+/// A command on a thread with `input` on its stdin: (exit code, stdout) to `done`
+/// (-1 when it couldn't start)
+fn run_with_input(cmd: Vec<String>, input: String, done: impl FnOnce(i32, String) + Send + 'static) {
+    std::thread::spawn(move || {
+        use std::io::Write;
+        let child = std::process::Command::new(&cmd[0]).args(&cmd[1..]).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn();
+        let Ok(mut child) = child else { return done(-1, String::new()) };
+        if let Some(mut i) = child.stdin.take() {
+            let _ = i.write_all(input.as_bytes());
+        }
+        match child.wait_with_output() {
+            Ok(o) => done(o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stdout).into_owned()),
+            Err(_) => done(-1, String::new()),
+        }
+    });
+}
+
 impl Probes {
     /// Tools.qml's `available`, for the surfaces that hide what needs one
     /// (tools.hyprpicker: the menu bar's colour picker)
@@ -598,7 +615,8 @@ impl Service for Probes {
                 self.publish_health(h);
             }
             Msg::Fixed(id, r) => {
-                if let Some(r) = r.filter(|r| r["ok"] != true) {
+                // (no usable answer, the helper missing or crashed, is a failure too)
+                if let Some(r) = r.map_or(Some(Value::Null), |r| (r["ok"] != true).then_some(r)) {
                     self.health_error = r["error"].as_str().filter(|e| !e.is_empty()).unwrap_or("That didn't work. Try the command shown instead.").to_string();
                 }
                 self.fixing.clear();
@@ -744,7 +762,16 @@ impl Service for Probes {
                     h.ask("updates.update", json!(["--install", pk.join(",")]));
                 }
             }
-            ("needs", "buildNative") => run_owned(vec![script("../native/build.sh").to_string_lossy().into_owned()]),
+            // (shell/native/build.sh: beside assets/, not in assets/scripts/)
+            ("needs", "buildNative") => {
+                let build = shell_dir().join("native/build.sh");
+                if build.is_file() {
+                    run_owned(vec!["bash".into(), build.to_string_lossy().into_owned()]);
+                } else {
+                    eprintln!("tessera-ui: host: no {}", build.display());
+                    run(&["notify-send", "-a", "Tessera", "Couldn't build the sign-in helpers", "Tessera's source folder (shell/native/build.sh) wasn't found. Reinstall Tessera to get it back."]);
+                }
+            }
             // UiState.data.<key> = value, for the other crates (System's caffeine: [key, value])
             ("uistate", "set") => {
                 if let Some(k) = a[0].as_str() {
@@ -873,13 +900,14 @@ impl Service for Probes {
             ("bugreport", "copy") => {
                 let r = if a[0].is_object() { a[0].clone() } else { self.report_now() };
                 let script = script("bug-report.py").to_string_lossy().into_owned();
-                run_then(vec!["sh".into(), "-c".into(), format!("printf '%s\\n' \"$1\" | python3 -I \"$0\" text | wl-copy"), script, r.to_string()], |_, _| {});
+                // (on stdin: a long log is over the 128 KiB a single argument may be)
+                run_with_input(vec!["sh".into(), "-c".into(), "python3 -I \"$0\" text | wl-copy >/dev/null 2>&1".into(), script], format!("{r}\n"), |_, _| {});
                 h.ask("island.post", json!([{"kind": "custom", "icon": "copy", "title": "Report copied", "subtitle": "Paste it into an issue or a message", "color": "#0A84FF"}, 3000]));
             }
             ("bugreport", "github") => {
                 let r = if a[0].is_object() { a[0].clone() } else { self.report_now() };
                 let script = script("bug-report.py").to_string_lossy().into_owned();
-                run_then(vec!["sh".into(), "-c".into(), "printf '%s\\n' \"$1\" | python3 -I \"$0\" github-url".into(), script, r.to_string()], |_, out| {
+                run_with_input(vec!["python3".into(), "-I".into(), script, "github-url".into()], format!("{r}\n"), |_, out| {
                     if out.trim().starts_with("https://") {
                         launch_open(out.trim());
                     }

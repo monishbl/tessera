@@ -343,9 +343,13 @@ impl Service for Brightness {
             M::Detected(t) => {
                 self.detecting = false;
                 self.scanned = true;
-                let (problem, found) = parse_detect(&t);
-                self.problem = problem;
-                self.ddc = found;
+                // (no output at all, a detect that timed out or failed to run: the
+                // displays found before stay, until the next display change scans)
+                if !(t.trim().is_empty() && !self.ddc.is_empty()) {
+                    let (problem, found) = parse_detect(&t);
+                    self.problem = problem;
+                    self.ddc = found;
+                }
                 if self.detect_again {
                     self.detect_again = false;
                     self.rescan(h);

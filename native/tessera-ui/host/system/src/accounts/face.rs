@@ -43,6 +43,8 @@ pub struct Face {
     /// jobs still to run after this one (adding a face with a regular camera
     /// is two: your features for the blink, then Howdy's)
     then: Vec<String>,
+    /// the camera (path, kind) the running setup was started for
+    setup_for: Option<(String, String)>,
     progress: i64,
     try_state: String,
     try_text: String,
@@ -56,6 +58,13 @@ pub struct Face {
     cfg_kind: String,
     cfg_camera: String,
     cfg_admin: bool,
+}
+
+/// Howdy's answer to `clear` when it has no model for you (it exits 1:
+/// "No models created yet, can't clear them if they don't exist")
+pub fn nothing_to_clear(said: &str) -> bool {
+    let s = said.to_lowercase();
+    s.contains("no models created") || s.contains("no face model")
 }
 
 /// The camera to offer: the one picked (lock.faceCamera) when it's there,
@@ -210,6 +219,9 @@ impl Face {
                     self.then.clear();
                     self.publish();
                     return;
+                }
+                if job == "setup" {
+                    self.setup_for = Some((path.clone(), if cam["kind"] == "rgb" { "rgb" } else { "ir" }.to_string()));
                 }
                 let args: Vec<String> = match job {
                     "setup" => strs(&["face", "setup", &path]),
@@ -369,8 +381,9 @@ impl Service for Face {
                 self.publish();
             }
             "chooseCamera" => {
-                // (only before it's set up: changing it means setting up again)
-                if let Some(p) = args[0].as_str() {
+                // (only before it's set up: changing it means setting up again;
+                // never while a job runs, which was started for the camera before)
+                if let Some(p) = args[0].as_str().filter(|_| !self.running) {
                     if self.info["cameras"].as_array().is_some_and(|l| l.iter().any(|c| c["path"] == p)) {
                         self.cfg_camera = p.to_string();
                         config_set("lock.faceCamera", json!(p));
@@ -388,6 +401,9 @@ impl Service for Face {
                     }
                 }
             }
+            // (while a job runs, a request is refused before it touches the chain
+            // of jobs to come: it would replace the running one's)
+            "setUpCamera" | "addFace" | "clearFaces" if self.running => {}
             "setUpCamera" => {
                 if self.camera().is_some() {
                     self.then = if self.camera().and_then(|c| c["kind"].as_str()) == Some("rgb") { vec!["models".into()] } else { vec![] };
@@ -458,15 +474,20 @@ impl Service for Face {
             M::Job(code, job, said_all) => {
                 self.busy.clear();
                 self.running = false;
+                // ('clear' with no face model to clear: nothing is left, as asked)
+                let code = if code != 0 && job == "clear" && nothing_to_clear(&said_all) { 0 } else { code };
                 if job == "models" {
                     self.progress = -1;
                 }
                 if code == 0 {
                     match job.as_str() {
                         "setup" => {
-                            let cam = self.camera().cloned().unwrap_or(Value::Null);
-                            let path = cam["path"].as_str().unwrap_or("").to_string();
-                            let kind = if cam["kind"] == "rgb" { "rgb" } else { "ir" };
+                            // (the camera it was set up for, not the one picked now)
+                            let (path, kind) = self.setup_for.take().unwrap_or_else(|| {
+                                let cam = self.camera().cloned().unwrap_or(Value::Null);
+                                (cam["path"].as_str().unwrap_or("").to_string(), if cam["kind"] == "rgb" { "rgb" } else { "ir" }.to_string())
+                            });
+                            let kind = kind.as_str();
                             self.cfg_device = path.clone();
                             self.cfg_kind = kind.into();
                             config_set("lock.faceDevice", json!(path));
@@ -530,6 +551,13 @@ impl Service for Face {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clearing_no_faces_is_not_a_failure() {
+        assert!(nothing_to_clear("No models created yet, can't clear them if they don't exist\n"));
+        assert!(!nothing_to_clear("Error: permission denied"));
+        assert!(!nothing_to_clear(""));
+    }
 
     #[test]
     fn the_picked_camera_or_infrared_first() {

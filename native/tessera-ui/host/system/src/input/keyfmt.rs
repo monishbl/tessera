@@ -324,10 +324,23 @@ pub fn key_label(k: &str) -> String {
     if let Some(x) = tessera_core::keynames::xf86(k) {
         return x;
     }
-    if k.chars().count() == 1 {
-        k.to_uppercase()
+    // (upper case only when it stays one letter: ß is not 'SS')
+    let up = k.to_uppercase();
+    if k.chars().count() == 1 && up.chars().count() == 1 {
+        up
     } else {
         k.to_string()
+    }
+}
+
+#[cfg(test)]
+mod single_key_tests {
+    use super::*;
+    #[test]
+    fn single_letters_stay_one_keycap() {
+        assert_eq!(key_label("s"), "S");
+        assert_eq!(key_label("ß"), "ß");
+        assert_eq!(key_label("é"), "É");
     }
 }
 

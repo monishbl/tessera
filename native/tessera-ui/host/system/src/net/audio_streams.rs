@@ -90,13 +90,24 @@ impl AudioStreams {
         let streams: Vec<Value> = s.streams.iter().filter(|x| !EVENT_PLAYERS.contains(&x.binary.as_str()))
             .map(|x| json!({"index": x.index, "name": x.name, "icon": x.icon, "binary": x.binary, "volume": x.volume, "muted": x.muted, "channels": x.channels, "output": self.links.get(&x.index).cloned().unwrap_or_default()}))
             .collect();
-        let v = json!({"canMove": has_tool("pactl"), "outputs": s.sinks.iter().map(|d| dev(d, true)).collect::<Vec<_>>(),
+        // (looked for once: publish runs on every sound reading)
+        static CAN_MOVE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let v = json!({"canMove": *CAN_MOVE.get_or_init(|| has_tool("pactl")), "outputs": s.sinks.iter().map(|d| dev(d, true)).collect::<Vec<_>>(),
                        "inputs": s.sources.iter().map(|d| dev(d, false)).collect::<Vec<_>>(), "streams": streams});
         if v != self.last {
             crate::bus::put(NAME, v.clone());
             self.last = v;
         }
     }
+}
+
+/// A pactl event that may change which output a stream plays to: a stream or
+/// an output coming or going, or a stream changed (moved). An output's own
+/// 'change' is its volume or mute: a slider drag no longer re-reads the links
+pub fn pokes_links(l: &str) -> bool {
+    let stream = l.contains(" on sink-input #");
+    let output = l.contains(" on sink #");
+    stream || (output && (l.contains("'new'") || l.contains("'remove'")))
 }
 
 impl Service for AudioStreams {
@@ -113,7 +124,7 @@ impl Service for AudioStreams {
         // each run woke every pactl listener)
         let send = h.sender(NAME);
         super::pulse_events::subscribe(Box::new(move |l: &str| {
-            if l.contains(" on sink-input #") || l.contains(" on sink #") {
+            if pokes_links(l) {
                 send(Box::new(M::Poke));
             }
         }));
@@ -160,6 +171,15 @@ impl Service for AudioStreams {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn output_volume_changes_dont_reread_links() {
+        assert!(pokes_links("Event 'new' on sink-input #42"));
+        assert!(pokes_links("Event 'change' on sink-input #42"));
+        assert!(pokes_links("Event 'remove' on sink #3"));
+        assert!(!pokes_links("Event 'change' on sink #3"));
+        assert!(!pokes_links("Event 'change' on source #1"));
+    }
 
     #[test]
     fn streams_and_their_sinks() {

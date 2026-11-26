@@ -30,11 +30,11 @@ pub fn kind_of(t: &str) -> &'static str {
 pub fn parse_nm(text: &str) -> Conns {
     let mut now = Conns::new();
     for l in text.split('\n') {
-        let f: Vec<String> = l.replace("\\:", "\u{1}").split(':').map(str::to_string).collect();
+        let f = super::network_feed::nm_fields(l);
         if f.len() < 4 {
             continue;
         }
-        let name = f[..f.len() - 3].join(":").replace('\u{1}', ":");
+        let name = f[..f.len() - 3].join(":");
         let kind = kind_of(&f[f.len() - 3]);
         if !kind.is_empty() && f[f.len() - 2] != "lo" {
             now.insert(name, (kind.to_string(), f[f.len() - 1] == "ap"));

@@ -539,7 +539,7 @@ impl Input {
         let p = expand(&self.home, &path);
         let send = h.sender("Input");
         std::thread::spawn(move || {
-            let r = std::fs::read_to_string(&p);
+            let r = crate::util::read_small(&p, 5 << 20);
             let err = r.as_ref().err().map(|e| format!("{p}: {}", e.to_string().split(" (os").next().unwrap_or(""))).unwrap_or_default();
             send(Box::new(M::Read { gestures, path, secs, ok: r.is_ok(), text: r.unwrap_or_default(), err }));
         });
@@ -595,7 +595,9 @@ impl Service for Input {
         let _ = M::RefreshBinds;
     }
     fn every_second(&mut self, h: &mut Host, n: u64) {
-        if self.poll_started && n % 2 == 0 {
+        // (every 2 s while Settings shows it, else every 30 s: a hand edit of
+        // the files is still picked up, without a stat of three files all session)
+        if self.poll_started && n % if self.live { 2 } else { 30 } == 0 {
             self.message(h, Box::new(M::Poll));
         }
     }

@@ -20,8 +20,19 @@ pub fn pick() -> String {
 }
 
 /// ["sh", "-c", …, "sh", args…]: pkexec <helper> args…, as one command
+/// (in a sandbox, one that refuses: the sandbox shares the real root helper,
+/// so a click there would change this computer's PAM, boot menu or login)
 pub fn command(args: &[String]) -> Vec<String> {
-    let mut v = vec!["sh".to_string(), "-c".into(), format!("{}exec pkexec \"$h\" \"$@\"", pick()), "sh".into()];
+    command_for(args, tessera_core::env::sandboxed())
+}
+
+fn command_for(args: &[String], sandboxed: bool) -> Vec<String> {
+    let script = if sandboxed {
+        "echo \"tessera-root: Not from the test session: it would change this computer, not the sandbox\" >&2; exit 1".to_string()
+    } else {
+        format!("{}exec pkexec \"$h\" \"$@\"", pick())
+    };
+    let mut v = vec!["sh".to_string(), "-c".into(), script, "sh".into()];
     v.extend(args.iter().cloned());
     v
 }
@@ -75,5 +86,13 @@ mod tests {
     fn knows_quotes_the_action() {
         assert!(knows("setup").contains("\\.root\\.setup\\\""));
         assert_eq!(command(&["a".into()]).last().unwrap(), "a");
+    }
+    #[test]
+    fn a_sandbox_never_reaches_pkexec() {
+        let c = command_for(&["fingerprint".into(), "on".into()], true);
+        assert!(!c[2].contains("pkexec"));
+        assert!(c[2].contains("exit 1"));
+        assert_eq!(&c[4..], ["fingerprint", "on"]);
+        assert!(command_for(&["a".into()], false)[2].contains("exec pkexec"));
     }
 }

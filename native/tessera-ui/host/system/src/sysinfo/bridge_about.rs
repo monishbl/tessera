@@ -54,7 +54,8 @@ struct Read {
     res: Result<String, String>,
 }
 /// The undo notice of an import ran out (8 s)
-struct IeExpire(String);
+/// (the section, and which apply or undo it was for: an older one's expiry is stale)
+struct IeExpire(String, u64);
 /// Tessera's features not set up yet (features.py missing), and whether to
 /// announce the one-time offer (a notification) when there are some
 struct FeatList(Value, bool);
@@ -89,6 +90,8 @@ pub struct About {
     feat_running: bool,
     feat_result: Value,
     feat_checking: bool,
+    /// each import/export section's latest apply or undo (its Undo expires 8 s after that one)
+    ie_gen: std::collections::HashMap<String, u64>,
 }
 
 fn obj(name: &str) -> Value {
@@ -358,7 +361,7 @@ impl About {
                 "count": plan["sysCount"], "aurCount": plan["aurCount"], "aurAll": up.aur_list.len(), "includeAur": su.include_aur, "removeDropped": su.remove_dropped,
                 "canCheck": up.available || !su.checked, "canUpdate": su.can_update_system(tu, up),
                 "running": up.running(), "job": sjob, "progress": up.progress(), "cancellable": up.cancellable(), "interrupted": up.interrupted,
-                "hyprTooNew": su.hypr_too_new(up), "hyprShort": su.hypr_short(up), "hyprNow": su.hypr_now(), "hyprMax": su.hypr_max(), "hold": su.hold,
+                "hyprTooNew": su.hypr_too_new(up), "hyprShort": su.hypr_short(up), "hyprNow": su.hypr_now(), "hyprMax": su.hypr_max_text(), "hold": su.hold,
                 "missing": n(&tu.packages["missing"]), "dropped": n(&tu.packages["dropped"]),
                 // (the lists only while the packages sheet shows them)
                 "list": if packages { pkgs(&up.list) } else { vec![] }, "aurList": if packages { pkgs(&up.aur_list) } else { vec![] },
@@ -521,9 +524,12 @@ impl About {
         }
         self.ie.insert(key.to_string(), Value::Object(m));
     }
-    fn ie_undo_later(&self, key: &str) {
+    fn ie_undo_later(&mut self, key: &str) {
+        let g = self.ie_gen.entry(key.to_string()).or_insert(0);
+        *g += 1;
+        let n = *g;
         let (tx, key) = (self.tx().clone(), key.to_string());
-        slint::Timer::single_shot(Duration::from_millis(8000), move || tx(Box::new(IeExpire(key.clone()))));
+        slint::Timer::single_shot(Duration::from_millis(8000), move || tx(Box::new(IeExpire(key.clone(), n))));
     }
 
     fn ie_pick(&mut self, key: &str, save: bool, secs: Vec<String>) {
@@ -567,7 +573,7 @@ impl About {
         self.ie_set(key, json!({"busy": true}));
         let (tx, key, path) = (self.tx().clone(), key.to_string(), path.to_string());
         std::thread::spawn(move || {
-            let res = std::fs::read_to_string(expand(&path)).map_err(|e| {
+            let res = crate::util::read_small(&expand(&path), 5 << 20).map_err(|e| {
                 let m = e.to_string();
                 m.split(" (os error").next().unwrap_or("").to_string()
             });
@@ -698,7 +704,8 @@ impl About {
             "features.setUp" => {
                 let known: Vec<String> = self.feat["items"].as_array().map(|a| a.iter().filter_map(|i| i["id"].as_str().map(str::to_string)).collect()).unwrap_or_default();
                 let ids: Vec<String> = a0.as_array().map(|a| a.iter().filter_map(|x| x.as_str()).filter(|x| known.iter().any(|k| k == x)).map(str::to_string).collect()).unwrap_or_default();
-                if !ids.is_empty() && !self.up.running() && !self.feat_running {
+                // (never beside Tessera's own update either: it builds against the system's libraries)
+                if !ids.is_empty() && !SoftwareUpdate::running(&self.up, &self.tu) && !self.feat_running {
                     self.feat_running = true;
                     self.feat_result = Value::Null;
                     let (t, script) = (tx.clone(), util::script("features.py"));
@@ -755,7 +762,7 @@ impl About {
             // and the AUR, through Software Update's job (the root helper, one
             // password; the AUR helper), their names checked here too
             "backup.packages" => {
-                if !self.up.running() {
+                if !SoftwareUpdate::running(&self.up, &self.tu) {
                     let args = backup_install_args(&a);
                     if !args.is_empty() {
                         self.up.update(&tx, &args);
@@ -901,7 +908,11 @@ impl Service for About {
                 _ => self.act(h, f, args),
             },
             "updates" => match f {
-                "update" => self.up.update(&tx, &list(args)),
+                "update" => {
+                    if !SoftwareUpdate::running(&self.up, &self.tu) {
+                        self.up.update(&tx, &list(args));
+                    }
+                }
                 "cancel" => self.up.cancel(),
                 "dismiss" => self.up.dismiss(),
                 "copyLog" => self.up.copy_log(),
@@ -1043,6 +1054,11 @@ impl Service for About {
         let msg = match msg.downcast::<FeatPlan>() {
             Ok(m) => {
                 match features_args(&m.0) {
+                    // (another update began while this planned: it isn't ours to take as the result)
+                    Some(_) if SoftwareUpdate::running(&self.up, &self.tu) => {
+                        self.feat_running = false;
+                        self.feat_result = json!({"error": "Another update started meanwhile. Try again when it has finished."});
+                    }
                     Some(a) => self.up.update(&tx, &a),
                     None => {
                         self.feat_running = false;
@@ -1064,8 +1080,10 @@ impl Service for About {
             Err(m) => m,
         };
         if let Ok(e) = msg.downcast::<IeExpire>() {
-            self.ie_set(&e.0, json!({"undoSnap": "", "status": ""}));
-            self.after(h);
+            if self.ie_gen.get(&e.0).copied() == Some(e.1) {
+                self.ie_set(&e.0, json!({"undoSnap": "", "status": ""}));
+                self.after(h);
+            }
         }
     }
 }

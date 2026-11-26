@@ -138,8 +138,9 @@ impl Service for CloudDrives {
                 if v.is_object() {
                     self.info = v;
                 }
-                // At login: connected drives come back
-                if self.first {
+                // At login: connected drives come back (once a status has been
+                // read: a failed first read waits for the next one)
+                if self.first && self.info.is_object() {
                     self.first = false;
                     for n in ["gdrive", "onedrive"] {
                         let d = self.drive(n);
@@ -200,6 +201,13 @@ impl CloudDrives {
         if !started {
             self.busy.clear();
             self.errors.insert(name.to_string(), json!("That didn't work. Try again."));
+            // (the ones waiting their turn don't wait on a job that never ran)
+            if !self.waiting.is_empty() {
+                let next = self.waiting.remove(0);
+                let mut it = next.splitn(2, ' ');
+                let (j, n) = (it.next().unwrap_or("").to_string(), it.next().unwrap_or("").to_string());
+                self.run_job(&j, &n);
+            }
         }
     }
 }

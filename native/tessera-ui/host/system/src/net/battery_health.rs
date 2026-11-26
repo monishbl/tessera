@@ -81,7 +81,7 @@ pub fn hm(secs: i64) -> String {
 
 /// One line for a hover: "84% · Charging · Balanced", "84% · 3:20 left · Low Power"
 pub fn summary(b: &Battery, mode: Option<&str>) -> String {
-    let level = if b.percent > 1.0 { b.percent / 100.0 } else { b.percent };
+    let level = b.percent / 100.0; // (percent is 0..100: 1% is not 100%)
     let state = match b.state {
         4 => "Fully charged".to_string(),
         1 => if b.time_to_full > 0 { format!("Full in {}", hm(b.time_to_full)) } else { "Charging".into() },
@@ -173,5 +173,8 @@ mod tests {
         let b = Battery { present: true, percent: 84.0, charging: false, state: 2, time_to_empty: 12000, time_to_full: 0 };
         assert_eq!(summary(&b, Some("power-saver")), "84% · 3:20 left · Low Power");
         assert_eq!(summary(&Battery { state: 1, ..b }, None), "84% · Charging");
+        // (1% and below are percents too, not fractions of one)
+        assert!(summary(&Battery { percent: 1.0, ..b }, None).starts_with("1% "));
+        assert!(summary(&Battery { percent: 0.5, ..b }, None).starts_with("1% ") || summary(&Battery { percent: 0.5, ..b }, None).starts_with("0% "));
     }
 }

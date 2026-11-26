@@ -21,6 +21,27 @@ pub fn short(name: &str, layouts: &[String]) -> String {
     }
 }
 
+/// With several layouts, the active one's code ("US", "GB", "UA": English (US)
+/// and English (UK) both read "EN" by name), with its variant when two share
+/// a code; None when the index isn't known (then `short` by the name)
+pub fn short_of(index: Option<usize>, layouts: &[String], variants: &[String]) -> Option<String> {
+    let i = index?;
+    let code = layouts.get(i)?;
+    if layouts.len() < 2 || code.is_empty() {
+        return None;
+    }
+    let var = variants.get(i).map(String::as_str).unwrap_or("");
+    let shared = layouts.iter().filter(|l| *l == code).count() > 1;
+    Some(if shared && !var.is_empty() { format!("{}-{}", code.to_uppercase(), var.chars().take(3).collect::<String>().to_uppercase()) } else { code.to_uppercase() })
+}
+
+/// The main keyboard's active_layout_index from `hyprctl -j devices`
+pub fn active_index(devices: &Value) -> Option<usize> {
+    let kbs = devices["keyboards"].as_array()?;
+    let main = kbs.iter().find(|k| k["main"] == true).or_else(|| kbs.first())?;
+    main["active_layout_index"].as_u64().map(|i| i as usize)
+}
+
 /// The main keyboard's (active keymap, layouts, variants) from `hyprctl -j devices`
 pub fn parse(devices: &Value) -> Option<(String, Vec<String>, Vec<String>)> {
     let kbs = devices["keyboards"].as_array()?;
@@ -42,6 +63,7 @@ pub struct KeyboardLayout {
     name: String,
     layouts: Vec<String>,
     variants: Vec<String>,
+    active: Option<usize>,
 }
 
 impl KeyboardLayout {
@@ -51,7 +73,7 @@ impl KeyboardLayout {
     }
     fn publish(&self, h: &mut Host) {
         let multiple = self.layouts.len() > 1;
-        let short = short(&self.name, &self.layouts);
+        let short = short_of(self.active, &self.layouts, &self.variants).unwrap_or_else(|| short(&self.name, &self.layouts));
         h.set_state("keyboard", json!({"multiple": multiple, "short": short, "name": self.name}));
         crate::bus::put("keyboardlayout", json!({"name": self.name, "layouts": self.layouts, "variants": self.variants, "multiple": multiple, "short": short}));
     }
@@ -76,13 +98,10 @@ impl Service for KeyboardLayout {
     }
     fn message(&mut self, h: &mut Host, msg: Box<dyn Any + Send>) {
         let msg = match msg.downcast::<Raw>() {
-            Ok(e) => {
-                if e.name == "activelayout" {
-                    self.name = e.data.split(',').skip(1).collect::<Vec<_>>().join(",");
-                    self.publish(h);
-                } else {
-                    self.refresh(h); // (the layouts may have changed)
-                }
+            Ok(_) => {
+                // (activelayout is for whichever keyboard changed, a virtual one
+                // too: the main keyboard's is read again rather than taken from it)
+                self.refresh(h);
                 return;
             }
             Err(m) => m,
@@ -90,6 +109,7 @@ impl Service for KeyboardLayout {
         if let Ok(m) = msg.downcast::<M>() {
             let M::Devices(d) = *m;
             if let Some((name, layouts, variants)) = parse(&d) {
+                self.active = active_index(&d);
                 self.name = name;
                 self.layouts = layouts;
                 self.variants = variants;
@@ -111,5 +131,12 @@ mod tests {
         assert_eq!(short(&n, &l), "EN");
         assert_eq!(short("", &l), "US");
         assert_eq!(short("(none)", &["de".to_string()]), "DE");
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(short_of(Some(1), &s(&["us", "gb"]), &s(&["", ""])).as_deref(), Some("GB"));
+        assert_eq!(short_of(Some(0), &s(&["ua", "us"]), &s(&["", ""])).as_deref(), Some("UA"));
+        assert_eq!(short_of(Some(1), &s(&["us", "us"]), &s(&["", "intl"])).as_deref(), Some("US-INT"));
+        assert_eq!(short_of(Some(0), &s(&["us"]), &s(&[""])), None);
+        assert_eq!(short_of(None, &s(&["us", "de"]), &s(&["", ""])), None);
+        assert_eq!(active_index(&json!({"keyboards": [{"main": true, "active_layout_index": 1}]})), Some(1));
     }
 }

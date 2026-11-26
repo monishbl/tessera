@@ -202,6 +202,13 @@ impl GlassBuild {
         }
         let dir = source_dir(tessera_core::env::root(), data_dir());
         let script = dir.join("tools/build-plugin.sh");
+        // (no build script: say so, rather than wait on progress that never comes)
+        if !script.is_file() {
+            eprintln!("tessera-ui: glass plugin: no build script at {}", script.display());
+            run(&["notify-send", "-a", "Tessera", "Couldn't build the glass plugin", "Tessera's source folder (tools/build-plugin.sh) wasn't found. Reinstall Tessera to get it back."]);
+            self.publish(h);
+            return;
+        }
         eprintln!("tessera-ui: glass plugin: building ({} --load)", script.display());
         self.starting = Some(now_ms());
         self.skipped = false;
@@ -262,7 +269,9 @@ impl Service for GlassBuild {
                 loop {
                     let v = read_files(&running, &headers);
                     let active = v["build"]["active"] == true;
-                    if v != last {
+                    // (also every second while fast: Build's 20 s 'starting' limit
+                    // is checked on each reading, even when nothing changes)
+                    if v != last || fast > 0 {
                         // (a build ended: the headers may have changed with it)
                         if last["build"]["active"] == true && !active {
                             headers = headers_version();
@@ -274,7 +283,7 @@ impl Service for GlassBuild {
                     let wait = if active || fast > 0 { Duration::from_secs(1) } else { Duration::from_secs(5) };
                     fast = fast.saturating_sub(1);
                     match rx.recv_timeout(wait) {
-                        Ok(()) => fast = 20,
+                        Ok(()) => fast = 25,
                         Err(mpsc::RecvTimeoutError::Timeout) => {}
                         Err(mpsc::RecvTimeoutError::Disconnected) => return,
                     }

@@ -142,7 +142,7 @@ def is_published(path):
             if "*" in kids:
                 return True
             if parts[n] in kids:
-                return n + 1 == len(parts) or True  # (deeper keys of a literal: trusted)
+                return True  # (that key, or deeper keys of a literal: trusted)
             return False
     # a child path published below it (reading a parent object)
     return any(k.startswith(path + ".") for k in published)
@@ -195,8 +195,6 @@ for p, s in QML_SRC.items():
             continue  # a variable (screentools' `o`): checked by hand
         for k in keys:
             qml_tells[(surf, k)] = os.path.relpath(p, REPO)
-qml_tells.update({("spaces-surfaces", "spaces"): "shell/modules/overview/RustWindows.qml"})
-del qml_tells[("spaces-surfaces", "spaces")]
 
 
 def host_sent_keys(surface):

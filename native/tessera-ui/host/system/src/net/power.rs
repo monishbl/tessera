@@ -134,6 +134,9 @@ fn set_profile(mode: String) {
 }
 
 fn spawn_ppd(send: impl Fn(Box<dyn Any + Send>) + Send + Clone + 'static) {
+    // (tries in a row that found no daemon: TLP, auto-cpufreq or none at all
+    // is asked less and less often, 30 s up to 8 min, and said once)
+    let mut misses = 0u32;
     std::thread::spawn(move || loop {
         let run = || -> zbus::Result<()> {
             let conn = zbus::blocking::Connection::system()?;
@@ -210,10 +213,31 @@ fn spawn_ppd(send: impl Fn(Box<dyn Any + Send>) + Send + Clone + 'static) {
             Ok(())
         };
         if run().is_err() {
-            send(Box::new(M::Ppd(None)));
+            if misses == 0 {
+                send(Box::new(M::Ppd(None)));
+            }
+            misses = misses.saturating_add(1);
+        } else {
+            misses = 0;
         }
-        std::thread::sleep(Duration::from_secs(30));
+        std::thread::sleep(ppd_wait(misses));
     });
+}
+
+/// UPower's battery state as 'on battery': 2 discharging, 3 empty; 1, 4, 5
+/// charging, full, not charging; 0 unknown and 6 pending discharge (a moment's
+/// reading of some firmware) change nothing, so they never look like a charger
+pub fn on_battery_state(state: u32, before: bool) -> bool {
+    match state {
+        2 | 3 => true,
+        0 | 6 => before,
+        _ => false,
+    }
+}
+
+/// The wait before power-profiles-daemon is looked for again after `misses` failed looks
+pub fn ppd_wait(misses: u32) -> Duration {
+    Duration::from_secs(30u64 << misses.saturating_sub(1).min(4))
 }
 
 /// (no battery reading yet)
@@ -325,14 +349,13 @@ impl Power {
     fn percent(&self) -> f64 {
         if !self.has_battery() {
             -1.0
-        } else if self.battery.percent > 1.0 {
-            self.battery.percent
         } else {
-            self.battery.percent * 100.0
+            // (UPower's Percentage is 0..100: 1% is 1, not a fraction)
+            self.battery.percent
         }
     }
     fn on_battery(&self) -> bool {
-        self.has_battery() && (self.battery.state == 2 || self.battery.state == 3)
+        self.has_battery() && on_battery_state(self.battery.state, self.prev_on_battery)
     }
     fn caffeine() -> bool {
         crate::bus::field("system", "keepAwake") == true
@@ -917,12 +940,28 @@ impl Service for Power {
             }
             M::IdleWrite => self.write_idle(h),
             M::IdleDone(t) => self.own_hypridle = t.trim() == "own",
-            M::LidClosed => self.lid_closed(h),
+            // (only while logind's lid switch is ours: else logind handles the
+            // lid itself, and acting too would sleep twice)
+            M::LidClosed => {
+                if self.lid_fd.is_some() {
+                    self.lid_closed(h);
+                }
+            }
             M::LidHeld(run, fd, closed) => {
                 // (for the watch running now only; an older one's fd closes here)
                 if run == self.lid_run && !self.lid.is_empty() {
-                    self.lid_fd = fd;
-                    self.lid_is_closed = closed.unwrap_or(false);
+                    if fd.is_none() {
+                        // refused (or the call failed): logind keeps the lid, and
+                        // it's asked again after a rest, as after a watch that ended
+                        eprintln!("tessera-ui: logind didn't give the lid switch: it handles the lid until asked again");
+                        let (quick, wait) = lid_rest(self.lid_started, now_ms(), self.lid_quick);
+                        self.lid_quick = quick;
+                        self.lid_rest_until = now_ms() + wait as f64;
+                        self.lid_stop();
+                    } else {
+                        self.lid_fd = fd;
+                        self.lid_is_closed = closed.unwrap_or(false);
+                    }
                 }
             }
             M::LidRead(run, closed) => {
@@ -997,6 +1036,18 @@ fn cpu_temp_c() -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_battery_states_change_nothing() {
+        assert!(on_battery_state(2, false) && on_battery_state(3, false));
+        assert!(!on_battery_state(1, true) && !on_battery_state(4, true) && !on_battery_state(5, true));
+        assert!(on_battery_state(0, true) && !on_battery_state(0, false));
+        assert!(on_battery_state(6, true) && !on_battery_state(6, false));
+        assert_eq!(ppd_wait(0), Duration::from_secs(30));
+        assert_eq!(ppd_wait(1), Duration::from_secs(30));
+        assert_eq!(ppd_wait(2), Duration::from_secs(60));
+        assert_eq!(ppd_wait(99), Duration::from_secs(480));
+    }
 
     #[test]
     fn a_lid_watch_that_ends_starts_again_after_a_growing_rest() {

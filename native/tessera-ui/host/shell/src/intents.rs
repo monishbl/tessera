@@ -49,6 +49,9 @@ fn after<'a>(t: &'a str, leads: &[&str]) -> Option<&'a str> {
 
 /// "10 min", "1h 30m", "90s", "2 hours": seconds (0 when there is no duration).
 /// Alarms.parseDuration
+/// The longest timer parse_duration gives (100 hours)
+pub const MAX_TIMER_SECS: i64 = 100 * 3600;
+
 pub fn parse_duration(text: &str) -> i64 {
     let low = text.to_lowercase();
     let b = low.as_bytes();
@@ -82,7 +85,8 @@ pub fn parse_duration(text: &str) -> i64 {
         }
     }
     if found {
-        total.round() as i64
+        // (at most 100 hours: an absurd length can't overflow the 'ends at' time)
+        total.min(MAX_TIMER_SECS as f64).round() as i64
     } else {
         0
     }
@@ -264,7 +268,7 @@ fn timers(t: &str, out: &mut Vec<Value>) {
                 }
                 label.push_str(w);
             }
-            let ends = tessera_core::util::strftime("%H:%M", now_ms() / 1000 + secs);
+            let ends = tessera_core::util::strftime("%H:%M", (now_ms() / 1000).saturating_add(secs));
             out.push(row(&format!("Start a {} timer{}", describe(secs), if label.is_empty() { String::new() } else { format!(": {label}") }), &format!("Ends at {ends}"), "timer", "alarms.addTimer", json!([secs, label]), Some(("timer", "Timer started", format!("{}{}", describe(secs), if label.is_empty() { String::new() } else { format!(" · {label}") }), "#FF9F0A"))));
         }
         return;
@@ -429,6 +433,8 @@ mod tests {
         assert_eq!(parse_duration("90s"), 90);
         assert_eq!(parse_duration("2 hours"), 7200);
         assert_eq!(parse_duration("soon"), 0);
+        // (an absurd length stops at 100 hours)
+        assert_eq!(parse_duration("99999999999999999999 h"), MAX_TIMER_SECS);
         assert_eq!(describe(5400), "1 h 30 min");
         assert_eq!(describe(45), "45 s");
     }

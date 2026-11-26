@@ -94,6 +94,9 @@ impl Watch {
             // (its lines are read: one language, "." decimals)
             tessera_core::util::plain_locale(&mut c);
             c.args(&cmd[1..]).stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::null());
+            // (its own process group: stop() ends what it started too, a
+            // script's curl or speedtest, not only the script)
+            c.process_group(0);
             // (the child ends with this thread, whatever happens to the shell)
             unsafe {
                 c.pre_exec(|| {
@@ -112,7 +115,7 @@ impl Watch {
                 // is ended here, under the same lock stop() takes)
                 let mut kept = me.child.lock().unwrap();
                 if me.stopped.load(std::sync::atomic::Ordering::SeqCst) {
-                    let _ = child.kill();
+                    crate::util::kill_tree(&mut child);
                 }
                 *kept = Some(child);
             }
@@ -128,11 +131,11 @@ impl Watch {
         w
     }
 
-    /// End the child (ours only)
+    /// End the child and everything it started (its process group)
     pub fn stop(&self) {
         self.stopped.store(true, std::sync::atomic::Ordering::SeqCst);
         if let Some(c) = self.child.lock().unwrap().as_mut() {
-            let _ = c.kill();
+            crate::util::kill_tree(c);
         }
     }
 }

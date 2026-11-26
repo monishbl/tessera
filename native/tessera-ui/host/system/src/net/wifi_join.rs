@@ -37,6 +37,8 @@ pub struct WifiJoin {
     show_busy: bool,
     known_busy: bool,
     saved: Value,
+    /// a join asked for while one ran: started when that one ends (the latest wins)
+    queued: Option<Value>,
 }
 
 impl WifiJoin {
@@ -51,6 +53,8 @@ impl WifiJoin {
     /// WifiJoin.join(req): false while one runs
     fn join(&mut self, h: &mut Host, req: &Value) -> bool {
         if self.busy {
+            // (not dropped unsaid: it runs next)
+            self.queued = Some(req.clone());
             return false;
         }
         self.ssid = req["ssid"].as_str().unwrap_or("").to_string();
@@ -149,6 +153,9 @@ impl Service for WifiJoin {
                 if code != 0 && self.stage != "error" {
                     self.stage = "error".into();
                     self.error = "Couldn't join the network. Check that python3 and NetworkManager are installed.".into();
+                }
+                if let Some(next) = self.queued.take() {
+                    self.join(h, &next);
                 }
             }
             M::Saved(t) => {

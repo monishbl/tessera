@@ -52,6 +52,8 @@ pub struct LoginScreen {
     /// "switch" | "back" while the helper runs
     busy: String,
     error: String,
+    /// a preview is up (one at a time: each is full-screen)
+    previewing: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Default for LoginScreen {
@@ -69,6 +71,7 @@ impl Default for LoginScreen {
             switch: json!({}),
             busy: String::new(),
             error: String::new(),
+            previewing: Default::default(),
         }
     }
 }
@@ -369,6 +372,11 @@ impl Service for LoginScreen {
             }
             M::Written(code) => {
                 self.writing = false;
+                // (a change that came while this wrote: Later compares the file with
+                // the look again, and writes only if they differ)
+                if code == 0 {
+                    self.arm();
+                }
                 self.status = if code == 0 { "The login screen has your look.".into() } else { "Couldn't give the login screen your look. It's tried again after your next change.".into() };
             }
         }
@@ -395,8 +403,14 @@ impl LoginScreen {
             vec!["env".to_string(), "TESSERA_GREETER_MOCK=1".into(), format!("TESSERA_GREETER_CLOCK24={clock24}"), me, "--greeter".into(), "--style".into(), style, "--look".into(), look.into()]
         });
         let cmd = rust.unwrap_or(qml);
+        use std::sync::atomic::Ordering;
+        if self.previewing.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let up = self.previewing.clone();
         std::thread::spawn(move || {
             let _ = run_full(&cmd, None);
+            up.store(false, Ordering::SeqCst);
         });
     }
 }

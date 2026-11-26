@@ -32,9 +32,10 @@ pub fn home() -> PathBuf {
     PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
 }
 
-/// $XDG_RUNTIME_DIR, else /tmp
+/// $XDG_RUNTIME_DIR, else /run/user/<uid> (as shell-ipc.sh and the scripts
+/// look; never the shared /tmp, where another user could make the folders first)
 pub fn runtime_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp"))
+    std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })))
 }
 
 /// The shell's folder (shell/), where assets/scripts/ are
@@ -465,6 +466,8 @@ impl Kept {
         // (in a Mutex: each run's writer thread borrows it, and a Receiver alone isn't Sync)
         let rx = std::sync::Mutex::new(rx);
         let (stop2, quick2) = (stop.clone(), quick.clone());
+        // (an empty line, which write() never sends, tells a run's relay that its child ended)
+        let ended = tx.clone();
         std::thread::spawn(move || {
             while !stop2.load(Ordering::SeqCst) {
                 let began = std::time::Instant::now();
@@ -473,25 +476,18 @@ impl Kept {
                 if let Ok(mut child) = child {
                     let mut stdin = child.stdin.take();
                     let stdout = child.stdout.take();
-                    // (what is written to us goes on to its stdin)
-                    let done = std::sync::atomic::AtomicBool::new(false);
+                    // (what is written to us goes on to its stdin; the relay sleeps
+                    // until a line comes or the child's output ends, no polling)
                     std::thread::scope(|sc| {
                         sc.spawn(|| loop {
-                            let got = rx.lock().map(|r| r.recv_timeout(std::time::Duration::from_millis(300)));
-                            let Ok(got) = got else { break };
-                            match got {
-                                Ok(l) => {
-                                    if let Some(i) = stdin.as_mut() {
-                                        let _ = i.write_all(l.as_bytes());
-                                        let _ = i.flush();
-                                    }
-                                }
-                                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                                    if done.load(Ordering::SeqCst) {
-                                        break;
-                                    }
-                                }
-                                Err(_) => break,
+                            let got = rx.lock().map(|r| r.recv());
+                            let Ok(Ok(l)) = got else { break };
+                            if l.is_empty() {
+                                break;
+                            }
+                            if let Some(i) = stdin.as_mut() {
+                                let _ = i.write_all(l.as_bytes());
+                                let _ = i.flush();
                             }
                         });
                         if let Some(o) = stdout {
@@ -499,7 +495,7 @@ impl Kept {
                                 on_line(l);
                             }
                         }
-                        done.store(true, Ordering::SeqCst);
+                        let _ = ended.send(String::new());
                     });
                     let _ = child.wait();
                 }

@@ -215,6 +215,8 @@ pub struct DeviceAlerts {
     usb_names: HashMap<String, String>,
     pending_usb: Option<Value>,
     drive_seen: bool,
+    /// the block DEVPATHs of USB drives seen (their USB device's path is the start of theirs)
+    drive_paths: std::collections::HashSet<String>,
     drive_seen_at: HashMap<String, u64>,
     usb_wait_gen: u64,
     output_key: String,
@@ -323,9 +325,19 @@ impl DeviceAlerts {
         if step >= was {
             return;
         }
+        // (not yet armed, at login: nothing is marked, so the first scan after shows it)
+        if !self.armed {
+            return;
+        }
         self.low_warned.insert(d.address.clone(), step);
-        if self.live(h) && island::wants(h, "bluetooth") {
-            let name = if d.name.is_empty() { d.address.clone() } else { d.name.clone() };
+        let name = if d.name.is_empty() { d.address.clone() } else { d.name.clone() };
+        if !(self.live(h) && island::wants(h, "bluetooth")) {
+            // (the island off, or its Bluetooth alerts: a notification says it)
+            let body = format!("Low battery · {pct}% left{}", if step == 10 { " · charge it soon" } else { "" });
+            tessera_core::util::notify_live("Bluetooth", "battery-caution", if step == 10 { "critical" } else { "normal" }, &tessera_core::util::Live::key(&format!("bt:{}", d.address), if step == 10 { 2 } else { 1 }), &name, &body);
+            return;
+        }
+        {
             island::post(
                 h,
                 json!({
@@ -359,18 +371,29 @@ impl DeviceAlerts {
                     after(h.sender("DeviceAlerts"), 1200, M::UsbWait(self.usb_wait_gen));
                 }
             } else if g("ACTION") == "remove" {
-                let name = self.usb_names.get(g("DEVPATH")).cloned();
+                // (one plugged in before the shell started has no stored name:
+                // the remove event's own model and vendor give it)
+                let named = !g("ID_MODEL").is_empty() || !g("ID_MODEL_FROM_DATABASE").is_empty();
+                let name = self.usb_names.remove(g("DEVPATH")).or_else(|| named.then(|| usb_name(p)));
+                // (a drive's own USB removal: its 'Drive removed' says it already)
+                let under = format!("{}/", g("DEVPATH"));
+                let was_drive = self.drive_paths.iter().any(|b| b.starts_with(&under));
+                self.drive_paths.retain(|b| !b.starts_with(&under));
                 if name.is_some() && self.live(h) {
                     h.ask("sound.play", json!(["usbOff"]));
                 }
                 if let Some(name) = name {
-                    if self.live(h) && island::wants(h, "usb") && !self.drive_seen {
+                    if self.live(h) && island::wants(h, "usb") && !was_drive {
                         island::post(h, json!({"kind": "usb", "key": format!("usb:{name}"), "failure": true, "icon": "usb", "title": name, "subtitle": "Disconnected", "color": DIM}), 2500);
                     }
                 }
                 self.drive_seen = false;
             }
         } else if g("SUBSYSTEM") == "block" && g("ID_BUS") == "usb" && (g("DEVTYPE") == "partition" || (g("DEVTYPE") == "disk" && !g("ID_FS_TYPE").is_empty())) {
+            // (which USB device this drive is part of: its block path starts with that one's)
+            if !g("DEVPATH").is_empty() {
+                self.drive_paths.insert(g("DEVPATH").to_string());
+            }
             if !self.live(h) || !island::wants(h, "usb") {
                 return;
             }
@@ -387,9 +410,9 @@ impl DeviceAlerts {
             self.drive_seen_at.insert(seen_key, now_ms());
             if g("ACTION") == "add" {
                 // up for 10 minutes (or until dismissed)
-                island::post(h, json!({"kind": "usb", "key": format!("drive:{label}"), "icon": "hard-drive", "title": label, "subtitle": "Drive connected", "color": ORANGE, "action": "Open", "onAction": {"call": "devicealerts.openDrive", "args": [dev]}}), 600000);
+                island::post(h, json!({"kind": "usb", "key": format!("drive:{}", disk_of(&dev)), "icon": "hard-drive", "title": label, "subtitle": "Drive connected", "color": ORANGE, "action": "Open", "onAction": {"call": "devicealerts.openDrive", "args": [dev]}}), 600000);
             } else if g("ACTION") == "remove" {
-                island::post(h, json!({"kind": "usb", "key": format!("drive:{label}"), "failure": true, "icon": "hard-drive", "title": label, "subtitle": "Drive removed", "color": DIM}), 2500);
+                island::post(h, json!({"kind": "usb", "key": format!("drive:{}", disk_of(&dev)), "failure": true, "icon": "hard-drive", "title": label, "subtitle": "Drive removed", "color": DIM}), 2500);
             }
         }
     }
@@ -481,7 +504,8 @@ impl Service for DeviceAlerts {
             // (Files.manager: Settings' file manager, else the first installed;
             // 17 Nov: read from a bus entry nothing filled, so always xdg-open)
             let fm = file_manager(h.cfg());
-            crate::util::run_async(&["sh", "-c", "m=$(findmnt -nro TARGET \"$1\" | head -1); [ -z \"$m\" ] && m=$(udisksctl mount -b \"$1\" 2>/dev/null | sed -n 's/.* at //p'); ${2:-xdg-open} \"${m:-$HOME}\"", "sh", &dev, &fm]);
+            // (not mounted and it can't be, locked or damaged: say so, never open home instead)
+            crate::util::run_async(&["sh", "-c", "m=$(findmnt -nro TARGET \"$1\" | head -1); [ -z \"$m\" ] && m=$(udisksctl mount -b \"$1\" 2>/dev/null | sed -n 's/.* at //p'); [ -n \"$m\" ] && exec ${2:-xdg-open} \"$m\"; notify-send -a Tessera -i drive-removable-media \"Couldn't open the drive\" \"It may be encrypted or damaged. Open it in your file manager to unlock or check it.\"", "sh", &dev, &fm]);
         }
     }
     fn message(&mut self, h: &mut Host, msg: Box<dyn Any + Send>) {
@@ -515,7 +539,11 @@ impl Service for DeviceAlerts {
         };
         let Ok(m) = msg.downcast::<M>() else { return };
         match *m {
-            M::Armed => self.armed = true,
+            M::Armed => {
+                self.armed = true;
+                // (a device already low at login gets its warning now)
+                self.scan_bluetooth(h);
+            }
             M::Udev(p) => self.on_udev(h, &p),
             M::UsbWait(g) => {
                 if g == self.usb_wait_gen {

@@ -197,8 +197,18 @@ pub fn look_feed(h: &Host) -> Value {
             let pic = cfg["wallpaper"]["path"].as_str().unwrap_or("").to_string();
             let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
             if last.as_ref().map(|l| &l.0) != Some(&pic) {
-                let found = if pic.is_empty() { None } else { tessera_core::seed::from_picture(std::path::Path::new(&pic)) };
-                *last = Some((pic, found));
+                // (decoded on a thread, not the UI's: a 4K picture takes 100 ms and
+                // more; the tone stands in until the next feed has it)
+                *last = Some((pic.clone(), None));
+                if !pic.is_empty() {
+                    std::thread::spawn(move || {
+                        let found = tessera_core::seed::from_picture(std::path::Path::new(&pic));
+                        let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+                        if last.as_ref().is_some_and(|l| l.0 == pic) {
+                            *last = Some((pic, found));
+                        }
+                    });
+                }
             }
             let found = last.as_ref().and_then(|l| l.1.clone());
             found.unwrap_or(tone7)

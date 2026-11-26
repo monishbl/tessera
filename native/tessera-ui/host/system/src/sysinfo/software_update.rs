@@ -42,6 +42,9 @@ pub struct SoftwareUpdate {
     pub restart_pending: bool,
     /// the tested Hyprland range of the version that would be installed
     pub compat: Option<Value>,
+    /// compat.json couldn't be read: the tested range is unknown, so a Hyprland
+    /// update is asked about rather than let through (fails closed)
+    pub compat_unknown: bool,
     compat_pending: bool,
     compat_busy: bool,
     hypr_busy: bool,
@@ -77,6 +80,7 @@ impl Default for SoftwareUpdate {
             asked: false,
             restart_pending: false,
             compat: None,
+            compat_unknown: false,
             compat_pending: false,
             compat_busy: false,
             hypr_busy: false,
@@ -282,6 +286,7 @@ impl SoftwareUpdate {
     pub fn event(&mut self, ev: Ev) {
         match ev {
             Ev::Compat(c) => {
+                self.compat_unknown = c.is_none();
                 self.compat = c;
                 self.compat_busy = false;
                 self.compat_pending = false;
@@ -315,10 +320,20 @@ impl SoftwareUpdate {
     pub fn hypr_max(&self) -> String {
         self.compat.as_ref().and_then(|c| c["hyprland"]["max"].as_str()).unwrap_or("").to_string()
     }
+    /// hypr_max for the page's sentence ("tested with Hyprland up to …")
+    pub fn hypr_max_text(&self) -> String {
+        let m = self.hypr_max();
+        if m.is_empty() && self.compat_unknown {
+            "a version that couldn't be read".into()
+        } else {
+            m
+        }
+    }
     /// The repo's Hyprland is newer than this Tessera is tested with
     pub fn hypr_too_new(&self, up: &Updates) -> bool {
         match self.hypr_update(up) {
             Some(u) if !self.hypr_max().is_empty() => helpers::cmp(&helpers::parts(u["to"].as_str().unwrap_or("")), &helpers::parts(&self.hypr_max())) > 0,
+            Some(_) => self.compat_unknown,
             _ => false,
         }
     }

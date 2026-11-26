@@ -123,7 +123,7 @@ impl Mirror {
         h.set_state("power.performance", json!(p["hasPerformance"].as_bool().unwrap_or(false)));
         // Battery: the hover's one line ("84% · 3:20 left · Low Power"), and whether Low Power is on
         let b = h.st.shell.get::<tessera_core::services::status::Battery>().cloned().unwrap_or_default();
-        let level = (if b.percent > 1.0 { b.percent / 100.0 } else { b.percent }).clamp(0.0, 1.0);
+        let level = (b.percent / 100.0).clamp(0.0, 1.0); // (percent is 0..100)
         let state = match b.state {
             4 => "Fully charged".to_string(),
             1 if b.time_to_full > 0 => format!("Full in {}", hm(b.time_to_full)),
