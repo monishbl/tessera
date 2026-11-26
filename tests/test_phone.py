@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "shell/assets/scripts/phone.py"
@@ -51,6 +52,17 @@ class Track(unittest.TestCase):
             self.assertTrue(ok["charging"])
             self.assertEqual(locked["state"], "unauthorized")
             self.assertNotIn("battery", locked)
+
+
+    def test_the_pairing_code_folder_is_ours_alone(self):
+        with tempfile.TemporaryDirectory() as t:
+            env = {"XDG_RUNTIME_DIR": t}
+            with unittest.mock.patch.dict(os.environ, env):
+                d = ph.private_dir()
+                self.assertEqual(d, os.path.join(t, "tessera"))
+                self.assertEqual(os.stat(d).st_mode & 0o777, 0o700)
+                os.chmod(d, 0o755)  # (opened to others: refused)
+                self.assertEqual(ph.private_dir(), "")
 
 
 if __name__ == "__main__":

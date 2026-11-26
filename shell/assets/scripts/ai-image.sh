@@ -6,8 +6,11 @@
 #   ai-image.sh FILE…         ai-image.sh --clipboard   (exit 3: no picture there)
 set -uo pipefail
 umask 077
-dir="${XDG_RUNTIME_DIR:-/tmp}/tessera-ai"
-mkdir -p "$dir"
+# (never a shared /tmp: a folder another user made first could be read, or
+# hold links that ImageMagick would write through)
+dir="${XDG_RUNTIME_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}}/tessera-ai"
+mkdir -p -m 700 -- "$dir" 2>/dev/null
+[[ -d "$dir" && ! -L "$dir" && -O "$dir" ]] && [[ $(stat -c %a -- "$dir") == 700 ]] || { echo "!	No private folder for the pictures"; exit 2; }
 im=$(command -v magick || command -v convert) || { echo "!	ImageMagick isn't installed" ; exit 2; }
 
 one() { # source, name shown when it fails
