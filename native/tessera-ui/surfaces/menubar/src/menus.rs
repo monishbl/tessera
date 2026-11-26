@@ -97,24 +97,24 @@ pub fn combo(spec: &str, style: &str) -> String {
 pub fn system(screen: &str, updates: i32, user: &str, style: &str) -> Vec<Row> {
     let plural = |n: i32, one: &str, many: &str| if n == 1 { format!("{n} {one}") } else { format!("{n} {many}") };
     let mut v = vec![
-        item("About This Computer", Action::Act("about", screen.into())),
+        item("About this computer", Action::Act("about", screen.into())),
         sep(),
         Row { shortcut: if updates > 0 { plural(updates, "update", "updates") } else { String::new() }, ..item("System Settings…", Action::Act("settings", String::new())) },
     ];
     if updates > 0 {
-        v.push(item(format!("Install {}…", plural(updates, "Update", "Updates")), Action::Act("installUpdates", String::new())));
+        v.push(item(format!("Install {}…", plural(updates, "update", "updates")), Action::Act("installUpdates", String::new())));
     }
     v.extend([
         sep(),
         // Duplicated bars or a stuck shell: restarts only the shell, apps keep running
-        Row { shortcut: combo("SUPER CTRL Escape", style), ..item("Repair Shell", Action::Act("repairShell", String::new())) },
+        Row { shortcut: combo("SUPER CTRL Escape", style), ..item("Repair shell", Action::Act("repairShell", String::new())) },
         sep(),
         item("Sleep", Action::Act("power", "sleep".into())),
         item("Restart…", Action::Act("session", screen.into())),
-        item("Shut Down…", Action::Act("session", screen.into())),
+        item("Shut down…", Action::Act("session", screen.into())),
         sep(),
-        item("Lock Screen", Action::Act("power", "lock".into())),
-        item(format!("Log Out {user}…"), Action::Act("session", screen.into())),
+        item("Lock screen", Action::Act("power", "lock".into())),
+        item(format!("Log out {user}…"), Action::Act("session", screen.into())),
     ]);
     v
 }
@@ -126,12 +126,12 @@ pub fn app(name: &str, entry: &str, class: &str) -> Vec<Row> {
     if entry.is_empty() && class.is_empty() {
         let ipc = |a: &[&str]| Action::Ipc(a.iter().map(|s| s.to_string()).collect());
         return vec![
-            item("Change Wallpaper…", ipc(&["panels", "settings", "wallpaper"])),
-            item("Edit Widgets…", ipc(&["panels", "widgets", "true"])),
+            item("Change wallpaper…", ipc(&["panels", "settings", "wallpaper"])),
+            item("Edit widgets…", ipc(&["panels", "widgets", "true"])),
         ];
     }
     vec![
-        Row { enabled: !entry.is_empty(), ..item(format!("New {name} Window"), Action::Act("launch", entry.into())) },
+        Row { enabled: !entry.is_empty(), ..item(format!("New {name} window"), Action::Act("launch", entry.into())) },
         sep(),
         Row { enabled: !class.is_empty(), ..item(format!("Quit {name}"), Action::Act("quit", class.into())) },
     ]
@@ -144,20 +144,20 @@ pub fn layout(name: &str) -> ([f32; 4], &'static str) {
         "right" => ([0.5, 0.0, 0.5, 1.0], "Right"),
         "top" => ([0.0, 0.0, 1.0, 0.5], "Top"),
         "bottom" => ([0.0, 0.5, 1.0, 0.5], "Bottom"),
-        "topLeft" => ([0.0, 0.0, 0.5, 0.5], "Top Left"),
-        "topRight" => ([0.5, 0.0, 0.5, 0.5], "Top Right"),
-        "bottomLeft" => ([0.0, 0.5, 0.5, 0.5], "Bottom Left"),
-        "bottomRight" => ([0.5, 0.5, 0.5, 0.5], "Bottom Right"),
-        "leftThird" => ([0.0, 0.0, 1.0 / 3.0, 1.0], "Left Third"),
-        "centerThird" => ([1.0 / 3.0, 0.0, 1.0 / 3.0, 1.0], "Center Third"),
-        "rightThird" => ([2.0 / 3.0, 0.0, 1.0 / 3.0, 1.0], "Right Third"),
-        "leftTwoThirds" => ([0.0, 0.0, 2.0 / 3.0, 1.0], "Left Two Thirds"),
+        "topLeft" => ([0.0, 0.0, 0.5, 0.5], "Top left"),
+        "topRight" => ([0.5, 0.0, 0.5, 0.5], "Top right"),
+        "bottomLeft" => ([0.0, 0.5, 0.5, 0.5], "Bottom left"),
+        "bottomRight" => ([0.5, 0.5, 0.5, 0.5], "Bottom right"),
+        "leftThird" => ([0.0, 0.0, 1.0 / 3.0, 1.0], "Left third"),
+        "centerThird" => ([1.0 / 3.0, 0.0, 1.0 / 3.0, 1.0], "Center third"),
+        "rightThird" => ([2.0 / 3.0, 0.0, 1.0 / 3.0, 1.0], "Right third"),
+        "leftTwoThirds" => ([0.0, 0.0, 2.0 / 3.0, 1.0], "Left two thirds"),
         _ => ([0.0, 0.0, 1.0, 1.0], "Fill"),
     }
 }
 
 /// `base`: the focused display's block of spaces (spacemap: each display
-/// owns 100 ids), so "Move to Space 2" means that display's second space
+/// owns 100 ids), so "Move to space 2" means that display's second space
 pub fn window(win: &Client, style: &str, base: i32) -> Vec<Row> {
     let has = !win.address.is_empty() && !win.class.is_empty();
     let addr = if win.address.starts_with("0x") { win.address.clone() } else { format!("0x{}", win.address) };
@@ -178,37 +178,37 @@ pub fn window(win: &Client, style: &str, base: i32) -> Vec<Row> {
     vec![
         en(item("Minimize", act("move", "workspace = \"special:minimized\", follow = false")), has),
         en(Row { checked: Some(win.floating), ..item("Float", act("float", "action = \"toggle\"")) }, has),
-        en(Row { checked: Some(win.pinned), ..item("Keep on All Spaces", act("pin", "action = \"toggle\"")) }, has && win.floating),
+        en(Row { checked: Some(win.pinned), ..item("Keep on all spaces", act("pin", "action = \"toggle\"")) }, has && win.floating),
         en(
             Row {
                 shortcut: combo("SUPER T", style),
-                ..item(if grouped { "Move Tab to New Window" } else { "Merge into Tabs" }, if grouped { Action::Dispatch("hl.dsp.window.move({ out_of_group = true })".into()) } else { Action::Act("mergeTabs", String::new()) })
+                ..item(if grouped { "Move tab to new window" } else { "Merge into tabs" }, if grouped { Action::Dispatch("hl.dsp.window.move({ out_of_group = true })".into()) } else { Action::Act("mergeTabs", String::new()) })
             },
             has,
         ),
         // (no tick: nothing here knows whether the window is in PiP)
         en(Row { shortcut: combo("SUPER SHIFT P", style), ..item("Picture in Picture", Action::Ipc(vec!["tiling".into(), "pip".into()])) }, has),
         sep(),
-        header("Move & Resize"),
+        header("Move & resize"),
         tiles(&["left", "right", "top", "bottom"]),
         tiles(&["topLeft", "topRight", "bottomLeft", "bottomRight"]),
         tiles(&["leftThird", "centerThird", "rightThird", "leftTwoThirds"]),
         en(Row { shortcut: combo("SUPER CTRL F", style), ..item("Fill", snap("fill")) }, has),
         en(Row { shortcut: combo("SUPER CTRL C", style), ..item("Center", snap("center")) }, has),
-        en(Row { shortcut: combo("SUPER CTRL R", style), ..item("Return to Previous Size", Action::Ipc(vec!["tiling".into(), "restore".into()])) }, has),
+        en(Row { shortcut: combo("SUPER CTRL R", style), ..item("Return to previous size", Action::Ipc(vec!["tiling".into(), "restore".into()])) }, has),
         header("Arrange"),
-        item("Left & Right", Action::Ipc(vec!["tiling".into(), "arrange".into(), "leftRight".into()])),
-        item("Top & Bottom", Action::Ipc(vec!["tiling".into(), "arrange".into(), "topBottom".into()])),
+        item("Left & right", Action::Ipc(vec!["tiling".into(), "arrange".into(), "leftRight".into()])),
+        item("Top & bottom", Action::Ipc(vec!["tiling".into(), "arrange".into(), "topBottom".into()])),
         item("Quarters", Action::Ipc(vec!["tiling".into(), "arrange".into(), "quarters".into()])),
         sep(),
         en(item("Zoom", act("fullscreen", "mode = \"maximized\", action = \"toggle\"")), has),
-        en(item("Enter Full Screen", act("fullscreen", "mode = \"fullscreen\", action = \"toggle\"")), has),
+        en(item("Enter full screen", act("fullscreen", "mode = \"fullscreen\", action = \"toggle\"")), has),
         sep(),
-        en(item("Move to Space 1", act("move", &format!("workspace = {}, follow = false", base + 1))), has),
-        en(item("Move to Space 2", act("move", &format!("workspace = {}, follow = false", base + 2))), has),
-        en(item("Move to Space 3", act("move", &format!("workspace = {}, follow = false", base + 3))), has),
+        en(item("Move to space 1", act("move", &format!("workspace = {}, follow = false", base + 1))), has),
+        en(item("Move to space 2", act("move", &format!("workspace = {}, follow = false", base + 2))), has),
+        en(item("Move to space 3", act("move", &format!("workspace = {}, follow = false", base + 3))), has),
         sep(),
-        en(item("Close Window", act("close", "")), has),
+        en(item("Close window", act("close", "")), has),
     ]
 }
 
@@ -330,8 +330,8 @@ mod tests {
     fn material_menus_are_as_wide_as_the_qml_ones() {
         let row = |t: &str, k: &str| Row { text: t.into(), shortcut: k.into(), separator: false, header: false, checked: None, enabled: true, tiles: Vec::new(), keep_open: false, action: Action::None };
         assert_eq!(material_width(&[row("Sleep", "")]), 232.0);
-        // "Repair Shell" and its shortcut, as the system menu has them
-        let w = material_width(&[row("Repair Shell", "Super+Ctrl+Esc")]);
+        // "Repair shell" and its shortcut, as the system menu has them
+        let w = material_width(&[row("Repair shell", "Super+Ctrl+Esc")]);
         assert!((w - (12.0 * 7.4 + 14.0 * 7.0 + 28.0 + 40.0)).abs() < 1e-3);
     }
 
@@ -358,24 +358,24 @@ mod tests {
     fn the_desktop_gets_its_own_app_menu() {
         let v = app("Desktop", "", "");
         let texts: Vec<&str> = v.iter().map(|r| r.text.as_str()).collect();
-        assert_eq!(texts, vec!["Change Wallpaper…", "Edit Widgets…"]);
+        assert_eq!(texts, vec!["Change wallpaper…", "Edit widgets…"]);
         assert!(v.iter().all(|r| r.enabled));
         assert_eq!(v[0].action, Action::Ipc(vec!["panels".into(), "settings".into(), "wallpaper".into()]));
         let v = app("Kitty", "kitty", "kitty");
-        assert_eq!(v[0].text, "New Kitty Window");
+        assert_eq!(v[0].text, "New Kitty window");
     }
 
     #[test]
     fn the_system_menu_as_menus_qml() {
         let v = system("DP-1", 0, "maya", "linux");
         let texts: Vec<&str> = v.iter().filter(|r| !r.separator).map(|r| r.text.as_str()).collect();
-        assert_eq!(texts, vec!["About This Computer", "System Settings…", "Repair Shell", "Sleep", "Restart…", "Shut Down…", "Lock Screen", "Log Out maya…"]);
+        assert_eq!(texts, vec!["About this computer", "System Settings…", "Repair shell", "Sleep", "Restart…", "Shut down…", "Lock screen", "Log out maya…"]);
         assert_eq!(v.iter().filter(|r| r.separator).count(), 4);
         let v = system("DP-1", 3, "maya", "linux");
         assert_eq!(v[2].shortcut, "3 updates");
-        assert_eq!(v[3].text, "Install 3 Updates…");
+        assert_eq!(v[3].text, "Install 3 updates…");
         assert_eq!(v[3].action, Action::Act("installUpdates", String::new()));
-        assert_eq!(system("DP-1", 1, "m", "linux")[3].text, "Install 1 Update…");
+        assert_eq!(system("DP-1", 1, "m", "linux")[3].text, "Install 1 update…");
     }
 
     #[test]
@@ -384,19 +384,19 @@ mod tests {
         let v = window(&w, "linux", 0);
         assert_eq!(v[0].action, Action::Dispatch("hl.dsp.window.move({ workspace = \"special:minimized\", follow = false, window = \"address:0x55aa\" })".into()));
         assert_eq!((v[1].checked, v[2].checked, v[2].enabled), (Some(true), Some(true), true));
-        assert_eq!(v[3].text, "Merge into Tabs");
+        assert_eq!(v[3].text, "Merge into tabs");
         assert_eq!(v.last().unwrap().action, Action::Dispatch("hl.dsp.window.close({ window = \"address:0x55aa\" })".into()));
         assert_eq!(v.iter().filter(|r| !r.tiles.is_empty()).map(|r| r.tiles.len()).sum::<usize>(), 12);
         // no window: only Arrange still works
         let v = window(&Client::default(), "linux", 0);
         let on: Vec<&str> = v.iter().filter(|r| r.enabled && !r.separator && !r.header && r.tiles.is_empty()).map(|r| r.text.as_str()).collect();
-        assert_eq!(on, vec!["Left & Right", "Top & Bottom", "Quarters"]);
+        assert_eq!(on, vec!["Left & right", "Top & bottom", "Quarters"]);
         // in tabs: take it out
         let g = Client { grouped: vec!["a".into(), "b".into()], ..w.clone() };
-        assert_eq!(window(&g, "linux", 0)[3].text, "Move Tab to New Window");
+        assert_eq!(window(&g, "linux", 0)[3].text, "Move tab to new window");
         // a second display's spaces start at its base
         let v = window(&w, "linux", 100);
-        let m2 = v.iter().find(|r| r.text == "Move to Space 2").unwrap();
+        let m2 = v.iter().find(|r| r.text == "Move to space 2").unwrap();
         assert_eq!(m2.action, Action::Dispatch("hl.dsp.window.move({ workspace = 102, follow = false, window = \"address:0x55aa\" })".into()));
         assert!(v.iter().find(|r| r.text == "Picture in Picture").unwrap().checked.is_none());
     }
