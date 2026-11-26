@@ -137,6 +137,12 @@ class Radio:
         if k in ("up", "down", "space", "enter") and self.options[self.cursor][0] not in self.disabled:
             self.value = self.options[self.cursor][0]
 
+    def choose(self, value):
+        """VALUE chosen (a command-line option), when it's one that can be"""
+        for i, o in enumerate(self.options):
+            if o[0] == value and value not in self.disabled:
+                self.cursor, self.value = i, value
+
 
 class Checks:
     def __init__(self, items):
@@ -157,6 +163,12 @@ class Checks:
 
     def chosen(self):
         return [i["id"] for i in self.items if i["ticked"] and not i.get("locked")]
+
+    def choose(self, ids):
+        """Exactly IDS ticked (a command-line option; "none": nothing)"""
+        for i in self.items:
+            if not i.get("locked"):
+                i["ticked"] = i["id"] in ids
 
 
 def fmt_s(s):
@@ -260,6 +272,30 @@ class Installer:
         self.width = 100
         self.build = None   # the last BUILD line of the step (a build's progress)
         self.pacman = None  # pacman's last "(n/N) installing x" of the step
+        self.given(passthrough)
+
+    def given(self, argv):
+        """install.sh's options given with --tui: the wizard starts from them
+        (and its command passes them on), never from its own defaults"""
+        opt = {}
+        for a in argv:
+            if a.startswith("--") and "=" in a:
+                k, v = a[2:].split("=", 1)
+                opt[k] = v
+            elif a == "--replace-pulseaudio":
+                opt["replace-pulseaudio"] = ""
+        ids = lambda v: [x for x in v.split(",") if x and x != "none"]
+        for k, radio in (("look", self.look), ("mode", self.mode), ("login", self.login), ("aur-helper", self.aur)):
+            if k in opt:
+                radio.choose(opt[k])
+        for k, checks in (("icons", self.icons), ("extras", self.extras), ("hardware", self.hardware), ("features", self.features)):
+            if k in opt:
+                checks.choose(ids(opt[k]))
+        for it in self.system.items:
+            if it["id"] == "pulse" and "replace-pulseaudio" in opt:
+                it["ticked"] = True
+            if it["id"] == "network" and opt.get("network") in ("keep", "networkmanager"):
+                it["ticked"] = opt["network"] == "networkmanager"
 
     # The install.sh options for these choices
     def args(self):
@@ -573,9 +609,14 @@ class Installer:
         if self.warnings:
             out += [Text(""), Text("Notes", style="bold")]
             out += [Text("  ! " + w, style="dim") for w in self.warnings[-8:]]
-        out += [Text(""), Text("Restart to begin. Super+/ lists the shortcuts; Super+, opens Settings.", style="dim"),
-                Text("The tessera command: tessera doctor, tessera update, tessera rebuild, tessera repair, tessera uninstall.", style="dim"),
-                Text("Log: " + log, style="dim")]
+        # (installed: with problems the check names is still installed)
+        if self.code == 0 or self.result.startswith("Tessera is installed"):
+            out += [Text(""), Text("Restart to begin. Super+/ lists the shortcuts; Super+, opens Settings.", style="dim"),
+                    Text("The tessera command: tessera doctor, tessera update, tessera rebuild, tessera repair, tessera uninstall.", style="dim")]
+        else:
+            # (not "Restart to begin": that lands in a half-installed desktop)
+            out += [Text(""), Text("Fix the problem above, then run ./install.sh again: the finished steps are quick the second time.", style="dim")]
+        out += [Text("Log: " + log, style="dim")]
         return Group(*out)
 
 
@@ -660,8 +701,11 @@ def run_install(ins, console, term):
             ins.feed(buf.decode("utf-8", "replace"))
         ins.finish(proc.wait())
         live.update(ins.render(console.width, console.height), refresh=True)
-        while term.key() not in ("enter", "q", "esc"):
-            pass
+        size = console.size
+        while (k := term.key(0.2)) not in ("enter", "q", "esc"):
+            if k is None and console.size != size:
+                size = console.size
+                live.update(ins.render(console.width, console.height), refresh=True)
     return ins.code
 
 
@@ -671,9 +715,14 @@ def interactive(ins):
     code = 0
     try:
         with Live(ins.render(console.width, console.height), console=console, screen=True, auto_refresh=False) as live:
+            size = console.size
             while True:
-                k = term.key()
+                # (a resized terminal is drawn again at once, not at the next key)
+                k = term.key(0.2)
                 if k is None:
+                    if console.size != size:
+                        size = console.size
+                        live.update(ins.render(console.width, console.height), refresh=True)
                     continue
                 act = ins.key(k)
                 if act == "review":

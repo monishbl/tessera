@@ -152,6 +152,17 @@ class Scripted(unittest.TestCase):
         self.assertNotIn("--bogus", cmd)
         self.assertFalse(any(a.startswith(("--icons", "--extras")) for a in cmd))
 
+    def test_options_given_on_the_command_line_are_the_starting_choices(self):
+        # (audit #714: ./install.sh --tui --look=material … starts from them)
+        _, cmd = self.run_tui("enter " * 8, None, "--look=material", "--mode=dark", "--login=text", "--icons=colloid",
+                              "--extras=none", "--hardware=none", "--features=emoji")
+        for flag in ("--look=material", "--mode=dark", "--login=text", "--icons=colloid", "--extras=none",
+                     "--hardware=none", "--features=emoji"):
+            self.assertIn(flag, cmd)
+        _, cmd = self.run_tui("enter " * 9, {"network": "iwd", "pulseaudio": True}, "--network=keep", "--look=bogus")
+        self.assertIn("--network=keep", cmd)
+        self.assertIn("--look=glass", cmd)  # (an unknown value: the default)
+
     def test_advanced_is_collapsed_and_greys_what_cannot_work(self):
         # Review, then a: Advanced; the tuned build can't work here, the generic one can
         frames, cmd = self.run_tui("enter " * 8 + "a down enter",
@@ -225,6 +236,16 @@ Tessera is installed, with problems above.
         text = c.file.getvalue()
         self.assertIn("Installing Tessera: skipped", text)
         self.assertIn("To look at", text)
+        self.assertIn("Restart to begin", text)  # (installed, with problems)
+        # A stopped install never says "Restart to begin" (audit #715)
+        stopped = tui.Installer(FACTS, [], {"apps_missing": False, "walls_ready": True})
+        stopped.feed("[1/14] Checking your system")
+        stopped.finish(130)
+        c = Console(file=io.StringIO(), width=100, color_system=None)
+        c.print(stopped.summary("/tmp/install.log"))
+        text = c.file.getvalue()
+        self.assertNotIn("Restart to begin", text)
+        self.assertIn("run ./install.sh again", text)
 
     def test_build_and_pacman_progress_with_the_log(self):
         """BUILD lines (tools/build-progress.py, TESSERA_PROGRESS=lines) give
