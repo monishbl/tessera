@@ -146,20 +146,12 @@ def main():
     import sys
     if sys.argv[1:2] == ["--loop"]:
         return loop(sys.argv[2])
-    W, H = 1600, 1000
-    # Brand renders, each its own family
+    # Only what index.html shows (media/art is published as it is): the
+    # material card's soft orb, light and dark. components-bg.webp, the
+    # components section's backdrop, isn't made here: it is kept as it was
+    # committed (d3d94af4) in site/public/media/art.
     for dark in (False, True):
         s = "-dark" if dark else ""
-        img = field("violet", W, H, dark, 11)
-        save(glass(img, (330, 390, 1270, 610), 110, text="Tessera", text_size=120, dark=dark), "brand-violet" + s)
-        img = field("orange", W, H, dark, 12)
-        img = glass(img, (530, 230, 1070, 770), 270, dark=dark)
-        save(squircle_tile(img, (735, 435, 865, 565), "#E86A2C"), "brand-orange" + s)
-        img = field("green", W, H, dark, 13)
-        save(glass(img, (560, 420, 1040, 580), 80, tint=(60, 120, 90), tint_amount=0.22, text="Calm", text_size=76, dark=dark), "brand-green" + s)
-        img = field("aqua", W, H, dark, 14)
-        save(wordmark(img, "Made to disappear.", 96), "brand-aqua" + s)
-        # The material card: one soft orb
         img = field("violet", 1600, 900, dark, 21)
         save(img, "material" + s)
     # Wallpapers for screenshots

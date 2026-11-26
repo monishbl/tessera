@@ -684,7 +684,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space
 <footer>
   <div class="wrap">
     <span>Tessera by Monish, free software under the <a href="https://github.com/monishbl/tessera/blob/main/LICENSE">GPL-3.0-or-later</a>. Not affiliated with or endorsed by Apple, Google or any device maker: macOS, AirPlay, iCloud and iPhone are trademarks of Apple Inc.; Android, Quick Share, Fast Pair, Chromecast and Material You are trademarks of Google LLC. Photos from Unsplash.</span>
-    <span><a href="https://github.com/monishbl/tessera">Source on GitHub</a> · <a href="https://github.com/monishbl/tessera">Star on GitHub</a> · <a href="/bugs/">Report a bug</a></span>
+    <span><a href="https://github.com/monishbl/tessera">Source on GitHub</a> · <a href="/bugs/">Report a bug</a></span>
   </div>
 </footer>
 
@@ -714,6 +714,9 @@ document.querySelectorAll("video[data-auto]").forEach(v => {
   b.type = "button"; b.className = "play";
   v.after(b);
   let held = still;
+  // (the hero film has autoplay, for a quick start: with reduced motion
+  // it's stopped at once and waits for a press like the rest)
+  if (still) { v.removeAttribute("autoplay"); v.pause(); }
   const draw = () => { b.innerHTML = v.paused ? icon.play : icon.pause; b.setAttribute("aria-label", v.paused ? "Play video" : "Pause video"); };
   const toggle = () => { if (v.paused) { held = false; v.play().catch(() => {}); } else { held = true; v.pause(); } };
   v.addEventListener("play", draw); v.addEventListener("pause", draw); draw();
