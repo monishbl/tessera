@@ -6,6 +6,17 @@
 - **The next update cleans up after it:** the passkey lines in sudo's and the login screen's PAM files, the key list in `/etc/tessera`, the udev rule and the background service are all removed. Each PAM file is checked with the real Linux-PAM before it's written. Your password, fingerprint and keyring unlocking work as before.
 - **Passkeys you saved stay in `~/.local/share/tessera/passkeys`, but nothing can use them now.** Sign in to those sites another way (a password, your phone or another security key), and remove the Tessera key from each site's security settings.
 
+## Updates in the background, a login that can't break, Health · 2026-11-22
+
+- **The shell is the Rust one.** Tessera's shell is now `tessera-ui`, written in Rust; the QML shell stays only as a fallback, started when the Rust shell stops twice in a row, with a notice and Try again.
+- **Software Update works in the background.** An update is made ready beside the running shell while you work, then goes in at **Restart shell now**, the next lock or the next login. A normal install takes one signed bundle per version and never compiles anything on update. The screen stays on and the computer awake while an update runs.
+- **An update brings what it needs.** Packages the new version needs that are missing or too old are installed first, with one password. When one of them is already installed, the same run upgrades the whole system first (`pacman -Syu`), because Arch doesn't support partial upgrades. Held packages stay held.
+- **Optional parts are chosen at install.** The installer's Features step offers fingerprint, face unlock, Bluetooth extras, battery guard, energy modes, Quick Share, cast, mirroring and the rest in one place; Software Update offers ones added later.
+- **The login can't be locked out by Tessera.** Every line Tessera adds to a PAM file is dashed (skipped if its module is missing), every edit is first tried on a copy with the real Linux-PAM and refused if it would stop a password working, and backups are kept. After every update a boot check asks whether the next login will work, undoes Tessera's own part in anything wrong, and says so loudly before you log out. If the login screen fails twice, greetd's text login takes over; if greetd fails for good, a rescue brings a way in back. docs/RECOVERY.md says how to get in from a console.
+- **One Health page** (Settings → System → Health): the Rust shell's stability, failed updates and alerts, each warning with what to do. **Back up and restore** keeps your settings, Hyprland edits, wallpapers and login look.
+- **Bluetooth pairing** has its own agent, with its questions in the password dialog, and paired devices stay paired.
+- **Dictation and the emoji picker paste** instead of typing with wtype. **Middle-click paste is off by default** (Settings → Mouse and Trackpad turns it on).
+
 ## Tessera's name, all the way · 2026-11-18
 
 - **The folder Tessera runs from moves to `~/tessera`** by itself, at the shell's next start after this update (or during the update): the old folder name stays behind as a link for now, and settings that pointed into it (wallpapers, the battery guard, your apps' colours) point at the new place. The link goes by itself once nothing uses it, at the earliest two weeks later.
@@ -107,6 +118,8 @@
   | Overview style "macOS", lock layouts "iOS" / "macOS" | "Strip"; "Widgets" / "Classic" |
   | Window tabs "Finder", emoji styles "Android" / "Windows" | "Tessera"; "Noto" / "Fluent" |
   | the built-in "Tahoe" wallpapers | the built-in set (Day, Dusk, Night) |
+
+  Entries from before this one keep the old names and comparisons as they were written (their headings are how Software Update tells entries apart).
 
 ## Faster Quick Share, iPhones by QR code, apps' own logos · 2026-11-03
 
@@ -217,7 +230,7 @@
   It works the same in the island and in the separate capsule.
 - **The volume and brightness bar no longer pops up for Tessera's own sliders** (Control Center, the Sound menu, the island's player, the overlay mixer, Settings) or its mute buttons. Keys, scrolling on the menu bar, Spotlight and other apps still show it.
 - **Bluetooth cards show a picture of the device.** Earbuds, over-ear headphones, a speaker, a soundbar, a phone, a watch, a game controller, a keyboard, a mouse or a laptop, chosen from the kind of device Bluetooth reports and its name (earbuds and over-ear headphones report the same kind, so "Buds" or "WH-" in the name decides). Anything else gets a Bluetooth tag. They show on connect and disconnect, batteries, and Fast Pair's card from Connect to Connected, in place of the coloured icon. The drawings are made by `tools/device-pictures.py`.
-- **Touchpad scrolling glides after your fingers lift,** as on macOS, everywhere that scrolls: Settings, Spotlight, Notification Center, Control Center, the clipboard, emoji and app lists, and the rest. A slow scroll or a pause before lifting stops where you left it, and a mouse wheel works as before. (Qt on Wayland stops dead when the fingers lift; libinput leaves the glide to the app.)
+- **Touchpad scrolling glides after your fingers lift,** everywhere that scrolls: Settings, Spotlight, Notification Center, Control Center, the clipboard, emoji and app lists, and the rest. A slow scroll or a pause before lifting stops where you left it, and a mouse wheel works as before. (Qt on Wayland stops dead when the fingers lift; libinput leaves the glide to the app.)
 - **Leaks and stray processes, found by checking a running session:**
   - **Clipboard pictures no longer pile up in memory.** Previews of copied images were kept in RAM (62 MB after a few days here) even after the entries left the clipboard history. They're now removed with their entries, and with Remove and Clear.
   - **No leftover process after the shell restarts.** Each restart left one finished-but-not-collected process behind.
@@ -275,9 +288,9 @@
   - If Tessera's shell stops three times within 15 minutes, and an update ran in the last 3 days, a recovery window opens. It offers to go back to before that update, start the desktop again, or open a terminal.
   - From a text console (Ctrl+Alt+F3), `tessera undo-update` does the same.
 - **Shake to find the pointer.** Move the mouse (or your finger on the trackpad) quickly back and forth: the pointer grows for a moment and a ring closes in on it. Ordinary fast movement, dragging and drawing don't set it off. Turn it off in Settings → Mouse. Hyprland checks the pointer's position 5 times a second while it's still, and 25 times a second while it moves.
-- **Sharing looks like AirDrop on iOS, in glass:**
+- **Sharing gets a share sheet, in glass:**
   - **The share sheet** shows a preview of what you're sharing, nearby devices as round avatars in a row, and Copy and Show in Files as a grouped list. Under each avatar it says Waiting…, then Sending… as a ring fills, then Sent ✓ or Declined.
-  - **Someone sending to you** gets an AirDrop-style card in the middle of the screen. It shows who it is, what they're sending, and the PIN their phone shows, with Decline and Accept. Accept, and a ring fills around them as it arrives. When it's done: Open or Show in Files. Hide leaves the transfer to the island.
+  - **Someone sending to you** gets a card in the middle of the screen. It shows who it is, what they're sending, and the PIN their phone shows, with Decline and Accept. Accept, and a ring fills around them as it arrives. When it's done: Open or Show in Files. Hide leaves the transfer to the island.
   - Quick Share and LocalSend look the same.
 - **"Allow through firewall" works again**, and every update now brings Tessera's system helper up to date with it:
   - **Why it seemed broken:** an update installed the system helper before downloading the new Tessera, so the helper stayed one update behind. Its firewall fix only knew the older rules, said "done", and added nothing new.
@@ -383,7 +396,7 @@ Tested with a real Android phone, both ways, on the same Wi-Fi and without one.
 - **Settings → Login Items** shows the apps that start when you log in (your own and the system's), with a switch each, and why Tessera skips the ones it does (it does their job itself, they're for another desktop, or they aren't installed). **Add app…** picks from your installed apps, **Remove** takes out one you added, **Start now** runs one straight away, and every change can be undone from the toast. **Start them when you log in** turns them all off at once.
 - The "Running hot" warning no longer goes off for a few seconds of high load: it waits until the CPU has averaged above your limit for about 30 seconds, and it ends once it has averaged 5 °C below it for a minute (it used to need 3 minutes 10 °C below, so it could stay forever).
 - Plugging in or unplugging a display is smooth: the screen you're using no longer goes dark, and a new display starts its connect animation sooner.
-- Each display has its own spaces, numbered from 1, like on a Mac. Super+1…9 (and Super+Shift / Super+Alt with a number to take a window along) go to that space on the display you're on, and the menu bar, Overview, Mission Control and the window switcher all show each display's own numbers. A monitor keeps its spaces by what it is, not which port it's in. Your existing spaces stay where they are, windows and all.
+- Each display has its own spaces, numbered from 1. Super+1…9 (and Super+Shift / Super+Alt with a number to take a window along) go to that space on the display you're on, and the menu bar, Overview, Mission Control and the window switcher all show each display's own numbers. A monitor keeps its spaces by what it is, not which port it's in. Your existing spaces stay where they are, windows and all.
 - Fixed: an external display's menu bar could show only its current space, even with windows on several of its spaces.
 - Unplug a display and its spaces stay together: they move to the laptop as separate spaces, listed after the laptop's own under the display's name (they no longer pile onto the laptop's current space). Plug it back in and they go back to it, showing the space it showed before.
 - Overview with several displays: **A row per display** (the default) shows every display's spaces in a labelled row, in the order they're arranged, with each display's current space marked; drag a window to any space on any display. Or pick **Each its own** in Settings → Appearance → Overview to open the Overview on every screen, each showing its own spaces.
@@ -395,7 +408,7 @@ Tested with a real Android phone, both ways, on the same Wi-Fi and without one.
 - Island alerts are kept: Notification Center has a **Tessera** group with every alert that wasn't already a notification (devices with their battery, drives, displays, sound output, charging, low battery, running hot, downloads, Wi-Fi and VPN…). Remove one with its ×, the group with its own ×, or everything with **Clear all**. The same alert again within a minute updates its line instead of adding another. They're kept when the shell reloads, like notifications.
 - The open island has a **Recent** list of the last few alerts. Swipe a line sideways (or use its ×) to remove it, or **Clear** them all. While something is live (music, a timer), **Recent** opens the list in its place.
 - The album art in the open island now follows the island's own rounded corners exactly, with no second, rounder corner or inner outline showing at the edges.
-- Incoming calls (Discord, WhatsApp, any app) open the island as a call card, like on an iPhone: the caller's photo with a soft pulsing ring, their name, the app, and round red **Decline** and green **Answer** buttons. A ringtone plays while it rings (for about 30 seconds, following your notification sound setting). The card stays until you answer or decline (Esc declines too), or the caller hangs up; a stray swipe or scroll doesn't put it away.
+- Incoming calls (Discord, WhatsApp, any app) open the island as a call card: the caller's photo with a soft pulsing ring, their name, the app, and round red **Decline** and green **Answer** buttons. A ringtone plays while it rings (for about 30 seconds, following your notification sound setting). The card stays until you answer or decline (Esc declines too), or the caller hangs up; a stray swipe or scroll doesn't put it away.
 - WhatsApp Desktop can't take calls on the computer, so its button reads **Open** and brings up WhatsApp (answer on your phone).
 - A call you didn't answer goes into the island's Recent list and Notification Center as **Missed call**, with the caller's name and a button to open the app.
 - After you answer, a small **Call** live activity with the app's icon and the time shows while the call's window is open (or the app is using the microphone).
@@ -734,7 +747,7 @@ After updating, run Update once more so it installs `openssl` and `plasma-integr
 
 **Accent colour**
 - Your accent is used where it reads, a lighter shade of it on dark backgrounds when needed, and neutral otherwise. It's never darkened, so yellow no longer turns brown.
-- Control Center looks like macOS: an "on" button is a white circle with the icon in your accent, or in near-black when the accent can't be read on white.
+- Control Center: an "on" button is a white circle with the icon in your accent, or in near-black when the accent can't be read on white.
 - Desktop widgets (clock, calendar, reminders, Screen Time, stocks) use your accent.
 
 **Desktop calendar**
@@ -798,7 +811,7 @@ After updating, run Update once more so it installs `openssl` and `plasma-integr
 - A speed test, in the Wi-Fi menu and in Settings → Network.
 
 **Menu bar and island**
-- The battery is drawn like iOS 27: a solid capsule, red when low, yellow in power saver, with a bolt or plug when charging. Show the percentage inside it, beside it, or not at all in Settings → Menu Bar.
+- The battery is drawn as a solid capsule, red when low, yellow in power saver, with a bolt or plug when charging. Show the percentage inside it, beside it, or not at all in Settings → Menu Bar.
 - Wi-Fi, Bluetooth and the Control Center icon match it.
 - Privacy dots are only for the microphone, camera and location. Screen sharing is detected from the actual stream and shown in the island or as a dot, your choice, with **Stop sharing**.
 - Spaces with windows show as short pills, empty ones as dots. With more spaces than shown, choose arrows or dots that shrink and fade at the ends.
@@ -814,7 +827,7 @@ After updating, run Update once more so it installs `openssl` and `plasma-integr
 - Live window previews are capped at 30 frames a second, and only when Live is chosen. Mission Control and Stage Manager follow the same setting.
 
 **Settings**
-- Grouped like System Settings, with a toolbar (back, forward, and where you are).
+- Grouped into sections, with a toolbar (back, forward, and where you are).
 - Long pages open subpages, like Appearance → Glass.
 - Search stays at the top, folds to a magnifier when you scroll, and ends when you click anywhere else.
 
@@ -838,4 +851,4 @@ After updating, run Update once more so it installs `openssl` and `plasma-integr
 - A tap of Super on its own opens Overview. Super held with another key works as before.
 
 **Dock**
-- The dock is a wide glass slab with softly rounded corners and more room around the icons, like macOS Tahoe.
+- The dock is a wide glass slab with softly rounded corners and more room around the icons.
