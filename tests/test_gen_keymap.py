@@ -16,9 +16,13 @@ class GenKeymap(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "tools").mkdir()
             (Path(d) / "hypr" / "tessera").mkdir(parents=True)
+            (Path(d) / "docs").mkdir()
+            shutil.copy(ROOT / "docs" / "FEATURES.md", Path(d) / "docs")
             shutil.copy(ROOT / "tools" / "gen-keymap.py", Path(d) / "tools")
             subprocess.run([sys.executable, "-I", str(Path(d) / "tools" / "gen-keymap.py")],
                            check=True, capture_output=True)
+            self.assertEqual((Path(d) / "docs" / "FEATURES.md").read_text(),
+                             (ROOT / "docs" / "FEATURES.md").read_text(), "FEATURES.md")
             for name in ("keymap.json", "gestures.json"):
                 self.assertEqual((Path(d) / "hypr" / "tessera" / name).read_text(),
                                  (ROOT / "hypr" / "tessera" / name).read_text(), name)
