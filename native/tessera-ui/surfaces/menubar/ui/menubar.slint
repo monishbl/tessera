@@ -6,10 +6,10 @@
 // outlined instead of cut out of the fill.)
 
 import { Theme, Icons } from "@tessera/theme.slint";
-import { Spaces, Chip, Island, Live, Ctl, AlertRow, Ring, IslandStats, BatteryGlyph, ActRow, RecentRow, LevelRow } from "island.slint";
+import { Spaces, Chip, Island, Live, Ctl, AlertRow, Ring, IslandStats, BatteryGlyph, ActRow, RecentRow, LevelRow, DictView } from "island.slint";
 import { Symbols, SymIcon } from "@tessera/symbols.slint";
 
-export { Chip, Live, Ctl, AlertRow, Ring, IslandStats, ActRow, RecentRow, LevelRow, Symbols }
+export { Chip, Live, Ctl, AlertRow, Ring, IslandStats, ActRow, RecentRow, LevelRow, DictView, Symbols }
 
 // One item on the right (items.rs: Entry)
 export struct Entry {
@@ -470,6 +470,13 @@ export component Bar inherits Window {
     callback focus-at(int);
     in property <string> cookie;
     in property <float> mic-level;
+    // dictation's card, its waves and level, its mic and language list (Island's)
+    in property <DictView> dict;
+    in property <string> dict-wave;
+    in property <string> dict-mini;
+    in property <float> dict-level;
+    in property <[LevelRow]> dict-rows;
+    callback dict-pick(string);
     // ResourceHover: the popover under a figure (its key) opens or closes, at x (centre), y (top)
     callback res-popover(string, bool, length, length);
 
@@ -771,6 +778,12 @@ export component Bar inherits Window {
         focus-at(i) => { root.focus-at(i); }
         cookie: root.cookie;
         mic-level: root.mic-level;
+        dict: root.dict;
+        dict-wave: root.dict-wave;
+        dict-mini: root.dict-mini;
+        dict-level: root.dict-level;
+        dict-rows: root.dict-rows;
+        dict-pick(id) => { root.dict-pick(id); }
         live-index: root.live-index;
         alerts: root.alerts;
         pill-text: root.pill-text;

@@ -28,7 +28,7 @@ const SNAPS: &[&str] = &["left", "right", "top", "bottom", "fill", "center"];
 const OTHERS: &[&str] = &[
     "reset", "lock", "reportBug", "appExpose", "showDesktop", "settings", "screenshotScreen", "screenshotRegion", "ocr", "screenTranslate", "record",
     "askScreen", "circleSearch", "circleSearchPointer", "lens", "darkMode", "caffeine", "replyLatest", "shareSelection", "shelf", "pointerDown", "pointerUp", "dictate",
-    "dictateRelease", "tabs", "pip", "snap-restore", "switcher", "switcherBack", "switcherCommit", "captions", "findPointer", "superTap",
+    "dictateRelease", "dictateEscape", "tabs", "pip", "snap-restore", "switcher", "switcherBack", "switcherCommit", "captions", "findPointer", "superTap",
     "superTapCancel", "superTapRelease", "closeFront", "dismiss", "volumeUp", "volumeDown", "volumeMute", "micMute", "brightnessUp", "brightnessDown",
 ];
 
@@ -161,6 +161,9 @@ impl Shortcuts {
             // Dictation: the key going down, and coming back up
             "dictate" => h.ask("dictation.pressed", json!([])),
             "dictateRelease" => h.ask("dictation.released", json!([])),
+            // Esc, anywhere (non-consuming: the app still gets it): cancels
+            // dictation while it listens or writes, else nothing
+            "dictateEscape" => h.ask("dictation.escape", json!([])),
             // Merge windows into tabs, or move a tab out
             "tabs" => {
                 let grouped = h.st.shell.get::<tessera_core::services::hypr::Snapshot>().is_some_and(|s| s.window.grouped.len() > 1);

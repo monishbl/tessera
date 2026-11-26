@@ -319,6 +319,11 @@ for _, e in ipairs(later) do bind(e, false) end
 pcall(hl.bind, "mouse:272", shortcut("pointerDown"), { non_consuming = true, ignore_mods = true })
 pcall(hl.bind, "mouse:272", shortcut("pointerUp"), { release = true, non_consuming = true, ignore_mods = true })
 
+-- Esc cancels dictation while it listens or writes (the island's "Esc to
+-- cancel"; tessera-ui does nothing with it otherwise). Non-consuming: the
+-- app under it gets Esc as always.
+pcall(hl.bind, "Escape", shortcut("dictateEscape"), { non_consuming = true })
+
 -- Moving or resizing a window with Super and the mouse isn't a tap either
 pcall(hl.bind, MOD .. " + mouse:272", shortcut("superTapCancel"), { non_consuming = true })
 pcall(hl.bind, MOD .. " + mouse:273", shortcut("superTapCancel"), { non_consuming = true })

@@ -143,5 +143,74 @@ class Transcribe(Data):
         self.assertEqual(r["error"], "failed to read WAV file")
 
 
+class Stream(Data):
+    """dictate.py stream: the live words while you speak (stand-in whisper-cli)."""
+
+    def setUp(self):
+        super().setUp()
+        os.makedirs(dp.model_dir(), exist_ok=True)
+        Path(dp.model_path("tiny")).write_bytes(dp.MAGIC)
+        self.calls = []
+
+    def wav(self, n):
+        p = os.path.join(self.tmp.name, f"dictation-partial-{n}.wav")
+        Path(p).write_bytes(b"RIFF")
+        return p
+
+    def whisper(self, cmd, **kw):
+        self.calls.append((cmd, kw))
+        return subprocess.CompletedProcess(cmd, 0, f" Draft {len(self.calls)}\n", "")
+
+    def stream(self, lines):
+        out = io.StringIO()
+        with mock.patch.object(dp, "binary", return_value="/usr/bin/whisper-cli"):
+            dp.stream(inp=io.StringIO("".join(json.dumps(x) + "\n" for x in lines)), out=out, run=self.whisper)
+        return [json.loads(x) for x in out.getvalue().splitlines()]
+
+    def test_each_request_answered_and_deleted(self):
+        a, b = self.wav(1), self.wav(2)
+        got = self.stream([{"id": 1, "wav": a, "model": "tiny", "lang": "en"}, {"id": 2, "wav": b, "model": "tiny", "lang": "en"}])
+        self.assertEqual(got, [{"id": 1, "ok": True, "text": "Draft 1"}, {"id": 2, "ok": True, "text": "Draft 2"}])
+        self.assertFalse(os.path.exists(a))
+        self.assertFalse(os.path.exists(b))
+
+    def test_a_draft_is_light(self):
+        self.stream([{"id": 1, "wav": self.wav(1), "model": "tiny", "lang": "fr"}])
+        cmd, kw = self.calls[0]
+        self.assertIn("fr", cmd)
+        self.assertEqual(cmd[cmd.index("-t") + 1], str(dp.threads_for(True)))
+        self.assertLessEqual(dp.threads_for(True), dp.threads_for(False))
+        self.assertGreaterEqual(dp.threads_for(True), 1)
+        self.assertEqual(kw["timeout"], 20)
+
+    def test_only_its_own_recordings(self):
+        other = os.path.join(self.tmp.name, "notes.wav")
+        Path(other).write_bytes(b"RIFF")
+        got = self.stream([{"id": 7, "wav": other, "model": "tiny", "lang": "en"}])
+        self.assertEqual(got, [{"id": 7, "ok": False, "text": ""}])
+        self.assertTrue(os.path.exists(other))  # (not touched)
+        self.assertEqual(self.calls, [])
+
+    def test_no_model_is_no_words(self):
+        got = self.stream([{"id": 3, "wav": self.wav(3), "model": "medium", "lang": "en"}])
+        self.assertEqual(got, [{"id": 3, "ok": False, "text": ""}])
+
+    def test_garbage_ignored(self):
+        out = io.StringIO()
+        dp.stream(inp=io.StringIO("not json\n[1]\n\n"), out=out, run=self.whisper)
+        self.assertEqual(out.getvalue(), "")
+
+    def test_older_waiting_drafts_skipped(self):
+        a = self.wav(1)
+        skip = dp.stream_one_skip(json.dumps({"id": 1, "wav": a}))
+        self.assertEqual(skip, {"id": 1, "ok": False, "text": "", "skipped": True})
+        self.assertFalse(os.path.exists(a))
+
+    def test_main_takes_stream(self):
+        with mock.patch.object(dp, "stream", return_value=0) as s:
+            self.assertEqual(dp.main(["stream"]), 0)
+        s.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
