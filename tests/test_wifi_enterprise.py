@@ -195,6 +195,19 @@ class WifiEnterprise(unittest.TestCase):
         self.assertIn("set 802-11-wireless.ssid Hidden Net", stdin)
         _, out = self.run_script("join", request=dict(req, psk="short"))
         self.assertIn("8 to 63", out[-1]["message"])
+        # (the key itself, 64 hex digits, is a valid WPA key: audit #808)
+        _, out = self.run_script("join", request=dict(req, psk="ab" * 32))
+        self.assertEqual(out[-1]["state"], "connected")
+        _, out = self.run_script("join", request=dict(req, psk="zz" * 32))
+        self.assertIn("8 to 63", out[-1]["message"])
+
+    def test_a_join_lists_the_saved_networks_once_before_saving(self):
+        # (audit #807: one nmcli per saved profile, not twice that and more)
+        db = {"profiles": {f"u{i}": {"name": f"Net{i}", "ssid": f"Net{i}", "settings": {}} for i in range(10)}, "calls": []}
+        self.state.write_text(json.dumps(db))
+        self.run_script("join", request={"ssid": "Net3", "security": "psk", "psk": "hunter22", "hidden": True})
+        ssids = [c for c in self.calls() if c["argv"][:2] == ["-g", "802-11-wireless.ssid"]]
+        self.assertEqual(len(ssids), 11)  # (each once, and the one just saved again)
 
     def test_psk_join_keeps_the_password_and_picks_wpa3(self):
         req = {"ssid": "Cafe", "security": "psk", "psk": "hunter22"}
