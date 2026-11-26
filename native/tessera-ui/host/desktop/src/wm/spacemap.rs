@@ -33,6 +33,18 @@ pub fn key_of(m: &Mon) -> String {
     }
 }
 
+/// A display's identity among those connected: key_of, except that a second
+/// display with the same description (two of one model whose EDID has no
+/// serial) is told apart by its connector, so each has its own block of
+/// spaces (the one first by connector name keeps the description)
+pub fn key_in(m: &Mon, monitors: &[Mon]) -> String {
+    let d = m.description.trim();
+    if !d.is_empty() && monitors.iter().any(|o| o.description.trim() == d && o.name < m.name) {
+        return format!("name:{}", m.name);
+    }
+    key_of(m)
+}
+
 /// A short name for marks and rows: "Built-in", else the model, else the
 /// first words of the description, else the connector
 pub fn label_of(m: &Mon, sandbox: bool) -> String {
@@ -75,7 +87,7 @@ pub fn assign(displays: &BTreeMap<String, Disp>, monitors: &[Mon], sandbox: bool
     list.sort_by_key(|m| (if is_builtin(&m.name, sandbox) { 0 } else { 1 }, m.x, m.y));
     let builtin_here = list.iter().any(|m| is_builtin(&m.name, sandbox));
     for m in list {
-        let k = key_of(m);
+        let k = key_in(m, monitors);
         if !next.contains_key(&k) {
             let used = |b: i32, n: &BTreeMap<String, Disp>| n.values().any(|d| d.base == b);
             let base = if !used(0, &next) && (is_builtin(&m.name, sandbox) || !builtin_here) {
@@ -98,7 +110,7 @@ pub fn assign(displays: &BTreeMap<String, Disp>, monitors: &[Mon], sandbox: bool
 
 /// The connected displays' bases by connector
 pub fn bases_by_name(displays: &BTreeMap<String, Disp>, monitors: &[Mon]) -> BTreeMap<String, i32> {
-    monitors.iter().filter_map(|m| displays.get(&key_of(m)).map(|d| (m.name.clone(), d.base))).collect()
+    monitors.iter().filter_map(|m| displays.get(&key_in(m, monitors)).map(|d| (m.name.clone(), d.base))).collect()
 }
 
 /// The first free number on a display (base), given every id in use
@@ -198,6 +210,19 @@ pub fn insert_moves(order: &[i32], pos: usize, new_id: i32, windows: &[(String, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn twin_displays_without_a_serial_get_a_block_each() {
+        let m = |name: &str, x: i32| Mon { name: name.into(), description: "Dell U2720Q".into(), model: "U2720Q".into(), x, ..Default::default() };
+        let mons = vec![m("DP-1", 0), m("DP-2", 2560)];
+        assert_eq!(key_in(&mons[0], &mons), "desc:Dell U2720Q");
+        assert_eq!(key_in(&mons[1], &mons), "name:DP-2");
+        let d = assign(&BTreeMap::new(), &mons, false);
+        let bases = bases_by_name(&d, &mons);
+        assert_ne!(bases["DP-1"], bases["DP-2"]);
+        // alone, it is known by its description again
+        assert_eq!(key_in(&mons[1], &mons[1..]), "desc:Dell U2720Q");
+    }
 
     fn mon(name: &str, desc: &str, x: i32) -> Mon {
         Mon { name: name.into(), description: desc.into(), model: "U2720Q".into(), x, ..Default::default() }

@@ -102,8 +102,11 @@ local function spaceBase(m)
     if not m then return 0 end
     local b = rawget(_G, "TESSERA_SPACE_BASES") or {}
     local t = rawget(_G, "TESSERA_SPACES")
-    return tonumber(m.description and m.description ~= "" and b["desc:" .. m.description])
-        or tonumber(b["name:" .. m.name]) or (type(t) == "table" and tonumber(t[m.name])) or 0
+    -- (the shell's map by connector first: two displays of one model with no
+    -- serial share a description, and the second is keyed by its connector)
+    return (type(t) == "table" and tonumber(t[m.name]))
+        or tonumber(m.description and m.description ~= "" and b["desc:" .. m.description])
+        or tonumber(b["name:" .. m.name]) or 0
 end
 -- Each display's spaces belong to it as Hyprland's own rules, so Hyprland
 -- keeps them there: base+1 … base+SPACE_RULES open on that display from

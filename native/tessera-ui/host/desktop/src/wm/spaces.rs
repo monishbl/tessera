@@ -267,7 +267,7 @@ impl Spaces {
         let before: BTreeMap<String, Disp> = serde_json::from_value(store["displays"].clone()).unwrap_or_default();
         let displays = map::assign(&before, &mons, sandbox);
         let next_bases = map::bases_by_name(&displays, &mons);
-        let next_keys: BTreeMap<String, String> = mons.iter().map(|m| (m.name.clone(), map::key_of(m))).collect();
+        let next_keys: BTreeMap<String, String> = mons.iter().map(|m| (m.name.clone(), map::key_in(m, &mons))).collect();
         let next_labels: BTreeMap<i32, String> = displays.values().map(|d| (d.base, d.label.clone())).collect();
         let changed = next_bases != self.bases || displays != before;
         let moved = changed || next_labels != self.labels;
