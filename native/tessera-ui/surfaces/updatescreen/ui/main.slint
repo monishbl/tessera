@@ -70,7 +70,8 @@ export component UpdateScreen inherits Window {
         duration: 400ms;
         easing: cubic-bezier(0.3333, 1, 0.6667, 1);
     }
-    property <length> col-w: min(Up.details && !root.error ? 640px : 360px, self.width - 64px);
+    // (wider for an error: its message and the backup's path)
+    property <length> col-w: min(root.error ? 520px : Up.details ? 640px : 360px, self.width - 64px);
     // What takes clicks while it works (Show details, the log and Copy);
     // everything else passes through. Read by the screen for its input region.
     out property <length> hit-x: col.x + toggle-row.x;
@@ -327,7 +328,16 @@ export component UpdateScreen inherits Window {
             if root.error: Text {
                 horizontal-alignment: center;
                 wrap: word-wrap;
-                text: "Nothing was lost." + (Up.backup != "" ? " Your settings and shortcuts were backed up to " + Up.backup + "." : "");
+                text: "Nothing was lost." + (Up.backup != "" ? " Your settings and shortcuts were backed up to:" : "");
+                color: #A1A1AA;
+                font-family: "Inter";
+                font-size: 13px;
+            }
+            // (the path on its own line, broken anywhere: it has no spaces)
+            if root.error && Up.backup != "": Text {
+                horizontal-alignment: center;
+                wrap: char-wrap;
+                text: Up.backup;
                 color: #A1A1AA;
                 font-family: "Inter";
                 font-size: 13px;
@@ -356,10 +366,14 @@ export component UpdateScreen inherits Window {
                         font-weight: 500;
                     }
                     ta := TouchArea {
+                        mouse-cursor: pointer;
                         clicked => {
                             Up.close();
                         }
                     }
+                    accessible-role: button;
+                    accessible-label: close-text.text;
+                    accessible-action-default => { Up.close(); }
                 }
             }
         }
