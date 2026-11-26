@@ -289,6 +289,13 @@ class Model:
             return "resume"
         elif what == "quit":
             self.finished = True
+            # (after a stop, Ctrl+C included: the step it stopped in failed,
+            # not left spinning)
+            if self.error:
+                for st in self.steps:
+                    if st["state"] == "run":
+                        st["state"] = "fail"
+                        st["t1"] = self.now()
             return "quit"
         return None
 
@@ -668,8 +675,8 @@ def serve(a):
         tty = None
     term = os.environ.get("TERM", "")
     sc = Screen(1, tty if tty is not None else 1, m, glyphs_for(term, os.environ), not os.environ.get("NO_COLOR"))
-    # (Ctrl+C reaches install.sh too: it stops, the stream ends, and the last
-    # frame says so)
+    # (Ctrl+C reaches install.sh too: it says it stopped, and the last frame
+    # says so)
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 

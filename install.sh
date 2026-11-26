@@ -193,6 +193,14 @@ screen_stop() {
     return 0
 }
 trap screen_stop EXIT
+# Ctrl+C or a kill: the screen says it stopped (the EXIT trap then gives the
+# terminal back), not 'Install finished'
+screen_interrupted() {
+    screen_send error "Stopped (Ctrl+C or the installer was stopped). Run ./install.sh again to go on: finished steps are quick the second time."
+    exit "$1"
+}
+trap 'screen_interrupted 130' INT
+trap 'screen_interrupted 143' TERM
 say() { if [[ $SCREEN == 1 ]]; then screen_send msg say "$*"; else printf '%s\n' "$*"; fi; }
 note() { if [[ $SCREEN == 1 ]]; then screen_send msg note "$*"; else printf '  %s%s%s\n' "$DIM" "$*" "$R"; fi; }
 warn() { if [[ $SCREEN == 1 ]]; then screen_send msg warn "$*"; else printf '  %s!%s %s\n' "$YEL" "$R" "$*"; fi; }
