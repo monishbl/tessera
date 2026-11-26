@@ -640,7 +640,7 @@ impl Part for Today {
         let fr = &self.frame;
         let on = fr.opacity > 0.002;
         let shape = theme::glass_shape(&st.shell.look, fr.x, fr.y, fr.w, fr.h, fr.r, fr.opacity, 1.0);
-        let key = if on { format!("{shape:?}") } else { String::new() };
+        let key = if on { theme::glass_key(&shape) } else { String::new() };
         if key != w.glass_sent {
             st.shell.glass.set(&w.output, NS, if on { std::slice::from_ref(&shape) } else { &[] });
             w.glass_sent = key;

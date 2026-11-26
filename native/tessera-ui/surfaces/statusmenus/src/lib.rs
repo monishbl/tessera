@@ -153,6 +153,9 @@ pub struct StatusMenus {
     pinned: String,
     /// the position (seconds) when read, and when
     position: (String, f64, Option<Instant>),
+    /// the player Now Playing last saw, and whether it played (a resume
+    /// counts on from the resume, not from the reading before the pause)
+    np_playing: Option<(String, bool)>,
     art: (String, Option<slint::Image>),
     /// the art cut into Material's nine-sided cookie (made once per picture)
     cookie: (String, Option<slint::Image>),
@@ -650,6 +653,26 @@ impl StatusMenus {
 
     fn push_np(&mut self, st: &State) {
         let (p, others) = self.player(st);
+        if let Some(p) = &p {
+            let seen = Some((p.bus.clone(), p.playing));
+            if seen != self.np_playing {
+                let same = self.np_playing.as_ref().is_some_and(|(b, _)| *b == p.bus) && self.position.0 == p.bus;
+                if same {
+                    if p.playing {
+                        // (resumed: on from now)
+                        self.position.2 = Some(Instant::now());
+                    } else if let Some(t) = self.position.2 {
+                        // (paused: where it got to)
+                        self.position.1 += t.elapsed().as_secs_f64();
+                        self.position.2 = Some(Instant::now());
+                    }
+                }
+                self.np_playing = seen;
+                if p.playing {
+                    Self::read_position_for(st, &p.bus);
+                }
+            }
+        }
         // The art: a local picture for its address (fetched once into the cache)
         let url = p.as_ref().map(|p| p.track.art_url.clone()).unwrap_or_default();
         if url != self.art.0 {
@@ -713,7 +736,11 @@ impl StatusMenus {
             return;
         }
         let target = (frac.clamp(0.0, 1.0) as f64 * p.track.length as f64) as i64;
-        tessera_core::services::mpris::seek(&p.bus, &p.track, target, (self.position_now(&p) * 1e6) as i64);
+        // (a relative seek needs where it really is: a reading of this bus
+        // within the last second, else mpris::seek reads it first)
+        let fresh = self.position.0 == p.bus && self.position.2.is_some_and(|t| t.elapsed().as_secs_f64() < 1.0);
+        let now = if fresh { (self.position_now(&p) * 1e6) as i64 } else { -1 };
+        tessera_core::services::mpris::seek(&p.bus, &p.track, target, now);
         self.position = (p.bus.clone(), target as f64 / 1e6, Some(Instant::now()));
         self.push_np(st);
     }
@@ -759,6 +786,10 @@ impl StatusMenus {
             return;
         }
         if let Some(d) = self.device(st, &b.id) {
+            // (already pairing or connecting: a second click starts no second run)
+            if self.bt_busy.contains(&d.address) {
+                return;
+            }
             let verb = model::bt_click(&d);
             self.bt_ctl(st, verb, d.address);
         }
@@ -1017,6 +1048,11 @@ impl Part for StatusMenus {
                 }
             }
             M::Tick => {
+                // (the Bluetooth menu looks for devices while it shows, not
+                // just its first 8 s)
+                if self.open && self.panel == "bluetoothMenu" && st.shell.get::<Bluetooth>().is_some_and(|b| b.powered) && !tessera_core::services::bluez::scanning("statusmenus") {
+                    tessera_core::services::bluez::scan("statusmenus", 8);
+                }
                 if self.open && self.panel == "nowPlaying" {
                     // (the position, once a second while it plays: Popover's Timer)
                     if self.player(st).0.is_some_and(|p| p.playing) {
@@ -1083,7 +1119,7 @@ impl Part for StatusMenus {
                 shapes.push(theme::glass_shape(&st.shell.look, ui.get_menu_x(), ui.get_menu_y(), ui.get_menu_w(), ui.get_menu_h(), 14.0, o, 0.35));
             }
         }
-        let key = format!("{shapes:?}");
+        let key = theme::glass_key(&shapes);
         if key != w.glass_sent {
             st.shell.glass.set(&w.output, NS, &shapes);
             w.glass_sent = key;

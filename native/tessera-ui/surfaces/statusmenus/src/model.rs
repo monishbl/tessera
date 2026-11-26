@@ -238,7 +238,8 @@ pub fn hm(secs: i64) -> String {
 
 /// 0..1
 pub fn level(b: &Battery) -> f64 {
-    (if b.percent > 1.0 { b.percent / 100.0 } else { b.percent }).clamp(0.0, 1.0)
+    // (Battery.percent is UPower's 0-100: 1 % is 0.01, not a full battery)
+    (b.percent / 100.0).clamp(0.0, 1.0)
 }
 
 /// UPower's states: 1 charging, 4 fully charged
