@@ -753,12 +753,30 @@ The public half is committed as `tools/tessera-ui.pub`. The secret key and its
 password live only on the user's laptop (`~/.minisign/`), where releases are
 signed; never on the build machine. Back both up somewhere safe (a password
 manager): without them nobody can sign again, and every install would need a
-new public key. The publisher never copies or prints either.
+new public key. The publisher never copies or prints either, and refuses to
+sign while the key or the password can be read by other users, or
+`~/.minisign` written by them.
+
+**What the password does and doesn't protect.** It sits beside the key so the
+publisher can sign unattended: any program running as the user on the laptop
+can therefore sign. And the laptop signs what server1 built: builds aren't
+reproducible, so the checks compare server1's own checksums and the tree, not
+the bytes against a second build. server1 is fully trusted: a compromised
+server1 gets its programs signed.
 
 **If the key leaks:** make a new pair (as above), put its password beside it,
 and commit the new `.pub` to main and beta. Copies of Tessera from before that
 commit then refuse new builds and build locally until they update. Delete the
 releases signed with the old key.
+
+A bundle install has no checkout to update the `.pub` in: it checks every new
+bundle against the `tools/tessera-ui.pub` of the version it runs, so after a
+key change it can't take a newer bundle (only Build now, which makes a local,
+unsigned one). Until there is a second key or a "next key" signed by the old
+one (not yet: a decision for later), each bundle install needs the new `.pub`
+by hand: running `setup.sh` again installs from the branch, which has it. The
+old key also stays trusted by those installs until then: there is no
+revocation.
 
 ## Checking a build by hand
 

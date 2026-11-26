@@ -6,7 +6,7 @@ one, signs it here, checks the signatures, publishes it to GitHub with this
 machine's gh and tells server1 it's out. Light work only: ssh, scp,
 checksums, minisign and gh. Installed as ~/tessera-verify/publish-release.sh
 (tools/release-builder/install-publisher.sh), run by a systemd user timer every
-10 minutes (docs/releases.md, "The release builder").
+2 minutes (docs/releases.md, "The release builder").
 
     publish-release              sign and publish every ready set
     publish-release --dry-run    fetch, check and sign them in the staging folder; publish nothing
@@ -18,7 +18,8 @@ never written or logged anywhere else), minisign, and gh logged in to an
 account that can publish to monishbl/tessera. Without one of them it stops
 before fetching anything, says what to do, and the sets stay waiting.
 
-For each set server1 lists (`tessera-release --list-ready`, over ssh):
+For each set server1 lists (`tessera-release --health`, over ssh; an older
+builder without it: `--list-ready`):
   1. copied here with scp into ~/.cache/tessera-publish/<tag>/<tree>/;
   2. checked: exactly the three files a set has (both archives and the
      manifest); each file's size and sha256 as server1 listed them; the
@@ -264,6 +265,12 @@ def preflight(publish=True):
     """What signing and publishing need, before anything is fetched."""
     if not os.path.exists(KEY):
         raise Refused(f"there's no signing key at {KEY}")
+    # (the key as private as its password: minisign makes it 600; its folder
+    # never writable by others, who could swap the key or the password)
+    if os.stat(KEY).st_mode & 0o077:
+        raise Refused(f"{KEY} can be read by others: chmod 600 {KEY}")
+    if os.stat(os.path.dirname(os.path.abspath(KEY))).st_mode & 0o022:
+        raise Refused(f"{os.path.dirname(os.path.abspath(KEY))} can be written by others: chmod go-w it")
     if not shutil.which("minisign"):
         raise Refused("minisign isn't installed here (sudo pacman -S minisign)")
     read_password()
@@ -541,6 +548,31 @@ def retry(what, fn, waits=(5, 20, 60)):
             time.sleep(waits[i])
 
 
+def mark_published(s):
+    """Tells server1 the set is out (tried again on a network failure). When
+    it still can't be told, the set is remembered here as out: the next run
+    only marks it, never signs and uploads it all again. True: marked"""
+    key = f"{s.get('tag')}/{set_key(s)}"
+    try:
+        retry("marking it published on server1",
+              lambda: run(SSH + [HOST, f"bin/tessera-release --mark-published {s['tag']} {set_key(s)}"],
+                          "marking it published on server1", timeout=120))
+    except (Refused, OSError) as e:
+        STATE.setdefault("unmarked", {})[key] = {"tree": s.get("tree"), "commit": s.get("commit"), "at": now(), "why": str(e)[:300]}
+        status()
+        log(f"{key}: published, but server1 couldn't be told ({e}); it's told on the next run")
+        return False
+    if STATE.get("unmarked", {}).pop(key, None) is not None:
+        status()
+    return True
+
+
+def published_unmarked(s):
+    """Is this set out already, only server1 not told yet (mark_published)?"""
+    r = STATE.get("unmarked", {}).get(f"{s.get('tag')}/{set_key(s)}")
+    return isinstance(r, dict) and r.get("tree") == s.get("tree") and r.get("commit") == s.get("commit")
+
+
 def gh(*args, what=None):
     env = dict(os.environ, GH_REPO=GH_REPO, GH_PROMPT_DISABLED="1", NO_COLOR="1", GH_NO_UPDATE_NOTIFIER="1")
     w = what or f"gh {' '.join(args[:2])}"
@@ -751,6 +783,11 @@ def main(argv=None):
         t0 = time.time()
         key = f"{s.get('tag')}/{set_key(s)}"
         try:
+            if published_unmarked(s) and not a.dry_run:
+                # (out on GitHub already: only server1 to tell)
+                if mark_published(s):
+                    log(f"{key}: server1 told it's published")
+                continue
             dest, m = fetch_and_check(s)
             sign(dest, s)
             if a.dry_run:
@@ -758,8 +795,7 @@ def main(argv=None):
                 continue
             urls = publish_github(s, dest, m)
             publish_gitlab(s, dest)
-            run(SSH + [HOST, f"bin/tessera-release --mark-published {s['tag']} {set_key(s)}"], "marking it published on server1",
-                timeout=120)
+            mark_published(s)
             sizes = {os.path.basename(u): os.path.getsize(os.path.join(dest, os.path.basename(u)))
                      for u in urls if u.endswith(".tar.zst")}
             secs = int(time.time() - t0)

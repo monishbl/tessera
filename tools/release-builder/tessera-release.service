@@ -1,9 +1,10 @@
 # Tessera's release builder (tools/release-builder/tessera-release, installed
-# as ~/bin/tessera-release): builds and signs tessera-ui for main, beta and v*
-# tags when their native/ tree has no build yet, and leaves each signed set
-# ready for the laptop's publisher. It never publishes. docs/releases.md.
+# as ~/bin/tessera-release): builds tessera-ui (and the bundles) for main,
+# beta and v* tags when their native/ tree has no build yet, and leaves each
+# set ready for the laptop's publisher, which signs it. It has no key: it
+# never signs or publishes. docs/releases.md.
 [Unit]
-Description=Tessera release builder (builds and signs tessera-ui on server1)
+Description=Tessera release builder (builds tessera-ui on server1; the laptop signs)
 After=network-online.target
 
 [Service]

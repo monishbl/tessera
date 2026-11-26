@@ -342,6 +342,37 @@ class Health(unittest.TestCase):
         with self.assertRaises(self.pr.Refused), mock.patch.object(self.pr.time, "sleep", lambda s: None):
             self.pr.retry("check", lambda: (_ for _ in ()).throw(self.pr.Refused("the manifest names another build")))
 
+    def test_a_key_others_can_read_or_swap_is_refused(self):
+        # (audit #720: only the password's mode was checked)
+        d = Path(self.tmp.name) / "minisign"
+        d.mkdir(mode=0o700)
+        key = d / "tessera-ui.key"
+        key.write_text("x")
+        key.chmod(0o644)
+        with mock.patch.object(self.pr, "KEY", str(key)):
+            self.assertRaisesRegex(self.pr.Refused, "chmod 600", self.pr.preflight)
+            key.chmod(0o600)
+            d.chmod(0o777)
+            self.assertRaisesRegex(self.pr.Refused, "written by others", self.pr.preflight)
+            d.chmod(0o700)
+            try:
+                self.pr.preflight()
+            except self.pr.Refused as e:
+                self.assertNotIn("others", str(e))  # (on to the next need: minisign, gh)
+
+    def test_a_set_out_but_not_marked_is_only_marked_next_time(self):
+        # (audit #722: one ssh failing after the uploads made it "not
+        # published" and re-uploaded every 2 minutes)
+        s = {"tag": "tessera-ui-beta", "tree": "a" * 40, "commit": "b" * 40}
+        down = mock.patch.object(self.pr, "run", side_effect=self.pr.Refused("ssh: connect to host server1: No route to host"))
+        with down, mock.patch.object(self.pr.time, "sleep", lambda s: None):
+            self.assertFalse(self.pr.mark_published(s))
+        self.assertTrue(self.pr.published_unmarked(s))
+        self.assertFalse(self.pr.published_unmarked(dict(s, tree="c" * 40)), "another build of that tag is published as usual")
+        with mock.patch.object(self.pr, "run", return_value=""):
+            self.assertTrue(self.pr.mark_published(s))
+        self.assertFalse(self.pr.published_unmarked(s))
+
     def test_the_timer_looks_often_and_after_login(self):
         t = (ROOT / "tools/release-builder/tessera-publish.timer").read_text()
         self.assertIn("OnUnitActiveSec=2min", t)

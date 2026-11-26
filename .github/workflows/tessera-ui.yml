@@ -6,9 +6,10 @@
 # NOT THE RELEASE BUILDER TODAY: the GitHub account's Actions are locked
 # (billing), so releases are made by the release builder instead: server1
 # builds (tools/release-builder/tessera-release), the user's laptop signs and
-# publishes (tools/release-builder/publish-release), each every 10 minutes
-# (docs/releases.md, "The release builder"). They make exactly what this
-# workflow made. So that the two never publish the same tree twice (two
+# publishes (tools/release-builder/publish-release), every few minutes
+# (docs/releases.md, "The release builder"). They make what this workflow
+# made and more since (bundles, patches, the build's commit and date, the
+# local profile for beta): this file is not kept in step with them. So that the two never publish the same tree twice (two
 # builds of one tree differ byte for byte, and a manifest from one with an
 # archive from the other is refused by every install), this workflow only
 # runs by hand now (workflow_dispatch). While Actions are locked even that
