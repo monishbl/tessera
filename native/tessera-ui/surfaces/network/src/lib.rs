@@ -309,6 +309,7 @@ impl Network {
         let ui = &w.ui;
         let wifi = &self.wifi;
         ui.set_wifi_on(wifi.enabled);
+        ui.set_adapter(wifi.adapter);
         ui.set_unmanaged(wifi.unmanaged);
         ui.set_notice_title(wifi.notice.title.as_str().into());
         ui.set_notice_text(wifi.notice.text.as_str().into());
