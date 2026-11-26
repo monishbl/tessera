@@ -160,7 +160,8 @@ pub fn subtitle(sp: &Speed, now: i64) -> String {
 /// 13 (or 10 or 26 in hex)
 pub fn password_ok(t: &str) -> bool {
     let n = t.chars().count();
-    (8..=63).contains(&n) || [5, 10, 13, 26].contains(&n)
+    // (64 hex digits: the raw pre-shared key, as routers and wpa_passphrase show it)
+    (8..=63).contains(&n) || [5, 10, 13, 26].contains(&n) || (n == 64 && t.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// Why Join didn't go ahead (None: it does)
@@ -169,6 +170,8 @@ pub fn password_hint(t: &str) -> Option<&'static str> {
         None
     } else if t.is_empty() {
         Some("Type the password first.")
+    } else if t.chars().count() > 63 {
+        Some("Wi-Fi passwords are at most 63 characters (or a 64-digit hex key).")
     } else {
         Some("Wi-Fi passwords are at least 8 characters.")
     }
@@ -388,6 +391,8 @@ mod tests {
         assert!(password_ok("eight888"));
         assert!(password_ok(&"x".repeat(63)));
         assert!(!password_ok(&"x".repeat(64)));
+        assert!(password_ok(&"a0".repeat(32))); // (a raw 64-hex PSK)
+        assert_eq!(password_hint(&"x".repeat(64)), Some("Wi-Fi passwords are at most 63 characters (or a 64-digit hex key)."));
         assert!(password_ok(&"x".repeat(26)));
         assert_eq!(password_hint(""), Some("Type the password first."));
         assert_eq!(password_hint("short"), None);
