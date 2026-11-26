@@ -77,6 +77,9 @@ pub struct DisplayOverlay {
     identifying: bool,
     confirming: bool,
     left: i32,
+    /// this question's countdown length (the host's "total", else its first
+    /// "left"): one for every card, made at the start or mid-countdown
+    total: i32,
     mons: Vec<Mon>,
     ids: Vec<IdWin>,
     cfs: Vec<CfWin>,
@@ -162,13 +165,13 @@ impl DisplayOverlay {
             margin_left: 0,
         });
         let to = st.shell.sender(NAME);
-        let total = self.left.max(1);
+        let total = self.total.max(self.left).max(1);
         let text = countdown_text(self.left);
         let (ui, region) = if material {
             let u = ui::ConfirmMaterial::new().expect("ConfirmMaterial");
             st.shell.apply_theme(&u.global::<ui::Theme>());
             u.set_countdown(text.into());
-            u.set_value(self.left as f32 / total as f32);
+            u.set_value((self.left as f32 / total as f32).min(1.0));
             let (a, b) = (to.clone(), to);
             u.on_revert(move || a(Box::new(Msg::Revert)));
             u.on_keep(move || b(Box::new(Msg::Keep)));
@@ -243,7 +246,7 @@ impl DisplayOverlay {
                     CfUi::Glass(u) => u.set_countdown(text.clone().into()),
                     CfUi::Material(u) => {
                         u.set_countdown(text.clone().into());
-                        u.set_value(self.left as f32 / w.total as f32);
+                        u.set_value((self.left as f32 / w.total.max(1) as f32).min(1.0));
                     }
                 }
             }
@@ -288,11 +291,15 @@ impl Part for DisplayOverlay {
                     // (a new question: its countdown starts from the full length)
                     if b && !self.confirming {
                         self.drop_confirm(st);
+                        self.total = 0;
                     }
                     self.confirming = b;
                 }
                 if let Some(n) = v["left"].as_i64() {
                     self.left = n as i32;
+                }
+                if self.confirming && self.total == 0 {
+                    self.total = v["total"].as_i64().map(|n| n as i32).unwrap_or(self.left);
                 }
                 if v["monitors"].is_array() {
                     self.mons = parse_mons(&v["monitors"]);

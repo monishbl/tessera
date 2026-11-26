@@ -387,7 +387,9 @@ impl DisplayConnect {
     }
 
     fn keep_ticking(&mut self, st: &State) {
-        if self.wins.is_empty() {
+        // (all played out: they stay mapped, clear, until the host's next
+        // list, but nothing is drawn for them meanwhile)
+        if self.wins.iter().all(|w| w.finished) {
             self.tick.stop();
             self.ticking = false;
         } else if !self.ticking {
@@ -407,6 +409,8 @@ impl DisplayConnect {
             }
             // a pending screen that never gets placed doesn't stay dark
             if w.run.pending && now.duration_since(w.seen) >= Duration::from_millis(3000) {
+                // (drawn clear: reported finished, it must not stay black)
+                w.draw(1.0, 0.0, still);
                 w.finished = true;
                 shell::ask("displays.finish", json!([w.run.id]));
                 continue;
@@ -434,6 +438,7 @@ impl DisplayConnect {
                 shell::ask("displays.finish", json!([w.run.id]));
             }
         }
+        self.keep_ticking(st);
     }
 }
 
