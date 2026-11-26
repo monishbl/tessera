@@ -465,7 +465,7 @@ pub fn color(s: &str) -> Option<slint::Color> {
 }
 
 /// Island.ago: how long ago a Recent line was ("now", "5m", "2h", else its time)
-pub fn ago(at_ms: f64, now_ms: f64) -> String {
+pub fn ago(at_ms: f64, now_ms: f64, h24: bool) -> String {
     let mins = ((now_ms - at_ms) / 60_000.0).floor() as i64;
     if mins < 1 {
         "now".into()
@@ -474,7 +474,15 @@ pub fn ago(at_ms: f64, now_ms: f64) -> String {
     } else if mins < 360 {
         format!("{}h", mins / 60)
     } else {
-        tessera_core::util::strftime("%H:%M", (at_ms / 1000.0) as i64)
+        // (the clock the user chose; from another day, the weekday or date)
+        let (at, now) = ((at_ms / 1000.0) as i64, (now_ms / 1000.0) as i64);
+        let days = tessera_core::util::local_day(now) - tessera_core::util::local_day(at);
+        let fmt = if h24 { "%H:%M" } else { "%-I:%M %p" };
+        match days {
+            i64::MIN..=0 => tessera_core::util::strftime(fmt, at),
+            1..=6 => tessera_core::util::strftime("%a", at),
+            _ => tessera_core::util::strftime("%-d %b", at),
+        }
     }
 }
 
@@ -490,9 +498,16 @@ mod tests {
 
     #[test]
     fn rings_and_colours() {
-        assert_eq!(ago(0.0, 30_000.0), "now");
-        assert_eq!(ago(0.0, 5.0 * 60_000.0), "5m");
-        assert_eq!(ago(0.0, 125.0 * 60_000.0), "2h");
+        assert_eq!(ago(0.0, 30_000.0, false), "now");
+        assert_eq!(ago(0.0, 5.0 * 60_000.0, false), "5m");
+        assert_eq!(ago(0.0, 125.0 * 60_000.0, false), "2h");
+        // (older: the chosen clock, the weekday or the date)
+        let now = 1_795_000_000_000.0;
+        let t = ago(now - 7.0 * 3_600_000.0, now, false);
+        assert!(t.ends_with("AM") || t.ends_with("PM") || t.len() <= 3, "{t}");
+        let t = ago(now - 7.0 * 3_600_000.0, now, true);
+        assert!(!t.ends_with("AM") && !t.ends_with("PM"), "{t}");
+        assert!(!ago(now - 30.0 * 86_400_000.0, now, true).contains(':'));
         // colours by name, as the services post them
         assert!(is_red(color("danger").unwrap()) && is_red(color("red").unwrap()));
         assert!(!is_red(color("orange").unwrap()));

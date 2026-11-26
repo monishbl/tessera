@@ -51,8 +51,10 @@ pub struct Strip {
 }
 
 /// The strip for one display. `start`: where the window over its own spaces
-/// was (kept so the current space stays in view as Workspaces.keepActive)
-pub fn strip(name: &str, groups: &[Group], h: &Snapshot, cap: i32, dynamic: bool, start: i32) -> Strip {
+/// was; `keep_active`: the current space changed since the last strip, so
+/// the window is pulled to it (Workspaces.keepActive); otherwise the arrows
+/// may page past it
+pub fn strip(name: &str, groups: &[Group], h: &Snapshot, cap: i32, dynamic: bool, start: i32, keep_active: bool) -> Strip {
     let cap = cap.max(1);
     let own: Vec<i32> = groups.first().map(|g| g.ids.clone()).unwrap_or_default();
     let rest: Vec<i32> = groups.iter().skip(1).flat_map(|g| g.ids.clone()).collect();
@@ -70,7 +72,7 @@ pub fn strip(name: &str, groups: &[Group], h: &Snapshot, cap: i32, dynamic: bool
     // keep the current space in view
     let clamp = |v: i32| v.max(0).min((own.len() as i32 - cap).max(0));
     let mut st = clamp(start);
-    if let Some(i) = own.iter().position(|&x| x == active).map(|i| i as i32) {
+    if let Some(i) = own.iter().position(|&x| x == active).map(|i| i as i32).filter(|_| keep_active) {
         if i < st {
             st = i;
         } else if i >= st + cap {
@@ -183,7 +185,7 @@ mod tests {
             Client { class: "firefox".into(), workspace: WsRef { id: 1 }, ..Default::default() },
         ];
         let g = groups("eDP-1", &bases, &h, 2, true, &labels);
-        let s = strip("eDP-1", &g, &h, 2, false, 0);
+        let s = strip("eDP-1", &g, &h, 2, false, 0, true);
         let ids: Vec<i32> = s.chips.iter().map(|c| c.id).collect();
         assert_eq!(ids, vec![1, 2, 101, 102]);
         assert!(s.chips[0].active && s.chips[0].occupied && s.chips[0].apps == vec!["firefox", "kitty"]);
@@ -196,7 +198,7 @@ mod tests {
     fn overflow_slides_a_window_with_arrows() {
         let h = snap((1..=9).map(|i| ws(i, "DP-1", (i == 2 || i == 9) as u32)).collect(), &[("DP-1", 7)]);
         let g = groups("DP-1", &BTreeMap::new(), &h, 5, true, &BTreeMap::new());
-        let s = strip("DP-1", &g, &h, 5, false, 0);
+        let s = strip("DP-1", &g, &h, 5, false, 0, true);
         // the current space (7) pulls the window to 3..7
         assert_eq!(s.start, 2);
         assert_eq!(s.chips.iter().map(|c| c.id).collect::<Vec<_>>(), vec![3, 4, 5, 6, 7]);
@@ -204,15 +206,18 @@ mod tests {
         assert!(l.more && l.hot, "1 and 2 are left of it, 2 has windows");
         assert!(r.more && r.hot, "8 and 9, 9 has windows");
         // the arrows move it (and it stays within the spaces)
-        let s2 = strip("DP-1", &g, &h, 5, false, 99);
+        let s2 = strip("DP-1", &g, &h, 5, false, 99, true);
         assert_eq!(s2.start, 4);
+        // the same current space: the arrows page past it (not snapped back)
+        let s3 = strip("DP-1", &g, &h, 5, false, 0, false);
+        assert_eq!(s3.start, 0);
     }
 
     #[test]
     fn dynamic_overflow_shrinks_past_the_ends() {
         let h = snap((1..=9).map(|i| ws(i, "DP-1", 0)).collect(), &[("DP-1", 1)]);
         let g = groups("DP-1", &BTreeMap::new(), &h, 4, true, &BTreeMap::new());
-        let s = strip("DP-1", &g, &h, 4, true, 0);
+        let s = strip("DP-1", &g, &h, 4, true, 0, true);
         let past: Vec<i32> = s.chips.iter().map(|c| c.past).collect();
         assert_eq!(past, vec![0, 0, 0, 0, 1, 2, 3, 4, 5]);
         assert!(s.arrows.is_none());

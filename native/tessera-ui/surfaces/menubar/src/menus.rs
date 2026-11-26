@@ -147,7 +147,9 @@ pub fn layout(name: &str) -> ([f32; 4], &'static str) {
     }
 }
 
-pub fn window(win: &Client, style: &str) -> Vec<Row> {
+/// `base`: the focused display's block of spaces (spacemap: each display
+/// owns 100 ids), so "Move to Space 2" means that display's second space
+pub fn window(win: &Client, style: &str, base: i32) -> Vec<Row> {
     let has = !win.address.is_empty() && !win.class.is_empty();
     let addr = if win.address.starts_with("0x") { win.address.clone() } else { format!("0x{}", win.address) };
     let act = |name: &str, args: &str| Action::Dispatch(format!("hl.dsp.window.{name}({{ {args}{}window = \"address:{addr}\" }})", if args.is_empty() { "" } else { ", " }));
@@ -175,7 +177,8 @@ pub fn window(win: &Client, style: &str) -> Vec<Row> {
             },
             has,
         ),
-        en(Row { checked: Some(false), shortcut: combo("SUPER SHIFT P", style), ..item("Picture in Picture", Action::Ipc(vec!["tiling".into(), "pip".into()])) }, has),
+        // (no tick: nothing here knows whether the window is in PiP)
+        en(Row { shortcut: combo("SUPER SHIFT P", style), ..item("Picture in Picture", Action::Ipc(vec!["tiling".into(), "pip".into()])) }, has),
         sep(),
         header("Move & Resize"),
         tiles(&["left", "right", "top", "bottom"]),
@@ -192,9 +195,9 @@ pub fn window(win: &Client, style: &str) -> Vec<Row> {
         en(item("Zoom", act("fullscreen", "mode = \"maximized\", action = \"toggle\"")), has),
         en(item("Enter Full Screen", act("fullscreen", "mode = \"fullscreen\", action = \"toggle\"")), has),
         sep(),
-        en(item("Move to Space 1", act("move", "workspace = 1, follow = false")), has),
-        en(item("Move to Space 2", act("move", "workspace = 2, follow = false")), has),
-        en(item("Move to Space 3", act("move", "workspace = 3, follow = false")), has),
+        en(item("Move to Space 1", act("move", &format!("workspace = {}, follow = false", base + 1))), has),
+        en(item("Move to Space 2", act("move", &format!("workspace = {}, follow = false", base + 2))), has),
+        en(item("Move to Space 3", act("move", &format!("workspace = {}, follow = false", base + 3))), has),
         sep(),
         en(item("Close Window", act("close", "")), has),
     ]
@@ -289,7 +292,8 @@ pub fn material_width(rows: &[Row]) -> f32 {
 /// Arrow keys: the next row that can be chosen, from `from` (-1: none yet)
 pub fn step(rows: &[Row], from: i32, d: i32) -> i32 {
     let n = rows.len() as i32;
-    let mut i = from;
+    // (nothing chosen yet: Down lands on the first row, Up on the last)
+    let mut i = if from < 0 && d < 0 { n } else { from };
     for _ in 0..n {
         i = (i + d + n) % n;
         let r = &rows[i as usize];
@@ -357,19 +361,24 @@ mod tests {
     #[test]
     fn the_window_menu_acts_on_the_focused_window() {
         let w = Client { address: "55aa".into(), class: "kitty".into(), floating: true, pinned: true, ..Default::default() };
-        let v = window(&w, "linux");
+        let v = window(&w, "linux", 0);
         assert_eq!(v[0].action, Action::Dispatch("hl.dsp.window.move({ workspace = \"special:minimized\", follow = false, window = \"address:0x55aa\" })".into()));
         assert_eq!((v[1].checked, v[2].checked, v[2].enabled), (Some(true), Some(true), true));
         assert_eq!(v[3].text, "Merge into Tabs");
         assert_eq!(v.last().unwrap().action, Action::Dispatch("hl.dsp.window.close({ window = \"address:0x55aa\" })".into()));
         assert_eq!(v.iter().filter(|r| !r.tiles.is_empty()).map(|r| r.tiles.len()).sum::<usize>(), 12);
         // no window: only Arrange still works
-        let v = window(&Client::default(), "linux");
+        let v = window(&Client::default(), "linux", 0);
         let on: Vec<&str> = v.iter().filter(|r| r.enabled && !r.separator && !r.header && r.tiles.is_empty()).map(|r| r.text.as_str()).collect();
         assert_eq!(on, vec!["Left & Right", "Top & Bottom", "Quarters"]);
         // in tabs: take it out
         let g = Client { grouped: vec!["a".into(), "b".into()], ..w };
-        assert_eq!(window(&g, "linux")[3].text, "Move Tab to New Window");
+        assert_eq!(window(&g, "linux", 0)[3].text, "Move Tab to New Window");
+        // a second display's spaces start at its base
+        let v = window(&w, "linux", 100);
+        let m2 = v.iter().find(|r| r.text == "Move to Space 2").unwrap();
+        assert_eq!(m2.action, Action::Dispatch("hl.dsp.window.move({ workspace = 102, follow = false, window = \"address:0x55aa\" })".into()));
+        assert!(v.iter().find(|r| r.text == "Picture in Picture").unwrap().checked.is_none());
     }
 
     #[test]
@@ -400,6 +409,7 @@ mod tests {
         assert_eq!(step(&v, -1, 1), 0);
         assert_eq!(step(&v, 0, 1), 2, "separators are skipped");
         assert_eq!(step(&v, 0, -1), (v.len() - 1) as i32);
+        assert_eq!(step(&v, -1, -1), (v.len() - 1) as i32, "Up from nothing: the last row");
         assert!(width(&v) >= 220.0);
         assert_eq!(space(5, "DP-1", &[("DP-1".into(), "Built-in".into())])[0].enabled, false);
         assert_eq!(space(5, "DP-1", &[("DP-1".into(), "Built-in".into()), ("HDMI-A-1".into(), "TV".into())])[0].text, "Move to TV (HDMI-A-1)");
