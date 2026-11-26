@@ -31,7 +31,8 @@ pub const DAY: i64 = 86_400_000;
 
 #[derive(Default)]
 pub struct Cal {
-    /// alert keys already shown this session
+    /// alerts already shown this session: "key|start|alert" (a moved event,
+    /// or a changed alert, alerts again)
     pub alerted: HashSet<String>,
 }
 
@@ -48,12 +49,54 @@ pub fn local_raw() -> Vec<Value> {
     std::fs::read_to_string(events_path()).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).and_then(|v| v.as_array().cloned()).unwrap_or_default()
 }
 
+/// Owner-only from the first byte: the temp file is made 0600 before
+/// anything is written to it (write_atomic's takes the umask's 0644, and a
+/// new file stayed so until the chmod after it), then renamed over the file
+fn write_private(p: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let p = tessera_core::util::link_target(p);
+    if let Some(d) = p.parent() {
+        std::fs::create_dir_all(d)?;
+    }
+    let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = p.with_file_name(format!(".{name}.tmp-{}", std::process::id()));
+    let done = (|| {
+        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, &p)
+    })();
+    if done.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    done
+}
+
+/// The file is there but isn't the JSON it should be (one bad byte, a
+/// half-done hand edit): writing now would replace everything in it with
+/// what was read, which is nothing. Kept as <name>.bad once, and said.
+fn unreadable(p: &std::path::Path, ok: impl Fn(&Value) -> bool) -> bool {
+    let Ok(text) = std::fs::read_to_string(p) else { return false };
+    if text.trim().is_empty() || serde_json::from_str::<Value>(&text).is_ok_and(|v| ok(&v)) {
+        return false;
+    }
+    let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let bad = p.with_file_name(format!("{name}.bad"));
+    if !bad.exists() {
+        let _ = std::fs::copy(p, &bad);
+    }
+    notify_send("Calendar", Some("calendar"), None, "Calendar not saved", &format!("{name} couldn't be read, so it was left as it is (a copy is {name}.bad). Fix or remove it, then try again."));
+    true
+}
+
 fn save_local(l: &[Value]) {
     // Owner-only: events can be private
-    use std::os::unix::fs::PermissionsExt;
     let p = events_path();
-    let _ = tessera_core::util::write_atomic(&p, serde_json::to_string_pretty(l).unwrap_or_default().as_bytes());
-    let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+    if unreadable(&p, Value::is_array) {
+        return;
+    }
+    let _ = write_private(&p, serde_json::to_string_pretty(l).unwrap_or_default().as_bytes());
 }
 
 /// Calendar.defaultAlert (calendars.json's, 10 minutes unless it says)
@@ -79,10 +122,11 @@ fn sources_doc() -> Value {
 
 /// Calendar.saveSources: owner-only (links can carry secret tokens); the reader notices the file
 fn save_sources(v: &Value) {
-    use std::os::unix::fs::PermissionsExt;
     let p = sources_path();
-    let _ = tessera_core::util::write_atomic(&p, serde_json::to_string_pretty(v).unwrap_or_default().as_bytes());
-    let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+    if unreadable(&p, Value::is_object) {
+        return;
+    }
+    let _ = write_private(&p, serde_json::to_string_pretty(v).unwrap_or_default().as_bytes());
 }
 
 /// The calls Settings -> Calendar makes (host-system's accounts bridge):
@@ -427,21 +471,32 @@ pub fn alert_text(e: &Event, alert: i64, now: i64) -> String {
     if e.location.is_empty() { when } else { format!("{when}\n{}", e.location) }
 }
 
+/// How far ahead check_alerts looks for events whose alert is due
+const ALERT_AHEAD: i64 = 31 * DAY;
+
+/// What an alert shown is remembered by
+fn alert_key(e: &Event, alert: i64) -> String {
+    format!("{}|{}|{alert}", e.key, e.start)
+}
+
 impl Cal {
     pub fn check_alerts(&mut self, h: &mut Host) {
         let now = now();
         let Some(c) = h.st.shell.get::<Calendar>().cloned() else { return };
         let def = default_alert();
         let raw = local_raw();
-        for e in c.between(now - 3_600_000, now + 24 * 3_600_000) {
+        // (as far ahead as an alert reaches: a week's or two days' alarm of
+        // a synced event is due long before the event is a day away)
+        for e in c.between(now - 3_600_000, now + ALERT_AHEAD) {
             let alert = alert_of(&e, &raw, def);
-            if alert < 0 || self.alerted.contains(&e.key) {
+            let seen = alert_key(&e, alert);
+            if alert < 0 || self.alerted.contains(&seen) {
                 continue;
             }
             let at = e.start - alert * 60_000;
             // Fire once, within ten minutes of the alert time (not for alerts long past)
             if now >= at && now - at < 600_000 {
-                self.alerted.insert(e.key.clone());
+                self.alerted.insert(seen);
                 notify_send("Calendar", Some("x-office-calendar"), Some("normal"), &e.title, &alert_text(&e, alert, now));
             }
         }
@@ -468,6 +523,15 @@ mod tests {
         let g = Event { account: "jane@gmail.com".into(), series: "google:s1".into(), ..ev("google:a:c:e", 0) };
         assert_eq!(series_of(&g), "google:s1");
         assert_eq!(series_of(&Event { series: String::new(), ..g }), "");
+    }
+
+    #[test]
+    fn a_moved_event_alerts_again() {
+        let a = ev("local:1", 1_000_000);
+        let b = ev("local:1", 2_000_000);
+        assert_ne!(alert_key(&a, 10), alert_key(&b, 10));
+        assert_ne!(alert_key(&a, 10), alert_key(&a, 30));
+        assert_eq!(alert_key(&a, 10), alert_key(&a.clone(), 10));
     }
 
     #[test]

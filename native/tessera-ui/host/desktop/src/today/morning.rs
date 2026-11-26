@@ -237,7 +237,11 @@ impl Morning {
     }
 
     pub fn pin(&mut self, h: &mut Host) {
-        state_set("todayPinned", json!(self.day));
+        // (only a widget this adds is taken away tomorrow: one you placed
+        // yourself stays)
+        if !has_widget() {
+            state_set("todayPinned", json!(self.day));
+        }
         self.ensure_widget(h);
         self.close(h);
     }
