@@ -528,7 +528,7 @@ impl Chat {
         if gen != self.gen || gen == 0 {
             return false;
         }
-        if let Some(r) = self.rows.last_mut().filter(|r| r.role == "assistant") {
+        if let Some(r) = self.reply().map(|i| &mut self.rows[i]) {
             r.text = text.clone();
             r.thinking = thinking.clone();
         }
@@ -574,8 +574,15 @@ impl Chat {
         }
     }
 
+    /// The row the running request answers: the last streaming answer, not
+    /// simply the last row (a note, e.g. "A message can carry 4 pictures",
+    /// can be added while the answer streams)
+    fn reply(&self) -> Option<usize> {
+        self.rows.iter().rposition(|r| r.role == "assistant" && r.status == "streaming")
+    }
+
     fn finish(&mut self, status: &str, p: &sse::Parser) {
-        let Some(i) = self.rows.len().checked_sub(1) else { return };
+        let Some(i) = self.reply() else { return };
         self.rows[i].text = p.text.clone();
         self.rows[i].thinking = p.thinking.clone();
         match status {
@@ -593,7 +600,7 @@ impl Chat {
                 self.save(false);
             }
             "stopped" if p.text.is_empty() => {
-                self.rows.pop();
+                self.rows.remove(i);
                 self.history.pop();
             }
             _ => {
@@ -609,7 +616,7 @@ impl Chat {
     }
 
     fn fail_with(&mut self, text: &str) {
-        if let Some(r) = self.rows.last_mut() {
+        if let Some(r) = self.reply().map(|i| &mut self.rows[i]) {
             r.status = "error".into();
             r.text = text.to_string();
         }
@@ -889,6 +896,26 @@ mod tests {
         assert!(!d.join(format!("{id}.json")).exists());
         assert!(Store::new(d.clone()).read_index().trash.is_empty());
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_note_while_streaming_leaves_the_answer_in_its_row() {
+        let mut c = chat(None);
+        let Submitted::Request(_, _, gen, _) = c.submit("hi") else { panic!() };
+        c.note("Couldn't add x.jpg.");
+        assert!(c.update(gen, "partial".into(), String::new()));
+        assert_eq!(c.rows[1].text, "partial");
+        let mut p = sse::Parser::new("custom");
+        p.text = "the answer".into();
+        assert!(c.done(gen, 200, &p, ""));
+        assert_eq!((c.rows[1].role.as_str(), c.rows[1].status.as_str(), c.rows[1].text.as_str()), ("assistant", "done", "the answer"));
+        assert_eq!((c.rows[2].role.as_str(), c.rows[2].text.as_str()), ("note", "Couldn't add x.jpg."));
+        // stopped before anything came: the empty answer goes, the note stays
+        let Submitted::Request(_, _, _, _) = c.submit("again") else { panic!() };
+        c.note("A note");
+        c.stop();
+        assert_eq!(c.rows.last().unwrap().text, "A note");
+        assert!(c.rows.iter().all(|r| r.status != "streaming"));
     }
 
     #[test]
