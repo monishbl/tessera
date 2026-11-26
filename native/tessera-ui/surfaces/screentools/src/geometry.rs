@@ -197,21 +197,21 @@ pub fn tools(record_only: bool, recording: bool) -> Vec<Tool> {
     let t = |icon, label, act| Tool { icon, label, act };
     let sep = || Tool { icon: "", label: "", act: Act::Sep };
     if record_only {
-        return vec![t("monitor", "Entire Screen", Act::Area("screen")), t("app-window", "Window", Act::Area("window")), t("selection", "Selected Region", Act::Area("region")), sep(), t("", "Options", Act::Options)];
+        return vec![t("monitor", "Entire screen", Act::Area("screen")), t("app-window", "Window", Act::Area("window")), t("selection", "Selected region", Act::Area("region")), sep(), t("", "Options", Act::Options)];
     }
     let mut v = vec![
-        t("monitor", "Capture Screen", Act::Shot),
-        t("selection", "Capture Selection", Act::Select("screenshot")),
+        t("monitor", "Capture screen", Act::Shot),
+        t("selection", "Capture selection", Act::Select("screenshot")),
         sep(),
-        t("text-t", "Copy Text", Act::Select("ocr")),
+        t("text-t", "Copy text", Act::Select("ocr")),
         t("translate", "Translate", Act::Select("translate")),
         t("sparkle", "Ask AI", Act::Select("ask")),
         sep(),
-        t("record", if recording { "Stop Recording" } else { "Record Screen" }, Act::Record("screen")),
+        t("record", if recording { "Stop recording" } else { "Record screen" }, Act::Record("screen")),
     ];
     if !recording {
-        v.push(t("app-window", "Record Window", Act::Record("window")));
-        v.push(t("selection-plus", "Record Selection", Act::Record("region")));
+        v.push(t("app-window", "Record window", Act::Record("window")));
+        v.push(t("selection-plus", "Record selection", Act::Record("region")));
     }
     v.push(sep());
     v.push(t("", "Options", Act::Options));
@@ -388,9 +388,9 @@ mod tests {
         // recording: Stop, and no other ways to record
         let rec = tools(false, true);
         assert_eq!(rec.len(), 10);
-        assert!(rec.iter().any(|t| t.label == "Stop Recording"));
+        assert!(rec.iter().any(|t| t.label == "Stop recording"));
         let only = tools(true, false);
-        assert_eq!(only.iter().map(|t| t.label).collect::<Vec<_>>(), vec!["Entire Screen", "Window", "Selected Region", "", "Options"]);
+        assert_eq!(only.iter().map(|t| t.label).collect::<Vec<_>>(), vec!["Entire screen", "Window", "Selected region", "", "Options"]);
     }
 
     #[test]
