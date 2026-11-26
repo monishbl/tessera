@@ -565,7 +565,7 @@ export component CalendarTab {
         ed-title = "";
         ed-all-day = false;
         ed-start = h24 ? "09:00" : "9:00 AM";
-        ed-end = "10:00 AM";
+        ed-end = h24 ? "10:00" : "10:00 AM";
         ed-alert = default-alert;
         error = "";
         ed-open = true;
@@ -1058,6 +1058,7 @@ export component CalendarTab {
                         selected(i) => {
                             ed-todo = i == 1;
                             ed-start = ed-todo ? "" : h24 ? "09:00" : "9:00 AM";
+                            ed-end = ed-todo ? ed-end : h24 ? "10:00" : "10:00 AM";
                         }
                     }
                     if ed-key == "" && !ed-todo && targets.length > 1: CalChoice {
