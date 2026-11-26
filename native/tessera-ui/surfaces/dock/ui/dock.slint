@@ -44,7 +44,7 @@ component Badge inherits Rectangle {
     property <float> pop: on ? 1 : 0;
     // (Glass 200 ms out-back; Material the fast spatial spring)
     animate pop {
-        duration: Theme.material ? 222ms : 200ms;
+        duration: Theme.motion(Theme.material ? 222ms : 200ms);
         easing: Theme.material ? spring(0.4) : cubic-bezier(0.34, 1.56, 0.64, 1);
     }
     visible: on || pop > 0.001;
@@ -135,7 +135,7 @@ export component Dock inherits Window {
     // coming up, 250 ms in-cubic going down; Material: its default spring)
     out property <float> slide: hidden ? 1 : 0;
     animate slide {
-        duration: Theme.material ? 320ms : (hidden ? 250ms : 350ms);
+        duration: Theme.motion(Theme.material ? 320ms : (hidden ? 250ms : 350ms));
         // (Easing.OutBack, overshoot 1.2, as a bezier: within 0.5% of it)
         easing: Theme.material ? spring(0.2) : (hidden ? cubic-bezier(0.3333, 0, 0.6667, 0) : cubic-bezier(0.35, 1.45, 0.7, 0.975));
     }
@@ -192,7 +192,8 @@ export component Dock inherits Window {
             }
             property <float> bt: bouncing ? (animation-tick() - bounce-start) / 1ms : 0;
             property <float> cycle: Math.mod(bt, Theme.material ? 480 : 520);
-            property <length> hop: !bouncing ? 0 : Theme.material ? (cycle < 220 ? Curves.emphasized(cycle / 220) * root.base * 0.3 : (1 - out-bounce((cycle - 220) / 260)) * root.base * 0.3) : (cycle < 260 ? (1 - (1 - cycle / 260) * (1 - cycle / 260)) * root.base * 0.35 : (1 - (cycle - 260) / 260 * (cycle - 260) / 260) * root.base * 0.35);
+            // (none with Reduce motion: the dot under the icon says it's launching)
+            property <length> hop: !bouncing || Theme.reduce-motion ? 0 : Theme.material ? (cycle < 220 ? Curves.emphasized(cycle / 220) * root.base * 0.3 : (1 - out-bounce((cycle - 220) / 260)) * root.base * 0.3) : (cycle < 260 ? (1 - (1 - cycle / 260) * (1 - cycle / 260)) * root.base * 0.35 : (1 - (cycle - 260) / 260 * (cycle - 260) / 260) * root.base * 0.35);
             pure function out-bounce(p: float) -> float {
                 if p < 1 / 2.75 { return 7.5625 * p * p; }
                 if p < 2 / 2.75 { return 7.5625 * (p - 1.5 / 2.75) * (p - 1.5 / 2.75) + 0.75; }
@@ -213,7 +214,7 @@ export component Dock inherits Window {
             // Hover lift and press squish, on springs (QML: spring 4.5 /
             // damping 0.28, and 6 / 0.35)
             property <length> lift: s.hot && root.max-scale <= 1 ? root.base * 0.14 : 0;
-            animate lift { duration: 380ms; easing: spring(0.48); }
+            animate lift { duration: Theme.motion(380ms); easing: spring(0.48); }
             if !Theme.material: Rectangle {
                 x: s.lead;
                 y: -parent.lift - parent.hop;
@@ -221,7 +222,7 @@ export component Dock inherits Window {
                 height: s.size;
                 transform-origin: { x: self.width / 2, y: self.height / 2 };
                 transform-scale: s.pressed ? 0.9 : 1;
-                animate transform-scale { duration: 320ms; easing: spring(0.44); }
+                animate transform-scale { duration: Theme.move-emphasized; easing: spring(0.44); }
                 if s.kind == "launcher" && !s.themed: DotGrid { size: s.size; }
                 // Minimized: a tile for its last frame (no thumbnail here), its app's badge
                 // Minimized: its last frame on a tile, its app's badge
@@ -313,7 +314,7 @@ export component Dock inherits Window {
                     height: self.width;
                     border-radius: self.width / 2;
                     background: Theme.m3-on-surface.with-alpha(s.pressed ? 0.1 : s.hot ? 0.08 : 0);
-                    animate background { duration: 150ms; }
+                    animate background { duration: Theme.hover; }
                 }
                 // The icon, swelling a little while pressed (the press spring)
                 Rectangle {
@@ -323,17 +324,17 @@ export component Dock inherits Window {
                     height: self.width;
                     transform-origin: { x: self.width / 2, y: self.height / 2 };
                     transform-scale: s.pressed && Theme.press-bounce ? 1 + min(0.06, 10px / self.width) : 1;
-                    animate transform-scale { duration: 290ms; easing: spring(0.57); }
+                    animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
                     // Apps button: a tonal circle that squares off while pressed
                     if s.kind == "launcher": Rectangle {
                         // (its own ElasticControl too, inside the icon's: it swells twice)
                         transform-origin: { x: self.width / 2, y: self.height / 2 };
                         transform-scale: s.pressed && Theme.press-bounce ? 1 + min(0.06, 10px / self.width) : 1;
-                        animate transform-scale { duration: 290ms; easing: spring(0.57); }
+                        animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
                         border-radius: s.pressed ? 16px : self.width / 2;
-                        animate border-radius { duration: 150ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+                        animate border-radius { duration: Theme.move-fast; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
                         background: Theme.m3-on-secondary-container.mix(Theme.m3-secondary-container, s.pressed ? 0.1 : s.hot ? 0.08 : 0);
-                        animate background { duration: 150ms; }
+                        animate background { duration: Theme.hover; }
                         // squares-four, as Material draws it (Icon.qml: a Material
                         // Symbol, 1.2× the size, filled)
                         Text {
@@ -384,13 +385,13 @@ export component Dock inherits Window {
             // Running: a short dash under the icon, longer and primary for the app in front
             if Theme.material && s.running: Rectangle {
                 width: s.focused ? 16px : 12px;
-                animate width { duration: 220ms; easing: spring(0.4); }
+                animate width { duration: Theme.move-standard; easing: spring(0.4); }
                 x: s.lead + (root.base - self.width) / 2;
                 y: root.base + round((root.pad - 2px) / 2px) * 1px;
                 height: 2px;
                 border-radius: 1px;
                 background: s.focused ? Theme.m3-primary : Theme.m3-on-surface-variant;
-                animate background { duration: 150ms; }
+                animate background { duration: Theme.hover; }
             }
             // A plain tooltip above the pill: inverse surface, after a first wait
             if Theme.material: Rectangle {
@@ -400,7 +401,7 @@ export component Dock inherits Window {
                 visible: self.opacity > 0;
                 x: s.lead + (root.base - self.width) / 2;
                 y: -root.pad - 8px - self.height + (shown ? 0 : 4px);
-                animate y { duration: 150ms; easing: cubic-bezier(0.05, 0.7, 0.1, 1.0); }
+                animate y { duration: Theme.move-fast; easing: cubic-bezier(0.05, 0.7, 0.1, 1.0); }
                 width: min(280px, tip.preferred-width + 16px);
                 height: 24px;
                 border-radius: 4px;
@@ -459,7 +460,7 @@ export component DockMenu inherits Window {
     // (spring 5 / damping 0.36 in QML; no exit animation there: it goes at once)
     out property <float> progress: shown ? 1 : 0;
     animate progress {
-        duration: shown ? 350ms : 0ms;
+        duration: Theme.motion(shown ? 350ms : 0ms);
         easing: spring(0.36);
     }
     out property <length> panel-x: panel.x;

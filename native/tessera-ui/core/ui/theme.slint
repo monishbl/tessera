@@ -247,9 +247,9 @@ export component BarItem inherits Rectangle {
     callback clicked();
     height: 24px;
     width: row.preferred-width + 18px;
-    border-radius: Theme.material ? self.height / 2 : 6px;
+    border-radius: Theme.material ? self.height / 2 : Theme.radius-small;
     background: Theme.fg.with-alpha(active ? (Theme.material ? 0.16 : 0.22) : touch.pressed ? (Theme.material ? 0.1 : 0.2) : touch.has-hover ? (Theme.material ? 0.08 : 0.12) : 0);
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     accessible-role: button;
     accessible-label: label != "" ? label : text;
     accessible-action-default => { clicked(); }

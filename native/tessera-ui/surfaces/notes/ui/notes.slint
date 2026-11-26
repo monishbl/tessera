@@ -53,7 +53,7 @@ export component QuickNote inherits Window {
     animate openness {
         // (Dialog.qml: spring + 0.4, damping + 0.08 → Material ω 20.1 ζ 0.90, Glass ω 16.2 ζ 0.77;
         // closes in panel × 0.6 on the look's exit curve)
-        duration: shown ? (Theme.material ? 312ms : 388ms) : Theme.motion-panel * 0.6;
+        duration: Theme.motion(shown ? (Theme.material ? 312ms : 388ms) : Theme.motion-panel * 0.6);
         easing: shown ? (Theme.material ? spring(0.1) : spring(0.23)) : Theme.material ? cubic-bezier(0.3, 0, 0.8, 0.15) : cubic-bezier(0.4, 0, 1, 1);
     }
     changed openness => {
@@ -219,14 +219,14 @@ export component QuickNote inherits Window {
                 height: 56px;
                 property <length> corner: fab-open ? self.width / 2 : fab-ta.pressed ? 20px : 16px;
                 border-radius: corner;
-                animate border-radius { duration: 290ms; easing: spring(0.57); } // (springPress)
+                animate border-radius { duration: Theme.motion(290ms); easing: spring(0.57); } // (springPress)
                 background: fab-open ? Theme.m3-primary : Theme.m3-primary-container.mix(Theme.m3-on-primary-container, fab-ta.pressed ? 0.9 : fab-ta.has-hover ? 0.92 : 1);
                 animate background { duration: Theme.hover; }
                 drop-shadow-blur: 10px;
                 drop-shadow-offset-y: 3px;
                 drop-shadow-color: Theme.m3-shadow.with-alpha(Theme.dark ? 0.4 : 0.18);
                 transform-scale: fab-ta.pressed ? 1.06 : 1;
-                animate transform-scale { duration: 290ms; easing: spring(0.57); } // (springPress)
+                animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); } // (springPress)
                 accessible-role: button;
                 accessible-label: "Add to the note";
                 accessible-action-default => { fab-open = !fab-open; }
@@ -235,7 +235,7 @@ export component QuickNote inherits Window {
                     font-size: 24px;
                     color: fab-open ? Theme.m3-on-primary : Theme.m3-on-primary-container;
                     transform-rotation: fab-open ? 90deg : 0deg;
-                    animate transform-rotation { duration: 290ms; easing: spring(0.57); } // (springPress)
+                    animate transform-rotation { duration: Theme.motion(290ms); easing: spring(0.57); } // (springPress)
                 }
                 fab-ta := TouchArea {
                     mouse-cursor: pointer;
@@ -265,13 +265,13 @@ export component QuickNote inherits Window {
                 height: footer-h;
                 x: parent.width - self.width;
                 border-radius: Theme.material ? (save-ta.pressed ? 8px : self.height / 2) : Theme.radius-control;
-                animate border-radius { duration: 222ms; easing: spring(0.4); } // (springFast)
+                animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); } // (springFast)
                 background: Theme.material
                     ? (!can-save ? Theme.m3-on-surface.with-alpha(0.12) : Theme.m3-primary.mix(Theme.m3-on-primary, save-ta.pressed ? 0.9 : save-ta.has-hover ? 0.92 : 1))
                     : (!can-save ? Theme.fill : save-ta.pressed ? Theme.accent.darker(0.15) : save-ta.has-hover ? Theme.accent.brighter(0.08) : Theme.accent);
                 // (Material: ElasticControl's swell on springPress; Glass: 97 % over 100 ms)
                 transform-scale: Theme.material ? (save-ta.pressed && can-save ? 1 + min(0.06, 10px / max(1px, self.width)) : 1) : (save-ta.pressed ? 0.97 : 1);
-                animate transform-scale { duration: Theme.material ? 290ms : 100ms; easing: Theme.material ? spring(0.57) : linear; }
+                animate transform-scale { duration: Theme.motion(Theme.material ? 290ms : 100ms); easing: Theme.material ? spring(0.57) : linear; }
                 accessible-role: button;
                 accessible-label: saving ? "Saving" : "Save note";
                 accessible-enabled: can-save;
@@ -306,7 +306,7 @@ export component QuickNote inherits Window {
             animate t {
                 // (FabMenu.qml: springPress with damping + 0.1 → ω 21.7, ζ 0.58; the
                 // stagger only when opening)
-                duration: 290ms;
+                duration: Theme.motion(290ms);
                 delay: fab-open ? (menu.length - 1 - i) * 30ms : 0ms;
                 easing: spring(0.42);
             }

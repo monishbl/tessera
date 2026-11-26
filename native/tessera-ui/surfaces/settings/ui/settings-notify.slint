@@ -40,7 +40,7 @@ component Ghost inherits Rectangle {
     width: 28px;
     height: self.width;
     border-radius: Theme.material ? (ta.pressed ? 8px : self.height / 2) : Theme.radius-control - 2px;
-    animate border-radius { duration: 150ms; }
+    animate border-radius { duration: Theme.move-fast; }
     background: Theme.material ? Theme.m3-on-surface-variant.with-alpha(ta.pressed ? 0.1 : ta.has-hover ? 0.08 : 0) : ta.pressed ? Theme.fill-pressed : ta.has-hover ? Theme.fill : transparent;
     animate background { duration: SM.hover; }
     accessible-role: AccessibleRole.button;

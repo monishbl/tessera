@@ -23,14 +23,14 @@ component PickerButton inherits Rectangle {
     width: label.preferred-width + (Theme.material ? 40px : 32px);
     height: Theme.material ? 40px : 36px;
     border-radius: Theme.material ? (touch.pressed ? 12px : self.height / 2) : Theme.radius-control;
-    animate border-radius { duration: 222ms; easing: spring(0.4); }
+    animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); }
     background: Theme.material ? (primary ? Theme.m3-primary : Theme.m3-secondary-container).mix(ink, touch.pressed ? 0.9 : touch.has-hover ? 0.92 : 1)
         : primary ? (touch.pressed ? Theme.accent.darker(0.2) : touch.has-hover ? Theme.accent.darker(0.1) : Theme.accent) : touch.pressed ? Theme.fill-pressed : touch.has-hover ? Theme.fill-hover : Theme.fill;
     animate background { duration: Theme.hover; }
     property <float> swell: Theme.material && touch.pressed ? 1 + min(0.06, 10px / max(self.width, self.height)) : 1;
-    animate swell { duration: 290ms; easing: spring(0.57); }
+    animate swell { duration: Theme.motion(290ms); easing: spring(0.57); }
     property <float> squish: !Theme.material && touch.pressed ? 0.97 : 1;
-    animate squish { duration: 100ms; }
+    animate squish { duration: Theme.motion(100ms); }
     transform-scale: swell * squish;
     transform-origin: { x: self.width / 2, y: self.height / 2 };
     accessible-role: button;
@@ -166,7 +166,7 @@ export component EmojiPicker inherits Window {
     // (subtle) 4.6 / 0.38: ω 17.0, ζ 0.70 → 370 ms spring(0.3). Closes in
     // Theme.motion.popover × 0.7 on the look's exit curve.
     animate openness {
-        duration: shown ? (Theme.material ? 303ms : 370ms) : Theme.popover * 0.7;
+        duration: Theme.motion(shown ? (Theme.material ? 303ms : 370ms) : Theme.popover * 0.7);
         easing: shown ? (Theme.material ? spring(0.16) : spring(0.3)) : Theme.material ? cubic-bezier(0.3, 0, 0.8, 0.15) : cubic-bezier(0.4, 0, 1, 1);
     }
     changed openness => {
@@ -273,7 +273,7 @@ export component EmojiPicker inherits Window {
                         // the press spring (springPress 7.5 / 0.3: ω 21.7, ζ 0.43 →
                         // 290 ms spring(0.57)), springing back past their size
                         property <float> swell: Theme.material && ta.pressed ? 1.06 : 1;
-                        animate swell { duration: 290ms; easing: spring(0.57); }
+                        animate swell { duration: Theme.motion(290ms); easing: spring(0.57); }
                         // the selection (Material: secondary container, round while pressed)
                         if on >= 0 && on < r.cells.length: Rectangle {
                             x: cr.on * cr.cw + 1px;
@@ -284,7 +284,7 @@ export component EmojiPicker inherits Window {
                             transform-origin: { x: self.width / 2, y: self.height / 2 };
                             border-radius: Theme.material && cr.press-col == cr.on ? self.height / 2 : Theme.radius-control;
                             // (springFast 12.8 / 0.54: ω 28.3, ζ 0.60)
-                            animate border-radius { duration: 222ms; easing: spring(0.4); }
+                            animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); }
                             background: Theme.material ? Theme.m3-secondary-container.mix(Theme.m3-on-secondary-container, cr.press-col == cr.on ? 0.9 : 1)
                                 : cr.press-col == cr.on ? Theme.fill-pressed : Theme.accent.with-alpha(Theme.dark ? 0.32 : 0.16);
                         }
@@ -597,7 +597,7 @@ export component EmojiPicker inherits Window {
                     background: active ? Theme.m3-secondary-container.mix(Theme.m3-on-secondary-container, tt.pressed ? 0.9 : tt.has-hover ? 0.92 : 1)
                         : Theme.m3-on-surface-variant.with-alpha(tt.pressed ? 0.1 : tt.has-hover ? 0.08 : 0);
                     // (springFast 12.8 / 0.54: ω 28.3, ζ 0.60)
-                    animate width { duration: 222ms; easing: spring(0.4); }
+                    animate width { duration: Theme.move-spatial; easing: spring(0.4); }
                     animate background { duration: Theme.hover; }
                 }
                 if t.icon != "": Icon {
@@ -619,7 +619,7 @@ export component EmojiPicker inherits Window {
                     height: 2px;
                     border-radius: 1px;
                     background: Theme.accent;
-                    animate width { duration: Theme.hover; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+                    animate width { duration: Theme.move-fast; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
                 }
                 tt := TouchArea {
                     mouse-cursor: pointer;

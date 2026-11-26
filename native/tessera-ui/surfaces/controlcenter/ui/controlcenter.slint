@@ -177,10 +177,10 @@ component GhostButton inherits Rectangle {
         border-color: Theme.material ? Theme.m3-secondary : Theme.accent;
     }
     border-radius: Theme.material ? (t.pressed ? min(8px, self.height / 2) : self.height / 2) : Theme.radius-control - 2px;
-    animate border-radius { duration: 150ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate border-radius { duration: Theme.move-fast; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     background: !enabled ? transparent : Theme.material ? (t.pressed ? Theme.m3-on-surface-variant.with-alpha(0.1) : t.has-hover ? Theme.m3-on-surface-variant.with-alpha(0.08) : transparent)
         : t.pressed ? Theme.fill-pressed : t.has-hover ? Theme.fill : transparent;
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     opacity: enabled || !dim-disabled ? 1 : 0.38;
     accessible-role: button;
     accessible-label: label;
@@ -229,7 +229,7 @@ component CapsuleSlider {
         clip: true;
         fill := Rectangle {
             property <length> len: max(thick, (vertical ? root.height : root.width) * v);
-            animate len { duration: touch.pressed ? 0ms : 150ms; }
+            animate len { duration: Theme.motion(touch.pressed ? 0ms : 150ms); }
             x: 0;
             y: vertical ? root.height - self.len : 0;
             width: vertical ? root.width : self.len;
@@ -334,7 +334,7 @@ component GlassModule {
     // (QML: the others blur and fade back; Slint has no blur, they fade)
     opacity: 1 - 0.6 * dim; // (QML: 0.45 and a blur; without the blur, a deeper fade)
     transform-scale: (m.focused ? 1.04 : 1) * (bg.pressed && !editing && m.kind != 2 ? 0.95 : 1);
-    animate transform-scale { duration: 300ms; easing: spring(0.35); }
+    animate transform-scale { duration: Theme.motion(300ms); easing: spring(0.35); }
     transform-origin: { x: self.width / 2, y: self.height / 2 };
     accessible-role: button;
     accessible-label: m.label;
@@ -351,7 +351,7 @@ component GlassModule {
         background: Theme.panel;
     }
     property <color> tile-fill: is-round ? (m.on ? #ffffff : bg.has-hover ? Theme.fill-hover : idle) : idle;
-    animate tile-fill { duration: 150ms; }
+    animate tile-fill { duration: Theme.hover; }
     // (on the glass's own curve, Platter's Squircle: a circular fill parted
     // from the plugin's squircle at the corners, a second rounding; a chip's
     // faint hairline lies on the glass's edge, as Platter's)
@@ -449,9 +449,9 @@ component GlassModule {
             height: size;
             border-radius: self.width / 2;
             background: m.on ? #ffffff : bt.has-hover ? Theme.fill-hover : Theme.toggle-off;
-            animate background { duration: 150ms; }
+            animate background { duration: Theme.hover; }
             transform-scale: bt.pressed ? 0.95 : 1;
-            animate transform-scale { duration: 150ms; }
+            animate transform-scale { duration: Theme.move-fast; }
             Ic {
                 icon: m.icon;
                 fill: m.on;
@@ -704,12 +704,12 @@ export component QsSlider {
     property <length> across: vertical ? self.width : self.height;
     property <float> v: seek-on-release && dragging ? drag : max(0, min(1, value));
     property <float> shown: v;
-    animate shown { duration: touch.pressed ? 0ms : 150ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate shown { duration: Theme.motion(touch.pressed ? 0ms : 150ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     property <length> corner: touch.pressed ? 8px : track / 2;
-    animate corner { duration: 290ms; easing: spring(0.5); }
+    animate corner { duration: Theme.motion(290ms); easing: spring(0.5); }
     property <length> gap: 6px;
     property <length> handle: touch.pressed ? 2px : 4px;
-    animate handle { duration: 100ms; }
+    animate handle { duration: Theme.motion(100ms); }
     property <length> hx: shown * (along - handle);
     property <length> t0: (across - track) / 2;
     property <float> before;
@@ -769,7 +769,7 @@ export component QsSlider {
         property <length> inset: round((track - sz) / 2 / 1px) * 1px;
         property <bool> inside: hx - gap >= inset + sz + 6px;
         property <length> pos: inside ? inset : hx + handle + gap + inset * 0.6;
-        animate pos { duration: touch.pressed ? 0ms : 150ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+        animate pos { duration: Theme.motion(touch.pressed ? 0ms : 150ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
         x: vertical ? (root.width - sz) / 2 : pos;
         y: vertical ? along - pos - sz : (root.height - sz) / 2;
         width: sz;
@@ -778,7 +778,7 @@ export component QsSlider {
         fill: true;
         size: sz;
         color: inside ? Theme.m3-on-primary : Theme.m3-on-secondary-container;
-        animate color { duration: 150ms; }
+        animate color { duration: Theme.hover; }
     }
     function at() -> float {
         return max(0, min(1, vertical ? 1 - touch.mouse-y / root.height : touch.mouse-x / root.width));
@@ -862,9 +862,9 @@ component TonalButton inherits Rectangle {
     height: 40px;
     property <color> ink: strong ? Theme.m3-on-primary-container : Theme.m3-on-surface-variant;
     border-radius: t.pressed ? min(12px, corner) : corner;
-    animate border-radius { duration: 222ms; easing: spring(0.4); }
+    animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); }
     background: (strong ? Theme.m3-primary-container : Theme.m3-surface-container-highest).mix(ink, t.pressed ? 0.9 : t.has-hover ? 0.92 : 1);
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     accessible-role: button;
     accessible-label: tip;
     accessible-action-default => { clicked(); }
@@ -907,7 +907,7 @@ component QsTile {
     property <string> subtitle: m.kind == 4 ? m.sub : m.status;
     property <length> rest-corner: on ? min(self.height, 72px) / 2 : 20px;
     property <length> corner: pressed && !editing ? rest-corner * 0.7 : rest-corner;
-    animate corner { duration: 290ms; easing: spring(0.5); }
+    animate corner { duration: Theme.motion(290ms); easing: spring(0.5); }
     property <bool> held;
     changed pressed => { pressed-changed(pressed); }
     accessible-role: button;
@@ -920,7 +920,7 @@ component QsTile {
     Rectangle {
         border-radius: corner;
         background: container.mix(ink, tile.pressed && !editing ? 0.9 : tile.has-hover && !icon-touch.has-hover && !editing ? 0.92 : 1);
-        animate background { duration: 150ms; }
+        animate background { duration: Theme.hover; }
     }
     if kbd-focus: Rectangle {
         x: -5px;
@@ -1014,10 +1014,10 @@ component QsTile {
             width: size;
             height: size;
             border-radius: (on ? size / 2 : 16px) * (icon-touch.pressed ? 0.7 : 1);
-            animate border-radius { duration: 222ms; easing: spring(0.4); }
+            animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); }
             background: on ? Theme.m3-primary.mix(Theme.m3-on-primary, icon-touch.pressed ? 0.9 : icon-touch.has-hover ? 0.92 : 1)
                 : container.mix(Theme.m3-on-surface, icon-touch.pressed ? 0.82 : icon-touch.has-hover ? 0.86 : 0.92);
-            animate background { duration: 150ms; }
+            animate background { duration: Theme.hover; }
             Ic {
                 icon: m.icon;
                 fill: on;
@@ -1120,7 +1120,7 @@ component QsMedia {
         // (QML: a cookie while playing, a circle paused; here a circle that
         // squares a little while playing)
         border-radius: media.playing ? self.width * 0.32 : self.width / 2;
-        animate border-radius { duration: 322ms; easing: spring(0.2); }
+        animate border-radius { duration: Theme.motion(322ms); easing: spring(0.2); }
         background: Theme.m3-tertiary-container;
         clip: true;
         if media.has-art: Image {
@@ -1271,9 +1271,9 @@ component QsMedia {
         width: 48px;
         height: 48px;
         border-radius: pt.pressed ? 10px : media.playing ? 16px : 24px;
-        animate border-radius { duration: 222ms; easing: spring(0.4); }
+        animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); }
         background: can ? Theme.m3-primary.mix(Theme.m3-on-primary, pt.pressed ? 0.9 : pt.has-hover ? 0.92 : 1) : Theme.m3-on-surface.with-alpha(0.12);
-        animate background { duration: 150ms; }
+        animate background { duration: Theme.hover; }
         accessible-role: button;
         accessible-label: media.playing ? "Pause" : "Play";
         accessible-action-default => { media-do("toggle"); }
@@ -1329,7 +1329,7 @@ export component Block inherits VerticalLayout {
         accessible-action-default => { do("click", ""); }
         property <bool> held;
         property <length> inner: b.hl || rt.pressed ? 16px : rt.has-hover ? 12px : 4px;
-        animate inner { duration: 222ms; easing: spring(0.4); }
+        animate inner { duration: Theme.move-spatial; easing: spring(0.4); }
         // Material: the segment (Glass: a hover fill)
         Rectangle {
             border-radius: m3 ? 0 : Theme.radius-control;
@@ -1339,7 +1339,7 @@ export component Block inherits VerticalLayout {
             border-bottom-right-radius: m3 ? (b.last ? 20px : inner) : Theme.radius-control;
             background: m3 ? (b.hl ? Theme.m3-primary-container : Theme.m3-surface-container-high).mix(b.hl ? Theme.m3-on-primary-container : Theme.m3-on-surface, rt.pressed ? 0.9 : rt.has-hover ? 0.92 : 1)
                 : rt.pressed ? Theme.fill-pressed : rt.has-hover ? Theme.fill : transparent;
-            animate background { duration: 150ms; }
+            animate background { duration: Theme.hover; }
         }
         // (drawn inside the row: rows fill their Flickable's width, and the
         // Flickable clips, which cut a ring drawn outside to two short lines)
@@ -1513,7 +1513,7 @@ export component Block inherits VerticalLayout {
             border-top-right-radius: !m3 ? 0 : chosen || i == n - 1 ? self.height / 2 : 8px;
             border-bottom-right-radius: self.border-top-right-radius;
             background: !m3 ? transparent : (chosen ? Theme.m3-primary : Theme.m3-surface-container-highest).mix(chosen ? Theme.m3-on-primary : Theme.m3-on-surface-variant, st.pressed ? 0.9 : st.has-hover ? 0.92 : 1);
-            animate background { duration: 150ms; }
+            animate background { duration: Theme.hover; }
             accessible-role: tab;
             accessible-label: o;
             accessible-action-default => { do("seg", i); }
@@ -1546,7 +1546,7 @@ export component Block inherits VerticalLayout {
         Rectangle {
             x: 0;
             width: max(parent.height, parent.width * max(0, min(1, b.value)));
-            animate width { duration: sl.pressed ? 0ms : 150ms; }
+            animate width { duration: Theme.motion(sl.pressed ? 0ms : 150ms); }
             height: parent.height;
             border-radius: 13px;
             background: Theme.dark ? #ffffffeb : #ffffff;
@@ -1864,7 +1864,7 @@ export component Block inherits VerticalLayout {
             opacity: b.busy && primary ? 0.6 : 1;
             background: primary ? (m3 ? Theme.m3-primary : Theme.accent).mix(m3 ? Theme.m3-on-primary : #000000, bt.pressed ? 0.9 : bt.has-hover ? 0.93 : 1)
                 : bt.pressed ? Theme.fill-pressed : bt.has-hover ? Theme.fill : transparent;
-            animate background { duration: 150ms; }
+            animate background { duration: Theme.hover; }
             accessible-role: button;
             accessible-label: o;
             accessible-action-default => { do("btn", o); }
@@ -1890,7 +1890,7 @@ export component Block inherits VerticalLayout {
             height: 28px;
             border-radius: m3 ? 14px : 6px;
             background: mt.pressed ? Theme.fill-pressed : mt.has-hover ? Theme.fill : transparent;
-            animate background { duration: 150ms; }
+            animate background { duration: Theme.hover; }
             accessible-role: button;
             accessible-label: (b.flag ? "Unmute " : "Mute ") + b.title;
             accessible-action-default => { do("mute", ""); }
@@ -1952,7 +1952,7 @@ component PageHeader {
     callback refreshed();
     property <bool> m3: Theme.material;
     property <angle> spin;
-    animate spin { duration: 500ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate spin { duration: Theme.motion(500ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     preferred-height: (m3 ? 48px : 30px) + (m3 && has-switch ? 56px + 10px : 0);
 
     if !m3: Rectangle {
@@ -1996,7 +1996,7 @@ component PageHeader {
             height: 22px;
             border-radius: 11px;
             background: switch-on ? Theme.accent : Theme.toggle-off;
-            animate background { duration: 150ms; }
+            animate background { duration: Theme.hover; }
             accessible-role: switch;
             accessible-label: switch-label;
             accessible-checkable: true;
@@ -2004,7 +2004,7 @@ component PageHeader {
             accessible-action-default => { toggled(); }
             Rectangle {
                 x: switch-on ? parent.width - self.width - 2px : 2px;
-                animate x { duration: 220ms; easing: cubic-bezier(0.2, 0.9, 0.1, 1.0); }
+                animate x { duration: Theme.move-standard; easing: cubic-bezier(0.2, 0.9, 0.1, 1.0); }
                 width: parent.height - 4px;
                 height: self.width;
                 border-radius: self.width / 2;
@@ -2060,7 +2060,7 @@ component PageHeader {
         border-radius: 28px;
         property <color> ink: switch-on ? Theme.m3-on-primary-container : Theme.m3-on-surface;
         background: (switch-on ? Theme.m3-primary-container : Theme.m3-surface-container-highest).mix(ink, bar.pressed ? 0.9 : bar.has-hover ? 0.92 : 1);
-        animate background { duration: 150ms; }
+        animate background { duration: Theme.hover; }
         accessible-role: switch;
         accessible-label: switch-label;
         accessible-checkable: true;
@@ -2091,15 +2091,15 @@ component PageHeader {
             background: switch-on ? Theme.m3-primary : Theme.m3-surface-container-highest;
             border-width: switch-on ? 0 : 2px;
             border-color: Theme.m3-outline;
-            animate background { duration: 150ms; }
+            animate background { duration: Theme.hover; }
             Rectangle {
                 property <length> size: bar.pressed ? 28px : switch-on ? 24px : 16px;
-                animate size { duration: 222ms; easing: spring(0.4); }
+                animate size { duration: Theme.move-spatial; easing: spring(0.4); }
                 width: size;
                 height: size;
                 border-radius: size / 2;
                 x: switch-on ? parent.width - 16px - size / 2 : 16px - size / 2;
-                animate x { duration: 222ms; easing: spring(0.4); }
+                animate x { duration: Theme.move-spatial; easing: spring(0.4); }
                 y: (parent.height - size) / 2;
                 background: switch-on ? Theme.m3-on-primary : Theme.m3-outline;
                 if switch-on: Ic {
@@ -2203,7 +2203,7 @@ component GlassFooterButton inherits Rectangle {
         border-color: Theme.material ? Theme.m3-secondary : Theme.accent;
     }
     width: text != "" ? w.preferred-width + 32px : 40px;
-    animate width { duration: 150ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate width { duration: Theme.move-fast; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     height: 40px;
     border-radius: 20px;
     background: accent ? (t.has-hover ? Theme.accent.darker(0.08) : Theme.accent)
@@ -2211,7 +2211,7 @@ component GlassFooterButton inherits Rectangle {
     border-width: chip && !accent ? 1px : 0; // (a pill: on the glass's own round ends, Platter's hairline)
     border-color: #ffffff.with-alpha(Theme.dark ? 0.06 : 0.3);
     transform-scale: t.pressed ? 0.95 : 1;
-    animate transform-scale { duration: 150ms; }
+    animate transform-scale { duration: Theme.move-fast; }
     accessible-role: button;
     accessible-label: label;
     accessible-action-default => { clicked(); }
@@ -2330,18 +2330,18 @@ export component ControlCenter inherits Window {
     property <length> pad: 16px;
     property <length> gap: Theme.material ? 8px : 10px;
     property <length> content-w: Theme.material ? 368px : editing ? 320px + 16px + 260px : 320px;
-    animate content-w { duration: 150ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate content-w { duration: Theme.move-fast; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     property <length> max-h: self.height - 34px - 2 * pad - 16px;
     // Glass: the grid, 12, the footer (the gallery beside it while editing)
     property <length> glass-h: max(grid-height + 12px + 40px, editing ? gal-col.preferred-height : 0);
     // Material: the editor's header, the grid, the gallery or the footer
     // (QuickSettings: the grid's height glides on the default spring as tiles move)
     property <length> grid-h: grid-height;
-    animate grid-h { duration: 322ms; easing: spring(0.2); }
+    animate grid-h { duration: Theme.motion(322ms); easing: spring(0.2); }
     property <length> home-h: (editing ? edit-head.preferred-height + 12px : 0) + (grid-h > 0 ? grid-h + 12px : 0) + (editing ? m-gal.preferred-height : 48px);
     property <length> m-target: min(max-h, page-t > 0.5 ? m-page.preferred-height : home-h);
     property <length> m-h: m-target;
-    animate m-h { duration: 322ms; easing: spring(0.2); }
+    animate m-h { duration: Theme.motion(322ms); easing: spring(0.2); }
     property <length> body-h: Theme.material ? m-h : glass-h;
     // Opening: the pieces rise in one after another (QuickSettings' stagger,
     // QSRise). Closing leaves them in place, as the QML's: they're reset
@@ -2349,21 +2349,21 @@ export component ControlCenter inherits Window {
     // closes (each tile fading on its own was a layer drawn per tile per frame)
     property <bool> rising;
     property <float> stagger: rising ? 1 : 0;
-    animate stagger { duration: rising ? 360ms : 0ms; }
+    animate stagger { duration: Theme.motion(rising ? 360ms : 0ms); }
     changed shown => {
         if shown { rising = true; }
     }
     property <float> squeeze: press-now && bounce ? 1 : 0;
-    animate squeeze { duration: 290ms; easing: spring(0.57); }
+    animate squeeze { duration: Theme.motion(290ms); easing: spring(0.57); }
     property <float> page-shown: page-t;
-    animate page-shown { duration: 322ms; easing: spring(0.2); }
+    animate page-shown { duration: Theme.motion(322ms); easing: spring(0.2); }
     out property <float> sub-shown: sub-show;
-    animate sub-shown { duration: 363ms; easing: spring(0.31); }
+    animate sub-shown { duration: Theme.motion(363ms); easing: spring(0.31); }
     property <float> dim-shown: paging && !Theme.material ? 1 : 0;
-    animate dim-shown { duration: 220ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate dim-shown { duration: Theme.move-standard; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
 
     animate openness {
-        duration: shown ? 370ms : Theme.popover * 0.7;
+        duration: Theme.motion(shown ? 370ms : Theme.popover * 0.7);
         easing: shown ? spring(0.3) : Theme.material ? cubic-bezier(0.3, 0, 0.8, 0.15) : cubic-bezier(0.4, 0, 1, 1);
     }
     changed openness => {
@@ -2576,8 +2576,8 @@ export component ControlCenter inherits Window {
                         width: m.w;
                         height: m.h;
                         z: self.dragging ? 5 : m.focused ? 4 : 0;
-                        animate x, y { duration: gm.dragging ? 0ms : 363ms; easing: spring(0.31); }
-                        animate width, height { duration: 363ms; easing: spring(0.31); }
+                        animate x, y { duration: Theme.motion(gm.dragging ? 0ms : 363ms); easing: spring(0.31); }
+                        animate width, height { duration: Theme.motion(363ms); easing: spring(0.31); }
                         m: m;
                         unit: (320px - 3 * gap) / 4;
                         chip: bare;
@@ -2800,14 +2800,14 @@ export component ControlCenter inherits Window {
                             property <bool> due: stagger >= 1 || stagger * 24 >= m.order + 1;
                             property <float> rise: due ? 1 : 0;
                             // (reset at once once closed; risen on a bouncy spring)
-                            animate rise { duration: due ? 222ms : 0ms; easing: spring(0.58); }
+                            animate rise { duration: Theme.motion(due ? 222ms : 0ms); easing: spring(0.58); }
                             property <bool> lifted: tile.dragging;
                             x: m.x + m.sq-dx * squeeze * 1px + tile.drag-dx;
                             y: m.y + tile.drag-dy;
-                            animate x, y { duration: lifted ? 0ms : 322ms; easing: spring(0.2); }
+                            animate x, y { duration: Theme.motion(lifted ? 0ms : 322ms); easing: spring(0.2); }
                             width: m.w;
                             height: m.h;
-                            animate width, height { duration: 322ms; easing: spring(0.2); }
+                            animate width, height { duration: Theme.motion(322ms); easing: spring(0.2); }
                             z: lifted ? 5 : 0;
                             opacity: min(1, rise);
                             transform-scale: (0.86 + 0.14 * rise) * (lifted ? 1.05 : 1);
@@ -2920,7 +2920,7 @@ export component ControlCenter inherits Window {
                         visible: !editing;
                         property <bool> due: stagger >= 1 || stagger * 24 >= modules.length + 2;
                         property <float> rise: due ? 1 : 0;
-                        animate rise { duration: due ? 222ms : 0ms; easing: spring(0.58); }
+                        animate rise { duration: Theme.motion(due ? 222ms : 0ms); easing: spring(0.58); }
                         y: (grid-h > 0 ? grid-h + 12px : 0) + 12px * (1 - rise);
                         height: 48px;
                         opacity: min(1, rise);
@@ -3100,7 +3100,7 @@ export component ControlCenter inherits Window {
             changed width => { root.menu-gw = self.width; }
             changed height => { root.menu-gh = self.height; }
             changed p => { root.menu-go = min(1, self.p); }
-            animate p { duration: 300ms; easing: spring(0.36); }
+            animate p { duration: Theme.motion(300ms); easing: spring(0.36); }
             opacity: min(1, p);
             transform-scale: 0.94 + 0.06 * p;
             transform-origin: { x: 0, y: menu-y + self.height > root.height - 8px && menu-y > root.height - menu-y ? self.height : 0 };

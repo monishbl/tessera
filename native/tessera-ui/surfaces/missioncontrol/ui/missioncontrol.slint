@@ -73,7 +73,7 @@ export component MissionControlPanel inherits Window {
 
     out property <float> progress: shown ? 1 : 0;
     animate progress {
-        duration: 320ms;
+        duration: Theme.move-emphasized;
         easing: shown ? (Theme.material ? cubic-bezier(0.05, 0.7, 0.1, 1.0) : cubic-bezier(0.2, 0.9, 0.1, 1.0)) : (Theme.material ? cubic-bezier(0.3, 0, 0.8, 0.15) : cubic-bezier(0.4, 0, 1, 1));
     }
     changed progress => {
@@ -272,7 +272,7 @@ export component MissionControlPanel inherits Window {
                 // before their pictures came)
                 background: Theme.material ? Theme.m3-surface-container-highest : Theme.dark ? #1a1a1f : #e4e4e7;
                 transform-scale: tile.hot ? 1.02 : 1;
-                animate transform-scale { duration: 150ms; }
+                animate transform-scale { duration: Theme.move-fast; }
                 transform-origin: { x: self.width / 2, y: self.height / 2 };
                 clip: true;
                 Image {
@@ -334,7 +334,7 @@ export component MissionControlPanel inherits Window {
                 height: 32px;
                 border-radius: 16px;
                 background: tile.hot ? Theme.m3-secondary-container : Theme.m3-surface-container-high;
-                animate background { duration: 150ms; }
+                animate background { duration: Theme.hover; }
                 chip := HorizontalLayout {
                     alignment: center;
                     spacing: 8px;

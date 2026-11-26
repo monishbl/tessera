@@ -3,7 +3,7 @@
 // look draws it, a window's picture with its app icon (WindowPreview.qml),
 // and the glass context menu they open at the pointer (ContextMenu.qml).
 
-import { Theme } from "theme.slint";
+import { Theme, Ease } from "theme.slint";
 
 // A glyph as Icon.qml picks it (Material: a Material Symbol, 1.2× the size)
 export struct WGlyph {
@@ -43,7 +43,7 @@ export component WPreview inherits Rectangle {
     in property <length> radius: 4px;
     property <bool> roomy: root.height >= 56px && root.width >= 72px;
     property <float> shown: has-picture ? 1 : 0;
-    animate shown { duration: 150ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); } // (OutCubic, WindowPreview.qml)
+    animate shown { duration: Theme.move-fast; easing: Ease.out-cubic; } // (OutCubic, WindowPreview.qml)
     accessible-role: none;
     Rectangle {
         border-radius: radius;
@@ -142,7 +142,7 @@ export component WMenu inherits Rectangle {
     out property <length> mh: natural;
     out property <float> openness: 0;
     init => { openness = 1; }
-    animate openness { duration: 300ms; easing: spring(0.36); }
+    animate openness { duration: Theme.motion(300ms); easing: spring(0.36); }
     // a click outside closes it (a right or middle one too, as the dock's
     // and the desktop's menus)
     TouchArea {

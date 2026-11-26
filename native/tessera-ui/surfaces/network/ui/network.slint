@@ -124,7 +124,7 @@ component WaveBar inherits Rectangle {
         Rectangle {
             x: 0;
             width: parent.width * root.value;
-            animate width { duration: 250ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+            animate width { duration: Theme.motion(250ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
             height: parent.height;
             border-radius: 2px;
             background: Theme.accent;
@@ -134,7 +134,7 @@ component WaveBar inherits Rectangle {
         width: 100%;
         height: 100%;
         property <length> end: self.width * root.value;
-        animate end { duration: 250ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+        animate end { duration: Theme.motion(250ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
         property <float> phase: mod(animation-tick() / 1000ms, 1);
         // the track after a gap, with its stop dot
         Rectangle {
@@ -255,7 +255,7 @@ export component SpeedTestCard inherits Rectangle {
                 // Material: an extra-small button, filled to start, tonal to
                 // cancel, its corners tightening while pressed (Glass: a pill)
                 border-radius: m3 ? (at.pressed ? 8px : self.height / 2) : 14px;
-                animate border-radius { duration: 222ms; easing: spring(0.4); } // (springFast)
+                animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); } // (springFast)
                 background: m3 ? base.mix(ink, at.pressed ? 0.9 : at.has-hover ? 0.92 : 1)
                     : s.running ? (at.pressed ? Theme.fill-pressed : at.has-hover ? Theme.fill-hover : Theme.fill)
                     : (at.pressed ? Theme.accent.darker(0.2) : at.has-hover ? Theme.accent.darker(0.1) : Theme.accent);
@@ -264,7 +264,7 @@ export component SpeedTestCard inherits Rectangle {
                 transform-origin: { x: self.width / 2, y: self.height / 2 };
                 // (Material: ElasticControl's swell on springPress; Glass: 97 % over the press time)
                 transform-scale: at.pressed ? (m3 ? 1 + min(0.06, 10px / max(1px, self.width)) : 0.97) : 1;
-                animate transform-scale { duration: m3 ? 290ms : 100ms; easing: m3 ? spring(0.57) : linear; }
+                animate transform-scale { duration: Theme.motion(m3 ? 290ms : 100ms); easing: m3 ? spring(0.57) : linear; }
                 accessible-role: button;
                 accessible-label: s.action;
                 accessible-action-default => { root.act(); }
@@ -423,7 +423,7 @@ component NetRowView inherits Rectangle {
     accessible-action-default => { root.clicked(); }
 
     property <length> inner: r.hl || rt.pressed ? 16px : rt.has-hover ? 12px : 4px;
-    animate inner { duration: 222ms; easing: spring(0.4); }
+    animate inner { duration: Theme.move-spatial; easing: spring(0.4); }
     Rectangle {
         border-top-left-radius: m3 ? (r.first ? 20px : inner) : Theme.radius-control;
         border-top-right-radius: self.border-top-left-radius;
@@ -431,7 +431,7 @@ component NetRowView inherits Rectangle {
         border-bottom-right-radius: self.border-bottom-left-radius;
         background: m3 ? (r.hl ? Theme.m3-primary-container : Theme.m3-surface-container-high).mix(r.hl ? Theme.m3-on-primary-container : Theme.m3-on-surface, rt.pressed ? 0.9 : rt.has-hover ? 0.92 : 1)
             : rt.pressed ? Theme.fill-pressed : rt.has-hover ? Theme.fill : transparent;
-        animate background { duration: 150ms; }
+        animate background { duration: Theme.hover; }
     }
     if r.focused: Rectangle {
         x: m3 ? -5px : -4px;
@@ -511,7 +511,7 @@ component NetRowView inherits Rectangle {
         border-radius: m3 ? (st.pressed ? 8px : 14px) : Theme.radius-control - 2px;
         background: m3 ? (st.pressed ? Theme.m3-on-surface-variant.with-alpha(0.1) : st.has-hover ? Theme.m3-on-surface-variant.with-alpha(0.08) : transparent)
             : st.pressed ? Theme.fill-pressed : st.has-hover ? Theme.fill : transparent;
-        animate background { duration: 150ms; }
+        animate background { duration: Theme.hover; }
         accessible-role: button;
         accessible-label: "Share this network";
         accessible-action-default => { root.action(); }
@@ -596,10 +596,10 @@ export component WifiMenu inherits Window {
     property <length> pad: 16px;
     property <length> mpad: m3 ? 4px : 5px;
     property <angle> spin;
-    animate spin { duration: 500ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate spin { duration: Theme.motion(500ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
 
     animate openness {
-        duration: shown ? 420ms : Theme.popover * 0.7;
+        duration: Theme.motion(shown ? 420ms : Theme.popover * 0.7);
         easing: shown ? spring(0.3) : Theme.material ? cubic-bezier(0.3, 0, 0.8, 0.15) : cubic-bezier(0.4, 0, 1, 1);
     }
     changed openness => {
@@ -697,7 +697,7 @@ export component WifiMenu inherits Window {
                                 height: 22px;
                                 border-radius: 11px;
                                 background: wifi-on ? Theme.accent : Theme.toggle-off;
-                                animate background { duration: 150ms; }
+                                animate background { duration: Theme.hover; }
                                 opacity: adapter ? 1 : 0.4;
                                 accessible-role: switch;
                                 accessible-label: "Wi-Fi";
@@ -707,7 +707,7 @@ export component WifiMenu inherits Window {
                                 accessible-action-default => { if adapter { switch-toggled(); } }
                                 Rectangle {
                                     x: wifi-on ? parent.width - self.width - 2px : 2px;
-                                    animate x { duration: 220ms; easing: cubic-bezier(0.2, 0.9, 0.1, 1.0); }
+                                    animate x { duration: Theme.move-standard; easing: cubic-bezier(0.2, 0.9, 0.1, 1.0); }
                                     width: parent.height - 4px;
                                     height: self.width;
                                     border-radius: self.width / 2;
@@ -740,7 +740,7 @@ export component WifiMenu inherits Window {
                                 height: 40px;
                                 border-radius: mr.pressed ? 8px : 20px;
                                 background: mr.pressed ? Theme.m3-on-surface-variant.with-alpha(0.1) : mr.has-hover ? Theme.m3-on-surface-variant.with-alpha(0.08) : transparent;
-                                animate background { duration: 150ms; }
+                                animate background { duration: Theme.hover; }
                                 accessible-role: button;
                                 accessible-label: "Refresh";
                                 accessible-action-default => { spin += 360deg; refresh(); }
@@ -761,7 +761,7 @@ export component WifiMenu inherits Window {
                             border-radius: 28px;
                             property <color> ink: wifi-on ? Theme.m3-on-primary-container : Theme.m3-on-surface;
                             background: (wifi-on ? Theme.m3-primary-container : Theme.m3-surface-container-highest).mix(ink, bar.pressed ? 0.9 : bar.has-hover ? 0.92 : 1);
-                            animate background { duration: 150ms; }
+                            animate background { duration: Theme.hover; }
                             // (no adapter: disabled, M3's 38 %)
                             opacity: adapter ? 1 : 0.38;
                             accessible-role: switch;
@@ -796,15 +796,15 @@ export component WifiMenu inherits Window {
                                 background: wifi-on ? Theme.m3-primary : Theme.m3-surface-container-highest;
                                 border-width: wifi-on ? 0 : 2px;
                                 border-color: Theme.m3-outline;
-                                animate background { duration: 150ms; }
+                                animate background { duration: Theme.hover; }
                                 Rectangle {
                                     property <length> size: bar.pressed ? 28px : wifi-on ? 24px : 16px;
-                                    animate size { duration: 222ms; easing: spring(0.4); }
+                                    animate size { duration: Theme.move-spatial; easing: spring(0.4); }
                                     width: size;
                                     height: size;
                                     border-radius: size / 2;
                                     x: wifi-on ? parent.width - 16px - size / 2 : 16px - size / 2;
-                                    animate x { duration: 222ms; easing: spring(0.4); }
+                                    animate x { duration: Theme.move-spatial; easing: spring(0.4); }
                                     y: (parent.height - size) / 2;
                                     background: wifi-on ? Theme.m3-on-primary : Theme.m3-outline;
                                     if wifi-on: SymIcon {

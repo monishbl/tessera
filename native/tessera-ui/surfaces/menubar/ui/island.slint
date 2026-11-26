@@ -370,11 +370,11 @@ export component Spaces inherits Rectangle {
         height: 18px;
         visible: c.fall > 0.01;
         opacity: (c.elsewhere && !c.shown-there ? 0.55 : 1) * (c.fall >= 0.99 ? 1 : c.fall >= 0.69 ? 0.6 : 0.3);
-        animate x, width { duration: Theme.material ? 222ms : Theme.popover; easing: Theme.material ? spring(0.4) : cubic-bezier(0.3333, 1, 0.6667, 1); }
+        animate x, width { duration: Theme.motion(Theme.material ? 222ms : Theme.popover); easing: Theme.material ? spring(0.4) : cubic-bezier(0.3333, 1, 0.6667, 1); }
         animate opacity { duration: Theme.popover; }
         // (past the window's ends, dynamic overflow: the whole chip smaller, Workspaces' scale)
         transform-scale-y: c.fall;
-        animate transform-scale-y { duration: Theme.popover; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+        animate transform-scale-y { duration: Theme.move-standard; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
         accessible-role: tab;
         accessible-label: "Space " + Math.mod(c.id, 100) + (c.occupied ? ", has windows" : ", empty") + (c.elsewhere ? ", on another display" : "");
         accessible-item-selectable: true;
@@ -420,7 +420,7 @@ export component Spaces inherits Rectangle {
                 border-radius: self.height / 2;
                 background: !Theme.material ? ink : c.active ? (root.hot ? Theme.m3-error : Theme.m3-primary) : c.shown-there ? Theme.m3-secondary : Theme.m3-on-surface-variant;
                 opacity: c.active || c.shown-there ? 1 : c.occupied ? (Theme.material ? 1 : 0.85) : (Theme.material ? 0.38 : 0.35);
-                animate width { duration: Theme.material ? 420ms : Theme.hover; easing: Theme.material ? spring(0.2) : ease-out; }
+                animate width { duration: Theme.motion(Theme.material ? 420ms : Theme.hover); easing: Theme.material ? spring(0.2) : ease-out; }
             }
             // On another display: a small bar under it
             if c.elsewhere: Rectangle {
@@ -685,7 +685,7 @@ component CallButton inherits VerticalLayout {
             animate background { duration: Theme.hover; }
             // (Glass: 94 % pressed; Material: ElasticControl, a little larger)
             transform-scale: grow * (t.pressed ? (Theme.material ? 1.06 : 0.94) : 1);
-            animate transform-scale { duration: 100ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+            animate transform-scale { duration: Theme.motion(100ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
             accessible-role: button;
             accessible-label: label + " call";
             accessible-action-default => { root.clicked(); }
@@ -994,9 +994,9 @@ component AlertView inherits Rectangle {
         property <float> p1: go ? 1 : 0;
         property <float> p2: go ? 1 : 0;
         property <float> p3: go ? 1 : 0;
-        animate p1 { duration: 315ms; delay: 70ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
-        animate p2 { duration: 315ms; delay: 105ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
-        animate p3 { duration: 315ms; delay: 210ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+        animate p1 { duration: Theme.motion(315ms); delay: 70ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+        animate p2 { duration: Theme.motion(315ms); delay: 105ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+        animate p3 { duration: Theme.motion(315ms); delay: 210ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
         photo := Rectangle {
             transform-scale: 0.7 + 0.3 * parent.p1;
             x: 4px;
@@ -1572,7 +1572,7 @@ component WavySeek inherits Rectangle {
     height: 10px;
     property <length> end: self.width * max(0, min(1, value));
     property <float> amp: paused || value <= 0.1 || value >= 0.95 ? 0 : 1;
-    animate amp { duration: 300ms; }
+    animate amp { duration: Theme.motion(300ms); }
     Rectangle {
         x: min(root.width, end + 4px + (end > 0 ? 2px : 0));
         y: 3px;
@@ -1620,10 +1620,10 @@ component PlayMorph inherits Rectangle {
     width: 44px;
     height: 44px;
     border-radius: playing ? 14px : 22px;
-    animate border-radius { duration: 350ms; easing: spring(0.35); }
+    animate border-radius { duration: Theme.motion(350ms); easing: spring(0.35); }
     background: t.pressed ? Theme.m3-primary.mix(Theme.m3-on-primary, 0.9) : t.has-hover ? Theme.m3-primary.mix(Theme.m3-on-primary, 0.92) : Theme.m3-primary;
     transform-scale: t.pressed ? 0.94 : 1;
-    animate transform-scale { duration: 100ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate transform-scale { duration: Theme.motion(100ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     accessible-role: button;
     accessible-label: playing ? "Pause" : "Play";
     accessible-action-default => { root.clicked(); }
@@ -1738,7 +1738,7 @@ component ActivityRow inherits Rectangle {
                     width: parent.width * max(0, min(1, r.progress));
                     border-radius: 1.5px;
                     background: Theme.material ? (red ? Theme.m3-error : Theme.m3-primary) : r.tint;
-                    animate width { duration: 900ms; }
+                    animate width { duration: Theme.motion(900ms); }
                 }
             }
         }
@@ -1853,7 +1853,7 @@ component RecentList inherits VerticalLayout {
                 property <length> dx;
                 property <bool> leaving;
                 property <length> off: leaving ? (dx < 0 ? -1 : 1) * self.width : dx;
-                animate off { duration: leaving ? 150ms : 0ms; easing: cubic-bezier(0.3333, 0, 0.6667, 0); }
+                animate off { duration: Theme.motion(leaving ? 150ms : 0ms); easing: cubic-bezier(0.3333, 0, 0.6667, 0); }
                 lt := TouchArea {
                     property <bool> dragged;
                     property <length> last-x;
@@ -2114,7 +2114,7 @@ component LiveInfo inherits HorizontalLayout {
     if live.show-bars && live.kind == "music": Rectangle {
         width: live.playing ? 3 * 2.5px + 2 * 2px : 0;
         opacity: live.playing ? 1 : 0;
-        animate width, opacity { duration: 200ms; }
+        animate width, opacity { duration: Theme.motion(200ms); }
         clip: true;
         for b[i] in [{ lo: 5, hi: 11, p: 0.70 }, { lo: 4, hi: 10, p: 0.66 }, { lo: 4, hi: 13, p: 0.74 }]: Rectangle {
             x: i * 4.5px;
@@ -2293,7 +2293,7 @@ export component Island inherits Rectangle {
     }
     // the open content fades in as it opens, and is gone at once as it closes
     property <float> content-in: expanded ? 1 : 0;
-    animate content-in { duration: expanded ? Theme.hover : 0ms; easing: ease-out; }
+    animate content-in { duration: Theme.motion(expanded ? Theme.hover : 0ms); easing: ease-out; }
 
     // hover opens it (after a moment), leaving closes it
     property <bool> hovering: over.has-hover || pinb.hovered || recb.hovered;
@@ -2477,7 +2477,7 @@ export component Island inherits Rectangle {
                     y: expanded ? 7px : 2px;
                     opacity: event-inside || mode == 3 || mode == 4 || (compact && layout == "replace") ? 0 : 1;
                     animate opacity { duration: Theme.hover; }
-                    animate y { duration: 400ms; easing: spring(0.25); }
+                    animate y { duration: Theme.motion(400ms); easing: spring(0.25); }
                     go(id) => { root.go(id); }
                     menu(id, x) => { root.space-menu(id, x); }
                     arrow(d) => { root.arrow(d); }
@@ -2504,7 +2504,7 @@ export component Island inherits Rectangle {
                     tick: root.tick;
                     // (a swap: it shrinks away, then grows back from its side)
                     property <float> shown: compact ? 1 : 0;
-                    animate shown { duration: Theme.hover; }
+                    animate shown { duration: Theme.move-fast; }
                     opacity: shown * swap;
                 }
                 trail := HorizontalLayout {
@@ -2513,7 +2513,7 @@ export component Island inherits Rectangle {
                     width: self.preferred-width;
                     height: 22px;
                     property <float> shown: compact ? 1 : 0;
-                    animate shown { duration: Theme.hover; }
+                    animate shown { duration: Theme.move-fast; }
                     opacity: shown * swap;
                     for c[i] in live.controls: IconButton {
                         width: 24px;
@@ -2638,7 +2638,7 @@ export component Island inherits Rectangle {
                                 // (nested in the island's corner: its radius less the padding; Material:
                                 // round while it plays, square paused — Slint can't cut a cookie)
                                 border-radius: Theme.material ? (card.playing ? 36px : 12px) : Theme.radius-tile - 12px;
-                                animate border-radius { duration: 350ms; easing: spring(0.35); }
+                                animate border-radius { duration: Theme.motion(350ms); easing: spring(0.35); }
                                 clip: true;
                                 background: Theme.material ? Theme.m3-surface-container-highest : #ffffff1a;
                                 if card.has-art: Image {
@@ -2830,7 +2830,7 @@ export component Island inherits Rectangle {
                                     width: parent.width * max(0, min(1, Math.sqrt(max(0, root.mic-level))));
                                     border-radius: 2px;
                                     background: Theme.material ? Theme.m3-primary : Theme.success;
-                                    animate width { duration: 80ms; }
+                                    animate width { duration: Theme.motion(80ms); }
                                 }
                             }
                             // the timer's, a transfer's or the update's progress (Material: wavy)
@@ -2844,7 +2844,7 @@ export component Island inherits Rectangle {
                                     width: parent.width * max(0, min(1, card.progress));
                                     border-radius: 2px;
                                     background: card.tint;
-                                    animate width { duration: 900ms; }
+                                    animate width { duration: Theme.motion(900ms); }
                                 }
                             }
                             if card.progress >= 0 && Theme.material: WavySeek {
@@ -2899,7 +2899,7 @@ export component Island inherits Rectangle {
                                 Rectangle {
                                     y: (parent.height - self.height) / 2;
                                     height: parent.hot ? 6px : 4px;
-                                    animate height { duration: Theme.hover; }
+                                    animate height { duration: Theme.move-fast; }
                                     border-radius: self.height / 2;
                                     background: Theme.material ? Theme.m3-secondary-container : #ffffff33;
                                     Rectangle {
@@ -2946,7 +2946,7 @@ export component Island inherits Rectangle {
                                 y: (parent.height - self.height) / 2;
                                 property <bool> open: volt.has-hover || vols.pressed;
                                 width: open ? 104px : 36px;
-                                animate width { duration: Theme.hover; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+                                animate width { duration: Theme.move-fast; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
                                 height: 36px;
                                 border-radius: 18px;
                                 background: ink.with-alpha(open ? 0.12 : 0);
@@ -3044,7 +3044,7 @@ export component Island inherits Rectangle {
                                 // (no wider than the room right of the centred transport,
                                 // 68 px each side of the middle, less Cast, which slides with it)
                                 width: open ? max(36px, min(140px, oa-name.preferred-width + 42px, parent.width / 2 - 68px - 4px - (card.cast-shown ? 40px : 0))) : 36px;
-                                animate width { duration: Theme.hover; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+                                animate width { duration: Theme.move-fast; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
                                 x: parent.width - self.width;
                                 y: (parent.height - self.height) / 2;
                                 height: 36px;
@@ -3087,7 +3087,7 @@ export component Island inherits Rectangle {
                                 height: 6px;
                                 border-radius: 3px;
                                 background: Theme.material ? (i == live-index ? Theme.m3-primary : Theme.m3-on-surface-variant.with-alpha(0.38)) : #ffffff.with-alpha(i == live-index ? 0.9 : 0.35);
-                                animate width { duration: Theme.hover; }
+                                animate width { duration: Theme.move-fast; }
                                 // (a click shows that one)
                                 TouchArea {
                                     x: -4px;
@@ -3179,7 +3179,7 @@ export component Island inherits Rectangle {
         property <bool> on: alerts-below && alerts.length > 0;
         x: (root.width - self.width) / 2;
         y: shape.y + shape.height + 8px + (on ? 0 : -8px);
-        animate y { duration: 300ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+        animate y { duration: Theme.motion(300ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
         width: 392px;
         height: on ? bl.preferred-height + 28px + (alerts.length > 1 ? 10px : 0) : 0;
         opacity: on ? 1 : 0;

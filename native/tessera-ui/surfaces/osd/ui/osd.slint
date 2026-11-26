@@ -53,7 +53,7 @@ component RowLevel inherits Rectangle {
         property <length> gap: 6px;
         property <length> handle: ta.pressed ? 2px : 4px;
         property <length> hx: clamp(value, 0, 1) * (self.width - handle);
-        animate handle { duration: 100ms; }
+        animate handle { duration: Theme.motion(100ms); }
         Rectangle {
             visible: self.width > 0;
             x: 0;
@@ -124,7 +124,7 @@ component Choice inherits Rectangle {
     height: 32px;
     border-radius: m3-current ? self.height / 2 : 10px;
     background: m3-current ? Theme.m3-tertiary-container : ta.pressed ? ink.with-alpha(Theme.material ? 0.1 : 0.14) : ta.has-hover ? ink.with-alpha(0.08) : transparent;
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     accessible-role: button;
     accessible-label: item.text;
     accessible-item-selectable: item.current;
@@ -289,7 +289,7 @@ export component OsdCapsule inherits Window {
     preferred-height: 52px + levels-height + 2 * m;
 
     animate progress {
-        duration: 220ms * pace;
+        duration: Theme.motion(220ms * pace);
         easing: shown ? cubic-bezier(0.2, 0.9, 0.1, 1.0) : cubic-bezier(0.4, 0.0, 1.0, 1.0);
     }
     changed progress => {
@@ -372,7 +372,7 @@ export component OsdCapsule inherits Window {
                 height: parent.height;
                 border-radius: 3px;
                 background: Theme.label;
-                animate width { duration: drag.pressed ? 0ms : 150ms * pace; }
+                animate width { duration: Theme.motion(drag.pressed ? 0ms : 150ms * pace); }
             }
         }
         // (the level's pointer area reaches 10 px past it)
@@ -490,7 +490,7 @@ export component OsdPanel inherits Window {
     // In on Material's default spatial spring (a little past its place), out
     // faster on the emphasized accelerate curve
     animate progress {
-        duration: shown ? 322ms : 200ms * pace;
+        duration: Theme.motion(shown ? 322ms : 200ms * pace);
         easing: shown ? spring(0.2) : cubic-bezier(0.3, 0.0, 0.8, 0.15);
     }
     changed progress => {
@@ -519,7 +519,7 @@ export component OsdPanel inherits Window {
                 width: button;
                 height: button;
                 border-radius: muted ? 12px : self.width / 2;
-                animate border-radius { duration: 222ms; easing: spring(0.4); }
+                animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); }
                 background: muted ? Theme.m3-tertiary-container : Theme.m3-surface-container-highest;
                 animate background { duration: 150ms * pace; }
                 accessible-role: AccessibleRole.button;
@@ -554,14 +554,14 @@ export component OsdPanel inherits Window {
                 // (follows the level quickly; straight under the pointer)
                 property <float> shown-ratio: ratio;
                 animate shown-ratio {
-                    duration: area.pressed ? 0ms : 150ms * pace;
+                    duration: Theme.motion(area.pressed ? 0ms : 150ms * pace);
                     easing: cubic-bezier(0.2, 0.0, 0.0, 1.0);
                 }
                 property <length> outer: self.width / 2;
                 property <length> inner: 4px;
                 property <length> gap: 6px;
                 property <length> thick: area.pressed ? 2px : 4px; // the handle, thinner while held
-                animate thick { duration: 100ms; }
+                animate thick { duration: Theme.motion(100ms); }
                 property <length> hy: (1 - shown-ratio) * (self.height - thick);
                 property <length> active-top: hy + thick + gap;
                 property <length> active-h: max(0px, self.height - active-top);
@@ -659,7 +659,7 @@ export component OsdPanel inherits Window {
                 width: button;
                 height: button;
                 border-radius: levels-open ? 12px : self.width / 2;
-                animate border-radius { duration: 222ms; easing: spring(0.4); }
+                animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); }
                 background: levels-open ? Theme.m3-secondary-container : Theme.m3-surface-container-highest;
                 animate background { duration: 150ms * pace; }
                 accessible-role: AccessibleRole.button;
@@ -712,7 +712,7 @@ export component OsdPanel inherits Window {
             toast-pill := Rectangle {
                 property <bool> showing: toast && !levels-open && !area.pressed;
                 x: -self.width - 8px + (showing ? 0 : 8px);
-                animate x { duration: 220ms * pace; easing: cubic-bezier(0.05, 0.7, 0.1, 1.0); }
+                animate x { duration: Theme.motion(220ms * pace); easing: cubic-bezier(0.05, 0.7, 0.1, 1.0); }
                 y: pad;
                 width: min(280px, toast-row.preferred-width + 32px);
                 height: 44px;
@@ -756,7 +756,7 @@ export component OsdPanel inherits Window {
             animate opacity { duration: 150ms * pace; }
             transform-origin: { x: self.width, y: self.height };
             transform-scale: open ? 1 : 0.92;
-            animate transform-scale { duration: 222ms; easing: spring(0.4); }
+            animate transform-scale { duration: Theme.move-spatial; easing: spring(0.4); }
             border-radius: Theme.radius-module;
             background: Theme.m3-surface-container;
             drop-shadow-blur: 12px;
@@ -852,7 +852,7 @@ export component OsdBar inherits Window {
                 height: parent.height;
                 border-radius: 2.5px;
                 background: ink;
-                animate width { duration: 100ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+                animate width { duration: Theme.motion(100ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
             }
         }
     }

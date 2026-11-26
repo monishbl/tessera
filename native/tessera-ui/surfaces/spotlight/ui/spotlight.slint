@@ -90,8 +90,8 @@ component SButton inherits Rectangle {
         : touch.pressed ? Theme.fill-pressed : touch.has-hover || focused ? Theme.fill : transparent;
     border-width: focused && !Theme.material ? 2px : 0;
     border-color: Theme.accent;
-    animate background { duration: 150ms; }
-    animate border-radius { duration: 150ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate background { duration: Theme.hover; }
+    animate border-radius { duration: Theme.move-fast; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     accessible-role: button;
     accessible-label: label;
     accessible-action-default => { clicked(); }
@@ -117,16 +117,16 @@ component MButton inherits Rectangle {
     height: 40px;
     width: label.preferred-width + 2 * round(self.height * 0.6 / 1px) * 1px;
     border-radius: touch.pressed ? min(12px, self.height / 2) : self.height / 2;
-    animate border-radius { duration: 222ms; easing: spring(0.4); } // (springFast 12.8 / 0.54: ω 28.3, ζ 0.60)
+    animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); } // (springFast 12.8 / 0.54: ω 28.3, ζ 0.60)
     background: filled ? Theme.m3-primary : Theme.m3-secondary-container.with-alpha(SLook.ca);
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     accessible-role: button;
     accessible-label: text;
     accessible-action-default => { clicked(); }
     Rectangle {
         border-radius: parent.border-radius;
         background: ink.with-alpha(touch.pressed ? 0.1 : touch.has-hover ? 0.08 : 0);
-        animate background { duration: 150ms; }
+        animate background { duration: Theme.hover; }
     }
     label := Text {
         text: root.text;
@@ -301,7 +301,7 @@ component GCard inherits Rectangle {
     callback activate();
     border-radius: 14px;
     background: selected ? tint : touch.has-hover ? Theme.fill-hover : Theme.fill;
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     border-width: selected ? 1px : 0;
     border-color: Theme.accent.with-alpha(0.5);
     accessible-role: list-item;
@@ -361,7 +361,7 @@ component MRow inherits Rectangle {
     callback activate();
     callback look();
     property <float> round: selected ? 1 : 0;
-    animate round { duration: 222ms; easing: spring(0.4); } // (springFast)
+    animate round { duration: Theme.move-spatial; easing: spring(0.4); } // (springFast)
     property <color> ink: selected ? Theme.m3-on-secondary-container : Theme.m3-on-surface;
     property <length> full: self.height / 2;
     property <length> top-r: max(0, min(full, (r.first ? 20px : 4px) + (full - (r.first ? 20px : 4px)) * round));
@@ -373,7 +373,7 @@ component MRow inherits Rectangle {
     border-bottom-right-radius: bottom-r;
     background: selected ? Theme.m3-secondary-container.with-alpha(SLook.ca) : root.surface-bright.with-alpha(SLook.ca);
     in property <color> surface-bright;
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     accessible-role: list-item;
     accessible-label: r.title + (r.sub != "" ? ", " + r.sub : "");
     accessible-item-selectable: true;
@@ -387,7 +387,7 @@ component MRow inherits Rectangle {
         border-bottom-left-radius: bottom-r;
         border-bottom-right-radius: bottom-r;
         background: ink.with-alpha(touch.pressed ? 0.1 : hot ? 0.08 : 0);
-        animate background { duration: 150ms; }
+        animate background { duration: Theme.hover; }
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -518,7 +518,7 @@ component MHero inherits Rectangle {
     property <color> strong: answer ? Theme.m3-tertiary : Theme.m3-primary;
     property <color> on-strong: answer ? on-tertiary : Theme.m3-on-primary;
     property <float> round: selected ? 1 : 0;
-    animate round { duration: 222ms; easing: spring(0.4); } // (springFast)
+    animate round { duration: Theme.move-spatial; easing: spring(0.4); } // (springFast)
     border-radius: max(0, min(self.height / 2, 28px + (self.height / 2 - 28px) * round));
     background: container;
     accessible-role: list-item;
@@ -529,7 +529,7 @@ component MHero inherits Rectangle {
     Rectangle {
         border-radius: parent.border-radius;
         background: content.with-alpha(touch.pressed ? 0.1 : touch.has-hover ? 0.08 : 0);
-        animate background { duration: 150ms; }
+        animate background { duration: Theme.hover; }
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -606,10 +606,10 @@ component MHero inherits Rectangle {
         }
         if !r.store: go := Rectangle {
             border-radius: go-touch.pressed ? 16px : self.height / 2;
-            animate border-radius { duration: 222ms; easing: spring(0.4); } // (springFast 12.8 / 0.54: ω 28.3, ζ 0.60)
+            animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); } // (springFast 12.8 / 0.54: ω 28.3, ζ 0.60)
             background: strong;
             transform-scale: go-touch.pressed ? 1.06 : 1;
-            animate transform-scale { duration: 300ms; easing: spring(0.35); }
+            animate transform-scale { duration: Theme.motion(300ms); easing: spring(0.35); }
             accessible-role: button;
             accessible-label: r.key-label;
             accessible-action-default => { activate(); }
@@ -688,7 +688,7 @@ export component SpotlightPanel inherits Window {
     property <length> m-answer-h;
     property <length> m-view-h: 56px + (m-open ? m-body : 0);
     // (springDefault 6.08 / 0.5: ω 19.5, ζ 0.80)
-    animate m-view-h { duration: 322ms; easing: spring(0.2); }
+    animate m-view-h { duration: Theme.motion(322ms); easing: spring(0.2); }
     property <duration> intro-t0;
     property <bool> has-text: field.text != "";
 
@@ -712,7 +712,7 @@ export component SpotlightPanel inherits Window {
 
     animate openness {
         // (Material opens on springDefault: ω 19.5, ζ 0.80; closes in popover × 0.7)
-        duration: Theme.material ? (shown ? 322ms : Theme.popover * 0.7) : Theme.popover;
+        duration: Theme.motion(Theme.material ? (shown ? 322ms : Theme.popover * 0.7) : Theme.popover);
         easing: Theme.material ? (shown ? spring(0.2) : cubic-bezier(0.3, 0, 0.8, 0.15)) : shown ? cubic-bezier(0.2, 0.9, 0.1, 1.0) : cubic-bezier(0.4, 0, 1, 1);
     }
     changed openness => {
@@ -885,7 +885,7 @@ export component SpotlightPanel inherits Window {
         if Theme.material: Rectangle {
             border-radius: 28px;
             background: (m-open ? Theme.m3-surface-container : Theme.m3-surface-container-high).with-alpha(SLook.ca);
-            animate background { duration: 150ms; }
+            animate background { duration: Theme.hover; }
             TouchArea { }
             Rectangle {
                 y: 56px;

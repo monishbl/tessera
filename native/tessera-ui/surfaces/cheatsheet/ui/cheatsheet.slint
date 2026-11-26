@@ -62,7 +62,7 @@ component Tabs inherits Rectangle {
         height: parent.height - 4px;
         border-radius: self.height / 2;
         background: Theme.dark ? #ffffff33 : #ffffff;
-        animate x, width { duration: Theme.popover; easing: cubic-bezier(0.2, 0.9, 0.1, 1.0); }
+        animate x, width { duration: Theme.move-standard; easing: cubic-bezier(0.2, 0.9, 0.1, 1.0); }
     }
     for i in 2: Rectangle {
         property <bool> chosen: i == current;
@@ -77,7 +77,7 @@ component Tabs inherits Rectangle {
         border-top-right-radius: !Theme.material ? 0 : i == 1 ? full : inner;
         border-bottom-right-radius: self.border-top-right-radius;
         // (Segmented.qml: the inner corners on springFast)
-        animate border-top-left-radius, border-top-right-radius { duration: 222ms; easing: spring(0.4); }
+        animate border-top-left-radius, border-top-right-radius { duration: Theme.move-spatial; easing: spring(0.4); }
         background: !Theme.material ? transparent : chosen ? Theme.m3-primary : Theme.m3-surface-container-highest;
         animate background { duration: Theme.hover; }
         accessible-role: tab;
@@ -188,7 +188,7 @@ export component Cheatsheet inherits Window {
     animate progress {
         // (Dialog.qml: Material ω 20.1 ζ 0.90, Glass ω 16.2 ζ 0.77; closes in
         // panel × 0.6 on the look's exit curve)
-        duration: shown ? (Theme.material ? 312ms : 388ms) : Theme.motion-panel * 0.6;
+        duration: Theme.motion(shown ? (Theme.material ? 312ms : 388ms) : Theme.motion-panel * 0.6);
         easing: shown ? (Theme.material ? spring(0.1) : spring(0.23)) : Theme.material ? cubic-bezier(0.3, 0, 0.8, 0.15) : cubic-bezier(0.4, 0.0, 1.0, 1.0);
     }
     changed progress => {
@@ -357,7 +357,7 @@ export component Cheatsheet inherits Window {
                             width: cell - 2px;
                             height: cell - 2px;
                             border-radius: Theme.material ? (hot ? self.width / 2 : 8px) : 6px;
-                            animate border-radius { duration: 222ms; easing: spring(0.4); } // (springFast)
+                            animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); } // (springFast)
                             background: e.tint.with-alpha(hot ? 0.45 : 0.18);
                             border-width: hot ? (Theme.material ? 2px : 1px) : 0;
                             border-color: e.tint;

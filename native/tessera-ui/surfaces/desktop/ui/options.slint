@@ -87,7 +87,7 @@ component Toggle inherits Rectangle {
     background: checked ? (Theme.material ? Theme.m3-primary : Theme.accent) : (Theme.material ? Theme.m3-surface-container-highest : Theme.toggle-off);
     border-width: Theme.material && !checked ? 2px : 0px;
     border-color: Theme.m3-outline;
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     accessible-role: switch;
     accessible-label: label;
     accessible-checked: checked;
@@ -100,7 +100,7 @@ component Toggle inherits Rectangle {
         x: checked ? parent.width - d - (parent.height - d) / 2 : (parent.height - d) / 2;
         border-radius: d / 2;
         background: Theme.material ? (checked ? Theme.m3-on-primary : Theme.m3-outline) : #ffffff;
-        animate x, width, height { duration: 180ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+        animate x, width, height { duration: Theme.motion(180ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     }
     TouchArea {
         mouse-cursor: pointer;
@@ -129,7 +129,7 @@ component Segments inherits Rectangle {
         height: parent.height - (Theme.material ? 0px : 4px);
         border-radius: Theme.material ? (chosen ? self.height / 2 : t.pressed ? 4px : 8px) : self.height / 2;
         background: Theme.material ? (chosen ? Theme.m3-primary : Theme.m3-surface-container-highest) : chosen ? (Theme.dark ? #ffffff33 : #ffffff) : transparent;
-        animate background { duration: 150ms; }
+        animate background { duration: Theme.hover; }
         accessible-role: tab;
         accessible-label: o;
         accessible-action-default => { root.selected(i); }
@@ -186,7 +186,7 @@ export component WidgetOptions inherits Window {
     property <length> pad: Theme.material ? 24px : 20px;
     property <float> progress: shown ? 1 : 0;
     animate progress {
-        duration: shown ? 520ms : 192ms;
+        duration: Theme.motion(shown ? 520ms : 192ms);
         easing: shown ? spring(0.4) : cubic-bezier(0.4, 0.0, 1.0, 1.0);
     }
     changed progress => {

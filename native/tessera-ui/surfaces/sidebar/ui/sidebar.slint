@@ -46,9 +46,10 @@ export global G {
 // Motion (Theme.motion): durations, and the panel's curves per look
 global M {
     out property <duration> press: 100ms;
-    out property <duration> hover: 150ms;
-    out property <duration> popover: 220ms;
-    out property <duration> panel: 320ms;
+    // (the shared tokens: Snappy's pace reaches the sidebar too)
+    out property <duration> hover: Theme.hover;
+    out property <duration> popover: Theme.popover;
+    out property <duration> panel: Theme.motion-panel;
     // (the product UI's body size: Theme.font.body, 13 in both looks)
     out property <length> body: 13px;
 }
@@ -154,9 +155,9 @@ component HeaderButton inherits FocusScope {
     Rectangle {
         transform-origin: { x: self.width / 2, y: self.height / 2 };
         transform-scale: Theme.material && Theme.press-bounce && t.pressed ? 1 + min(0.06, 10px / self.width) : 1;
-        animate transform-scale { duration: 420ms; easing: spring(0.3); }
+        animate transform-scale { duration: Theme.motion(420ms); easing: spring(0.3); }
         border-radius: Theme.material && t.pressed ? 8px : self.height / 2;
-        animate border-radius { duration: 250ms; easing: spring(0.6); }
+        animate border-radius { duration: Theme.motion(250ms); easing: spring(0.6); }
         background: Theme.material ? Theme.m3-secondary-container.mix(Theme.m3-on-secondary-container, t.pressed ? 0.9 : t.has-hover ? 0.92 : 1) : t.pressed ? Theme.fill-pressed : t.has-hover ? Theme.fill-hover : Theme.fill;
         animate background { duration: M.hover; }
         SIcon {
@@ -208,9 +209,9 @@ component GhostButton inherits FocusScope {
     body := Rectangle {
         transform-origin: { x: self.width / 2, y: self.height / 2 };
         transform-scale: t.pressed ? (Theme.material ? (Theme.press-bounce ? 1 + min(0.06, 10px / max(self.width, self.height)) : 1) : Press.squish) : 1;
-        animate transform-scale { duration: Theme.material ? 420ms : 180ms; easing: Theme.material ? spring(0.3) : spring(0.5); }
+        animate transform-scale { duration: Theme.motion(Theme.material ? 420ms : 180ms); easing: Theme.material ? spring(0.3) : spring(0.5); }
         border-radius: Theme.material ? (t.pressed ? min(8px, self.height / 2) : self.height / 2) : Theme.radius-control - 2px;
-        animate border-radius { duration: 150ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+        animate border-radius { duration: Theme.move-fast; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
         background: Theme.material ? Theme.m3-on-surface-variant.with-alpha(t.pressed ? 0.1 : t.has-hover ? 0.08 : 0) : t.pressed ? Theme.fill-pressed : t.has-hover ? Theme.fill : transparent;
         animate background { duration: M.hover; }
         SIcon {
@@ -273,9 +274,9 @@ export component ChatButton inherits FocusScope {
     body := Rectangle {
         transform-origin: { x: self.width / 2, y: self.height / 2 };
         transform-scale: t.pressed ? (Theme.material ? (Theme.press-bounce ? 1 + min(0.06, 10px / max(self.width, self.height)) : 1) : 0.97) : 1;
-        animate transform-scale { duration: Theme.material ? 420ms : 100ms; easing: Theme.material ? spring(0.3) : linear; }
+        animate transform-scale { duration: Theme.motion(Theme.material ? 420ms : 100ms); easing: Theme.material ? spring(0.3) : linear; }
         border-radius: Theme.material ? (t.pressed ? 12px : self.height / 2) : Theme.radius-control;
-        animate border-radius { duration: 250ms; easing: spring(0.6); }
+        animate border-radius { duration: Theme.motion(250ms); easing: spring(0.6); }
         background: primary ? (Theme.material ? Theme.m3-primary.mix(Theme.m3-on-primary, t.pressed ? 0.9 : t.has-hover ? 0.92 : 1) : t.pressed ? Theme.accent.darker(0.15) : t.has-hover ? Theme.accent.darker(0.07) : Theme.accent)
             : Theme.material ? Theme.m3-secondary-container.mix(Theme.m3-on-secondary-container, t.pressed ? 0.9 : t.has-hover ? 0.92 : 1)
             : t.pressed ? Theme.fill-pressed : t.has-hover ? Theme.fill-hover : Theme.fill;
@@ -328,7 +329,7 @@ component Segmented inherits Rectangle {
         height: parent.height - 4px;
         border-radius: self.height / 2;
         background: Theme.dark ? #ffffff33 : #ffffff;
-        animate x { duration: M.popover; easing: cubic-bezier(0.2, 0.9, 0.1, 1.0); }
+        animate x { duration: Theme.motion(M.popover); easing: cubic-bezier(0.2, 0.9, 0.1, 1.0); }
     }
     for o[i] in options: Rectangle {
         x: 2px + i * (seg + gap);
@@ -348,7 +349,7 @@ component Segmented inherits Rectangle {
             border-top-right-radius: i == options.length - 1 ? full : inner;
             border-bottom-right-radius: i == options.length - 1 ? full : inner;
             background: chosen ? Theme.m3-primary.mix(Theme.m3-on-primary, st.pressed ? 0.9 : st.has-hover ? 0.92 : 1) : Theme.m3-surface-container-highest.mix(Theme.m3-on-surface-variant, st.pressed ? 0.9 : st.has-hover ? 0.92 : 1);
-            animate background { duration: 150ms; }
+            animate background { duration: Theme.hover; }
         }
         Text {
             text: o;
@@ -871,7 +872,7 @@ component UndoBar inherits Rectangle {
     accessible-label: message;
     bar := Rectangle {
         y: shown ? 0px : 8px;
-        animate y { duration: 200ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+        animate y { duration: Theme.motion(200ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
         border-radius: Theme.material ? 4px : 14px;
         background: Theme.material ? Theme.m3-inverse-surface : Theme.dark ? #3A3A40 : #18181B;
         border-width: Theme.dark && !Theme.material ? 1px : 0px;
@@ -909,7 +910,7 @@ component UndoBar inherits Rectangle {
             ubody := Rectangle {
                 transform-origin: { x: self.width / 2, y: self.height / 2 };
                 transform-scale: ut.pressed ? (Theme.material ? (Theme.press-bounce ? 1 + min(0.06, 10px / self.width) : 1) : 0.97) : 1;
-                animate transform-scale { duration: Theme.material ? 420ms : 100ms; easing: Theme.material ? spring(0.3) : linear; }
+                animate transform-scale { duration: Theme.motion(Theme.material ? 420ms : 100ms); easing: Theme.material ? spring(0.3) : linear; }
                 border-radius: Theme.material ? 20px : Theme.radius-control;
                 background: Theme.material ? Theme.m3-inverse-primary.with-alpha(ut.pressed ? 0.1 : ut.has-hover ? 0.08 : 0) : ut.pressed ? #ffffff33 : ut.has-hover ? #ffffff1f : transparent;
                 animate background { duration: M.hover; }
@@ -1459,7 +1460,7 @@ component LangButton inherits Rectangle {
     in property <bool> open;
     callback clicked();
     border-radius: Theme.material ? (open ? self.height / 2 : 12px) : 15px;
-    animate border-radius { duration: 250ms; easing: spring(0.6); }
+    animate border-radius { duration: Theme.motion(250ms); easing: spring(0.6); }
     background: Theme.material ? (open ? Theme.m3-secondary-container : Theme.m3-surface-container-high.mix(Theme.m3-on-surface, t.pressed ? 0.9 : t.has-hover ? 0.92 : 1)) : t.has-hover || open ? Theme.fill-hover : Theme.fill;
     accessible-role: combobox;
     accessible-label: label;
@@ -1535,10 +1536,10 @@ component Translate inherits Rectangle {
         width: bar-h;
         height: bar-h;
         border-radius: Theme.material && sw.pressed ? 12px : self.height / 2;
-        animate border-radius { duration: 250ms; easing: spring(0.6); }
+        animate border-radius { duration: Theme.motion(250ms); easing: spring(0.6); }
         transform-origin: { x: self.width / 2, y: self.height / 2 };
         transform-scale: Theme.material && Theme.press-bounce && sw.pressed ? 1 + min(0.06, 10px / max(self.width, self.height)) : 1;
-        animate transform-scale { duration: 420ms; easing: spring(0.3); }
+        animate transform-scale { duration: Theme.motion(420ms); easing: spring(0.3); }
         opacity: source-auto ? (Theme.material ? 0.38 : 0.4) : 1;
         background: Theme.material ? Theme.m3-secondary-container.mix(Theme.m3-on-secondary-container, sw.pressed ? 0.9 : sw.has-hover ? 0.92 : 1) : sw.has-hover ? Theme.fill-hover : Theme.fill;
         accessible-role: button;
@@ -1626,10 +1627,10 @@ component Translate inherits Rectangle {
             width: cl.preferred-width + (Theme.material ? 32px : 24px);
             height: Theme.material ? 36px : 28px;
             border-radius: Theme.material && ct.pressed ? 8px : self.height / 2;
-            animate border-radius { duration: 250ms; easing: spring(0.6); }
+            animate border-radius { duration: Theme.motion(250ms); easing: spring(0.6); }
             transform-origin: { x: self.width / 2, y: self.height / 2 };
             transform-scale: Theme.material && Theme.press-bounce && ct.pressed ? 1 + min(0.06, 10px / max(self.width, self.height)) : 1;
-            animate transform-scale { duration: 420ms; easing: spring(0.3); }
+            animate transform-scale { duration: Theme.motion(420ms); easing: spring(0.3); }
             background: Theme.material ? Theme.m3-primary.mix(Theme.m3-on-primary, ct.pressed ? 0.9 : ct.has-hover ? 0.92 : 1) : ct.has-hover ? Theme.fill-hover : Theme.fill;
             accessible-role: button;
             accessible-label: "Copy translation";
@@ -1718,7 +1719,7 @@ component Toggle inherits Rectangle {
     background: Theme.material ? (checked ? Theme.m3-primary : Theme.m3-surface-container-highest) : checked ? Theme.accent : Theme.toggle-off;
     border-width: Theme.material && !checked ? 2px : 0px;
     border-color: Theme.m3-outline;
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     accessible-role: switch;
     accessible-label: label;
     accessible-checkable: true;
@@ -1750,8 +1751,8 @@ component Toggle inherits Rectangle {
         y: (parent.height - self.height) / 2;
         x: Theme.material ? (checked ? parent.width - 16px - knob / 2 : 16px - knob / 2) : checked ? parent.width - self.width - 2px : 2px;
         background: Theme.material ? (checked ? Theme.m3-on-primary : ta.has-hover || ta.pressed ? Theme.m3-on-surface-variant : Theme.m3-outline) : #ffffff;
-        animate x, width, height { duration: Theme.material ? 300ms : M.popover; easing: Theme.material ? spring(0.6) : cubic-bezier(0.2, 0.9, 0.1, 1.0); }
-        animate background { duration: 150ms; }
+        animate x, width, height { duration: Theme.motion(Theme.material ? 300ms : M.popover); easing: Theme.material ? spring(0.6) : cubic-bezier(0.2, 0.9, 0.1, 1.0); }
+        animate background { duration: Theme.hover; }
         if Theme.material && checked: SIcon { g: G.check; size: 13px; bold: true; color: Theme.m3-on-primary-container; }
     }
     ta := TouchArea {
@@ -1882,9 +1883,9 @@ component Booru inherits Rectangle {
                 width: parent.width - 2 * m;
                 height: parent.height - 2 * m;
                 border-radius: Theme.material ? (it.pressed ? 8px : 16px) : 12px;
-                animate border-radius { duration: 250ms; easing: spring(0.6); }
+                animate border-radius { duration: Theme.motion(250ms); easing: spring(0.6); }
                 transform-scale: Theme.material && Theme.press-bounce && it.pressed ? 1 + min(0.06, 10px / max(self.width, self.height)) : 1;
-                animate transform-scale { duration: 420ms; easing: spring(0.3); }
+                animate transform-scale { duration: Theme.motion(420ms); easing: spring(0.3); }
                 background: Theme.material ? Theme.m3-surface-container-high : Theme.fill;
                 clip: true;
                 accessible-role: button;
@@ -1898,7 +1899,7 @@ component Booru inherits Rectangle {
                     opacity: c.ready ? 1 : 0;
                     animate opacity { duration: M.popover; }
                     transform-scale: it.has-hover && !Theme.material ? 1.04 : 1;
-                    animate transform-scale { duration: M.hover; }
+                    animate transform-scale { duration: Theme.motion(M.hover); }
                     accessible-role: none;
                 }
                 if Theme.material && it.has-hover: Rectangle {
@@ -1947,7 +1948,7 @@ export component Sidebar inherits Window {
     out property <float> progress: shown ? 1 : 0;
     out property <length> slide-x: panel-x + (1 - progress) * -40px;
     animate progress {
-        duration: M.panel;
+        duration: Theme.motion(M.panel);
         easing: shown ? (Theme.material ? cubic-bezier(0.05, 0.7, 0.1, 1.0) : cubic-bezier(0.2, 0.9, 0.1, 1.0)) : (Theme.material ? cubic-bezier(0.3, 0.0, 0.8, 0.15) : cubic-bezier(0.4, 0.0, 1.0, 1.0));
     }
     changed progress => {
@@ -2172,7 +2173,7 @@ export component Sidebar inherits Window {
                             // long model id elides, not under History and New chat)
                             width: min(pr.preferred-width, parent.width - 24px - 84px) + 24px;
                             border-radius: Theme.material ? (model-menu ? self.height / 2 : 12px) : 15px;
-                            animate border-radius { duration: 250ms; easing: spring(0.6); }
+                            animate border-radius { duration: Theme.motion(250ms); easing: spring(0.6); }
                             background: Theme.material ? (model-menu ? Theme.m3-secondary-container : Theme.m3-surface-container-high.mix(Theme.m3-on-surface, pt.pressed ? 0.9 : pt.has-hover ? 0.92 : 1)) : pt.has-hover || model-menu ? Theme.fill-hover : Theme.fill;
                             accessible-role: combobox;
                             accessible-label: "Model: " + model-name;
@@ -2579,11 +2580,11 @@ export component Sidebar inherits Window {
                             width: Theme.material ? 36px : 28px;
                             height: self.width;
                             border-radius: Theme.material && st.pressed ? 10px : self.width / 2;
-                            animate border-radius { duration: 250ms; easing: spring(0.6); }
+                            animate border-radius { duration: Theme.motion(250ms); easing: spring(0.6); }
                             // (Material: ElasticControl's swell; Glass doesn't move)
                             transform-origin: { x: self.width / 2, y: self.height / 2 };
                             transform-scale: Theme.material && Theme.press-bounce && st.pressed ? 1.06 : 1;
-                            animate transform-scale { duration: 420ms; easing: spring(0.3); }
+                            animate transform-scale { duration: Theme.motion(420ms); easing: spring(0.3); }
                             background: busy || can-send ? (Theme.material ? Theme.m3-primary.mix(Theme.m3-on-primary, st.pressed ? 0.9 : st.has-hover ? 0.92 : 1) : Theme.accent) : Theme.material ? Theme.m3-on-surface.with-alpha(0.12) : Theme.toggle-off;
                             accessible-role: button;
                             accessible-label: busy ? "Stop" : "Send";
