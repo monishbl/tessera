@@ -77,6 +77,7 @@ pub fn rows(stats: &[Stat], mem_detail: &str, gpu: Option<&Stat>) -> Vec<Row> {
                 let t = second.map(|s| s.text.clone()).unwrap_or_default();
                 format!("{mem_detail}{}", if swap > 0.005 { format!(" · swap {t}") } else { String::new() })
             }
+            "graphics" if main.label == AWAKE => "Time awake, not load".into(),
             _ => String::new(),
         };
         let net = g == "network";
@@ -110,6 +111,9 @@ pub fn rows(stats: &[Stat], mem_detail: &str, gpu: Option<&Stat>) -> Vec<Row> {
 /// /proc/meminfo: "6.1 of 15.4 GB" (in core: the overlay shows it too)
 pub use crate::surfaces::kit::mem_detail;
 
+/// The label of a GPU figure that is time awake, not load (Intel)
+pub const AWAKE: &str = "GPU awake";
+
 /// The GPU's reading: amdgpu's busy percentage, or Intel's idle residency
 /// (busy = 1 - idle time over the interval)
 #[derive(Default)]
@@ -119,16 +123,32 @@ pub struct Gpu {
     history: Vec<f64>,
 }
 
-fn glob_first(pattern_dirs: &[&str]) -> Option<String> {
-    let mut cards: Vec<_> = std::fs::read_dir("/sys/class/drm").ok()?.flatten().map(|e| e.path()).filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("card") && !n.to_string_lossy().contains('-'))).collect();
+/// The DRM cards, the one the firmware booted on first
+fn cards() -> Vec<std::path::PathBuf> {
+    let Ok(dir) = std::fs::read_dir("/sys/class/drm") else { return Vec::new() };
+    let mut cards: Vec<_> = dir.flatten().map(|e| e.path()).filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("card") && !n.to_string_lossy().contains('-'))).collect();
     // (the card the firmware booted on first: on a hybrid laptop that's the
     // integrated one that drives the screens, not a discrete one asleep)
     cards.sort_by_key(|c| (std::fs::read_to_string(c.join("device/boot_vga")).map_or(true, |v| v.trim() != "1"), c.clone()));
-    for rel in pattern_dirs {
-        for c in &cards {
+    cards
+}
+
+/// Intel's idle residency files (gt0's RC6, or Xe's gtidle)
+const IDLE_FILES: [&str; 2] = ["gt/gt0/rc6_residency_ms", "device/tile0/gt0/gtidle/idle_residency_ms"];
+
+/// The first card, in order, with a reading: busy percentage, else idle
+/// residency, decided per card (an Intel card driving the screens has no
+/// busy file, and must not lose to a discrete GPU asleep beside it)
+fn first_reading(cards: &[std::path::PathBuf]) -> Option<(bool, String)> {
+    for c in cards {
+        let busy = c.join("device/gpu_busy_percent");
+        if std::fs::File::open(&busy).is_ok() {
+            return Some((true, busy.to_string_lossy().into_owned()));
+        }
+        for rel in IDLE_FILES {
             let f = c.join(rel);
             if std::fs::File::open(&f).is_ok() {
-                return Some(f.to_string_lossy().into_owned());
+                return Some((false, f.to_string_lossy().into_owned()));
             }
         }
     }
@@ -147,10 +167,7 @@ pub fn suspended(status: &str) -> bool {
 
 impl Gpu {
     fn find() -> Option<(bool, String)> {
-        if let Some(f) = glob_first(&["device/gpu_busy_percent"]) {
-            return Some((true, f));
-        }
-        glob_first(&["gt/gt0/rc6_residency_ms", "device/tile0/gt0/gtidle/idle_residency_ms"]).map(|f| (false, f))
+        first_reading(&cards())
     }
 
     /// Which card is read (once), without reading it: while only the menu
@@ -196,7 +213,9 @@ impl Gpu {
             return None;
         }
         let last = self.history.last().copied().unwrap_or(0.0);
-        Some(Stat { key: "gpu", label: "GPU", tone: "indigo", text: format!("{}%", (last * 100.0).round()), history: self.history.clone(), max: 1.0 })
+        // (Intel's figure is time out of idle (RC6), not load: said so)
+        let label = if matches!(self.found, Some(Some((false, _)))) { AWAKE } else { "GPU" };
+        Some(Stat { key: "gpu", label, tone: "indigo", text: format!("{}%", (last * 100.0).round()), history: self.history.clone(), max: 1.0 })
     }
 }
 
@@ -242,7 +261,27 @@ mod tests {
         let g = stat("gpu", "indigo", "7%", vec![0.07], 1.0);
         let r = rows(&stats, "", Some(&g));
         assert_eq!((r[1].title, r[1].icon, r.len()), ("Graphics", "graphics-card", 4));
+        assert_eq!(r[1].detail, "");
+        let g = Stat { label: AWAKE, ..g };
+        assert_eq!(rows(&stats, "", Some(&g))[1].detail, "Time awake, not load");
         assert_eq!(mem_detail("MemTotal: 16148844 kB\nMemAvailable: 9759008 kB\n"), "6.1 of 15.4 GB");
+    }
+
+    #[test]
+    fn the_booted_card_is_read_first_whatever_its_kind() {
+        let d = std::env::temp_dir().join(format!("tessera-gpu-pick-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let (intel, amd) = (d.join("card1"), d.join("card0"));
+        std::fs::create_dir_all(intel.join("gt/gt0")).unwrap();
+        std::fs::write(intel.join("gt/gt0/rc6_residency_ms"), "100\n").unwrap();
+        std::fs::create_dir_all(amd.join("device")).unwrap();
+        std::fs::write(amd.join("device/gpu_busy_percent"), "0\n").unwrap();
+        // (the Intel card first, as cards() puts the boot_vga one)
+        let got = first_reading(&[intel.clone(), amd.clone()]).unwrap();
+        assert_eq!(got, (false, intel.join("gt/gt0/rc6_residency_ms").to_string_lossy().into_owned()));
+        let got = first_reading(&[amd.clone(), intel]).unwrap();
+        assert!(got.0);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
