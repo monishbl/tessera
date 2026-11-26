@@ -169,3 +169,52 @@ class Forgetting(unittest.TestCase):
         w.on_signal(None, None, "/", None, "InterfacesRemoved", P(("/d/buds", ["org.bluez.Device1", "org.bluez.Battery1"])))
         self.assertEqual(w.other, {"/d/watch"})
         self.assertEqual(w.devices, {})
+
+
+class AudioAfterConnect(unittest.TestCase):
+    """Connect answering AlreadyConnected (Fast Pair's own LE link was up)
+    still connects the audio profiles: 26 Nov, headphones connected with no
+    sound until ConnectProfile(A2DP) was asked."""
+
+    class Bus:
+        def __init__(self, connect_error=None):
+            self.calls = []
+            self.connect_error = connect_error
+
+        def __call__(self, path, iface, method, args=None, sig=None, timeout=10000):
+            self.calls.append((method, args))
+            if method == "GetAll":
+                return ({"Address": "A8:E6:E8:0B:C3:55", "UUIDs": [
+                    "00001108-0000-1000-8000-00805f9b34fb", "0000110b-0000-1000-8000-00805f9b34fb",
+                    "0000110e-0000-1000-8000-00805f9b34fb", "0000111e-0000-1000-8000-00805f9b34fb"]},)
+            if method == "Connect" and self.connect_error:
+                raise RuntimeError(self.connect_error)
+            if method == "ConnectProfile" and args == ("00001108-0000-1000-8000-00805f9b34fb",):
+                raise RuntimeError("org.bluez.Error.AlreadyConnected")
+            return ()
+
+    def watcher(self, bus):
+        w = fp.Watcher.__new__(fp.Watcher)
+        w.call = bus
+        w.GLib = type("GLib", (), {"Variant": staticmethod(lambda *a: a)})
+        return w
+
+    def profiles(self, bus):
+        return [a[0] for m, a in bus.calls if m == "ConnectProfile"]
+
+    def test_already_connected_still_connects_the_audio(self):
+        bus = self.Bus("GDBus.Error:org.bluez.Error.AlreadyConnected: Already Connected")
+        r = self.watcher(bus).connect_known("/org/bluez/hci0/dev_A8_E6_E8_0B_C3_55")
+        self.assertTrue(r["ok"])
+        self.assertEqual(self.profiles(bus), list(fp.CONNECT_UUIDS))
+
+    def test_a_plain_connect_connects_the_audio_too(self):
+        bus = self.Bus()
+        r = self.watcher(bus).connect_known("/org/bluez/hci0/dev_A8_E6_E8_0B_C3_55")
+        self.assertEqual(r, {"ok": True, "error": "", "address": "A8:E6:E8:0B:C3:55"})
+        self.assertEqual(self.profiles(bus)[0], "0000110b-0000-1000-8000-00805f9b34fb")
+
+    def test_no_audio_profiles_no_profile_calls(self):
+        bus = self.Bus()
+        self.watcher(bus).connect_audio("/d", {"UUIDs": ["00001124-0000-1000-8000-00805f9b34fb"]})
+        self.assertEqual(self.profiles(bus), [])

@@ -564,6 +564,19 @@ class Watcher:
         except Exception:  # noqa: BLE001
             return ""
 
+    def connect_audio(self, path, props):
+        """Connects the audio profiles (A2DP sink, HFP, HSP) that PROPS (the
+        device's Device1 properties) offers, one by one; one that's up
+        already answers AlreadyConnected, which is fine. Device1.Connect says
+        AlreadyConnected when any link is up, Fast Pair's LE one included,
+        and left headphones connected with no sound."""
+        uuids = [str(u).lower() for u in (props or {}).get("UUIDs", [])]
+        for u in (u for u in CONNECT_UUIDS if u in uuids):
+            try:
+                self.call(path, "org.bluez.Device1", "ConnectProfile", (u,), "(s)", timeout=30000)
+            except Exception:  # noqa: BLE001
+                continue
+
     def connect_known(self, path):
         """Connects earbuds paired before (a second try when BlueZ is busy
         with them: "Device or resource busy" when they reconnect at the same
@@ -577,6 +590,7 @@ class Watcher:
             for attempt in range(2):
                 try:
                     self.call(path, dev, "Connect", timeout=30000)
+                    self.connect_audio(path, known)
                     return {"ok": True, "error": "", "address": address}
                 except Exception as e:  # noqa: BLE001
                     msg = getattr(e, "message", str(e))
@@ -586,6 +600,9 @@ class Watcher:
         except Exception as e:  # noqa: BLE001
             msg = getattr(e, "message", str(e))
             if "AlreadyConnected" in msg:
+                # (a link was up already, often Fast Pair's own LE one: the
+                # audio isn't, until it's asked for; 26 Nov, WH-CH720N)
+                self.connect_audio(path, known)
                 return {"ok": True, "error": "", "address": known.get("Address", "")}
         # (in pairing mode and paired, yet they won't connect: they were reset,
         # or they're busy with a phone; the card offers to pair them again)

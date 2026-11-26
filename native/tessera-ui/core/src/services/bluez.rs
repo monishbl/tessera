@@ -142,6 +142,41 @@ fn read(conn: &Connection) -> zbus::Result<Bluetooth> {
     Ok(from_objects(&objs))
 }
 
+/// The audio profiles connected after a connect: A2DP sink, HFP, HSP
+/// (fastpair.py's CONNECT_UUIDS)
+const AUDIO_UUIDS: [&str; 3] = ["0000110b-0000-1000-8000-00805f9b34fb", "0000111e-0000-1000-8000-00805f9b34fb", "00001108-0000-1000-8000-00805f9b34fb"];
+
+/// Which of `uuids` (a device's) are audio profiles to connect, A2DP first
+pub fn audio_profiles(uuids: &[String]) -> Vec<&'static str> {
+    AUDIO_UUIDS.iter().copied().filter(|a| uuids.iter().any(|u| u.eq_ignore_ascii_case(a))).collect()
+}
+
+/// After a connect (or "already connected"): headphones' and speakers' audio
+/// profiles connected one by one. Device1.Connect answers AlreadyConnected
+/// when any link is up, and a Fast Pair or LE link left a pair of headphones
+/// "connected" with no audio at all (26 Nov, WH-CH720N: no sink until
+/// ConnectProfile(A2DP) was asked). A profile that's up already answers
+/// AlreadyConnected, which is fine; blocking, call on a thread
+pub fn connect_audio(addr: &str) {
+    let Ok(conn) = Connection::system() else { return };
+    let Ok(m) = conn.call_method(Some("org.bluez"), "/", Some("org.freedesktop.DBus.ObjectManager"), "GetManagedObjects", &()) else { return };
+    let Ok(objs) = m.body().deserialize::<Objects>() else { return };
+    for (path, ifs) in &objs {
+        let Some(d) = ifs.get("org.bluez.Device1") else { continue };
+        if !s(d, "Address").eq_ignore_ascii_case(addr) {
+            continue;
+        }
+        let uuids: Vec<String> = match d.get("UUIDs").map(|v| &**v) {
+            Some(Value::Array(a)) => a.iter().filter_map(|u| if let Value::Str(s) = u { Some(s.to_string()) } else { None }).collect(),
+            _ => Vec::new(),
+        };
+        for u in audio_profiles(&uuids) {
+            let _ = conn.call_method(Some("org.bluez"), path.as_str(), Some("org.bluez.Device1"), "ConnectProfile", &(u,));
+        }
+        return;
+    }
+}
+
 pub fn spawn(tx: Sender<Msg>) {
     std::thread::spawn(move || loop {
         let run = || -> zbus::Result<()> {
@@ -206,6 +241,14 @@ mod tests {
         );
         o.insert(path("/org/bluez/hci0/dev_BB"), [("org.bluez.Device1".to_string(), props(&[("Name", Value::from("Keyboard")), ("Address", Value::from("BB")), ("Paired", Value::from(true))]))].into());
         o
+    }
+
+    #[test]
+    fn audio_profiles_are_picked_a2dp_first() {
+        let u = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let headphones = u(&["00001108-0000-1000-8000-00805f9b34fb", "0000110B-0000-1000-8000-00805F9B34FB", "0000110e-0000-1000-8000-00805f9b34fb", "0000111e-0000-1000-8000-00805f9b34fb"]);
+        assert_eq!(audio_profiles(&headphones), AUDIO_UUIDS.to_vec());
+        assert!(audio_profiles(&u(&["00001124-0000-1000-8000-00805f9b34fb"])).is_empty());
     }
 
     #[test]
@@ -375,7 +418,11 @@ pub fn act(verb: &str, addr: &str) -> Result<(), String> {
         return pair(addr);
     }
     let (code, out) = ctl_full(&[verb, addr], if verb == "connect" { 30 } else { 15 });
-    outcome(verb, code, &out)
+    let r = outcome(verb, code, &out);
+    if verb == "connect" && r.is_ok() {
+        connect_audio(addr);
+    }
+    r
 }
 
 /// Pair a device so it stays paired, then trust and connect it (blocking:
@@ -399,6 +446,9 @@ pub fn pair(addr: &str) -> Result<(), String> {
         ctl(&["trust", addr], 5);
         let (code, out) = ctl_full(&["connect", addr], 30);
         result = outcome("connect", code, &out).map_err(|e| format!("Paired. {e}"));
+        if result.is_ok() {
+            connect_audio(addr);
+        }
     }
     if !was {
         ctl(&["pairable", "off"], 5);
