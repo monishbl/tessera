@@ -91,5 +91,44 @@ class Currency(unittest.TestCase):
         self.assertEqual(an.answer("100 usd in inr", NOW, lambda: None), {})
 
 
+class Limits(unittest.TestCase):
+    def test_huge_powers_are_refused_quickly(self):
+        # (audit #324: a tower of powers built a number with billions of digits)
+        self.assertEqual(ask("((((9^100)^100)^100)^100)^100"), {})
+        self.assertEqual(ask("1000000000 ^ 50"), {})
+        self.assertEqual(ask("2^10")["title"], "1,024")
+
+    def test_roots_of_negatives_answer_nothing(self):
+        self.assertEqual(ask("square root of -4"), {})
+        self.assertEqual(ask("square root of 16")["title"], "4")
+
+    def test_serve_always_answers_with_the_id(self):
+        import io
+        import json
+        import sys
+        old_in, old_out = sys.stdin, sys.stdout
+        sys.stdin, sys.stdout = io.StringIO('{"id": 7, "q": "square root of -4"}\nnot json\n'), io.StringIO()
+        try:
+            an.main(["--serve"])
+            lines = [json.loads(x) for x in sys.stdout.getvalue().splitlines()]
+        finally:
+            sys.stdin, sys.stdout = old_in, old_out
+        self.assertEqual(lines, [{"id": 7}, {"id": None}])
+
+    def test_a_failed_fetch_is_not_tried_on_every_keystroke(self):
+        import tempfile
+        from unittest import mock
+        calls = []
+
+        def offline(*a, **k):
+            calls.append(1)
+            raise OSError("offline")
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(an, "RATES_FILE", Path(d) / "rates.json"), \
+                mock.patch.object(an, "_failed_at", [0.0]), mock.patch.object(an.urllib.request, "urlopen", offline):
+            self.assertIsNone(an.rates())
+            self.assertIsNone(an.rates())
+            self.assertEqual(len(calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

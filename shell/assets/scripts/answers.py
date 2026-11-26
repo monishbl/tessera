@@ -72,6 +72,15 @@ OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast
        ast.Pow: operator.pow, ast.Mod: operator.mod, ast.USub: operator.neg, ast.UAdd: operator.pos}
 
 
+def small(v):
+    """A result small enough to show (and to work on: a power of a power of
+    a power can otherwise build a number with billions of digits); never a
+    complex one (a root of a negative)."""
+    if isinstance(v, complex) or (isinstance(v, int) and v.bit_length() > 4096):
+        raise ValueError("too big")
+    return v
+
+
 def safe_eval(expr):
     def ev(node):
         if isinstance(node, ast.Expression):
@@ -80,13 +89,13 @@ def safe_eval(expr):
             return node.value
         if isinstance(node, ast.BinOp) and type(node.op) in OPS:
             a, b = ev(node.left), ev(node.right)
-            if isinstance(node.op, ast.Pow) and abs(b) > 100:
+            if isinstance(node.op, ast.Pow) and (abs(b) > 100 or (abs(a) > 1e6 and b > 20)):
                 raise ValueError("too big")
-            return OPS[type(node.op)](a, b)
+            return small(OPS[type(node.op)](a, b))
         if isinstance(node, ast.UnaryOp) and type(node.op) in OPS:
             return OPS[type(node.op)](ev(node.operand))
         if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "sqrt" and len(node.args) == 1:
-            return ev(node.args[0]) ** 0.5
+            return small(ev(node.args[0]) ** 0.5)
         raise ValueError("not arithmetic")
     return ev(ast.parse(expr, mode="eval"))
 
@@ -131,7 +140,7 @@ def math_phrase(q):
         return (num(m[1]) if m[1] else 1) * 12, t
     m = re.fullmatch(r"(?:the\s+)?square root of " + NUM, t)
     if m:
-        return num(m[1]) ** 0.5, t
+        return small(num(m[1]) ** 0.5), t
     # Operators in words
     e = t
     for words, sym in ((r"multiplied by|times|into|x", "*"), (r"divided by|over", "/"), (r"plus|add", "+"),
@@ -367,6 +376,8 @@ CURRENCY_NAMES = {"dollar": "USD", "dollars": "USD", "usd": "USD", "$": "USD", "
                   "pounds": "GBP", "gbp": "GBP", "£": "GBP", "yen": "JPY", "jpy": "JPY", "¥": "JPY", "yuan": "CNY",
                   "rmb": "CNY", "dirham": "AED", "dirhams": "AED", "won": "KRW"}
 RATES_FILE = Path(app_dir(str(Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")))) / "rates.json"
+RETRY_AFTER = 300  # (s) after a failed fetch, before trying again
+_failed_at = [0.0]  # when the last fetch failed (offline: every keystroke waited 4 s)
 
 
 def rates(fetch=True):
@@ -377,17 +388,23 @@ def rates(fetch=True):
             return cached["rates"]
     except Exception:  # noqa: BLE001
         cached = None
-    if not fetch:
-        return None
+    if not fetch or time.time() - _failed_at[0] < RETRY_AFTER:
+        return cached["rates"] if cached else None
     try:
         with urllib.request.urlopen("https://api.frankfurter.app/latest", timeout=4) as r:
             data = json.loads(r.read())
         table = dict(data["rates"], EUR=1.0)
-        RATES_FILE.parent.mkdir(parents=True, exist_ok=True)
-        RATES_FILE.write_text(json.dumps({"at": time.time(), "rates": table}))
-        return table
     except Exception:  # noqa: BLE001
+        _failed_at[0] = time.time()
         return cached["rates"] if cached else None
+    try:
+        RATES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = RATES_FILE.with_name(f"{RATES_FILE.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps({"at": time.time(), "rates": table}))
+        os.replace(tmp, RATES_FILE)
+    except OSError:
+        pass
+    return table
 
 
 def code_for(word, table):
@@ -429,14 +446,14 @@ def answer(q, now=None, table_fn=rates):
                      ("math", lambda: math_phrase(q))):
         try:
             r = fn()
-        except Exception:  # noqa: BLE001
-            r = None
-        if r:
-            if kind == "math":
+            if r and kind == "math":
                 value, what = r[0], r[1]
                 suffix = r[2] if len(r) > 2 else ""
                 title = fmt(round(value, 10)) + suffix
                 return {"kind": kind, "title": title, "subtitle": what, "copy": title.replace(",", "")}
+        except Exception:  # noqa: BLE001
+            r = None
+        if r:
             return {"kind": kind, "title": r[0], "subtitle": r[1], "copy": r[0]}
     return {}
 
@@ -444,11 +461,14 @@ def answer(q, now=None, table_fn=rates):
 def main(argv):
     if argv[:1] == ["--serve"]:
         for line in sys.stdin:
+            rid = None
             try:
                 req = json.loads(line)
-                out = dict(answer(req.get("q", "")), id=req.get("id"))
+                rid = req.get("id")
+                out = dict(answer(req.get("q", "")), id=rid)
             except Exception:  # noqa: BLE001
-                out = {"id": None}
+                # (still this request's: Spotlight waits for its id)
+                out = {"id": rid}
             sys.stdout.write(json.dumps(out) + "\n")
             sys.stdout.flush()
         return 0
