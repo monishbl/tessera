@@ -249,6 +249,9 @@ component Ring inherits Rectangle {
 // Glass's ring, ticking a to-do off
 component Tick inherits Rectangle {
     in property <length> size: 16px;
+    // what it ticks off, for a screen reader (it's only shown on open to-dos:
+    // never checked)
+    in property <string> label;
     callback ticked();
     width: size;
     height: size;
@@ -271,6 +274,7 @@ component Tick inherits Rectangle {
     }
     accessible-role: checkbox;
     accessible-checked: false;
+    accessible-label: label;
     accessible-action-default => { ticked(); }
 }
 
@@ -290,6 +294,10 @@ component DragTap inherits TouchArea {
         }
         if e.button == PointerEventButton.left && e.kind == PointerEventKind.down {
             self.dragged = false;
+        }
+        if e.kind == PointerEventKind.cancel && self.dragged {
+            self.dragged = false;
+            root.drag-by(0, 0, false);
         }
         if e.button == PointerEventButton.left && e.kind == PointerEventKind.up {
             if self.dragged {
@@ -431,8 +439,8 @@ component WeatherW inherits Rectangle {
             height: self.preferred-height;
             spacing: 2px;
             HorizontalLayout { alignment: start; SymIcon { text: w.g1; fill: true; font-size: 18px; color: Theme.label; } }
-            T { text: w.t3; font-weight: 500; }
-            T { text: w.t4; color: Theme.secondary; }
+            T { text: w.t3; font-weight: 500; overflow: elide; }
+            T { text: w.t4; color: Theme.secondary; overflow: elide; }
         }
         if w.size != "s": VerticalLayout {
             x: root.width - self.width;
@@ -444,8 +452,8 @@ component WeatherW inherits Rectangle {
                 alignment: end;
                 SymIcon { text: w.g1; fill: true; font-size: 26px; color: Theme.label; }
             }
-            T { text: w.t3; horizontal-alignment: right; font-weight: 500; }
-            T { text: w.t4; horizontal-alignment: right; color: Theme.secondary; }
+            T { text: w.t3; horizontal-alignment: right; font-weight: 500; overflow: elide; }
+            T { text: w.t4; horizontal-alignment: right; color: Theme.secondary; overflow: elide; }
         }
         if w.size != "s": HorizontalLayout {
             y: root.height - self.preferred-height;
@@ -595,7 +603,7 @@ component RemindersW inherits Rectangle {
         if w.lines.length == 0: T { text: w.t3; color: Theme.secondary; }
         for t in w.lines: HorizontalLayout {
             spacing: 8px;
-            Tick { size: 16px; y: 0; ticked => { root.act("tick", t.key); } }
+            Tick { size: 16px; y: 0; label: t.text; ticked => { root.act("tick", t.key); } }
             T { text: t.text; overflow: elide; horizontal-stretch: 1; }
             if t.sub != "" && w.size != "s": T { text: t.sub; color: t.flag ? Theme.danger : Theme.tertiary; font-size: Theme.caption; horizontal-stretch: 0; }
         }
@@ -678,7 +686,7 @@ component TodayW inherits Rectangle {
         width: root.width;
         height: self.preferred-height;
         spacing: 6px;
-        if large && w.on: T { text: w.t4; color: Theme.secondary; }
+        if large && w.on: T { text: w.t4; color: Theme.secondary; overflow: elide; }
         if w.lines.length == 0: T { text: w.t5; color: Theme.tertiary; }
         for e in w.lines: HorizontalLayout {
             height: 18px;
@@ -694,7 +702,7 @@ component TodayW inherits Rectangle {
             for t in w.lines2: HorizontalLayout {
                 height: 18px;
                 spacing: 8px;
-                Tick { size: Theme.material ? 16px : 14px; ticked => { root.act("tick", t.key); } }
+                Tick { size: Theme.material ? 16px : 14px; label: t.text; ticked => { root.act("tick", t.key); } }
                 T { text: t.text; overflow: elide; vertical-alignment: center; }
             }
         }
@@ -809,7 +817,7 @@ component NowPlayingW inherits Rectangle {
                 text: b.g;
                 fill: true;
                 font-size: 20px;
-                color: !Theme.material ? Theme.label : !w.flag ? Theme.m3-on-surface.with-alpha(0.38) : i == 1 ? Theme.m3-on-primary : Theme.m3-on-secondary-container;
+                color: !Theme.material ? (w.flag ? Theme.label : Theme.tertiary) : !w.flag ? Theme.m3-on-surface.with-alpha(0.38) : i == 1 ? Theme.m3-on-primary : Theme.m3-on-secondary-container;
             }
             bt := DragTap {
                 enabled: w.flag;
@@ -1271,6 +1279,14 @@ component Frame inherits Rectangle {
                 root.dx = 0;
                 root.dy = 0;
             }
+            // (the grab taken away: a lock, a surface under the pointer)
+            // back where it was, not left lifted at the wrong place
+            if e.kind == PointerEventKind.cancel && root.dragging {
+                root.dragging = false;
+                root.drag(w.index, w.x, w.y, false);
+                root.dx = 0;
+                root.dy = 0;
+            }
         }
         moved => {
             if self.pressed && self.pressed-x >= 0 {
@@ -1354,9 +1370,10 @@ component Frame inherits Rectangle {
         y: (w.h - self.preferred-height) / 2;
         width: 16px;
         height: self.preferred-height;
+        // (each dot's row 16 px high: easy to hit, and a miss doesn't start a drag)
         for i in w.stack-n: Rectangle {
             width: 16px;
-            height: (i == w.stack-i ? 12px : 5px) + 4px;
+            height: max(16px, (i == w.stack-i ? 12px : 5px) + 4px);
             Rectangle {
                 width: 5px;
                 height: i == w.stack-i ? 12px : 5px;
@@ -1492,6 +1509,13 @@ component IconCell inherits Rectangle {
         pointer-event(e) => {
             if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
                 root.icon(ic.index, "menu", root.x + self.mouse-x, root.y + self.mouse-y);
+            }
+            if e.kind == PointerEventKind.cancel && root.dragging {
+                // (the grab taken away: dropped back on its own spot)
+                root.dragging = false;
+                root.icon(ic.index, "drop", ic.x, ic.y);
+                root.dx = 0;
+                root.dy = 0;
             }
             if e.kind == PointerEventKind.up && e.button == PointerEventButton.left {
                 if root.dragging {
@@ -1745,10 +1769,21 @@ export component DeskMenu inherits Window {
     function ok(i: int) -> bool {
         return i >= 0 && i < rows.length && !rows[i].separator && rows[i].enabled;
     }
+    // (from no row, Up starts at the bottom and Down at the top; past either
+    // end it wraps round; separators and disabled rows are skipped, up to
+    // four in a row)
+    function step-from(d: int) -> int {
+        return current < 0 ? (d > 0 ? -1 : rows.length) : current;
+    }
+    function step-wrap(i: int) -> int {
+        return i < 0 ? i + rows.length : i >= rows.length ? i - rows.length : i;
+    }
     function step(d: int) {
-        if ok(current + d) { current = current + d; return; }
-        if ok(current + 2 * d) { current = current + 2 * d; return; }
-        if ok(current + 3 * d) { current = current + 3 * d; }
+        if ok(step-wrap(step-from(d) + d)) { current = step-wrap(step-from(d) + d); return; }
+        if ok(step-wrap(step-from(d) + 2 * d)) { current = step-wrap(step-from(d) + 2 * d); return; }
+        if ok(step-wrap(step-from(d) + 3 * d)) { current = step-wrap(step-from(d) + 3 * d); return; }
+        if ok(step-wrap(step-from(d) + 4 * d)) { current = step-wrap(step-from(d) + 4 * d); return; }
+        if ok(step-wrap(step-from(d) + 5 * d)) { current = step-wrap(step-from(d) + 5 * d); }
     }
 
     TouchArea {
@@ -1806,7 +1841,7 @@ export component DeskMenu inherits Window {
                             vertical-alignment: center;
                             height: parent.height;
                             font-size: Theme.body;
-                            color: hot && !(Theme.material && r.danger) ? (Theme.material ? Theme.on-highlight : #ffffff) : !r.enabled ? Theme.tertiary : r.danger ? Theme.danger : Theme.label;
+                            color: hot && !(Theme.material && r.danger) ? (r.danger ? #ffffff : Theme.on-highlight) : !r.enabled ? Theme.tertiary : r.danger ? Theme.danger : Theme.label;
                             accessible-role: none;
                         }
                         TouchArea {
@@ -1868,6 +1903,15 @@ export component Gallery inherits Window {
     title: "Widget gallery";
     default-font-family: Theme.font;
 
+    // The list scrolls so the kind chosen with the arrows stays in sight
+    function show-kind(n: int) {
+        if n * kind-step < -kinds-list.viewport-y {
+            kinds-list.viewport-y = -n * kind-step;
+        } else if (n + 1) * kind-step > kinds-list.height - kinds-list.viewport-y {
+            kinds-list.viewport-y = kinds-list.height - (n + 1) * kind-step;
+        }
+    }
+    property <length> kind-step: Theme.material ? 42px : 38px;
     keys := FocusScope {
         key-pressed(e) => {
             if e.text == Key.Escape {
@@ -1875,10 +1919,12 @@ export component Gallery inherits Window {
                 return accept;
             }
             if e.text == Key.UpArrow {
+                root.show-kind(max(0, root.picked - 1));
                 root.pick(max(0, root.picked - 1));
                 return accept;
             }
             if e.text == Key.DownArrow {
+                root.show-kind(min(root.kinds.length - 1, root.picked + 1));
                 root.pick(min(root.kinds.length - 1, root.picked + 1));
                 return accept;
             }
@@ -1901,7 +1947,7 @@ export component Gallery inherits Window {
             TouchArea { }
 
             // Kinds
-            Flickable {
+            kinds-list := Flickable {
                 x: 12px;
                 y: 12px;
                 width: 200px;

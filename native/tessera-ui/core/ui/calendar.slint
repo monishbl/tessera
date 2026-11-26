@@ -292,7 +292,7 @@ component CalSwitch inherits Rectangle {
     animate background { duration: 150ms; }
     border-width: Theme.material && !checked ? 2px : 0;
     border-color: Theme.m3-outline;
-    accessible-role: checkbox;
+    accessible-role: switch;
     accessible-checked: checked;
     accessible-label: label;
     accessible-action-default => { if enabled { toggled(); } }

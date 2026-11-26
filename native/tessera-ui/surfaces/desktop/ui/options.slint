@@ -88,7 +88,7 @@ component Toggle inherits Rectangle {
     border-width: Theme.material && !checked ? 2px : 0px;
     border-color: Theme.m3-outline;
     animate background { duration: 150ms; }
-    accessible-role: checkbox;
+    accessible-role: switch;
     accessible-label: label;
     accessible-checked: checked;
     accessible-action-default => { toggled(!checked); }

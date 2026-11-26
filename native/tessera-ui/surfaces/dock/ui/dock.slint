@@ -269,9 +269,10 @@ export component Dock inherits Window {
             }
             // The name above the hovered icon, on frosted glass
             if !Theme.material && s.hot: Rectangle {
+                // (at most 320 px: a minimized window's long title is cut short)
                 x: s.lead + (s.size - self.width) / 2;
                 y: -parent.lift - parent.hop - self.height - 10px;
-                width: name.preferred-width + 20px;
+                width: min(320px, name.preferred-width + 20px);
                 height: 26px;
                 border-radius: 13px;
                 background: Theme.dark ? rgba(28, 28, 33, 0.55) : rgba(247, 247, 252, 0.62);
@@ -285,7 +286,10 @@ export component Dock inherits Window {
                     background: Theme.dark ? rgba(255, 255, 255, 0.12) : rgba(255, 255, 255, 0.6);
                 }
                 name := Text {
+                    x: 10px;
+                    width: parent.width - 20px;
                     text: s.name;
+                    overflow: elide;
                     color: Theme.label;
                     font-size: Theme.body;
                     font-weight: 500;
@@ -484,11 +488,21 @@ export component DockMenu inherits Window {
     function ok(i: int) -> bool {
         return i >= 0 && i < rows.length && !rows[i].separator && rows[i].enabled;
     }
-    // (arrows skip separators and disabled rows: never more than two in a row)
+    // (from no row, Up starts at the bottom and Down at the top; past either
+    // end it wraps round; separators and disabled rows are skipped, up to
+    // four in a row)
+    function step-from(d: int) -> int {
+        return current < 0 ? (d > 0 ? -1 : rows.length) : current;
+    }
+    function step-wrap(i: int) -> int {
+        return i < 0 ? i + rows.length : i >= rows.length ? i - rows.length : i;
+    }
     function step(d: int) {
-        if ok(current + d) { current = current + d; return; }
-        if ok(current + 2 * d) { current = current + 2 * d; return; }
-        if ok(current + 3 * d) { current = current + 3 * d; }
+        if ok(step-wrap(step-from(d) + d)) { current = step-wrap(step-from(d) + d); return; }
+        if ok(step-wrap(step-from(d) + 2 * d)) { current = step-wrap(step-from(d) + 2 * d); return; }
+        if ok(step-wrap(step-from(d) + 3 * d)) { current = step-wrap(step-from(d) + 3 * d); return; }
+        if ok(step-wrap(step-from(d) + 4 * d)) { current = step-wrap(step-from(d) + 4 * d); return; }
+        if ok(step-wrap(step-from(d) + 5 * d)) { current = step-wrap(step-from(d) + 5 * d); }
     }
     function choose(i: int) {
         if i < 0 || i >= rows.length || rows[i].separator || !rows[i].enabled { return; }
@@ -556,7 +570,7 @@ export component DockMenu inherits Window {
                             height: parent.height;
                             font-size: Theme.body;
                             font-weight: armed-row ? 600 : 400;
-                            color: armed-row ? (Theme.material ? Theme.m3-on-error : #ffffff) : hot && !(Theme.material && r.danger) ? (Theme.material ? Theme.on-highlight : #ffffff) : !r.enabled ? Theme.tertiary : r.danger ? Theme.danger : Theme.label;
+                            color: armed-row ? (Theme.material ? Theme.m3-on-error : #ffffff) : hot && !(Theme.material && r.danger) ? (r.danger ? #ffffff : Theme.on-highlight) : !r.enabled ? Theme.tertiary : r.danger ? Theme.danger : Theme.label;
                             accessible-role: none;
                         }
                         TouchArea {

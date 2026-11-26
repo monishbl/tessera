@@ -560,6 +560,11 @@ impl Dock {
         let m = self.metrics(st);
         let dividers: Vec<bool> = self.items.iter().map(|i| i.divider).collect();
         let Some(w) = self.win(output) else { return };
+        // (the tracker says a diagonal move twice, x then y, with the same
+        // place: the second changes nothing, so the dock isn't worked out again)
+        if w.pointer == on.then_some((x, y)) {
+            return;
+        }
         w.pointer = on.then_some((x, y));
         let (ww, wh) = w.surface.logical_size();
         let (edge, zone) = layout::edge_and_zone(&m, &dividers, ww as f32, wh as f32, w.pointer);

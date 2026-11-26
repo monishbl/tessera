@@ -621,7 +621,7 @@ export component OverviewPanel inherits Window {
                 border-color: Theme.accent.with-alpha(0.55);
                 Text {
                     text: ch.n;
-                    color: chip-hot == ch.id ? (Theme.material ? Theme.m3-on-primary : white) : Theme.material && ch.current ? Theme.m3-on-secondary-container : Theme.label;
+                    color: chip-hot == ch.id ? (Theme.material ? Theme.m3-on-primary : Theme.on-accent) : Theme.material && ch.current ? Theme.m3-on-secondary-container : Theme.label;
                     font-size: Theme.body;
                     font-weight: ch.current ? 600 : 500;
                     accessible-role: none;
