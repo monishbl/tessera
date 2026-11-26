@@ -467,7 +467,7 @@ impl Sharing {
             self.island(
                 h,
                 json!({"kind": "custom", "icon": "wifi-high", "title": format!("Wi-Fi network from {from}"), "subtitle": js(&w["ssid"]), "color": GREEN,
-                    "action": "Copy Password", "onAction": act("share.copyText", json!([js(&w["password"])]))}),
+                    "action": "Copy password", "onAction": act("share.copyText", json!([js(&w["password"])]))}),
                 10000,
             );
         }

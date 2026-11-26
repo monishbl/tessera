@@ -119,7 +119,7 @@ impl Sharing {
             self.island(
                 h,
                 json!({"kind": "custom", "key": "phone", "icon": "device-mobile", "title": if model.is_empty() { "Phone connected".to_string() } else { model }, "subtitle": sub,
-                    "action": if scrcpy {"Show Screen"} else {""}, "onAction": crate::act("share.phoneMirror", json!([js(&d["serial"])]))}),
+                    "action": if scrcpy {"Show screen"} else {""}, "onAction": crate::act("share.phoneMirror", json!([js(&d["serial"])]))}),
                 6000,
             );
         }

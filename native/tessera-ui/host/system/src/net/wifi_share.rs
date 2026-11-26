@@ -81,12 +81,12 @@ impl WifiShare {
             ev["actionCall"] = json!("wifishare.join");
             ev["actionArgs"] = json!([w]);
         } else if !pw.is_empty() {
-            ev["action"] = json!("Copy Password");
+            ev["action"] = json!("Copy password");
             ev["actionCall"] = json!("wifishare.copy");
             ev["actionArgs"] = json!([pw]);
         }
         if can && !pw.is_empty() {
-            ev["action2"] = json!("Copy Password");
+            ev["action2"] = json!("Copy password");
             ev["action2Call"] = json!("wifishare.copy");
             ev["action2Args"] = json!([pw]);
         }
