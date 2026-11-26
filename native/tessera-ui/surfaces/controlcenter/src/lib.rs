@@ -1376,7 +1376,7 @@ fn page_title(page: &str) -> &'static str {
         "mic" => "Microphone",
         "focus" => "Focus",
         "caffeine" => "Caffeine",
-        "resources" => "CPU & Memory",
+        "resources" => "CPU & memory",
         "sharing" => "Sharing",
         "mirroring" => "Screen Mirroring",
         "cast" => "Cast",

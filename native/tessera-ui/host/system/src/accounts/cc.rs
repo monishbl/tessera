@@ -408,7 +408,7 @@ impl ControlCenter {
                     d.needs = "hyprsunset";
                     d
                 }
-                "darkMode" => def(if look.dark { "Dark Mode" } else { "Light Mode" }, "circle-half", look.dark, if cfg["appearance"]["mode"] == "auto" { "Auto" } else { "" }),
+                "darkMode" => def(if look.dark { "Dark mode" } else { "Light mode" }, "circle-half", look.dark, if cfg["appearance"]["mode"] == "auto" { "Auto" } else { "" }),
                 // Visible to: phones (Quick Share) and LocalSend together, one
                 // level; on whenever it isn't No one; "10 min" counts down
                 "sharing" => {
@@ -428,7 +428,7 @@ impl ControlCenter {
                 "captions" => {
                     // (on/off is the setting; host-desktop's "captions" state has only readiness)
                     let en = cfg["captions"]["enabled"].as_bool().unwrap_or(false);
-                    def("Live Captions", "closed-captioning", en, if en { "On" } else { "" })
+                    def("Live captions", "closed-captioning", en, if en { "On" } else { "" })
                 }
                 "keepAwake" => def("Caffeine", "coffee", bs(&sys, "keepAwake"), ss(&sys, "keepAwakeStatus")),
                 "stageManager" => def("Stages", "squares-four", cfg["stageManager"]["enabled"].as_bool().unwrap_or(false), ""),
@@ -476,19 +476,19 @@ impl ControlCenter {
                 "keyboard" => def("Keyboard", "keyboard", false, ""),
                 "screenshot" => def("Screenshot", "camera", false, ""),
                 "colorPicker" => {
-                    let mut d = def("Colour Picker", "eyedropper", false, "");
+                    let mut d = def("Colour picker", "eyedropper", false, "");
                     d.needs = "hyprpicker";
                     d
                 }
                 "musicRecognition" => {
-                    let mut d = def("Identify Song", "music-notes", false, "");
+                    let mut d = def("Identify song", "music-notes", false, "");
                     d.needs = "songrec";
                     d
                 }
                 "clipboard" => def("Clipboard", "clipboard-text", false, ""),
                 "calculator" => def("Calculator", "calculator", false, ""),
                 "timer" => def("Timer", "timer", false, ""),
-                "tileWindows" => def("Tile Left & Right", "square-split-horizontal", false, ""),
+                "tileWindows" => def("Tile left & right", "square-split-horizontal", false, ""),
                 "appLibrary" => def("App Drawer", "squares-four", false, ""),
                 "display" => {
                     let mut d = def("Display", "sun", false, "");
@@ -512,7 +512,7 @@ impl ControlCenter {
                     d.reason = "No battery".into();
                     d
                 }
-                "resources" => def("CPU & Memory", "cpu", false, ""),
+                "resources" => def("CPU & memory", "cpu", false, ""),
                 _ => {
                     let w = h.st.shell.get::<tessera_core::services::weather::Weather>();
                     def("Weather", w.map_or("", |w| w.icon), false, "")
@@ -1042,7 +1042,7 @@ impl ControlCenter {
             json!({"t": "gap", "h": 2}),
             note(&format!("The last minute, once a second. Network counts every interface but loopback, containers and VPN tunnels.{}", if r["gpuAvailable"].as_bool().unwrap_or(false) { "" } else { " Your GPU driver doesn't report its load." }), "tertiary", false),
         ]);
-        json!({"name": "resources", "title": "CPU & Memory", "blocks": blocks})
+        json!({"name": "resources", "title": "CPU & memory", "blocks": blocks})
     }
 
     // ── Doing ────────────────────────────────────────────────────────────
