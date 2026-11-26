@@ -22,13 +22,18 @@ pub fn follow(part: &'static str, tx: Sender<Msg>, mut each: impl FnMut(&str) ->
                 continue;
             };
             let mut r = BufReader::new(stream);
-            let mut line = String::new();
+            // (bytes per line, made text lossily: a title that isn't UTF-8
+            // mustn't drop the connection and the lines around it)
+            let mut raw: Vec<u8> = Vec::new();
             loop {
-                line.clear();
-                match r.read_line(&mut line) {
-                    Ok(0) | Err(_) => break,
+                raw.clear();
+                match r.read_until(b'\n', &mut raw) {
+                    Ok(0) => break,
                     Ok(_) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => break,
                 }
+                let line = String::from_utf8_lossy(&raw);
                 if let Some(m) = each(line.trim_end()) {
                     if tx.send(Msg::Part(part, m)).is_err() {
                         return;

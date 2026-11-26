@@ -150,6 +150,9 @@ pub struct GlSurface {
     /// the last frames' changed boxes, newest first, in GL's window
     /// coordinates (x, y from the bottom; None: all of it)
     history: RefCell<VecDeque<Option<[i32; 4]>>>,
+    /// the frame being drawn's box, put into `history` only once it is
+    /// presented (a frame that failed to draw or swap reached no buffer)
+    pending: Cell<Option<Option<[i32; 4]>>>,
 }
 
 impl GlSurface {
@@ -158,7 +161,7 @@ impl GlSurface {
         let surface = unsafe {
             egl.api.create_window_surface(egl.display, egl.config, window.ptr() as egl::NativeWindowType, None)?
         };
-        Ok(Self { egl, window, surface, interval_set: Cell::new(false), damage: Default::default(), frame: Default::default(), history: Default::default() })
+        Ok(Self { egl, window, surface, interval_set: Cell::new(false), damage: Default::default(), frame: Default::default(), history: Default::default(), pending: Cell::new(None) })
     }
 
     fn gl_string(&self, what: u32) -> String {
@@ -169,6 +172,11 @@ impl GlSurface {
     /// frames since this back buffer was drawn (its age), as one box; all of
     /// it when that isn't known (the first frames, a new size, no age)
     fn set_clip(&self) {
+        // (a frame begun but never presented: its box is in no buffer, and
+        // what the buffers hold isn't known, so the next frames draw whole)
+        if self.pending.take().is_some() {
+            self.history.borrow_mut().clear();
+        }
         let now = self.damage.borrow().as_ref().map(|(rects, h)| bbox(&egl_rects(rects, *h)));
         let mut hist = self.history.borrow_mut();
         let clip = if self.egl.buffer_age {
@@ -182,12 +190,21 @@ impl GlSurface {
         } else {
             None
         };
-        hist.push_front(now);
-        hist.truncate(4);
+        drop(hist);
+        self.pending.set(Some(now));
         femtovg::renderer::set_screen_clip(clip);
         // (and Slint's renderer skips the items outside it: vendor/i-slint-renderer-femtovg)
         let h = self.damage.borrow().as_ref().map_or(0, |d| d.1);
         i_slint_renderer_femtovg::set_frame_damage(clip.zip(now).map(|(c, n)| i_slint_renderer_femtovg::FrameDamage { redraw: top_left(c, h), now: top_left(n, h) }));
+    }
+
+    /// The frame was presented: its box joins the history
+    fn presented(&self) {
+        if let Some(now) = self.pending.take() {
+            let mut hist = self.history.borrow_mut();
+            hist.push_front(now);
+            hist.truncate(4);
+        }
     }
 }
 
@@ -286,10 +303,22 @@ unsafe impl slint::platform::femtovg_renderer::OpenGLInterface for GlSurface {
         if let (Some(f), Some((rects, h))) = (self.egl.swap_with_damage, self.damage.borrow_mut().take()) {
             let r = egl_rects(&rects, h);
             if unsafe { f(self.egl.display.as_ptr(), self.surface.as_ptr(), r.as_ptr(), (r.len() / 4) as egl::Int) } == egl::TRUE {
+                self.presented();
                 return Ok(());
             }
         }
-        Ok(self.egl.api.swap_buffers(self.egl.display, self.surface)?)
+        match self.egl.api.swap_buffers(self.egl.display, self.surface) {
+            Ok(()) => {
+                self.presented();
+                Ok(())
+            }
+            Err(e) => {
+                // (what the buffers hold is no longer known: the next frames whole)
+                self.pending.set(None);
+                self.history.borrow_mut().clear();
+                Err(e.into())
+            }
+        }
     }
     fn resize(&self, width: NonZeroU32, height: NonZeroU32) -> Res<()> {
         self.window.resize(width.get() as i32, height.get() as i32, 0, 0);

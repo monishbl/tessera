@@ -43,7 +43,19 @@ pub const OUTSIDE_TITLE: &str = "The network is managed outside Tessera";
 pub const OUTSIDE_REASON: &str = "This computer is online, but not through NetworkManager, which Tessera's Wi-Fi menus need. Choose networks with the tool that set up this connection.";
 pub const OUTSIDE_SHORT: &str = "Managed outside Tessera";
 
-fn watch<T: Send + Clone + PartialEq + 'static>(
+/// What the watcher hears (from the two readers below)
+enum Heard {
+    /// a property changed
+    Changed,
+    /// the service left the bus (stopped, crashed)
+    Lost,
+}
+
+/// How long a burst of PropertiesChanged is let settle before one reading
+/// (a Wi-Fi scan: dozens a second, each a full re-read before)
+const SETTLE: Duration = Duration::from_millis(150);
+
+fn watch<T: Send + Clone + PartialEq + Default + 'static>(
     tx: Sender<Msg>,
     sender: &'static str,
     read: fn(&Connection) -> zbus::Result<T>,
@@ -67,13 +79,57 @@ fn watch<T: Send + Clone + PartialEq + 'static>(
                 .interface("org.freedesktop.DBus.Properties")?
                 .member("PropertiesChanged")?
                 .build();
-            let mut signals = MessageIterator::for_match_rule(rule, &conn, Some(16))?;
+            let signals = MessageIterator::for_match_rule(rule, &conn, Some(16))?;
+            // (the service leaving: its last reading mustn't stay on screen)
+            let gone_rule = MatchRule::builder()
+                .msg_type(zbus::message::Type::Signal)
+                .sender("org.freedesktop.DBus")?
+                .interface("org.freedesktop.DBus")?
+                .member("NameOwnerChanged")?
+                .arg(0, sender)?
+                .build();
+            let owners = MessageIterator::for_match_rule(gone_rule, &conn, Some(8))?;
+            // (read on threads of their own, so a burst can be let settle;
+            // each ends at its next message once this run is over)
+            let (htx, heard) = std::sync::mpsc::channel::<Heard>();
+            let h1 = htx.clone();
+            std::thread::spawn(move || {
+                for _ in signals {
+                    if h1.send(Heard::Changed).is_err() {
+                        return;
+                    }
+                }
+            });
+            std::thread::spawn(move || {
+                for m in owners.flatten() {
+                    let lost = m.body().deserialize::<(String, String, String)>().is_ok_and(|(_, _, new)| new.is_empty());
+                    if lost && htx.send(Heard::Lost).is_err() {
+                        return;
+                    }
+                }
+            });
             // (only what changed: NetworkManager and UPower signal often,
             // for properties these readings don't hold)
             let mut last = read(&conn)?;
             up = true;
             tx.send(wrap(last.clone())).map_err(|_| zbus::Error::Failure("ui gone".into()))?;
-            while signals.next().is_some() {
+            let lost = || -> zbus::Result<()> {
+                // (not there: no reading, until it's back)
+                tx.send(wrap(T::default())).map_err(|_| zbus::Error::Failure("ui gone".into()))?;
+                Ok(())
+            };
+            while let Ok(h) = heard.recv() {
+                if let Heard::Lost = h {
+                    return lost();
+                }
+                // (the rest of the burst)
+                loop {
+                    match heard.recv_timeout(SETTLE) {
+                        Ok(Heard::Changed) => {}
+                        Ok(Heard::Lost) => return lost(),
+                        Err(_) => break,
+                    }
+                }
                 let now = read(&conn)?;
                 if now != last {
                     tx.send(wrap(now.clone())).map_err(|_| zbus::Error::Failure("ui gone".into()))?;

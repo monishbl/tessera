@@ -286,10 +286,14 @@ pub fn is_call(n: &Note) -> bool {
     let kinds = ["", "voice", "video", "audio", "group"];
     let incoming = kinds.iter().any(|k| if k.is_empty() { has_word_seq(&text, &["incoming", "call"]) } else { has_word_seq(&text, &["incoming", k, "call"]) });
     let started = ["", "voice", "video"].iter().any(|k| if k.is_empty() { has_word_seq(&text, &["started", "a", "call"]) } else { has_word_seq(&text, &["started", "a", k, "call"]) });
+    // ("is calling" and "calling you" turn up in ordinary messages: only in
+    // the title, or a body that is little more than the phrase)
+    let short_body = norm(&n.body).split_whitespace().count() <= 4;
+    let phrase = if short_body { text.clone() } else { norm(&n.summary) };
     incoming
         || started
-        || has_word_seq(&text, &["is", "calling"])
-        || has_word_seq(&text, &["calling", "you"])
+        || has_word_seq(&phrase, &["is", "calling"])
+        || has_word_seq(&phrase, &["calling", "you"])
         || has_word_seq(&text, &["voice", "call", "from"])
         || has_word_seq(&text, &["video", "call", "from"])
         || has_word_seq(&text, &["wants", "to", "call"])
@@ -362,9 +366,18 @@ pub fn route(n: &Note, cfg: &Value, focus: &Value, now_ms: i64, shell: bool) -> 
 
 /// How long a banner stays, ms (None: until dismissed: critical ones and a
 /// ringing call). The app's own timeout when it gives one, else 5 s
+/// How long a banner stays for a call guessed from its words (ms)
+pub const CALL_GUESSED_MS: u64 = 60_000;
+
 pub fn banner_ms(n: &Note) -> Option<u64> {
-    if n.urgency == CRITICAL || is_call(n) {
+    if n.urgency == CRITICAL {
         return None;
+    }
+    if is_call(n) {
+        // (a call the app said is one rings until answered; one guessed from
+        // the words alone stays a minute at most: any app could pin a banner)
+        let cat = n.category.to_lowercase();
+        return if cat.split(['.', '-']).any(|p| p == "call") { None } else { Some(CALL_GUESSED_MS) };
     }
     Some(if n.expire_timeout > 0 { n.expire_timeout as u64 } else { 5000 })
 }
@@ -581,6 +594,10 @@ mod tests {
         assert!(!is_call(&note("Missed call", "Ann is calling")));
         assert!(!is_call(&note("Call ended", "")));
         assert!(!is_call(&note("Recalling the meeting", "nothing incoming")));
+        // (audit #854: the phrase in an ordinary message)
+        assert!(!is_call(&note("Ann", "the client is calling at 3 about the invoice")));
+        assert!(!is_call(&note("Bob", "stop calling you-know-who every day please")));
+        assert!(is_call(&note("Ann is calling you", "")));
     }
 
     #[test]
@@ -590,7 +607,8 @@ mod tests {
         assert_eq!(banner_ms(&Note { expire_timeout: 12000, ..note("a", "") }), Some(12000));
         assert_eq!(banner_ms(&Note { urgency: LOW, ..note("a", "") }), Some(5000));
         assert_eq!(banner_ms(&Note { urgency: CRITICAL, ..note("a", "") }), None);
-        assert_eq!(banner_ms(&note("Incoming call", "Ann")), None);
+        assert_eq!(banner_ms(&note("Incoming call", "Ann")), Some(CALL_GUESSED_MS));
+        assert_eq!(banner_ms(&Note { category: "call.incoming".into(), ..note("Ann", "") }), None);
     }
 
     #[test]

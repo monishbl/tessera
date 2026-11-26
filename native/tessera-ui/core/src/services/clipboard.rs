@@ -56,11 +56,12 @@ pub fn db_path() -> String {
     std::env::var("CLIPHIST_DB_PATH").ok().filter(|p| !p.is_empty()).unwrap_or_else(|| crate::util::xdg("XDG_CACHE_HOME", ".cache").join("cliphist/db").to_string_lossy().into_owned())
 }
 
+/// Where the pictures are decoded: the runtime folder (yours alone), else a
+/// folder in your cache, never a fixed name in /tmp another account could
+/// make first and fill
 pub fn preview_dir() -> PathBuf {
-    // (no runtime folder: one of your own under the cache, not a fixed name
-    // in /tmp that another user could take first)
-    match std::env::var("XDG_RUNTIME_DIR").ok().filter(|s| !s.is_empty()) {
-        Some(run) => PathBuf::from(run).join("tessera-clip"),
+    match std::env::var("XDG_RUNTIME_DIR").ok().filter(|d| !d.is_empty()) {
+        Some(d) => PathBuf::from(d).join("tessera-clip"),
         None => crate::util::xdg("XDG_CACHE_HOME", ".cache").join("tessera/clip"),
     }
 }
@@ -271,27 +272,58 @@ fn decode(db: &str, id: &str, path: &Path) -> Option<Vec<u8>> {
     Some(out.stdout)
 }
 
-/// Wakes on writes to cliphist's database (its folder, for the file's name)
+/// Wakes on writes to cliphist's database (its folder, for the file's name).
+/// The folder may not be there yet (a fresh install: made on the first
+/// copy) or be removed or replaced (cliphist wipe, a cache clean-up): it is
+/// waited for, and watched again, with a wake each time
 fn watch_db(db: &str, tx: mpsc::Sender<()>) {
     let path = PathBuf::from(db);
     let (Some(dir), Some(name)) = (path.parent().map(Path::to_owned), path.file_name().map(|n| n.as_encoded_bytes().to_vec())) else { return };
-    std::thread::spawn(move || unsafe {
-        let fd = libc::inotify_init1(libc::IN_CLOEXEC);
-        let c = std::ffi::CString::new(dir.as_os_str().as_encoded_bytes()).unwrap();
-        if fd < 0 || libc::inotify_add_watch(fd, c.as_ptr(), libc::IN_CLOSE_WRITE | libc::IN_MODIFY | libc::IN_MOVED_TO | libc::IN_CREATE) < 0 {
-            return;
-        }
-        let mut buf = [0u8; 4096];
+    let Ok(c) = std::ffi::CString::new(dir.as_os_str().as_encoded_bytes()) else { return };
+    std::thread::spawn(move || {
+        let mut first = true;
         loop {
-            let n = libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len());
-            if n <= 0 {
+            let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC) };
+            if fd < 0 {
                 return;
             }
-            // (read unaligned: util::inotify_events, audit #49)
-            let hit = crate::util::inotify_events(&buf[..n as usize]).iter().any(|(_, raw)| *raw == &name[..]);
-            if hit && tx.send(()).is_err() {
+            let mask = libc::IN_CLOSE_WRITE | libc::IN_MODIFY | libc::IN_MOVED_TO | libc::IN_CREATE | libc::IN_DELETE_SELF | libc::IN_MOVE_SELF;
+            if unsafe { libc::inotify_add_watch(fd, c.as_ptr(), mask) } < 0 {
+                unsafe { libc::close(fd) };
+                std::thread::sleep(Duration::from_secs(5));
+                continue;
+            }
+            // (watched again: what changed meanwhile is read once)
+            if !first && tx.send(()).is_err() {
+                unsafe { libc::close(fd) };
                 return;
             }
+            first = false;
+            let mut buf = [0u8; 4096];
+            let alive = loop {
+                let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+                if n <= 0 {
+                    if n < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                        continue;
+                    }
+                    break true;
+                }
+                // (read unaligned: util::inotify_events, audit #49)
+                let events = crate::util::inotify_events(&buf[..n as usize]);
+                let hit = events.iter().any(|(_, raw)| *raw == &name[..]);
+                if hit && tx.send(()).is_err() {
+                    break false;
+                }
+                // (the folder itself went, or the watch was dropped)
+                if events.iter().any(|(m, _)| m & (libc::IN_IGNORED | libc::IN_DELETE_SELF | libc::IN_MOVE_SELF) != 0) {
+                    break true;
+                }
+            };
+            unsafe { libc::close(fd) };
+            if !alive {
+                return;
+            }
+            std::thread::sleep(Duration::from_secs(1));
         }
     });
 }

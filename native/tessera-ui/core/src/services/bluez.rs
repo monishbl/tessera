@@ -401,7 +401,11 @@ pub fn scan(who: &'static str, secs: u64) -> bool {
         !matches!(c.try_wait(), Ok(Some(_)))
     });
     let secs = secs.to_string();
-    match Command::new("bluetoothctl").args(["--timeout", secs.as_str(), "scan", "on"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+    let mut cmd = Command::new("bluetoothctl");
+    cmd.args(["--timeout", secs.as_str(), "scan", "on"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    // (a shell that dies or is replaced mustn't leave the radio discovering)
+    crate::util::dies_with_us(&mut cmd);
+    match cmd.spawn() {
         Ok(c) => {
             list.push((who, c));
             true

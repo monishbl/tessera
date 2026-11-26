@@ -56,7 +56,10 @@ fn bus(system: bool) -> Result<&'static Bus, String> {
     if let Some(b) = *g {
         return Ok(b);
     }
-    let conn = if system { Connection::system() } else { Connection::session() }.map_err(|e| e.to_string())?;
+    // Every call has a time limit: one unanswered call (Inhibit from the
+    // stdin loop, Avahi, GeoClue) must not stop the process for good.
+    let builder = if system { zbus::blocking::connection::Builder::system() } else { zbus::blocking::connection::Builder::session() };
+    let conn = builder.and_then(|b| b.method_timeout(Duration::from_secs(10)).build()).map_err(|e| e.to_string())?;
     // (before any match rule: nothing that matches can come before it)
     let it = MessageIterator::from(&conn);
     let b: &'static Bus = Box::leak(Box::new(Bus { conn, owners: Default::default(), rules: Default::default() }));
@@ -414,10 +417,19 @@ fn location(b: &'static Bus, rx: Receiver<Geo>) {
                 false
             }
             Ok(Geo::Dirty) => {
+                // The first signal's time is kept: a steady stream of them must
+                // not put the look off (it happens at most a second after it).
                 if on {
-                    dirty = Some(Instant::now()); // (looked at once it's been quiet a second)
+                    let first = *dirty.get_or_insert_with(Instant::now);
+                    if first.elapsed() >= Duration::from_secs(1) {
+                        dirty = None;
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
                 }
-                false
             }
             Err(RecvTimeoutError::Timeout) => {
                 dirty = None;

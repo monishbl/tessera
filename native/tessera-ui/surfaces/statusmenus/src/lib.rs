@@ -804,7 +804,8 @@ impl StatusMenus {
 
     fn hush(&mut self, st: &mut State) {
         let v = json!({"to": "osd", "hush": "sound"});
-        st.part("osd", |p, st| p.message(st, Box::new(v)));
+        // (from inside this part: State::part would reach no other part)
+        st.send_part("osd", Box::new(v));
         shell::ask("audio.hush", json!([]));
     }
 

@@ -105,8 +105,23 @@ fn gone(dir: &Path) -> bool {
 pub fn spawn(tx: Sender<Msg>) {
     let Some(dir) = find() else {
         let _ = tx.send(Msg::Data(Box::new(Backlight::default())));
+        // (a backlight whose driver loads later, a docked start: looked for
+        // again now and then, for the first minutes)
+        std::thread::spawn(move || {
+            for _ in 0..60 {
+                std::thread::sleep(Duration::from_secs(5));
+                if let Some(dir) = find() {
+                    start(tx, dir);
+                    return;
+                }
+            }
+        });
         return;
     };
+    start(tx, dir);
+}
+
+fn start(tx: Sender<Msg>, dir: PathBuf) {
     let first = reading(&dir);
     if let Ok(mut s) = SHARED.lock() {
         *s = Some(Shared { dir: dir.clone(), tx: tx.clone(), now: first.clone() });
@@ -195,7 +210,7 @@ pub fn set(v: f64) {
             while let Ok(first) = rx.recv() {
                 let (dir, v) = rx.try_iter().last().unwrap_or(first); // (a drag: its newest level)
                 let max = read_num(&dir.join("max_brightness")).unwrap_or(0);
-                let raw = (v * max as f64).round() as u32;
+                let raw = raw_level(v, max);
                 if !dir.starts_with("/sys") {
                     let _ = std::fs::write(dir.join("brightness"), format!("{raw}\n"));
                     continue;
@@ -225,6 +240,12 @@ pub fn set(v: f64) {
                         .is_ok_and(|s| s.success());
                     if !ok {
                         eprintln!("tessera-ui: brightness: {e}");
+                        // (not applied: the level shown goes back to the screen's)
+                        let now = reading(&dir);
+                        if let Some(s) = SHARED.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+                            s.now = now.clone();
+                            let _ = s.tx.send(Msg::Data(Box::new(now)));
+                        }
                     }
                     bus = None;
                 }
@@ -237,9 +258,26 @@ pub fn set(v: f64) {
     }
 }
 
+/// A level (0..1) as the device's raw value: never 0 (on a backlight of a
+/// few steps 1 % would round to off, a black screen) unless it has no steps
+fn raw_level(v: f64, max: u32) -> u32 {
+    if max == 0 {
+        return 0;
+    }
+    ((v * max as f64).round() as u32).clamp(1, max)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_lowest_level_is_never_off() {
+        assert_eq!(raw_level(0.01, 15), 1);
+        assert_eq!(raw_level(0.5, 24), 12);
+        assert_eq!(raw_level(1.0, 96000), 96000);
+        assert_eq!(raw_level(0.01, 0), 0);
+    }
 
     #[test]
     fn the_finest_backlight_is_used() {

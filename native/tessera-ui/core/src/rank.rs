@@ -368,7 +368,16 @@ fn tokens(s: &str) -> Option<Vec<Tok>> {
 struct Parser {
     t: Vec<Tok>,
     i: usize,
+    /// how deep the parentheses and signs nest (a pasted "((((…" must not
+    /// overflow the UI thread's stack: that is no panic, the shell dies)
+    depth: u32,
 }
+
+/// The deepest nesting calculate() follows
+const MAX_DEPTH: u32 = 64;
+
+/// The longest text calculate() looks at
+const MAX_EXPR: usize = 256;
 
 impl Parser {
     fn peek(&self) -> Option<&Tok> {
@@ -431,11 +440,18 @@ impl Parser {
         }
         Some(base)
     }
+    /// One level deeper (None past MAX_DEPTH: the whole sum fails)
+    fn enter(&mut self) -> Option<()> {
+        self.depth += 1;
+        (self.depth <= MAX_DEPTH).then_some(())
+    }
     fn unary(&mut self) -> Option<Val> {
         if self.op("+") || self.op("-") {
             let neg = self.op("-");
             self.i += 1;
+            self.enter()?;
             let v = Self::num(self.unary()?)?;
+            self.depth -= 1;
             return Some(Val::Num(if neg { -v } else { v }));
         }
         self.call()
@@ -450,11 +466,13 @@ impl Parser {
                 v = Val::Num(f(f64::NAN));
                 continue;
             }
+            self.enter()?;
             let a = Self::num(self.additive()?)?;
             if !self.op(")") {
                 return None;
             }
             self.i += 1;
+            self.depth -= 1;
             v = Val::Num(f(a));
         }
         Some(v)
@@ -476,11 +494,13 @@ impl Parser {
                 _ => Val::Num(f64::NAN),
             }),
             Tok::Op("(") => {
+                self.enter()?;
                 let v = self.additive()?;
                 if !self.op(")") {
                     return None;
                 }
                 self.i += 1;
+                self.depth -= 1;
                 Some(v)
             }
             Tok::Op(_) => None,
@@ -491,6 +511,9 @@ impl Parser {
 /// Search.calculate: arithmetic only (digits, operators, parentheses, a few
 /// functions), None when it isn't a sum or doesn't give a finite number
 pub fn calculate(q: &str) -> Option<f64> {
+    if q.len() > MAX_EXPR {
+        return None;
+    }
     let expr: String = q.chars().filter(|c| !c.is_whitespace()).collect::<String>().replace('×', "*").replace('÷', "/").replace(',', "");
     if !expr.chars().any(|c| c.is_ascii_digit()) {
         return None;
@@ -532,7 +555,7 @@ pub fn calculate(q: &str) -> Option<f64> {
             s.push(ch);
         }
     }
-    let mut p = Parser { t: tokens(&s)?, i: 0 };
+    let mut p = Parser { t: tokens(&s)?, i: 0, depth: 0 };
     let v = Parser::num(p.additive()?)?;
     if p.i != p.t.len() || !v.is_finite() {
         return None;
@@ -687,12 +710,25 @@ pub fn icon_for_file(path: &str) -> &'static str {
     }
 }
 
+/// A folder with the home folder at its start written as ~ (only there,
+/// and only a whole folder name: /home/alexandra isn't /home/alex's)
+fn home_short(folder: &str, home: &str) -> String {
+    let home = home.trim_end_matches('/');
+    if home.is_empty() {
+        return folder.to_string();
+    }
+    match folder.strip_prefix(home) {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') => format!("~{rest}"),
+        _ => folder.to_string(),
+    }
+}
+
 fn file_row(section: &str, path: &str, dir: bool, home: &str) -> Row {
     let (folder, name) = match path.rfind('/') {
         Some(i) => (&path[..i], &path[i + 1..]),
         None => ("", path),
     };
-    let sub = if !home.is_empty() { folder.replacen(home, "~", 1) } else { folder.to_string() };
+    let sub = home_short(folder, home);
     Row {
         section: section.into(),
         title: name.into(),
@@ -931,6 +967,24 @@ pub fn emoji() -> &'static [(String, String)] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_is_shortened_only_at_the_start() {
+        assert_eq!(home_short("/home/alex/notes", "/home/alex"), "~/notes");
+        assert_eq!(home_short("/home/alex", "/home/alex"), "~");
+        assert_eq!(home_short("/mnt/backup/home/alex", "/home/alex"), "/mnt/backup/home/alex");
+        assert_eq!(home_short("/home/alexandra/x", "/home/alex"), "/home/alexandra/x");
+        assert_eq!(home_short("/tmp", ""), "/tmp");
+    }
+
+    #[test]
+    fn deep_or_long_sums_are_refused_not_overflowed() {
+        let deep = format!("{}1{}", "(".repeat(100), ")".repeat(100));
+        assert_eq!(calculate(&deep), None);
+        assert_eq!(calculate(&format!("{}1", "-".repeat(10_000))), None);
+        assert_eq!(calculate("((1+2))*3"), Some(9.0));
+        assert_eq!(calculate("-(2)+5"), Some(3.0));
+    }
 
     fn app(id: &str, name: &str, generic: &str, kw: &[&str]) -> App {
         App { id: id.into(), name: name.into(), generic: generic.into(), keywords: kw.iter().map(|s| s.to_string()).collect(), ..Default::default() }

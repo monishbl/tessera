@@ -178,11 +178,12 @@ fn address(field: &str) -> String {
 }
 
 /// What an event does to the urgent set: urgent>>ADDR adds it, focusing a
-/// window (activewindowv2>>ADDR) clears it
+/// window (activewindowv2>>ADDR) or closing it (closewindow>>ADDR: Hyprland
+/// gives its address to a later window) clears it
 pub fn note_urgent(urgent: &mut BTreeSet<String>, line: &str) {
     if let Some(a) = line.strip_prefix("urgent>>") {
         urgent.insert(address(a));
-    } else if let Some(a) = line.strip_prefix("activewindowv2>>") {
+    } else if let Some(a) = line.strip_prefix("activewindowv2>>").or_else(|| line.strip_prefix("closewindow>>")) {
         urgent.remove(&address(a));
     }
 }
@@ -290,6 +291,10 @@ mod tests {
         note_urgent(&mut u, "activewindowv2>>5f2");
         assert!(u.contains("0x5f1"));
         note_urgent(&mut u, "activewindowv2>>5f1");
+        assert!(u.is_empty());
+        // (closed unfocused: its address is free for the next window)
+        note_urgent(&mut u, "urgent>>5f3");
+        note_urgent(&mut u, "closewindow>>5f3");
         assert!(u.is_empty());
     }
 }

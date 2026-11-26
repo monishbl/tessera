@@ -224,6 +224,12 @@ pub fn list() -> Vec<Gpu> {
     for c in cards {
         let dev = format!("/sys/class/drm/{c}/device");
         let Some(driver) = std::fs::read_link(format!("{dev}/driver")).ok().and_then(|l| l.file_name().map(|f| f.to_string_lossy().into_owned())) else { continue };
+        // (GPUs only: a display-only device, simpledrm, DisplayLink's evdi,
+        // vkms, is a platform or USB one, not on the PCI bus)
+        let on_pci = std::fs::read_link(format!("{dev}/subsystem")).ok().is_some_and(|l| l.file_name().and_then(|f| f.to_str()) == Some("pci"));
+        if !on_pci {
+            continue;
+        }
         let pci = pci_of(&dev).unwrap_or_default();
         if out.iter().any(|g| g.pci == pci) {
             continue;
@@ -233,7 +239,18 @@ pub fn list() -> Vec<Gpu> {
         let fam = family(&driver);
         out.push(Gpu { family: fam, integrated: integrated(fam, &pci, vram), pci, vram });
     }
+    beside_intel(&mut out);
     out
+}
+
+/// Beside the processor's own Intel GPU, an AMD one is a card, whatever its
+/// memory (a 4 GB Radeon isn't an APU: the processor is Intel's)
+fn beside_intel(all: &mut [Gpu]) {
+    if all.iter().any(|g| g.family == "intel" && g.integrated) {
+        for g in all.iter_mut().filter(|g| g.family == "amd") {
+            g.integrated = false;
+        }
+    }
 }
 
 /// An integrated GPU: Intel's on the processor's own PCI bus (00:02.0; an
@@ -258,7 +275,9 @@ pub fn gpus() -> Vec<(&'static str, String)> {
 pub fn low_power(all: &[Gpu]) -> Option<&Gpu> {
     all.iter().min_by_key(|g| {
         let nv = matches!(g.family, "nvidia" | "nouveau");
-        (!g.integrated, nv, if g.vram == 0 { u64::MAX } else { g.vram })
+        // (two counted integrated: the processor's Intel one first)
+        let intel_root = g.family == "intel" && g.integrated;
+        (!g.integrated, nv, !intel_root, if g.vram == 0 { u64::MAX } else { g.vram })
     })
 }
 
@@ -268,7 +287,7 @@ pub fn performance<'a>(all: &'a [Gpu], low: &Gpu) -> Option<&'a Gpu> {
 }
 
 /// Settings' choice (performance.gpu): "low" (the default), "auto" (the
-/// compositor's), or a family
+/// compositor's), a family, or a GPU's PCI address (two of one family)
 fn chosen() -> String {
     let path = crate::util::xdg("XDG_CONFIG_HOME", ".config").join("tessera/config.json");
     std::fs::read_to_string(path)
@@ -313,7 +332,8 @@ fn decide<'a>(all: &'a [Gpu], want: &str, comp: Option<&str>) -> Option<(&'a Gpu
                 _ => Some((low, "low power")),
             }
         }
-        f => match (all.iter().find(|g| g.family == f), theirs) {
+        // (a PCI address names one GPU; a family, the first of it)
+        f => match (all.iter().find(|g| g.pci == f).or_else(|| all.iter().find(|g| g.family == f)), theirs) {
             // (frames Mesa draws on another GPU never show on NVIDIA's
             // driver: the sandbox's desktop on NVIDIA, Intel chosen, stayed
             // black; drawn on the desktop's instead)
@@ -734,6 +754,20 @@ mod tests {
         // nouveau is never the low-power one beside another
         let all = [g("nouveau", "0000:01:00.0", 0), g("amd", "0000:05:00.0", 0)];
         assert_eq!(low_power(&all).unwrap().family, "amd");
+        // a 4 GB Radeon card beside Intel's own: Intel's is the low-power one
+        let mut all = [g("amd", "0000:01:00.0", 4 << 30), g("intel", "0000:00:02.0", 0)];
+        assert_eq!(low_power(&all).unwrap().family, "intel");
+        beside_intel(&mut all);
+        assert!(!all[0].integrated);
+        assert_eq!(performance(&all, low_power(&all).unwrap()).unwrap().family, "amd");
+    }
+
+    #[test]
+    fn a_pci_address_picks_one_of_a_family() {
+        // an AMD APU and an AMD card: the card by its address
+        let all = [g("amd", "0000:c4:00.0", 512 << 20), g("amd", "0000:03:00.0", 16 << 30)];
+        assert_eq!(decide(&all, "0000:03:00.0", None).unwrap().0.pci, "0000:03:00.0");
+        assert_eq!(decide(&all, "amd", None).unwrap().0.pci, "0000:c4:00.0");
     }
 
     #[test]

@@ -29,9 +29,19 @@ const KINDS: &[&str] = &["apps", "status", "devices", "panel", "actions", "categ
 
 /// Where a name's file is in one theme folder (both layouts: size/kind and kind/size)
 pub fn in_theme(dir: &Path, name: &str) -> Option<PathBuf> {
+    // (a miss walks every theme in every data folder: only the folders that
+    // exist are looked in, not all 640 paths of each)
+    if !dir.is_dir() {
+        return None;
+    }
+    let sizes: Vec<&str> = SIZES.iter().copied().filter(|s| dir.join(s).is_dir()).collect();
+    let kinds: Vec<&str> = KINDS.iter().copied().filter(|k| dir.join(k).is_dir()).collect();
     for size in SIZES {
         for kind in KINDS {
             for (a, b) in [(size, kind), (kind, size)] {
+                if !sizes.contains(a) && !kinds.contains(a) {
+                    continue;
+                }
                 for ext in ["svg", "png"] {
                     let p = dir.join(a).join(b).join(format!("{name}.{ext}"));
                     if p.is_file() {
@@ -96,7 +106,9 @@ fn lookup(name: &str, extra: Option<&Path>) -> Option<PathBuf> {
             }
         }
     }
-    for ext in ["svg", "png", "xpm"] {
+    // (no .xpm: nothing here decodes it, and a path found skips the
+    // callers' generic fallback icon)
+    for ext in ["svg", "png"] {
         let p = PathBuf::from(format!("/usr/share/pixmaps/{name}.{ext}"));
         if p.is_file() {
             return Some(p);

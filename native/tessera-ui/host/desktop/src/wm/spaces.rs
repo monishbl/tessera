@@ -408,7 +408,8 @@ impl Spaces {
     }
     /// To the views and the menu bar's state, when it changed
     pub fn tell(&mut self, h: &mut Host) {
-        let count = h.cfg()["menubar"]["workspaceCount"].as_i64().unwrap_or(5);
+        // (clamped as everywhere: tessera_core::wm::workspace_count)
+        let count = tessera_core::wm::workspace_count(h.cfg()) as i64;
         self.open = h.cfg()["menubar"]["spacesShown"].as_str() != Some("fixed");
         let v = self.json(count);
         h.set_state("spaces", json!({"bases": v["bases"], "labels": v["labels"]}));

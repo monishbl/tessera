@@ -36,10 +36,63 @@ pub struct Entry {
 /// One desktop file's [Desktop Entry] group (None: not an application, or
 /// Hidden, which means deleted)
 pub fn parse(id: &str, text: &str) -> Option<Entry> {
+    static DESKTOPS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    static LOCALES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let desktops = DESKTOPS.get_or_init(|| std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().split(':').filter(|d| !d.is_empty()).map(String::from).collect());
+    let locales = LOCALES.get_or_init(|| {
+        let l = ["LC_ALL", "LC_MESSAGES", "LANG"].iter().find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty())).unwrap_or_default();
+        locale_keys(&l)
+    });
+    parse_for(id, text, desktops, locales, on_path)
+}
+
+/// A locale's keys for Name[…], best first (de_DE.UTF-8@euro: de_DE@euro,
+/// de_DE, de@euro, de); none for C and POSIX
+pub fn locale_keys(locale: &str) -> Vec<String> {
+    let (rest, modifier) = match locale.split_once('@') {
+        Some((r, m)) => (r, Some(m)),
+        None => (locale, None),
+    };
+    let rest = rest.split('.').next().unwrap_or("");
+    if rest.is_empty() || rest == "C" || rest == "POSIX" {
+        return vec![];
+    }
+    let lang = rest.split('_').next().unwrap_or(rest);
+    let mut out = vec![];
+    for base in [rest, lang] {
+        if let Some(m) = modifier {
+            out.push(format!("{base}@{m}"));
+        }
+        out.push(base.to_string());
+    }
+    out.dedup();
+    out
+}
+
+/// A program TryExec= names is there: a path that can be run, or a name on $PATH
+fn on_path(prog: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let runnable = |p: &Path| std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
+    if prog.contains('/') {
+        return runnable(Path::new(prog));
+    }
+    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| runnable(&d.join(prog))))
+}
+
+/// parse(), for these desktops ($XDG_CURRENT_DESKTOP), locale keys
+/// (locale_keys) and test of TryExec=. An entry for other desktops
+/// (OnlyShowIn=, NotShowIn=) or whose TryExec= program isn't there is kept
+/// (its windows still find it) but not shown, as NoDisplay=true. Name,
+/// GenericName, Comment and Keywords are the locale's when the file has
+/// them; the untranslated name stays a keyword (searched by either)
+pub fn parse_for(id: &str, text: &str, desktops: &[String], locales: &[String], exists: impl Fn(&str) -> bool) -> Option<Entry> {
     let mut e = Entry { id: id.to_string(), ..Default::default() };
     let mut in_entry = false;
     let mut kind = String::new();
     let mut hidden = false;
+    let (mut only, mut not, mut try_exec) = (None::<String>, None::<String>, None::<String>);
+    // (the translations found: key → (rank in `locales`, value))
+    let mut local: HashMap<&'static str, (usize, String)> = HashMap::new();
     for l in text.lines() {
         let l = l.trim_end();
         if l.starts_with('[') {
@@ -51,7 +104,17 @@ pub fn parse(id: &str, text: &str) -> Option<Entry> {
         }
         let Some((k, v)) = l.split_once('=') else { continue };
         let v = v.trim().to_string();
-        match k.trim() {
+        let k = k.trim();
+        if let Some((base, loc)) = k.strip_suffix(']').and_then(|k| k.split_once('[')) {
+            let base: Option<&'static str> = ["Name", "GenericName", "Comment", "Keywords"].into_iter().find(|b| *b == base);
+            if let (Some(base), Some(rank)) = (base, locales.iter().position(|x| x == loc)) {
+                if local.get(base).is_none_or(|(r, _)| rank < *r) {
+                    local.insert(base, (rank, v));
+                }
+            }
+            continue;
+        }
+        match k {
             "Type" => kind = v,
             "Name" => e.name = v,
             "Icon" => e.icon = v,
@@ -64,8 +127,32 @@ pub fn parse(id: &str, text: &str) -> Option<Entry> {
             "GenericName" => e.generic_name = v,
             "Comment" => e.comment = v,
             "Keywords" => e.keywords = v.split(';').map(str::trim).filter(|k| !k.is_empty()).map(String::from).collect(),
+            "OnlyShowIn" => only = Some(v),
+            "NotShowIn" => not = Some(v),
+            "TryExec" => try_exec = Some(v),
             _ => {}
         }
+    }
+    let list = |s: &str| s.split(';').map(str::trim).filter(|x| !x.is_empty()).map(String::from).collect::<Vec<_>>();
+    let ours = |s: &str| list(s).iter().any(|d| desktops.iter().any(|x| x.eq_ignore_ascii_case(d)));
+    if only.as_deref().is_some_and(|s| !ours(s)) || not.as_deref().is_some_and(ours) || try_exec.as_deref().is_some_and(|t| !t.is_empty() && !exists(t)) {
+        e.no_display = true;
+    }
+    if let Some((_, n)) = local.remove("Name").filter(|(_, n)| !n.is_empty()) {
+        if n != e.name && !e.name.is_empty() {
+            e.keywords.push(std::mem::replace(&mut e.name, n));
+        } else {
+            e.name = n;
+        }
+    }
+    if let Some((_, g)) = local.remove("GenericName") {
+        e.generic_name = g;
+    }
+    if let Some((_, c)) = local.remove("Comment") {
+        e.comment = c;
+    }
+    if let Some((_, k)) = local.remove("Keywords") {
+        e.keywords.extend(list(&k));
     }
     (kind == "Application" && !hidden && !e.name.is_empty()).then_some(e)
 }
@@ -244,8 +331,7 @@ pub fn spawn(tx: Sender<Msg>) {
 /// A file of the shell's (scripts): $TESSERA_ROOT's, else this checkout's
 pub fn shell_file(rel: &str) -> Option<PathBuf> {
     // (crate::env::root: $TESSERA_ROOT, else the checkout the shell was started from, 17 Nov)
-    let roots = [crate::env::root(), PathBuf::from(crate::env::BUILT_ROOT)];
-    roots.into_iter().map(|r| r.join(rel)).find(|p| p.exists())
+    std::iter::once(crate::env::root()).chain(crate::env::built_root()).map(|r| r.join(rel)).find(|p| p.exists())
 }
 
 /// In the tty test session the shell runs with sandbox folders; apps get the
@@ -352,11 +438,29 @@ mod tests {
     #[test]
     fn parses_the_desktop_entry_group_only() {
         let t = "[Desktop Entry]\nType=Application\nName=Files\nName[de]=Dateien\nIcon=system-file-manager\nExec=dolphin %u\nStartupWMClass=dolphin\n\n[Desktop Action new]\nName=New Window\nExec=dolphin --new\n";
-        let e = parse("org.kde.dolphin", t).unwrap();
+        let e = parse_for("org.kde.dolphin", t, &[], &[], |_| true).unwrap();
         assert_eq!((e.name.as_str(), e.icon.as_str(), e.exec.as_str(), e.wm_class.as_str()), ("Files", "system-file-manager", "dolphin %u", "dolphin"));
+        // in German: the German name, the English one still searched
+        let e = parse_for("org.kde.dolphin", t, &[], &locale_keys("de_DE.UTF-8"), |_| true).unwrap();
+        assert_eq!(e.name, "Dateien");
+        assert!(e.keywords.contains(&"Files".to_string()));
         assert!(parse("x", "[Desktop Entry]\nType=Link\nName=Site\n").is_none());
         assert!(parse("x", "[Desktop Entry]\nType=Application\nName=Gone\nHidden=true\n").is_none());
         assert!(parse("x", "[Desktop Entry]\nType=Application\nName=Quiet\nNoDisplay=true\n").unwrap().no_display);
+    }
+
+    #[test]
+    fn entries_for_other_desktops_or_missing_programs_are_not_shown() {
+        let hypr = ["Hyprland".to_string()];
+        let shown = |t: &str, has: bool| !parse_for("x", &format!("[Desktop Entry]\nType=Application\nName=X\n{t}"), &hypr, &[], |_| has).unwrap().no_display;
+        assert!(!shown("OnlyShowIn=GNOME;KDE;\n", true));
+        assert!(shown("OnlyShowIn=GNOME;Hyprland;\n", true));
+        assert!(!shown("NotShowIn=Hyprland;\n", true));
+        assert!(shown("NotShowIn=KDE;\n", true));
+        assert!(!shown("TryExec=not-installed\n", false));
+        assert!(shown("TryExec=installed\n", true));
+        assert_eq!(locale_keys("pt_BR.UTF-8@x"), ["pt_BR@x", "pt_BR", "pt@x", "pt"]);
+        assert!(locale_keys("C.UTF-8").is_empty());
     }
 
     fn app(id: &str, name: &str, wm: &str) -> Entry {

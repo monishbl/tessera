@@ -565,7 +565,7 @@ export component CalendarTab {
         ed-title = "";
         ed-all-day = false;
         ed-start = h24 ? "09:00" : "9:00 AM";
-        ed-end = "10:00 AM";
+        ed-end = h24 ? "10:00" : "10:00 AM";
         ed-alert = default-alert;
         error = "";
         ed-open = true;
@@ -788,7 +788,9 @@ export component CalendarTab {
                     }
                     Text {
                         text: d.label;
-                        color: d.today ? Theme.accent : Theme.label;
+                        // (the accent that reads on the panel: a light accent,
+                        // yellow, was about 1.3:1 on white)
+                        color: d.today ? (Theme.material ? Theme.m3-primary : Theme.accent-ink) : Theme.label;
                         font-size: Theme.body;
                         font-weight: d.today ? 700 : 500;
                     }
@@ -888,6 +890,18 @@ export component CalendarTab {
                             if root.drop-key != "" && root.drop-key != it.day {
                                 root.move(it.key, root.drop-key, -1);
                             }
+                            root.drop-key = "";
+                        }
+                        // (the press taken away, a scroll or a touch cancel: the
+                        // drag ends where it began, its ghost gone)
+                        if e.kind == PointerEventKind.cancel && root.dragging && root.drag-key == it.key {
+                            root.dragging = false;
+                            root.drop-key = "";
+                        }
+                    }
+                    changed pressed => {
+                        if !self.pressed && root.dragging && root.drag-key == it.key {
+                            root.dragging = false;
                             root.drop-key = "";
                         }
                     }

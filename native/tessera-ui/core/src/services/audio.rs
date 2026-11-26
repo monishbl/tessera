@@ -13,7 +13,7 @@ use super::pulse::{self, Conn, Reader, Tags};
 use crate::Msg;
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
 use std::sync::{mpsc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// An output (sink) or input (source)
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -100,6 +100,32 @@ fn prop<'a>(props: &'a [(String, String)], k: &str) -> &'a str {
     props.iter().find(|(n, _)| n == k).map_or("", |(_, v)| v.as_str())
 }
 
+/// Each device's and stream's channel levels as last read, by Cmd::key: a
+/// volume set keeps their balance (scaled, as pactl's relative set), not one
+/// level for every channel
+static LEVELS: Mutex<Option<std::collections::HashMap<(u8, u32), Vec<u32>>>> = Mutex::new(None);
+
+fn remember_levels(key: (u8, u32), vol: &[u32]) {
+    if let Ok(mut l) = LEVELS.lock() {
+        l.get_or_insert_with(Default::default).insert(key, vol.to_vec());
+    }
+}
+
+/// The channels' raw levels for an average of `v` (0..1): `levels` scaled
+/// when they're known for these channels and not all silent, else `v` on
+/// each; none above 100%
+pub fn scaled_levels(levels: Option<&[u32]>, channels: u8, v: f64) -> Vec<u32> {
+    let flat = (v.max(0.0) * pulse::NORM).round() as u32;
+    let n = channels.max(1) as usize;
+    match levels.filter(|l| l.len() == n && l.iter().any(|&x| x > 0)) {
+        Some(l) => {
+            let avg = pulse::average(l) * pulse::NORM;
+            l.iter().map(|&x| ((x as f64) * flat as f64 / avg).round().min(pulse::NORM) as u32).collect()
+        }
+        None => vec![flat; n],
+    }
+}
+
 /// One sink or source record (they share their layout up to the formats);
 /// with whether it's a monitor of an output (sources only)
 pub fn device(r: &mut Reader, v: u32, sink: bool) -> Option<(Device, bool)> {
@@ -108,6 +134,7 @@ pub fn device(r: &mut Reader, v: u32, sink: bool) -> Option<(Device, bool)> {
     let description = r.string()?;
     r.skip_n(3)?; // sample spec, channel map, owner module
     let vol = r.cvolume()?;
+    remember_levels((if sink { 0 } else { 1 }, index), &vol);
     let muted = r.bool()?;
     let monitor_of = r.u32()?;
     r.skip_n(4)?; // monitor (of) name, latency, driver, flags
@@ -148,6 +175,7 @@ pub fn stream(r: &mut Reader, v: u32) -> Option<Stream> {
     let media = r.string()?;
     r.skip_n(5)?; // owner module, client, sink, sample spec, channel map
     let vol = r.cvolume()?;
+    remember_levels((4, index), &vol);
     r.skip_n(4)?; // buffer and sink latency, resample method, driver
     let muted = if v >= 11 { r.bool()? } else { false };
     let props = if v >= 13 { r.proplist()? } else { Vec::new() };
@@ -225,6 +253,9 @@ pub fn spawn(tx: Sender<Msg>) {
                 let mut c = Conn::open("Tessera")?;
                 c.subscribe(MASK)?;
                 let mut last = read(&mut c)?;
+                // (outputs that went, and when: one back within RECREATED is
+                // the same device made again, not one just connected)
+                let mut gone_at: std::collections::HashMap<String, Instant> = std::collections::HashMap::new();
                 up = true;
                 tx.send(Msg::Data(Box::new(last.clone()))).map_err(|_| gone())?;
                 loop {
@@ -241,7 +272,15 @@ pub fn spawn(tx: Sender<Msg>) {
                     // A Bluetooth output that just appeared (headphones
                     // connected) becomes the default, as a phone does; not
                     // ones already there when the shell started
-                    if let Some(new) = new_bluetooth_sink(&last, &now) {
+                    // (its profile switched, or it dropped and came back: a sink
+                    // made again, which mustn't undo the output the user chose)
+                    for b in &last.sinks {
+                        if !now.sinks.iter().any(|d| d.name == b.name) {
+                            gone_at.insert(b.name.clone(), Instant::now());
+                        }
+                    }
+                    gone_at.retain(|_, t| t.elapsed() < RECREATED);
+                    if let Some(new) = new_bluetooth_sink(&last, &now).filter(|n| !gone_at.contains_key(n)) {
                         send(Cmd::DefaultSink(new));
                     }
                     if now != last {
@@ -269,6 +308,10 @@ pub fn spawn(tx: Sender<Msg>) {
         }
     });
 }
+
+/// A Bluetooth output back this soon after it went was made again (a
+/// profile switch, a short drop), not newly connected
+const RECREATED: Duration = Duration::from_secs(30);
 
 /// A Bluetooth output in `now` that `before` didn't have, unless it's
 /// already the default
@@ -312,12 +355,14 @@ impl Cmd {
     fn request(&self) -> (u32, Tags) {
         let t = Tags::new();
         let clamp = |v: f64| v.clamp(0.0, 1.0);
+        let levels = LEVELS.lock().ok().and_then(|l| l.as_ref().and_then(|m| m.get(&self.key()).cloned()));
+        let at = |channels: u8, v: f64| scaled_levels(levels.as_deref(), channels, clamp(v));
         match self {
-            Cmd::SinkVolume { index, channels, volume } => (pulse::SET_SINK_VOLUME, t.u32(*index).null().cvolume(*channels, clamp(*volume))),
-            Cmd::SourceVolume { index, channels, volume } => (pulse::SET_SOURCE_VOLUME, t.u32(*index).null().cvolume(*channels, clamp(*volume))),
+            Cmd::SinkVolume { index, channels, volume } => (pulse::SET_SINK_VOLUME, t.u32(*index).null().levels(&at(*channels, *volume))),
+            Cmd::SourceVolume { index, channels, volume } => (pulse::SET_SOURCE_VOLUME, t.u32(*index).null().levels(&at(*channels, *volume))),
             Cmd::SinkMute { index, muted } => (pulse::SET_SINK_MUTE, t.u32(*index).null().bool(*muted)),
             Cmd::SourceMute { index, muted } => (pulse::SET_SOURCE_MUTE, t.u32(*index).null().bool(*muted)),
-            Cmd::StreamVolume { index, channels, volume } => (pulse::SET_SINK_INPUT_VOLUME, t.u32(*index).cvolume(*channels, clamp(*volume))),
+            Cmd::StreamVolume { index, channels, volume } => (pulse::SET_SINK_INPUT_VOLUME, t.u32(*index).levels(&at(*channels, *volume))),
             Cmd::StreamMute { index, muted } => (pulse::SET_SINK_INPUT_MUTE, t.u32(*index).bool(*muted)),
             Cmd::DefaultSink(n) => (pulse::SET_DEFAULT_SINK, t.string(n)),
             Cmd::DefaultSource(n) => (pulse::SET_DEFAULT_SOURCE, t.string(n)),
@@ -405,6 +450,19 @@ mod tests {
         assert_eq!(list_name(&a), "Built-in Audio Analog Stereo");
         assert_eq!((b.index, b.volume, b.muted, b.bluetooth), (43, 0.25, true, true));
         assert_eq!(name_of(&b), "Buds");
+    }
+
+    #[test]
+    fn a_volume_keeps_the_balance() {
+        // (audit #834) left at 100%, right at 50%: set to 50% on average
+        let n = pulse::NORM as u32;
+        assert_eq!(scaled_levels(Some(&[n, n / 2]), 2, 0.5), vec![(n as f64 * 2.0 / 3.0).round() as u32, (n as f64 / 3.0).round() as u32]);
+        // (louder: none past 100%)
+        assert_eq!(scaled_levels(Some(&[n, n / 2]), 2, 1.0), vec![n, (n as f64 * 2.0 / 3.0).round() as u32]);
+        // unknown, another channel count, or silent: the level on each
+        assert_eq!(scaled_levels(None, 2, 0.5), vec![n / 2, n / 2]);
+        assert_eq!(scaled_levels(Some(&[n]), 2, 0.5), vec![n / 2, n / 2]);
+        assert_eq!(scaled_levels(Some(&[0, 0]), 2, 0.25), vec![n / 4, n / 4]);
     }
 
     #[test]

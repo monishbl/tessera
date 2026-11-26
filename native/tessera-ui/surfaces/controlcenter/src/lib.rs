@@ -906,7 +906,8 @@ impl ControlCenter {
 
     fn hush(&mut self, st: &mut State, what: &str) {
         let v = json!({"to": "osd", "hush": what});
-        st.part("osd", |p, st| p.message(st, Box::new(v)));
+        // (from inside this part: State::part would reach no other part)
+        st.send_part("osd", Box::new(v));
         // (the QML OSD's own quiet window; once a second is enough during a drag)
         if self.hushed.is_none_or(|t| t.elapsed() > Duration::from_millis(600)) {
             shell::ask(if what == "brightness" { "brightness.hush" } else { "audio.hush" }, json!([]));

@@ -185,7 +185,8 @@ export component WMenu inherits Rectangle {
                     Text {
                         x: 12px;
                         text: r.text;
-                        color: hot ? (Theme.material ? Theme.on-highlight : white) : !r.enabled ? Theme.tertiary : Theme.label;
+                        // (on-highlight: dark text on a light accent, both looks)
+                        color: hot ? Theme.on-highlight : !r.enabled ? Theme.tertiary : Theme.label;
                         font-size: Theme.body;
                         vertical-alignment: center;
                         accessible-role: none;

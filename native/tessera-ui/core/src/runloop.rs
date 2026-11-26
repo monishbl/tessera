@@ -147,14 +147,16 @@ pub fn drain_deferred(state: &mut State, budget: std::time::Duration) {
 pub fn register_fonts() {
     use slint::fontique_011::fontique;
     // (the checkout the shell runs from first: crate::env::root, 17 Nov)
-    let roots = [crate::env::root(), std::path::PathBuf::from(crate::env::BUILT_ROOT)];
+    let roots: Vec<std::path::PathBuf> = std::iter::once(crate::env::root()).chain(crate::env::built_root()).collect();
     let mut collection = slint::fontique_011::shared_collection();
     for f in ["shell/assets/fonts/Phosphor.ttf", "shell/assets/fonts/Phosphor-Fill.ttf", "shell/assets/fonts/Phosphor-Bold.ttf", "material/assets/fonts/GoogleSansFlex.ttf", "material/assets/fonts/MaterialSymbolsRounded.ttf", "material/assets/fonts/MaterialSymbolsRounded-Fill.ttf"] {
-        let Some(file) = roots.iter().find_map(|r| std::fs::File::open(r.join(f)).ok()) else {
+        // (read into memory, not mapped: a font file rewritten in place under
+        // a map would turn glyphs to garbage, or end the shell with SIGBUS)
+        let Some(map) = roots.iter().find_map(|r| std::fs::read(r.join(f)).ok()) else {
             eprintln!("tessera-ui: font {f} not found");
             continue;
         };
-        if let Ok(map) = unsafe { memmap2::Mmap::map(&file) } {
+        {
             // (Material's text face, "Tessera Text Flex": its weights as the
             // QML's Qt draws them, textflex.rs; Theme.font in Material)
             if f.ends_with("GoogleSansFlex.ttf") {

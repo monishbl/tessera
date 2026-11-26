@@ -94,9 +94,13 @@ pub fn parse(text: &str, hour: u32, minute: u32, metric: bool, place: &str, dayl
     let night = now_min < sunrise || now_min >= sunset;
     let hours = today["hourly"].as_array()?;
     let at = |h: &serde_json::Value| n(&h["time"]).unwrap_or(0) / 100;
+    // (today's from the hour before now, then tomorrow's: in the evening
+    // today has one or none left)
+    let tomorrow = j["weather"][1]["hourly"].as_array().map(|a| a.as_slice()).unwrap_or(&[]);
     let hourly = hours
         .iter()
         .filter(|h| at(h) >= hour as i32 - 1)
+        .chain(tomorrow.iter())
         .take(5)
         .map(|h| {
             let hh = at(h);
@@ -330,6 +334,12 @@ mod tests {
         assert_eq!((f.temp, f.icon, f.place.as_str()), (52, "cloud-moon", "Paris"));
         assert_eq!(f.hourly.len(), 1);
         assert!(parse("<html>", 10, 0, true, "", (390, 1110)).is_none());
+        // with tomorrow's in the answer: the evening goes on into it (audit #859)
+        let mut v: serde_json::Value = serde_json::from_str(J1).unwrap();
+        let day = v["weather"][0].clone();
+        v["weather"].as_array_mut().unwrap().push(day);
+        let e = parse(&v.to_string(), 20, 0, true, "", (390, 1110)).unwrap();
+        assert_eq!(e.hourly.iter().map(|h| h.hour).collect::<Vec<_>>(), vec![21, 0, 3, 6, 9]);
     }
 
     #[test]

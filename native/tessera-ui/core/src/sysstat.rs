@@ -47,7 +47,8 @@ pub fn cpu_times(stat: &str) -> Option<(u64, u64)> {
     if f.len() < 5 {
         return None;
     }
-    Some((f[3] + f[4], f.iter().sum()))
+    // (through steal: guest and guest_nice are already in user and nice)
+    Some((f[3] + f[4], f.iter().take(8).sum()))
 }
 
 /// /proc/meminfo: (memory used 0..1, swap used 0..1)
@@ -60,11 +61,26 @@ pub fn mem_use(info: &str) -> (f64, f64) {
 /// /proc/net/dev: bytes in and out over the real interfaces (no loopback,
 /// containers, bridges or tunnels: a VPN's traffic would count twice)
 pub fn net_bytes(dev: &str) -> (u64, u64) {
+    net_bytes_where(dev, physical)
+}
+
+/// An interface whose bytes are counted: one with a device of its own and
+/// no master (not a bridge, bond, VLAN or VPN, nor a bond's or bridge's
+/// port), as sysfs says; by its name when sysfs doesn't know it
+fn physical(name: &str) -> bool {
+    let at = std::path::Path::new("/sys/class/net").join(name);
+    if at.exists() {
+        return at.join("device").exists() && !at.join("master").exists();
+    }
+    !["lo", "veth", "docker", "br-", "virbr", "vnet", "tun", "tap", "wg", "tailscale", "zt"].iter().any(|p| name.starts_with(p))
+}
+
+fn net_bytes_where(dev: &str, counted: impl Fn(&str) -> bool) -> (u64, u64) {
     let (mut rx, mut tx) = (0u64, 0u64);
     for line in dev.lines().skip(2) {
         let Some((name, rest)) = line.split_once(':') else { continue };
         let name = name.trim();
-        if ["lo", "veth", "docker", "br-", "virbr", "vnet", "tun", "tap", "wg", "tailscale", "zt"].iter().any(|p| name.starts_with(p)) {
+        if !counted(name) {
             continue;
         }
         let f: Vec<u64> = rest.split_whitespace().map(|x| x.parse().unwrap_or(0)).collect();
@@ -241,7 +257,10 @@ mod tests {
         let (m, s) = mem_use("MemTotal:  1000 kB\nMemFree: 1 kB\nMemAvailable:  250 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n");
         assert_eq!((m, s), (0.75, 0.0));
         let dev = "Inter-|   Receive\n face |bytes\n    lo: 100 0 0 0 0 0 0 0 100 0\n  eth0: 1000 5 0 0 0 0 0 0 2000 4\ndocker0: 9 0 0 0 0 0 0 0 9 0\n wlan0: 10 0 0 0 0 0 0 0 20 0\n";
-        assert_eq!(net_bytes(dev), (1010, 2020));
+        let by_name = |n: &str| !["lo", "docker"].iter().any(|p| n.starts_with(p));
+        assert_eq!(net_bytes_where(dev, by_name), (1010, 2020));
+        // (guest time is in user and nice already: not counted twice)
+        assert_eq!(cpu_times("cpu  30 0 10 50 10 0 0 0 20 0"), Some((60, 100)));
     }
 
     #[test]
