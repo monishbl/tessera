@@ -396,9 +396,10 @@ pub fn nc_move(h: &mut Host, key: &str, day: &str, every: bool) -> Result<(), St
     Err("This calendar is read-only here.".into())
 }
 
-/// "ddd h:mm AP"
+/// "ddd h:mm AP" ("ddd HH:MM" with the 24-hour clock)
 fn when_text(ms: i64) -> String {
-    tessera_core::util::strftime("%a %-I:%M %p", ms.div_euclid(1000))
+    let h24 = cfg_get("appearance.clock24").as_bool().unwrap_or(false);
+    tessera_core::util::strftime(if h24 { "%a %H:%M" } else { "%a %-I:%M %p" }, ms.div_euclid(1000))
 }
 
 /// IPC `calendar remind <text>`
