@@ -108,6 +108,9 @@ GOV=$HOME/.cache/tessera-governor.json
 # (~/.cache/tessera-gate-hold.last: "<end> <seconds held>")
 HOLD_MAX=${GATE_HOLD_MAX:-600}
 LAST=$HOME/.cache/tessera-gate-hold.last
+# (two gates at once, GATE_ARENAS: one holds at a time, under this lock, so
+# the first to finish can't release the builds into the other's measurement)
+LOCK=$HOME/.cache/tessera-gate-hold.lock
 HOLD_T0="" WD=""
 release() {
     [[ -n $WD ]] && kill "$WD" 2>/dev/null
@@ -117,11 +120,19 @@ release() {
         echo "$(date +%s) $(( $(date +%s) - HOLD_T0 ))" >"$LAST"
         HOLD_T0=""
     fi
+    flock -u 8 2>/dev/null
+    exec 8>&-
 }
 trap release EXIT
 trap 'exit 130' INT TERM
 hold() {
     local end held wait
+    mkdir -p "${HOLD%/*}"
+    exec 8>>"$LOCK"
+    flock -n 8 || {
+        say "another gate is holding the builds: waiting for its turn"
+        flock -w $((HOLD_MAX * 2)) 8 || say "the other gate's hold didn't end: holding anyway"
+    }
     if read -r end held <"$LAST" 2>/dev/null && [[ $end =~ ^[0-9]+$ && $held =~ ^[0-9]+$ ]]; then
         wait=$(( end + held - $(date +%s) ))
         if ((wait > 0)); then
