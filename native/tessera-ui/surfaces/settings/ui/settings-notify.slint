@@ -337,12 +337,19 @@ export component NotifyCtl inherits VerticalLayout {
                 width: i < 6 ? 30px : 0;
                 height: 28px;
                 visible: i < 6;
+                // (the chosen one on a tonal circle: a filled glyph alone didn't read as chosen)
+                if i < 6 && o.on: Rectangle {
+                    x: 2px;
+                    width: parent.width - 2px;
+                    border-radius: self.height / 2;
+                    background: Theme.material ? Theme.m3-primary-container : Theme.accent.with-alpha(0.2);
+                }
                 if i < 6: Ghost {
                     x: 2px;
                     width: parent.width - 2px;
                     icon: o.icon;
                     fill: o.on;
-                    ink: o.on ? Theme.accent : Theme.secondary;
+                    ink: o.on ? (Theme.material ? Theme.m3-on-primary-container : Theme.accent) : Theme.secondary;
                     label: o.text;
                     clicked => { SBus.act(r.id, i, 0, ""); }
                 }
@@ -358,12 +365,19 @@ export component NotifyCtl inherits VerticalLayout {
                 width: i >= 6 ? 30px : 0;
                 height: 28px;
                 visible: i >= 6;
+                // (the chosen one on a tonal circle: a filled glyph alone didn't read as chosen)
+                if i >= 6 && o.on: Rectangle {
+                    x: 2px;
+                    width: parent.width - 2px;
+                    border-radius: self.height / 2;
+                    background: Theme.material ? Theme.m3-primary-container : Theme.accent.with-alpha(0.2);
+                }
                 if i >= 6: Ghost {
                     x: 2px;
                     width: parent.width - 2px;
                     icon: o.icon;
                     fill: o.on;
-                    ink: o.on ? Theme.accent : Theme.secondary;
+                    ink: o.on ? (Theme.material ? Theme.m3-on-primary-container : Theme.accent) : Theme.secondary;
                     label: o.text;
                     clicked => { SBus.act(r.id, i, 0, ""); }
                 }
