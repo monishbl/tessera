@@ -383,10 +383,30 @@ def del_path(d, path):
 
 
 def write_json(path, data):
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=2)
-    os.replace(tmp, path)  # all at once: a running shell never reads half
+    # (a temp name of its own: two writers never share one; on disk before
+    # the rename, and the rename itself, so a power cut leaves the old file
+    # or the new one, never an empty one: the journal is for exactly that)
+    tmp = "%s.tmp-%d-%s" % (path, os.getpid(), os.urandom(3).hex())
+    try:
+        with open(tmp, "w") as f:
+            json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)  # all at once: a running shell never reads half
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    try:
+        fd = os.open(os.path.dirname(path) or ".", os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
 
 
 # ── Check ──────────────────────────────────────────────────────────────────
@@ -1471,14 +1491,16 @@ def lock_openers(path, me=None):
 def lock_holder(path=None, cmdline=proc_cmdline, start=proc_start, openers=lock_openers):
     """Who holds the repo lock as an update, or None when no update does
     (stale, or free). The holder's record while that process is still that
-    update; without a record (an older updater's empty file), any update's
-    process that has the file open."""
+    update; without a record (an older updater's empty file), or with the
+    record of one that's gone, any update's process that has the file open
+    (one that has just taken the lock and not yet written its record)."""
     path = path or lock_path()
     rec = load_json(path, None)
     if isinstance(rec, dict) and rec.get("pid"):
         pid = rec["pid"]
         same = not rec.get("start") or start(pid) == rec.get("start")
-        return rec if same and is_updater(cmdline(pid)) else None
+        if same and is_updater(cmdline(pid)):
+            return rec
     for pid in openers(path):
         if is_updater(cmdline(pid)):
             return {"pid": pid, "what": "update", "started": int(os.path.getmtime(path)) if os.path.exists(path) else 0}
@@ -3005,7 +3027,14 @@ def main():
     # recorded once, here)
     os.environ["TESSERA_HEALTH_PARENT"] = "tessera-update"
     if a.command == "cli":
-        return cli_update(a.config, a.channel, a.how)
+        # (one line saying what went wrong, never a traceback: a broken
+        # checkout, git missing, the bundle code failing)
+        try:
+            return cli_update(a.config, a.channel, a.how)
+        except Exception as e:  # noqa: BLE001
+            print("The update stopped: " + (str(e) or type(e).__name__) + ". Nothing was installed; Settings → Software Update says more.",
+                  file=sys.stderr)
+            return 1
     try:
         if a.command == "lock-holder":
             out = lock_report(a.mark)

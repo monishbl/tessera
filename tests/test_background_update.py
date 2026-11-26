@@ -18,6 +18,7 @@ each on its own, with no network, no real install and no shell:
 """
 import hashlib
 import importlib.machinery
+import io
 import importlib.util
 import json
 import os
@@ -782,6 +783,20 @@ time.sleep(60)
         with self.assertRaises(self.m.Busy):
             self.m.repo_lock()
 
+    def test_a_new_holder_without_its_record_yet_is_not_taken_for_stale(self):
+        # (it has just taken the lock; the file still names the last holder,
+        # long gone: still busy, not broken apart)
+        Path(self.m.lock_path()).parent.mkdir(parents=True, exist_ok=True)
+        p = self.held_by_an_update(record=False)
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        Path(self.m.lock_path()).write_text(json.dumps({"pid": dead.pid, "start": 1, "what": "restart", "started": 1700000000}))
+        holder = self.m.lock_holder()
+        self.assertIsNotNone(holder)
+        self.assertEqual(holder["pid"], p.pid)
+        with self.assertRaises(self.m.Busy):
+            self.m.repo_lock()
+
     def test_lock_holder_reports_and_marks_the_job(self):
         self.assertEqual(self.m.lock_report(), {"free": True})
         self.inherited_by_a_shell(record=True)
@@ -837,6 +852,36 @@ time.sleep(60)
 
 
 # ── sysupdate.py ──────────────────────────────────────────────────────────
+
+class WriteJsonAndCli(unittest.TestCase):
+    """write_json: whole on disk, a temp name of its own, none left behind
+    (audit #729); `tessera update` says one line, not a traceback (#731)"""
+
+    def test_write_json_leaves_only_the_file(self):
+        m = load_update()
+        with tempfile.TemporaryDirectory() as t:
+            p = os.path.join(t, "update-journal.json")
+            m.write_json(p, {"a": 1})
+            m.write_json(p, {"a": 2})
+            self.assertEqual(os.listdir(t), ["update-journal.json"])
+            self.assertEqual(json.loads(Path(p).read_text()), {"a": 2})
+            with self.assertRaises(TypeError):
+                m.write_json(p, {"a": object()})
+            self.assertEqual(os.listdir(t), ["update-journal.json"], "a failed write leaves no temp file")
+            self.assertEqual(json.loads(Path(p).read_text()), {"a": 2})
+
+    def test_cli_failure_is_one_line(self):
+        m = load_update()
+
+        def broken(*_a, **_k):
+            raise RuntimeError("git failed: not a git repository")
+        err = io.StringIO()
+        with mock.patch.dict(os.environ), mock.patch.object(m, "cli_update", broken), mock.patch.object(sys, "argv", ["tessera-update.py", "cli"]), \
+                mock.patch.object(sys, "stderr", err):
+            self.assertEqual(m.main(), 1)
+        self.assertIn("The update stopped: git failed: not a git repository.", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
+
 
 class RestartNeeded(unittest.TestCase):
     def test_kernels_drivers_and_core_libraries(self):
