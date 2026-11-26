@@ -43,7 +43,7 @@ fn power_word(style: Style, action: &str) -> String {
         (Style::Text, a) => a.to_string(),
         (_, "suspend") => "Sleep".into(),
         (_, "reboot") => "Restart".into(),
-        (Style::Glass, "poweroff") => "Shut Down".into(),
+        (Style::Glass, "poweroff") => "Shut down".into(),
         (_, "poweroff") => "Shut down".into(),
         (_, a) => a.to_string(),
     }
@@ -90,8 +90,8 @@ pub fn placeholder(style: Style, m: &Model) -> String {
         _ if m.busy && style != Style::Text => "Logging in…".into(),
         // (PAM's next question after the password: a new one, a code…)
         _ if !m.question.is_empty() && style != Style::Text => m.question.clone(),
-        Style::Glass if m.finger != Finger::None => "Fingerprint or Password".into(),
-        Style::Glass => "Enter Password".into(),
+        Style::Glass if m.finger != Finger::None => "Fingerprint or password".into(),
+        Style::Glass => "Enter password".into(),
         Style::Plain => "Password".into(),
         Style::Material => "Enter password".into(),
         Style::Text => String::new(),
@@ -278,7 +278,7 @@ mod tests {
         m.error = "Incorrect password. Try again.".into();
         assert_eq!(say(Style::Glass, &m), ("Incorrect password. Try again.".into(), true));
         m.power_choice = "poweroff".into();
-        assert_eq!(say(Style::Glass, &m).0, "Shut Down: click it again or press Return. Esc cancels.");
+        assert_eq!(say(Style::Glass, &m).0, "Shut down: click it again or press Return. Esc cancels.");
         assert_eq!(say(Style::Plain, &m).0, "Shut down: click it again or press Enter. Esc cancels.");
         assert_eq!(say(Style::Material, &m).0, "Shut down: press Enter or click it again");
         assert_eq!(say(Style::Text, &m), ("poweroff: Enter (or the same key again) to confirm, Esc to cancel".into(), true));
@@ -289,11 +289,11 @@ mod tests {
     #[test]
     fn placeholders_and_sessions() {
         let mut m = model(false);
-        assert_eq!(placeholder(Style::Glass, &m), "Enter Password");
+        assert_eq!(placeholder(Style::Glass, &m), "Enter password");
         assert_eq!(placeholder(Style::Plain, &m), "Password");
         assert_eq!(placeholder(Style::Material, &m), "Enter password");
         m.finger = Finger::Waiting;
-        assert_eq!(placeholder(Style::Glass, &m), "Fingerprint or Password");
+        assert_eq!(placeholder(Style::Glass, &m), "Fingerprint or password");
         // PAM's second question (a code after the password) shows in the field
         m.question = "Verification code".into();
         assert_eq!(placeholder(Style::Glass, &m), "Verification code");
