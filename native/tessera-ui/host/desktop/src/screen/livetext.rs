@@ -187,8 +187,26 @@ impl ScreenSvc {
             self.index_soon(h);
         } else if !on && !self.index_seen_off {
             self.index_seen_off = true;
-            let f = index_file();
-            util::detached(&["rm", "-f", "--", &f.to_string_lossy(), &format!("{}.tmp", f.display())]);
+            // (an index being built now is stopped: it would write the
+            // words of every screenshot back when it finished)
+            let pid = self.index_pid.load(std::sync::atomic::Ordering::Relaxed);
+            if pid > 0 {
+                unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+            }
+            Self::remove_index();
+        }
+    }
+
+    fn remove_index() {
+        let f = index_file();
+        util::detached(&["rm", "-f", "--", &f.to_string_lossy(), &format!("{}.tmp", f.display())]);
+    }
+
+    /// The indexer ended: what it wrote goes if search was turned off meanwhile
+    pub(super) fn index_ended(&mut self, h: &mut Host) {
+        self.indexing_now = false;
+        if !self.indexing(h) {
+            Self::remove_index();
         }
     }
 
@@ -210,6 +228,7 @@ impl ScreenSvc {
         self.indexing_now = true;
         let (send, again) = (h.sender("ScreenTools"), h.sender("ScreenTools"));
         let (dir, file, langs, script) = (Self::shots_dir(), index_file().to_string_lossy().into_owned(), self.ocr_lang_arg(), util::script("shot-index.py"));
+        let pid = self.index_pid.clone();
         std::thread::spawn(move || {
             let (b, p, s) = power_now();
             if !may_index(b, p, s) {
@@ -218,10 +237,16 @@ impl ScreenSvc {
                 util::later(again, 300_000, Box::new(IndexNow));
                 return;
             }
-            let _ = Command::new("nice")
+            // (nice, ionice and env each exec the next: the pid is python's)
+            if let Ok(mut child) = Command::new("nice")
                 .args(["-n", "19", "ionice", "-c", "3", "env", "OMP_THREAD_LIMIT=1", "python3", "-I", &script, "run", &dir, &file, &langs])
                 .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
-                .status();
+                .spawn()
+            {
+                pid.store(child.id(), std::sync::atomic::Ordering::Relaxed);
+                let _ = child.wait();
+                pid.store(0, std::sync::atomic::Ordering::Relaxed);
+            }
             send(Box::new(IndexEnded));
         });
     }

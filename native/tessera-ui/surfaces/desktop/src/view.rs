@@ -309,6 +309,7 @@ mod tests {
         assert_eq!(hm(ms, false), "9:41 AM");
         assert_eq!(hm_short(ms, false), "9:41");
         assert_eq!(hm_short(ms + 7 * 3_600_000, false), "4:41");
+        assert_eq!(hm_short(ms + 7 * 3_600_000, true), "16:41");
         assert_eq!(local(ms), ((2026, 11, 5), 9, 41));
         let today = (2026, 11, 5);
         assert_eq!(when(ms, false, today, true, true), "09:41");

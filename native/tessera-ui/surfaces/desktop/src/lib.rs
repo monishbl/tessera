@@ -231,7 +231,9 @@ pub struct Desktop {
     photos: HashMap<String, Photo>,
     lists: HashMap<String, Lists>,
     fans: HashMap<String, Rows<slint::Image>>,
-    note_pending: Option<(String, String)>,
+    /// notes typed in and not sent yet, by note id (one slot for all lost
+    /// note A's last edit when note B was typed in within the 500 ms)
+    note_pending: std::collections::BTreeMap<String, String>,
     note_timer: slint::Timer,
     // data read here
     images: HashMap<String, slint::Image>,
@@ -1008,7 +1010,8 @@ impl Desktop {
             "photos" => {
                 let p = self.photos.entry(key.to_string()).or_default();
                 let now = crate::util::now_ms();
-                if p.list.is_empty() || p.folder != c.photos || now - p.listed_at > 15 * 60_000 {
+                // (an empty folder is listed again once a minute, not on every update)
+                if (p.list.is_empty() && now - p.listed_at > 60_000) || p.folder != c.photos || now - p.listed_at > 15 * 60_000 {
                     let moved = p.folder != c.photos;
                     p.list = files::pictures(&c.photos);
                     p.folder = c.photos.clone();
@@ -1357,7 +1360,7 @@ impl Desktop {
             "note" => {
                 let id = w.id.clone();
                 self.feed.notes.insert(id.clone(), arg.to_string());
-                self.note_pending = Some((id, arg.to_string()));
+                self.note_pending.insert(id, arg.to_string());
                 let to = st.shell.sender(NAME);
                 self.note_timer.start(slint::TimerMode::SingleShot, Duration::from_millis(500), move || to(Box::new(M::SaveNote)));
                 return; // (no redraw: the field has it)
@@ -1380,12 +1383,21 @@ impl Desktop {
         self.update(st);
     }
 
+    /// The notes typed in, sent to the host now
+    fn flush_notes(&mut self) {
+        for (id, text) in std::mem::take(&mut self.note_pending) {
+            ask("note", vec![json!(id), json!(text)]);
+        }
+    }
+
     fn drag(&mut self, st: &mut State, i: usize, x: f32, y: f32, on: bool) {
         let Some(g) = self.grid else { return };
         if on {
+            // (a widget removed meanwhile: the drag's index is gone)
+            let Some(size) = self.placed.get(i).map(|w| w.size.clone()) else { return };
             self.live = Some((i, x, y));
             let (c, r) = Grid::cell_at(x, y);
-            self.ghost = g.nearest_free(&self.placed, c, r, &self.placed[i].size, Some(i)).map(|(c, r)| (c, r, self.placed[i].size.clone()));
+            self.ghost = g.nearest_free(&self.placed, c, r, &size, Some(i)).map(|(c, r)| (c, r, size.clone()));
         } else {
             self.live = None;
             self.ghost = None;
@@ -1742,8 +1754,23 @@ fn art(url: &str, px: u32) -> Option<Pixels> {
         return files::thumbnail(&percent_decode(p), px);
     }
     if url.starts_with("http") {
-        let out = std::process::Command::new("curl").args(["-sfL", "--max-time", "8", url]).stderr(std::process::Stdio::null()).output().ok()?;
-        let img = image::load_from_memory(&out.stdout).ok()?.thumbnail(px, px).to_rgba8();
+        // (any app on the session bus can publish an artUrl: web only, at
+        // most 10 MB, and decoded within limits)
+        let out = std::process::Command::new("curl")
+            .args(["-sfL", "--max-time", "8", "--max-filesize", "10M", "--proto", "=http,https", "--proto-redir", "=http,https", url])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        if out.stdout.len() > 10 << 20 {
+            return None;
+        }
+        let mut reader = image::ImageReader::new(std::io::Cursor::new(&out.stdout)).with_guessed_format().ok()?;
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(8192);
+        limits.max_image_height = Some(8192);
+        limits.max_alloc = Some(128 << 20);
+        reader.limits(limits);
+        let img = reader.decode().ok()?.thumbnail(px, px).to_rgba8();
         let (w, h) = img.dimensions();
         return Some(slint::SharedPixelBuffer::clone_from_slice(img.as_raw(), w, h));
     }
@@ -1782,8 +1809,9 @@ fn percent_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
+        // (bytes, not str: "%4é" cut inside the é and panicked)
         if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+            if let Some(v) = std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()) {
                 out.push(v);
                 i += 3;
                 continue;
@@ -1909,8 +1937,12 @@ impl Part for Desktop {
         // From the shell (stdin): the feed, and widgets the gallery added
         let msg = match msg.downcast::<Value>() {
             Ok(v) => {
-                if let Some(f) = Feed::from(&v["feed"]) {
+                if let Some(mut f) = Feed::from(&v["feed"]) {
                     let editing_was = self.feed.editing;
+                    // (a note being typed keeps its text: the feed's is older)
+                    for (id, text) in &self.note_pending {
+                        f.notes.insert(id.clone(), text.clone());
+                    }
                     self.feed = f;
                     if !self.feed.editing && editing_was {
                         self.ghost = None;
@@ -2009,9 +2041,7 @@ impl Part for Desktop {
             }
             M::Slow => self.slow(st, false),
             M::SaveNote => {
-                if let Some((id, text)) = self.note_pending.take() {
-                    ask("note", vec![json!(id), json!(text)]);
-                }
+                self.flush_notes();
             }
             M::Image(k, px) => {
                 self.pending.remove(&k);
@@ -2216,6 +2246,7 @@ impl Part for Desktop {
     }
 
     fn quit(&mut self, _: &mut State) {
+        self.flush_notes();
         if let Some(g) = &self.gal {
             crate::services::hypr::Glass::clear_now(&g.output, gallery::NS);
         }
@@ -2271,6 +2302,8 @@ mod tests {
         assert!(clock(20, 0, String::new(), String::new(), 0).night && !clock(9, 0, String::new(), String::new(), 0).night);
         assert!(view_shape("cookie12").ends_with('Z'));
         assert_eq!(percent_decode("/a%20b.png"), "/a b.png");
+        // (a '%' and one byte before a multi-byte character: no panic)
+        assert_eq!(percent_decode("/tmp/cover%4é.jpg"), "/tmp/cover%4é.jpg");
         assert!(pick("x", 5) < 5);
         assert_eq!(elide_middle("short.txt", 14), "short.txt");
         assert_eq!(elide_middle("a-very-long-file-name.pdf", 14), "a-very…ame.pdf");

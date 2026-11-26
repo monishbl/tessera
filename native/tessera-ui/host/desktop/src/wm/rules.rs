@@ -84,8 +84,10 @@ pub fn has_effects(r: &Rule) -> bool {
     r.float || r.tile || r.workspace > 0 || r.opaque || !r.start.is_empty() || r.pin || (r.width > 0 && r.height > 0) || r.self_maximize
 }
 
+/// (hx::q: control characters too, so one odd class can't stop
+/// window-rules.lua loading as a whole)
 fn lua_str(s: &str) -> String {
-    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n"))
+    hx::q(s)
 }
 fn escape(cls: &str) -> String {
     let mut o = String::new();
@@ -436,6 +438,13 @@ mod tests {
 
     fn rule(v: Value) -> Rule {
         normalize(&v)
+    }
+
+    #[test]
+    fn lua_strings_escape_control_characters() {
+        assert_eq!(lua_str("a\"b\\c\nd"), "\"a\\\"b\\\\c\\nd\"");
+        assert_eq!(lua_str("x\ry\u{0}z\u{1b}"), "\"x\\ry\\000z\\027\"");
+        assert_eq!(lua_str("café"), "\"café\"");
     }
 
     #[test]

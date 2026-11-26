@@ -52,9 +52,25 @@ pub fn addr(a: &str) -> String {
 pub fn key(a: &str) -> String {
     a.trim().trim_start_matches("0x").to_lowercase()
 }
-/// A Lua string literal
+/// A Lua string literal: backslash, quote and the control characters
+/// escaped the way Lua reads them (\n, \r, \t, else \ddd; JSON's \u00XX,
+/// which serde_json wrote, is not Lua, and a raw CR broke the whole chunk)
 pub fn q(s: &str) -> String {
-    serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into())
+    let mut o = String::with_capacity(s.len() + 2);
+    o.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => o.push_str("\\\\"),
+            '"' => o.push_str("\\\""),
+            '\n' => o.push_str("\\n"),
+            '\r' => o.push_str("\\r"),
+            '\t' => o.push_str("\\t"),
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => o.push_str(&format!("\\{:03}", c as u32)),
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
 }
 /// Apps.windowActionFor: `hl.dsp.window.<name>({ k = v, …, window = "address:0x…" })`;
 /// the values are Lua already (strings quoted with `q`)

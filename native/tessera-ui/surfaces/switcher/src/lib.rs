@@ -103,6 +103,31 @@ pub fn first_selected(list: &[Client], active: &str, dir: i32) -> usize {
     }
 }
 
+/// Up (-1) or Down (1) a row, staying in the column: past the last row
+/// back to that column's first, before the first to its last (modulo the
+/// count, a Down from the last row landed in another column)
+pub fn step_row(sel: usize, d: i32, per_row: usize, n: usize) -> usize {
+    if n == 0 {
+        return 0;
+    }
+    let per_row = per_row.max(1);
+    let col = sel % per_row;
+    let next = sel as i64 + d as i64 * per_row as i64;
+    if next >= 0 && (next as usize) < n {
+        return next as usize;
+    }
+    if d > 0 {
+        col.min(n - 1)
+    } else {
+        // the last row of this column that has a cell
+        let mut last = col;
+        while last + per_row < n {
+            last += per_row;
+        }
+        last.min(n - 1)
+    }
+}
+
 pub fn step(sel: usize, d: i32, n: usize) -> usize {
     if n == 0 {
         return 0;
@@ -305,6 +330,36 @@ impl Switcher {
         self.push(st);
     }
 
+    fn step_rows(&mut self, st: &mut State, d: i32, per_row: i32) {
+        if self.phase == Phase::Idle {
+            return self.begin(st, d);
+        }
+        self.selected = step_row(self.selected, d, per_row.max(1) as usize, self.items.len());
+        self.reveal(st);
+        self.push(st);
+    }
+
+    /// Windows changed while it's up: one that closed leaves the strip (the
+    /// selection stays on the same window), and it ends with none left
+    fn windows_changed(&mut self, st: &mut State) {
+        if self.phase == Phase::Idle {
+            return;
+        }
+        let Some(wins) = st.shell.get::<Windows>() else { return };
+        let kept: Vec<Client> = self.items.iter().filter(|c| wins.clients.iter().any(|w| w.address == c.address)).cloned().collect();
+        if kept.len() == self.items.len() {
+            return;
+        }
+        let was = self.items.get(self.selected).map(|c| c.address.clone()).unwrap_or_default();
+        self.selected = kept.iter().position(|c| c.address == was).unwrap_or(self.selected.min(kept.len().saturating_sub(1)));
+        self.items = kept;
+        if self.items.is_empty() {
+            return self.finish(st);
+        }
+        self.layout(st);
+        self.push(st);
+    }
+
     /// The strip shows (held long enough, or a second Tab)
     fn reveal(&mut self, st: &mut State) {
         self.hold.stop();
@@ -467,9 +522,9 @@ impl Switcher {
         } else if is(t, Key::Backtab) || is(t, Key::LeftArrow) {
             self.step(st, -1);
         } else if is(t, Key::DownArrow) {
-            self.step(st, per_row);
+            self.step_rows(st, 1, per_row);
         } else if is(t, Key::UpArrow) {
-            self.step(st, -per_row);
+            self.step_rows(st, -1, per_row);
         }
     }
 
@@ -543,6 +598,12 @@ impl Part for Switcher {
         self.look(st);
         self.info.count = wm::workspace_count(&st.shell.cfg);
         self.info.open = wm::spaces_open(&st.shell.cfg);
+    }
+
+    fn data(&mut self, st: &mut State, what: std::any::TypeId) {
+        if what == std::any::TypeId::of::<Windows>() {
+            self.windows_changed(st);
+        }
     }
 
     fn plugin_changed(&mut self, st: &mut State) {
@@ -713,6 +774,13 @@ mod tests {
         assert_eq!(step(0, -1, 3), 2);
         assert_eq!(step(1, 4, 3), 2);
         assert_eq!(step(0, 1, 0), 0);
+        // up and down stay in the column: 7 windows, 5 a row
+        assert_eq!(step_row(3, 1, 5, 7), 3); // 4th: no cell below, back to its column's top
+        assert_eq!(step_row(1, 1, 5, 7), 6);
+        assert_eq!(step_row(6, 1, 5, 7), 1);
+        assert_eq!(step_row(1, -1, 5, 7), 6);
+        assert_eq!(step_row(3, -1, 5, 7), 3);
+        assert_eq!(step_row(0, 1, 5, 0), 0);
     }
 
     #[test]

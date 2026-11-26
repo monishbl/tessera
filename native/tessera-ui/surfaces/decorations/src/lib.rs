@@ -61,6 +61,8 @@ struct Win {
     pos: (i32, i32),
     region: (i32, i32, i32, i32),
     glass_sent: String,
+    /// the window it's on is maximized (the zoom button shows restore)
+    maximized: bool,
 }
 
 #[derive(Default)]
@@ -125,7 +127,7 @@ impl Decorations {
         ui.on_tiling_off(move || t3(Box::new(Msg::TilingOff)));
         ui.show().expect("show window controls");
         surface.hide();
-        self.wins.push(Win { output: output.to_string(), surface, ui, shown: false, pos: (i32::MIN, 0), region: (0, 0, 0, 0), glass_sent: String::new() });
+        self.wins.push(Win { output: output.to_string(), surface, ui, shown: false, pos: (i32::MIN, 0), region: (0, 0, 0, 0), glass_sent: String::new(), maximized: false });
         Some(self.wins.len() - 1)
     }
 
@@ -148,7 +150,9 @@ impl Decorations {
             return Some((addr.clone(), layout::place_at((*x, *y), (m.x, m.y), size.0 as f32)));
         }
         let c = w.active_client()?;
-        if c.monitor != m.id || c.fullscreen > 0 || !c.mapped || c.hidden {
+        // (Hyprland's fullscreen: 1 maximized, 2 fullscreen; a maximized
+        // window keeps its controls, so it can be restored from them)
+        if c.monitor != m.id || c.fullscreen >= 2 || !c.mapped || c.hidden {
             return None;
         }
         Some((c.address.clone(), layout::place(c.at, c.size, (m.x, m.y), size.0 as f32)))
@@ -173,6 +177,14 @@ impl Decorations {
             let visible = target.is_some() && (!plugin || w.ui.get_tiling());
             match target {
                 Some((addr, pos)) if visible => {
+                    let maximized = st.shell.get::<Windows>().and_then(|ws| ws.clients.iter().find(|c| c.address == addr)).is_some_and(|c| c.fullscreen == 1);
+                    if maximized != w.maximized {
+                        w.maximized = maximized;
+                        w.ui.set_maximized(maximized);
+                        let (zoom, max) = if maximized { ("arrows-in-simple", "arrows-in-simple") } else { ("arrows-out-simple", "square") };
+                        w.ui.set_zoom_icon(gl(zoom));
+                        w.ui.set_max_icon(gl(max));
+                    }
                     w.ui.set_address(addr.into());
                     if pos != w.pos {
                         w.pos = pos;

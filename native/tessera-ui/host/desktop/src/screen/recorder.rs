@@ -16,9 +16,12 @@ use std::process::{Command, Stdio};
 use tessera_core::host::Host;
 
 /// Is this stderr gpu-screen-recorder's "can't encode on the GPU"?
+/// (the recorder's own words for it only: its usage text and unrelated
+/// errors, an unknown monitor or a refused portal, also say "encoder")
 pub fn hw_encode_failure(text: &str) -> bool {
     let t = text.to_lowercase();
-    ["vaapi", "va-api", "libva", "failed to create", "no h264", "nvenc", "cuda", "vulkan video", "encoder", "encoding"].iter().any(|k| t.contains(k))
+    ["vaapi", "va-api", "libva", "no h264", "nvenc", "cuda", "vulkan video"].iter().any(|k| t.contains(k))
+        || t.lines().any(|l| (l.contains("failed to") || l.contains("could not") || l.contains("unable to")) && (l.contains("encoder") || l.contains("hardware")))
         || t.lines().any(|l| ["h264", "hevc", "av1"].iter().any(|c| l.contains(c)) && (l.contains("not supported") || l.contains("unavailable")))
 }
 
@@ -61,6 +64,14 @@ fn source_mute(h: &Host, mic: &str, muted: Option<bool>) {
     } else if default && util::has("wpctl") {
         util::detached(&["wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@", how]);
     }
+}
+
+/// Whether that microphone is muted now (core's sound connection; false
+/// when it doesn't know it)
+fn source_muted(h: &Host, mic: &str) -> bool {
+    use tessera_core::services::audio::Sound;
+    let default = mic.is_empty() || mic == "default";
+    h.st.shell.get::<Sound>().and_then(|s| if default { s.source() } else { s.sources.iter().find(|d| d.name == mic) }).is_some_and(|d| d.muted)
 }
 
 /// The recording is there and has something in it
@@ -156,22 +167,35 @@ impl ScreenSvc {
     }
 
     /// Mute / unmute the microphone being recorded (restored when it ends)
+    /// (the microphone the recording started with, even if Settings changed since)
     pub(super) fn toggle_mic(&mut self, h: &mut Host) {
-        if !self.recording || Self::rec_cfg_str(h, "mic", "").is_empty() {
+        if !self.recording || self.mic_source.is_empty() {
             return;
         }
-        let mic = Self::rec_cfg_str(h, "mic", "");
-        source_mute(h, &mic, if self.mic_muted { Some(false) } else { Some(true) });
+        let mic = self.mic_source.clone();
+        source_mute(h, &mic, Some(!self.mic_muted));
         self.mic_muted = !self.mic_muted;
     }
 
+    /// The screen locked while recording: the microphone goes quiet (the
+    /// lock screen and the room aren't recorded with sound)
+    pub(super) fn mute_for_lock(&mut self, h: &mut Host) {
+        if self.recording && !self.mic_source.is_empty() && !self.mic_muted {
+            let mic = self.mic_source.clone();
+            source_mute(h, &mic, Some(true));
+            self.mic_muted = true;
+        }
+    }
+
     fn restore_mic(&mut self, h: &mut Host) {
-        // (what it was before we touched it: unmuted if we muted it)
-        if self.mic_muted {
-            let mic = Self::rec_cfg_str(h, "mic", "");
-            source_mute(h, &mic, Some(false));
+        // (what it was before the recording: muted stays muted, and only
+        // that microphone is touched)
+        if !self.mic_source.is_empty() && self.mic_muted != self.mic_was_muted {
+            let mic = self.mic_source.clone();
+            source_mute(h, &mic, Some(self.mic_was_muted));
         }
         self.mic_muted = false;
+        self.mic_source.clear();
     }
 
     // ── Countdown ───────────────────────────────────────────────────────
@@ -199,8 +223,11 @@ impl ScreenSvc {
     // ── Start / stop ────────────────────────────────────────────────────
     /// what: { output: "DP-1" } (a whole display) or { region: "x,y wxh" }
     pub(super) fn start(&mut self, h: &mut Host, what: Value) {
-        if self.recording || self.countdown > 0 || !self.available() {
+        if self.recording || self.countdown > 0 || self.rec_starting || self.locked {
             return;
+        }
+        if !self.available() {
+            return self.no_recorder(h);
         }
         h.ask("panels.closeOpen", json!([]));
         let n = h.cfg()["recorder"]["countdown"].as_i64().unwrap_or(0).max(0);
@@ -210,7 +237,20 @@ impl ScreenSvc {
             self.tick_gen += 1;
             util::later(h.sender("ScreenTools"), 1000, Box::new(Tick(self.tick_gen)));
         } else {
+            // (a second start before this arrives starts nothing: key repeat,
+            // a double click, IPC twice)
+            self.rec_starting = true;
             util::later(h.sender("ScreenTools"), 0, Box::new(StartRec(what)));
+        }
+    }
+
+    /// No gpu-screen-recorder and no wf-recorder: said, with what to install
+    pub(super) fn no_recorder(&mut self, h: &mut Host) {
+        let why = "Install gpu-screen-recorder (or wf-recorder) to record the screen.";
+        if self.island_says(h) {
+            util::island_post(h, json!({"kind": "recording", "icon": "warning-circle", "title": "Install a screen recorder", "subtitle": why, "color": "danger"}), 6000);
+        } else {
+            tessera_core::util::notify("Screen Recording", "", "normal", "Install a screen recorder", why);
         }
     }
 
@@ -218,7 +258,10 @@ impl ScreenSvc {
     /// without libva-nvidia-driver, a VM) gpu-screen-recorder exits at once;
     /// launch() then runs it again once with the CPU encoder (H.264 only)
     pub(super) fn launch(&mut self, h: &mut Host, what: Value, cpu: bool, keep_file: bool) {
-        if what.is_null() {
+        self.rec_starting = false;
+        // (one recorder at a time: a second would take over rec_pid and the
+        // first could not be stopped from the shell)
+        if what.is_null() || self.rec_pid.is_some() {
             return;
         }
         self.last_what = Some(what.clone());
@@ -296,6 +339,10 @@ impl ScreenSvc {
         let gen = self.rec_gen;
         self.rec_pid = Some(child.id() as i32);
         self.recording = true;
+        // the microphone recorded and how it was: put back as it was at the end
+        self.mic_source = mic.clone();
+        self.mic_was_muted = !mic.is_empty() && source_muted(h, &mic);
+        self.mic_muted = self.mic_was_muted;
         self.started = tessera_core::util::now_ms();
         if self.island_says(h) {
             util::island_post(h, json!({"kind": "recording", "icon": "record", "title": "Recording", "subtitle": "Stop it here or with Super+Shift+R", "color": "danger"}), 3000);
@@ -517,5 +564,9 @@ mod tests {
     fn missing_encoders_are_told_apart() {
         assert!(hw_encode_failure("Error: failed to create vaapi context"));
         assert!(!hw_encode_failure("permission denied"));
+        // (its usage text and other errors say "encoder" too)
+        assert!(!hw_encode_failure("usage: gpu-screen-recorder -w <window_id|monitor> [-encoder gpu|cpu]"));
+        assert!(!hw_encode_failure("Error: unknown monitor DP-9, encoding stopped"));
+        assert!(hw_encode_failure("gsr error: failed to open the video encoder"));
     }
 }

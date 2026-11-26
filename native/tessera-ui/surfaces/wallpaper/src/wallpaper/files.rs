@@ -34,9 +34,12 @@ pub fn list(dir: &str, bundled: &[PathBuf]) -> Vec<String> {
     out
 }
 
-/// FolderListModel's name filters (they match case: a .JPEG or .WEBP isn't listed)
+/// A picture the background can show (core's picture::decode: JPEG, PNG,
+/// WebP, BMP), whatever the case of its extension (the QML's filters
+/// matched case: a .JPEG, .WEBP or .Png was never listed)
 fn user_picture(name: &str) -> bool {
-    !name.starts_with('.') && ["jpg", "jpeg", "png", "webp", "JPG", "PNG"].iter().any(|x| name.strip_suffix(x).is_some_and(|s| s.ends_with('.')))
+    !name.starts_with('.')
+        && name.rsplit_once('.').is_some_and(|(stem, ext)| !stem.is_empty() && ["jpg", "jpeg", "png", "webp", "bmp"].contains(&ext.to_ascii_lowercase().as_str()))
 }
 
 /// Where a picture is in the list: by its path, else by where it really is
@@ -58,11 +61,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn name_filters_as_the_qml() {
-        for n in ["a.jpg", "b.jpeg", "c.png", "d.webp", "E.JPG", "F.PNG"] {
+    fn pictures_whatever_the_case() {
+        for n in ["a.jpg", "b.jpeg", "c.png", "d.webp", "E.JPG", "F.PNG", "g.JPEG", "h.WEBP", "photo.Jpg", "k.bmp"] {
             assert!(user_picture(n), "{n}");
         }
-        for n in ["g.JPEG", "h.WEBP", "i.gif", ".hidden.jpg", "jpg", "notes.txt"] {
+        for n in ["i.gif", ".hidden.jpg", "jpg", ".jpg", "notes.txt", "x.avif"] {
             assert!(!user_picture(n), "{n}");
         }
     }

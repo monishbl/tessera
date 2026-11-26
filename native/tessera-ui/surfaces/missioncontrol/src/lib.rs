@@ -274,7 +274,8 @@ impl MissionControl {
         // order: the Overview's list (spaces::Info::shown_for)
         let ids: Vec<i32> = self.info.shown_for(&out, &snap);
         let cards = layout::cards(ids.len(), size);
-        let s = layout::CARD_W / size.0.max(1.0);
+        // (the cards' own width: narrower when many spaces share the bar)
+        let s = cards.first().map_or(layout::CARD_W, |r| r.w) / size.0.max(1.0);
         let mut card_minis: Vec<(i32, Vec<ui::McMini>)> = Vec::new();
         let mut card_ui: Vec<ui::McCard> = ids
             .iter()

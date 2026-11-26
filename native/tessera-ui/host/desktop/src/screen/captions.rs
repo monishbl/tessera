@@ -40,6 +40,21 @@ pub struct CaptionsSvc {
     was_enabled: bool,
     last: Option<Value>,
     language: String,
+    /// quick failures in a row (the helper ended within a minute of its
+    /// start), and when it last started: the retry backs off, then stops
+    fails: u32,
+    started_at: i64,
+}
+
+/// The pause before the helper is started again after `fails` quick failures
+/// (None: given up until captions are turned off and on, or the language changes)
+fn retry_after(fails: u32) -> Option<u64> {
+    match fails {
+        0 | 1 => Some(3000),
+        2 => Some(10_000),
+        3 => Some(60_000),
+        _ => None,
+    }
 }
 
 impl CaptionsSvc {
@@ -98,11 +113,18 @@ impl CaptionsSvc {
             self.lines.clear();
             self.partial.clear();
             self.error.clear();
+            self.fails = 0;
         }
         let want = enabled && self.ready();
         // (the language changed: started again with it)
         if self.kept.running() && (!want || lang != self.language) {
             self.kept.stop();
+        }
+        if lang != self.language {
+            self.fails = 0;
+        }
+        if want && !self.kept.running() && retry_after(self.fails).is_none() {
+            return self.send(h);
         }
         if want && !self.kept.running() {
             self.language = lang.clone();
@@ -110,7 +132,11 @@ impl CaptionsSvc {
             let (s1, s2) = (h.sender("Captions"), h.sender("Captions"));
             let gen = self.kept.next_gen();
             if self.kept.start(&cmd, move |l| s1(Box::new(Line(l))), move || s2(Box::new(Ended(gen)))) {
-                self.error.clear();
+                self.started_at = tessera_core::util::now_ms();
+                // (the reason it failed stays up until a line arrives)
+                if self.fails == 0 {
+                    self.error.clear();
+                }
             }
         }
         self.send(h);
@@ -268,6 +294,8 @@ impl Service for CaptionsSvc {
                 } else if let Some(f) = m["final"].as_str() {
                     self.partial.clear();
                     if !f.is_empty() {
+                        self.error.clear();
+                        self.fails = 0;
                         self.lines.push(f.into());
                         let n = self.lines.len();
                         // (four kept: the island's card shows the last four, the bar two)
@@ -288,8 +316,19 @@ impl Service for CaptionsSvc {
         let msg = match msg.downcast::<Ended>() {
             Ok(e) => {
                 if self.kept.reap_if(e.0) {
-                    // (KeptProcess: started again if still wanted, after a pause)
-                    util::later(h.sender("Captions"), 3000, Box::new(Retry));
+                    // (KeptProcess: started again if still wanted, after a
+                    // pause that grows while it keeps failing at once)
+                    let quick = tessera_core::util::now_ms() - self.started_at < 60_000;
+                    self.fails = if quick { self.fails + 1 } else { 0 };
+                    match retry_after(self.fails) {
+                        Some(ms) => util::later(h.sender("Captions"), ms, Box::new(Retry)),
+                        None => {
+                            if self.error.is_empty() {
+                                self.error = "Live captions stopped: they kept failing to start".into();
+                            }
+                            self.send(h);
+                        }
+                    }
                 }
                 return;
             }

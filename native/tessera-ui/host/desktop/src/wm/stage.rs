@@ -38,6 +38,9 @@ pub struct Stage {
     quiet_until: Option<Instant>,
     pending_open: String,
     sent: String,
+    /// looks at the windows' classes before starting (a window whose class
+    /// stays empty must not keep Stage Manager from starting for ever)
+    start_tries: u32,
 }
 
 fn class_of<'a>(w: &'a Windows, addr: &str) -> &'a str {
@@ -329,7 +332,10 @@ impl Stage {
             return;
         }
         let ready = h.st.shell.get::<Windows>().is_some_and(|w| w.clients.iter().all(|c| !c.class.is_empty()));
-        if ready {
+        self.start_tries += 1;
+        // (after ~2 s with what is known: an empty class is an app of its own)
+        if ready || (self.start_tries >= 4 && h.st.shell.get::<Windows>().is_some()) {
+            self.start_tries = 0;
             self.start(h);
         } else {
             io.arm("stage.start", 600);

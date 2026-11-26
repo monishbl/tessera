@@ -453,7 +453,11 @@ pub fn move_icon(key: &str, x: f32, y: f32, placed: &HashMap<String, (i32, i32)>
     }
     let (c, r) = best?;
     let prefix = format!("{key}\t");
-    let mut keep: Vec<String> = lines.iter().filter(|l| !l.starts_with(&prefix) && items.iter().any(|i| l.starts_with(&format!("{}\t", i.key)))).cloned().collect();
+    // (a line is kept while its file is still there: an item, or a file in a
+    // stack; with Use Stacks on the items are only the stacks, and every
+    // file's own place was thrown away on the first drag)
+    let live = |l: &str| l.split_once('\t').is_some_and(|(k, _)| items.iter().any(|i| i.key == k || i.stack.iter().any(|e| e.path == k)));
+    let mut keep: Vec<String> = lines.iter().filter(|l| !l.starts_with(&prefix) && live(l)).cloned().collect();
     keep.push(format!("{key}\t{c}\t{r}"));
     Some(keep)
 }
@@ -614,5 +618,10 @@ mod tests {
         let (x, y) = (ORIGIN.0 + 4.0 * SPOT + 10.0, ORIGIN.1 + SPOT);
         let lines = move_icon("/d/a", x, y, &p, &b, 6, 2, &["/gone\t1\t1".into(), "/d/b\t4\t0".into()], &it).unwrap();
         assert_eq!(lines, vec!["/d/b\t4\t0".to_string(), "/d/a\t4\t1".to_string()]);
+        // with Use Stacks on, dragging a stack keeps the files' own places
+        let st = items(&list, true);
+        let k = st[0].key.clone();
+        let lines = move_icon(&k, x, y, &HashMap::new(), &HashSet::new(), 6, 2, &["/d/b\t4\t0".into(), "/gone\t1\t1".into()], &st).unwrap();
+        assert!(lines.contains(&"/d/b\t4\t0".to_string()) && !lines.iter().any(|l| l.starts_with("/gone")));
     }
 }

@@ -65,6 +65,25 @@ class TerminalTests(unittest.TestCase):
     def test_choice_with_options_keeps_them(self):
         self.assertEqual(self.run_in("foot -o pad=8x8", "--", "nvim"), ["foot", "-o", "pad=8x8", "nvim"])
 
+    def files_with(self, *installed):
+        """open-app.sh files with only these programs (and bash) on PATH"""
+        with tempfile.TemporaryDirectory() as d:
+            bins = Path(d) / "bin"
+            bins.mkdir()
+            for t in installed:
+                stub(bins, t, f'echo {t}; for a in "$@"; do printf "%s\\n" "$a"; done')
+            stub(bins, "notify-send", 'echo notify; for a in "$@"; do printf "%s\\n" "$a"; done')
+            (bins / "bash").symlink_to("/bin/bash")
+            e = {"PATH": str(bins), "TESSERA_USER_DIR": str(Path(d) / "none"), "HOME": d}
+            out = subprocess.run(["/bin/bash", str(SCRIPTS / "open-app.sh"), "files"], capture_output=True, text=True, env=e, timeout=10)
+            return out.stdout.splitlines()
+
+    def test_a_terminal_file_manager_needs_its_program_and_uses_your_terminal(self):
+        # yazi there, kitty not: yazi in the terminal that is (not "kitty -e")
+        self.assertEqual(self.files_with("foot", "yazi"), ["foot", "yazi"])
+        # kitty there, yazi not: no window that flashes and closes, but the notice
+        self.assertEqual(self.files_with("kitty")[0], "notify")
+
 
 class ConflictTests(unittest.TestCase):
     def check(self, layers):

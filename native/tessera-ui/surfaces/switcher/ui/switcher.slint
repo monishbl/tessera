@@ -164,7 +164,7 @@ export component SwitcherStrip inherits Window {
                     y: Theme.material ? 8px : 8px + 120px + 8px;
                     width: cell-w - 20px;
                     height: chip-h;
-                    property <length> room: self.width - 22px - (t.place != "" ? place.preferred-width + (Theme.material ? 18px : 6px) : (Theme.material ? 12px : 0px));
+                    property <length> room: self.width - 22px - (t.place != "" ? place.width + (Theme.material ? 18px : 6px) : (Theme.material ? 12px : 0px));
                     if Theme.material: Rectangle {
                         x: -6px;
                         width: 6px + 16px + 6px + min(title.preferred-width, parent.room) + 12px;
@@ -190,10 +190,14 @@ export component SwitcherStrip inherits Window {
                         font-weight: tile.current ? 600 : 500;
                         accessible-role: none;
                     }
+                    // (a long space name: at most 40 % of the cell, cut short,
+                    // so the window's title keeps its room)
                     place := Text {
                         x: parent.width - self.width;
+                        width: min(self.preferred-width, parent.width * 0.4);
                         visible: t.place != "";
                         text: t.place;
+                        overflow: elide;
                         vertical-alignment: center;
                         color: Theme.secondary;
                         font-size: Theme.small;

@@ -143,9 +143,15 @@ export component WMenu inherits Rectangle {
     out property <float> openness: 0;
     init => { openness = 1; }
     animate openness { duration: 300ms; easing: spring(0.36); }
-    // a click outside closes it
+    // a click outside closes it (a right or middle one too, as the dock's
+    // and the desktop's menus)
     TouchArea {
         clicked => { dismissed(); }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button != PointerEventButton.left {
+                dismissed();
+            }
+        }
     }
     body := Rectangle {
         x: mx;

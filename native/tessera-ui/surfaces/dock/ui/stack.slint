@@ -95,7 +95,7 @@ export component StackGlass inherits Window {
                 width: cell;
                 height: cell;
                 border-radius: Theme.radius-control;
-                background: ft.has-hover || eye.has-hover ? Theme.fill : transparent;
+                background: ft.pressed || eye.pressed ? Theme.fill-pressed : ft.has-hover || eye.has-hover ? Theme.fill : transparent;
                 accessible-role: button;
                 accessible-label: f.name;
                 accessible-action-default => { root.open(i, false); }

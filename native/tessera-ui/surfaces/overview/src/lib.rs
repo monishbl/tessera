@@ -78,6 +78,9 @@ use std::rc::Rc;
 use std::time::Duration;
 
 const NAME: &str = "overview";
+
+/// The window pictures that arrived meanwhile are shown (one rebuild for them)
+struct ShotsDue;
 pub const NS: &str = "tessera:overview";
 /// how far the pointer goes before a press is a drag
 const DRAG: f32 = 10.0;
@@ -253,6 +256,11 @@ fn keyed_lists<K: std::hash::Hash + Eq + Clone, T: Clone + PartialEq + 'static>(
 pub struct Overview {
     wins: Vec<Win>,
     open: bool,
+    /// window pictures arrived and the layout not rebuilt for them yet: one
+    /// rebuild per 50 ms at most (live previews ask every window 30 times a
+    /// second, and each picture rebuilt the whole Overview)
+    shots_due: bool,
+    shots_timer: slint::Timer,
     /// focus the field again once the keyboard is on the window: focused
     /// before the window was active, the caret stayed hidden until typing
     /// (the QML shows it at once)
@@ -945,13 +953,14 @@ impl Overview {
         self.selected = i;
         let Some(w) = self.wins.iter().find(|w| w.output == self.key_out) else { return };
         w.ui.set_selected(i as i32);
-        // keep it in view (the list shows 420 px)
+        // keep it in view (the list shows up to 420 px: less on a short screen)
+        let shown = (w.ui.get_res_h() - 56.0).clamp(40.0, 420.0);
         let top = i as f32 * 40.0;
         let cur = -w.ui.get_results_y();
         if top < cur {
             w.ui.set_results_y(-top);
-        } else if top + 40.0 > cur + 420.0 {
-            w.ui.set_results_y(-(top + 40.0 - 420.0));
+        } else if top + 40.0 > cur + shown {
+            w.ui.set_results_y(-(top + 40.0 - shown));
         }
     }
 
@@ -1696,7 +1705,20 @@ impl Part for Overview {
         };
         let msg = match msg.downcast::<Shot>() {
             Ok(s) => {
-                if self.thumbs.got(*s) && self.open {
+                if self.thumbs.got(*s) && self.open && !self.shots_due {
+                    self.shots_due = true;
+                    let to = st.shell.sender(NAME);
+                    self.shots_timer.start(slint::TimerMode::SingleShot, std::time::Duration::from_millis(50), move || to(Box::new(ShotsDue)));
+                }
+                return;
+            }
+            Err(m) => m,
+        };
+        let msg = match msg.downcast::<ShotsDue>() {
+            Ok(_) => {
+                self.shots_due = false;
+                // (not mid-drag, as data(): the layout under the pointer stays put)
+                if self.open && self.wins.iter().all(|w| matches!(w.press, Press::None)) {
                     self.rebuild(st);
                 }
                 return;

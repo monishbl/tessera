@@ -74,7 +74,16 @@ pub struct Notif {
     /// until then the calendar reads events.json itself (a write here shows
     /// at once, before the reader's next look at the file)
     pub cal_fresh_until: i64,
+    /// when push_widgets last rebuilt the calendar, and whether an act asks
+    /// for it sooner (it reads events.json and expands the month: not on
+    /// every second nor on the stopwatch's 50 ms tick)
+    pub cal_checked_at: i64,
+    pub cal_dirty: bool,
 }
+
+/// How often an open Notification Center's calendar is looked at again
+/// without an act (a sync, the day turning over)
+const CAL_RECHECK_MS: i64 = 5000;
 
 fn words_initials(s: &str) -> String {
     s.split_whitespace()
@@ -340,7 +349,11 @@ impl Notif {
             self.last_widgets = s;
             h.say(w);
         }
-        self.send_calendar(h);
+        if self.cal_dirty || self.last_calendar.is_empty() || now - self.cal_checked_at >= CAL_RECHECK_MS || now < self.cal_checked_at {
+            self.cal_dirty = false;
+            self.cal_checked_at = now;
+            self.send_calendar(h);
+        }
     }
 
     /// The days it shows ({from, to, day}): CalendarWidget's marks, everyDay
@@ -428,7 +441,11 @@ pub fn calendar_payload(c: &Calendar, todo_list: &[todos::Item], raw: &[Value], 
             continue;
         }
         let end = if e.all_day { e.end - 1 } else { e.end };
-        let (mut d, endd) = (cal::day_bounds(e.start).0, cal::day_bounds(end.max(e.start)).0);
+        // (clamped to the days asked for: an event from 1900 to 9999 is not
+        // walked day by day)
+        let d0 = cal::day_bounds(e.start).0.max(cal::day_bounds(first).0);
+        let endd = cal::day_bounds(end.max(e.start)).0.min(cal::day_bounds(to.max(first)).0);
+        let mut d = d0;
         while d <= endd {
             let color = if e.color.is_empty() { accent.to_string() } else { e.color.clone() };
             let m = marks.entry(key_of(d)).or_default();

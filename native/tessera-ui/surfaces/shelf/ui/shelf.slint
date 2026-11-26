@@ -42,7 +42,8 @@ component ShelfButton inherits Rectangle {
     // (ElasticControl: Material swells 1 + min(6 %, 10 px) = 1.06 on springPress
     // 7.5/0.3 → 290 ms spring(0.57); Glass squishes to 0.95 on spring 6 /
     // damping 0.37 → ω 19.4, ζ 0.60: 325 ms spring(0.4); no rubber band)
-    transform-scale: touch.pressed ? (Theme.material ? 1.06 : 0.95) : 1;
+    // (Material's swell off with Reduce motion, as every other press: Theme.press-bounce)
+    transform-scale: touch.pressed ? (Theme.material ? (Theme.press-bounce ? 1.06 : 1) : 0.95) : 1;
     transform-origin: { x: self.width / 2, y: self.height / 2 };
     animate transform-scale { duration: Theme.material ? 290ms : 325ms; easing: Theme.material ? spring(0.57) : spring(0.4); }
     accessible-role: button;
@@ -336,7 +337,7 @@ export component ShelfCard inherits Window {
                     }
                 }
                 Text {
-                    text: "Drop files here";
+                    text: "Drop files or text here";
                     horizontal-alignment: center;
                     color: Theme.label;
                     font-size: Theme.body;
@@ -365,23 +366,36 @@ export component ShelfCard inherits Window {
         }
 
         // Each item; more than six scroll (the wheel: a press and move takes it out)
-        if count > 0: Flickable {
+        // (more than six: a thin thumb at the right edge shows there's more)
+        if count > 0: Rectangle {
             x: 12px;
             y: list-y;
             width: parent.width - 24px;
             height: list-h;
-            content-height: count * row-h;
-            interactive: false;
-            for r in rows: ShelfRow {
-                y: r.index * row-h;
+            shelf-list := Flickable {
                 width: parent.width;
-                height: row-h;
-                entry: r;
-                removable: true;
-                elide-right: false;
-                x-glyph: g-x;
-                remove(i) => { root.remove(i); }
-                drag-out(i) => { root.drag-out(i); }
+                height: parent.height;
+                content-height: count * row-h;
+                interactive: false;
+                for r in rows: ShelfRow {
+                    y: r.index * row-h;
+                    width: parent.width;
+                    height: row-h;
+                    entry: r;
+                    removable: true;
+                    elide-right: false;
+                    x-glyph: g-x;
+                    remove(i) => { root.remove(i); }
+                    drag-out(i) => { root.drag-out(i); }
+                }
+            }
+            if count > 6: Rectangle {
+                x: parent.width + 4px;
+                y: (parent.height - self.height) * clamp(-shelf-list.viewport-y / max(1px, count * row-h - parent.height), 0, 1);
+                width: 3px;
+                height: max(16px, parent.height * parent.height / max(1px, count * row-h));
+                border-radius: 1.5px;
+                background: Theme.tertiary;
             }
         }
 

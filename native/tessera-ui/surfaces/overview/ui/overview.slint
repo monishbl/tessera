@@ -178,7 +178,9 @@ export component OverviewPanel inherits Window {
     out property <float> openness: shown ? 1 : 0;
     out property <length> sx: round((root.width - 600px) / 2 / 1px) * 1px;
     out property <length> sy: (mac ? round(root.height * 0.36 / 1px) * 1px : 64px);
-    out property <length> res-h: results.length > 0 ? min(results.length * 40px, 420px) + 56px : 0;
+    // (the list at most 420 px, and never past the screen's bottom: the
+    // macOS style's field sits at 36 % of the height)
+    out property <length> res-h: results.length > 0 ? min(results.length * 40px, 420px, max(40px, floor((root.height - res-y - 60px - 56px) / 40px) * 40px)) + 56px : 0;
     out property <length> res-y: sy + 62px;
     out property <float> content-scale: 0.97 + 0.03 * openness;
 
@@ -416,7 +418,7 @@ export component OverviewPanel inherits Window {
                 }
                 lt := Text {
                     text: l.text;
-                    color: Theme.material ? Theme.m3-on-surface : #ffffff.with-alpha(0.85);
+                    color: Theme.material ? Theme.m3-on-surface : Theme.dark ? #ffffff.with-alpha(0.85) : Theme.label; // (light glass: dark text)
                     font-size: Theme.body;
                     font-weight: 600;
                     accessible-role: none;
@@ -469,7 +471,21 @@ export component OverviewPanel inherits Window {
                             accessible-role: none;
                         }
                     }
-                    if c.wins.length == 0: Text {
+                    // (on a small chip over the wallpaper: plain grey text on a
+                    // grey or busy picture couldn't be read)
+                    if c.wins.length == 0 && wallpapers: Rectangle {
+                        width: nw.preferred-width + 16px;
+                        height: nw.preferred-height + 6px;
+                        border-radius: self.height / 2;
+                        background: Theme.material ? Theme.m3-surface-container-high.with-alpha(0.85) : Theme.dark ? #1A1A1Dcc : #F4F4F5d9;
+                        nw := Text {
+                            text: "No windows";
+                            color: Theme.material ? Theme.m3-on-surface-variant : Theme.dark ? #C7C7CC : #48484A;
+                            font-size: Theme.small;
+                            accessible-role: none;
+                        }
+                    }
+                    if c.wins.length == 0 && !wallpapers: Text {
                         text: "No windows";
                         color: Theme.material ? (c.current ? Theme.m3-on-secondary-container : Theme.m3-on-surface-variant) : Theme.dark ? #94949D : #6B6B74;
                         font-size: Theme.small;
@@ -526,7 +542,7 @@ export component OverviewPanel inherits Window {
                     width: parent.width;
                     horizontal-alignment: center;
                     text: c.title;
-                    color: Theme.material ? (c.current ? Theme.m3-on-secondary-container : Theme.m3-on-surface) : #ffffff.with-alpha(c.id == picked || c.current ? 0.95 : 0.7);
+                    color: Theme.material ? (c.current ? Theme.m3-on-secondary-container : Theme.m3-on-surface) : Theme.dark ? #ffffff.with-alpha(c.id == picked || c.current ? 0.95 : 0.7) : c.id == picked || c.current ? Theme.label : Theme.secondary;
                     font-size: Theme.small;
                     font-weight: c.current ? 600 : 500;
                     overflow: elide;
@@ -569,7 +585,10 @@ export component OverviewPanel inherits Window {
             border-color: Theme.accent;
             accessible-role: button;
             accessible-label: z.label;
+            // (y: 0 on both: a layout with a height but no y is centred, and
+            // slid down over the chips when an open zone grew)
             if z.vertical: VerticalLayout {
+                y: 0;
                 height: z.head-h;
                 alignment: center;
                 spacing: 4px;
@@ -590,6 +609,7 @@ export component OverviewPanel inherits Window {
                 }
             }
             if !z.vertical: HorizontalLayout {
+                y: 0;
                 height: z.head-h;
                 alignment: center;
                 spacing: 8px;
@@ -621,7 +641,7 @@ export component OverviewPanel inherits Window {
                 border-color: Theme.accent.with-alpha(0.55);
                 Text {
                     text: ch.n;
-                    color: chip-hot == ch.id ? (Theme.material ? Theme.m3-on-primary : white) : Theme.material && ch.current ? Theme.m3-on-secondary-container : Theme.label;
+                    color: chip-hot == ch.id ? (Theme.material ? Theme.m3-on-primary : Theme.on-accent) : Theme.material && ch.current ? Theme.m3-on-secondary-container : Theme.label;
                     font-size: Theme.body;
                     font-weight: ch.current ? 600 : 500;
                     accessible-role: none;
@@ -758,7 +778,7 @@ export component OverviewPanel inherits Window {
                 y: i * 40px;
                 height: 40px;
                 border-radius: Theme.radius-control;
-                background: i == selected ? Theme.accent : rt.has-hover ? Theme.fill : transparent;
+                background: i == selected ? Theme.accent : rt.pressed ? Theme.fill-pressed : rt.has-hover ? Theme.fill : transparent;
                 accessible-role: list-item;
                 accessible-label: r.title;
                 accessible-item-selected: i == selected;

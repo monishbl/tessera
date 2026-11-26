@@ -169,7 +169,10 @@ impl StageManager {
             let scale = self.wins[i].ui.window().scale_factor().max(1.0);
             let h = wins.monitor(&out).map(|m| m.logical().1).unwrap_or(1080.0);
             let covered = wins.covered(&out, (0.0, 0.0, WIDTH as f32, h));
-            let list: Vec<Stage> = self.waiting.get(&ws).cloned().unwrap_or_default().into_iter().take(6).collect();
+            // (as many as the strip's height holds, six at most: a 104 px card
+            // and a 24 px gap each, below the menu bar)
+            let fit = (((h - 48.0 + 24.0) / 128.0).floor() as usize).clamp(1, 6);
+            let list: Vec<Stage> = self.waiting.get(&ws).cloned().unwrap_or_default().into_iter().take(fit).collect();
             let max = ((120.0 * scale) as u32, (80.0 * scale) as u32);
             let mut stages: Vec<ui::StStage> = Vec::with_capacity(list.len());
             for (j, s) in list.iter().enumerate() {

@@ -64,6 +64,8 @@ pub struct DictationSvc {
     install_error: String,
     /// the model last downloaded (which one an error is about)
     last_download: String,
+    /// the screen was locked when last looked (dictation stops on lock)
+    locked: bool,
 }
 
 impl DictationSvc {
@@ -88,6 +90,7 @@ impl DictationSvc {
             install_asked: false,
             install_error: String::new(),
             last_download: String::new(),
+            locked: false,
         }
     }
 
@@ -181,7 +184,9 @@ impl DictationSvc {
     }
 
     pub fn start(&mut self, h: &mut Host) {
-        if self.stage != Stage::Idle || self.rec_pid.is_some() || self.tr_pid.is_some() {
+        // (not while the screen is locked: nothing to type into, and the
+        // microphone would listen in an empty room)
+        if self.stage != Stage::Idle || self.rec_pid.is_some() || self.tr_pid.is_some() || h.state("locked").as_bool().unwrap_or(false) {
             return;
         }
         if !self.ready(h) {
@@ -408,6 +413,16 @@ fn mic_muted(h: &Host) -> bool {
 impl Service for DictationSvc {
     fn name(&self) -> &'static str {
         "Dictation"
+    }
+    /// The screen locked: dictation in progress stops, typing nothing
+    fn settled(&mut self, h: &mut Host) {
+        let locked = h.state("locked").as_bool().unwrap_or(false);
+        if locked != self.locked {
+            self.locked = locked;
+            if locked {
+                self.cancel(h);
+            }
+        }
     }
     fn calls(&self) -> &'static [&'static str] {
         &["dictation"]

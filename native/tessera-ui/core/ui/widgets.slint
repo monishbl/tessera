@@ -13,10 +13,13 @@ export component IconButton inherits Rectangle {
     in property <color> icon-color: Theme.secondary;
     in property <length> icon-size: 16px;
     in property <string> label;
+    // (off: greyed, no hover or press look, not pressable)
+    in property <bool> enabled: true;
     out property <bool> hovered: touch.has-hover;
     callback clicked();
     width: 28px;
     height: 28px;
+    opacity: enabled ? 1 : Theme.material ? 0.38 : 0.4;
     border-radius: Theme.material ? (touch.pressed ? min(8px, self.height / 2) : self.height / 2) : Theme.radius-control - 2px;
     background: Theme.material ? (touch.pressed ? Theme.m3-on-surface-variant.with-alpha(0.1) : touch.has-hover ? Theme.m3-on-surface-variant.with-alpha(0.08) : transparent)
         : touch.pressed ? Theme.fill-pressed : touch.has-hover ? Theme.fill : transparent;
@@ -24,7 +27,8 @@ export component IconButton inherits Rectangle {
     animate border-radius { duration: 150ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     accessible-role: button;
     accessible-label: label;
-    accessible-action-default => { clicked(); }
+    accessible-enabled: enabled;
+    accessible-action-default => { if enabled { clicked(); } }
     Icon {
         text: icon;
         fill: root.fill;
@@ -32,6 +36,7 @@ export component IconButton inherits Rectangle {
         font-size: icon-size;
     }
     touch := TouchArea {
+        enabled: root.enabled;
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
@@ -60,8 +65,9 @@ export component SearchField inherits Rectangle {
     height: 36px;
     border-radius: Theme.material ? self.height / 2 : Theme.radius-control;
     background: Theme.material ? Theme.m3-surface-container-high : Theme.fill;
-    border-width: Theme.material ? 0 : 1px;
-    border-color: input.has-focus ? Theme.accent : transparent;
+    // (focused: outlined in both looks, Material 2 px primary, Glass 1 px accent)
+    border-width: Theme.material ? (input.has-focus ? 2px : 0) : 1px;
+    border-color: input.has-focus ? (Theme.material ? Theme.m3-primary : Theme.accent) : transparent;
 
     Icon {
         x: Theme.material ? 14px : 10px;
@@ -221,7 +227,10 @@ export component TextButton inherits Rectangle {
     // the widest it grows (a long or translated label is elided, not run
     // past its panel or over its neighbour)
     in property <length> limit: 320px;
+    // (off: greyed, no hover or press look, not pressable)
+    in property <bool> enabled: true;
     callback clicked();
+    opacity: enabled ? 1 : Theme.material ? 0.38 : 0.4;
     property <color> ink: Theme.material ? (primary ? Theme.m3-on-primary : Theme.m3-on-secondary-container) : primary ? Theme.on-accent : Theme.label;
     property <length> pad: Theme.material ? 40px : 32px;
     width: min(limit, label.preferred-width + pad);
@@ -238,7 +247,8 @@ export component TextButton inherits Rectangle {
     animate background { duration: 150ms; }
     accessible-role: button;
     accessible-label: text;
-    accessible-action-default => { clicked(); }
+    accessible-enabled: enabled;
+    accessible-action-default => { if enabled { clicked(); } }
     label := Text {
         width: max(0px, parent.width - pad);
         text: root.text;
@@ -250,6 +260,7 @@ export component TextButton inherits Rectangle {
         accessible-role: none;
     }
     touch := TouchArea {
+        enabled: root.enabled;
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }

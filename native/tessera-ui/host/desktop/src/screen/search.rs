@@ -29,11 +29,30 @@ enum Run {
     AppStore(Value),
 }
 
-/// "2026-10-27 1432 Call the bank" → "Call the bank"
+/// "2026-10-27 1432 Call the bank" → "Call the bank", and the quick note's
+/// own names, "2026-10-27 093015123-ab12cd34 Call the bank" (notes.rs: the
+/// date, the time to the millisecond, a short random tag)
 pub fn note_title(name: &str) -> String {
     let b = name.as_bytes();
-    let dated = b.len() > 16 && b[..4].iter().all(u8::is_ascii_digit) && b[4] == b'-' && b[5..7].iter().all(u8::is_ascii_digit) && b[7] == b'-' && b[8..10].iter().all(u8::is_ascii_digit) && b[10] == b' ' && b[11..15].iter().all(u8::is_ascii_digit) && b[15] == b' ';
-    if dated { name[16..].to_string() } else { name.to_string() }
+    let date = b.len() > 11 && b[..4].iter().all(u8::is_ascii_digit) && b[4] == b'-' && b[5..7].iter().all(u8::is_ascii_digit) && b[7] == b'-' && b[8..10].iter().all(u8::is_ascii_digit) && b[10] == b' ';
+    if !date {
+        return name.to_string();
+    }
+    // (all ASCII up to the space after the stamp: slicing there is safe)
+    let rest = &name[11..];
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if digits < 4 {
+        return name.to_string();
+    }
+    let mut after = &rest[digits..];
+    if let Some(t) = after.strip_prefix('-') {
+        let tag = t.bytes().take_while(u8::is_ascii_alphanumeric).count();
+        after = &t[tag..];
+    }
+    match after.strip_prefix(' ') {
+        Some(title) if !title.trim().is_empty() => title.to_string(),
+        _ => name.to_string(),
+    }
 }
 
 #[derive(Default)]
@@ -45,6 +64,31 @@ pub struct SearchSvc {
     /// answers the query again
     store_q: String,
     store_rev: i64,
+    /// the notes folder's notes (modified, name, path), listed at most every
+    /// few seconds: not on every keystroke in Spotlight
+    notes: Option<(std::time::Instant, String, Vec<(i64, String, String)>)>,
+}
+
+/// How long the listed notes are used before the folder is read again
+const NOTES_FRESH: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The notes in a folder: (modified, name, path) of each .md, .markdown and .txt
+fn list_notes(folder: &str) -> Vec<(i64, String, String)> {
+    std::fs::read_dir(folder)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            let ext = p.extension()?.to_str()?.to_lowercase();
+            if !["md", "markdown", "txt"].contains(&ext.as_str()) || !e.file_type().ok()?.is_file() {
+                return None;
+            }
+            let name = p.file_stem()?.to_string_lossy().into_owned();
+            let m = e.metadata().ok()?.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as i64;
+            Some((m, name, p.to_string_lossy().into_owned()))
+        })
+        .collect()
 }
 
 impl SearchSvc {
@@ -126,31 +170,22 @@ impl SearchSvc {
                     .get::<tessera_core::services::calendar::Calendar>()
                     .map(|c| c.between(now - 86_400_000, now + 366 * 86_400_000).into_iter().filter(|e| e.title.to_lowercase().contains(&q)).take(3).collect())
                     .unwrap_or_default();
+                let hm = if h.cfg()["appearance"]["clock24"].as_bool().unwrap_or(false) { "%H:%M" } else { "%-I:%M %p" };
                 let list = events
                     .into_iter()
                     .map(|e| {
-                        let when = if e.all_day { "All day".to_string() } else { tessera_core::util::strftime("%-I:%M %p", e.start / 1000) };
+                        let when = if e.all_day { "All day".to_string() } else { tessera_core::util::strftime(hm, e.start / 1000) };
                         (Self::row("Calendar", &e.title, &format!("{} · {}", tessera_core::util::strftime("%a %-d %b", e.start / 1000), when), "calendar-blank"), Run::NotificationCenter)
                     })
                     .collect();
                 out["calendar"] = json!(self.pack(list, &mut n));
                 // Notes by name
                 let folder = h.cfg()["notes"]["folder"].as_str().filter(|s| !s.is_empty()).map(String::from).unwrap_or_else(|| format!("{}/Documents/Notes", util::home()));
-                let mut found: Vec<(i64, String, String)> = std::fs::read_dir(&folder)
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-                    .filter_map(|e| {
-                        let p = e.path();
-                        let ext = p.extension()?.to_str()?.to_lowercase();
-                        if !["md", "markdown", "txt"].contains(&ext.as_str()) || !e.file_type().ok()?.is_file() {
-                            return None;
-                        }
-                        let name = p.file_stem()?.to_string_lossy().into_owned();
-                        let m = e.metadata().ok()?.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as i64;
-                        name.to_lowercase().contains(&q).then(|| (m, name, p.to_string_lossy().into_owned()))
-                    })
-                    .collect();
+                let fresh = self.notes.as_ref().is_some_and(|(at, f, _)| *f == folder && at.elapsed() < NOTES_FRESH);
+                if !fresh {
+                    self.notes = Some((std::time::Instant::now(), folder.clone(), list_notes(&folder)));
+                }
+                let mut found: Vec<(i64, String, String)> = self.notes.as_ref().map(|(_, _, l)| l.iter().filter(|(_, name, _)| name.to_lowercase().contains(&q)).cloned().collect()).unwrap_or_default();
                 found.sort_by(|a, b| b.0.cmp(&a.0));
                 let list = found.into_iter().take(4).map(|(m, name, path)| (Self::row("Notes", &note_title(&name), &tessera_core::util::strftime("%-d %b %Y", m), "note"), Run::OpenFile(path))).collect();
                 out["notes"] = json!(self.pack(list, &mut n));
@@ -160,7 +195,7 @@ impl SearchSvc {
                     let list = hits
                         .into_iter()
                         .map(|s| {
-                            let mut row = Self::row("Screenshots", &s.snippet, &tessera_core::util::strftime("%-d %b %Y, %-I:%M %p", s.modified), "image");
+                            let mut row = Self::row("Screenshots", &s.snippet, &tessera_core::util::strftime(&format!("%-d %b %Y, {hm}"), s.modified), "image");
                             row["picture"] = json!(s.path);
                             row["path"] = json!(s.path);
                             (row, Run::PreviewShot(s.path, raw.to_string()))
@@ -231,7 +266,11 @@ impl SearchSvc {
             "Toggle Dark Mode" => util::cfg_set("appearance.mode", json!(if dark { "light" } else { "dark" })),
             "Quick Settings" => h.ask("panels.show", json!(["controlCenter"])),
             "Notification Center" => h.ask("panels.show", json!(["notificationCenter"])),
-            "Ask AI" | "Translate" => h.ask("panels.show", json!(["sidebar"])),
+            // (on its own tab: the sidebar opened on whichever was last)
+            "Ask AI" | "Translate" => {
+                h.ask("sidebar.tab", json!([if title == "Translate" { 1 } else { 0 }]));
+                h.ask("panels.show", json!(["sidebar"]));
+            }
             "Ask AI About the Screen" => h.ask("screen.do", json!(["select", "ask"])),
             "System Settings" => h.ask("panels.openSettings", json!([])),
             "Take Screenshot" => h.ask("screen.do", json!(["select", "screenshot"])),
@@ -335,5 +374,10 @@ mod tests {
     fn notes_lose_their_date_prefix() {
         assert_eq!(note_title("2026-10-27 1432 Call the bank"), "Call the bank");
         assert_eq!(note_title("Groceries"), "Groceries");
+        // the quick note's own names (notes.rs file_name)
+        assert_eq!(note_title("2026-10-27 093015123-ab12cd34 Call the bank"), "Call the bank");
+        assert_eq!(note_title("2026-10-27 093015123 Call"), "Call");
+        assert_eq!(note_title("2026-10-27 12 short"), "2026-10-27 12 short");
+        assert_eq!(note_title("2026-10-27 093015123-ab12cd34"), "2026-10-27 093015123-ab12cd34");
     }
 }

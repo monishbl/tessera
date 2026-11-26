@@ -14,11 +14,13 @@ use tessera_core::util::{now_ms, strftime};
 pub struct ScreenTime {
     since: i64,
     counting: String,
+    /// the last tick (a gap far past the 2 s tick is a suspend: not counted)
+    last_tick: i64,
 }
 
 impl Default for ScreenTime {
     fn default() -> Self {
-        Self { since: now_ms(), counting: String::new() }
+        Self { since: now_ms(), counting: String::new(), last_tick: 0 }
     }
 }
 
@@ -48,7 +50,9 @@ impl ScreenTime {
     fn app(h: &Host) -> String {
         let Some(w) = h.st.shell.get::<Windows>() else { return String::new() };
         let Some(c) = w.active_client() else { return String::new() };
-        let id = h.st.shell.get::<Entries>().and_then(|a| a.entry_for(&c.class)).map(|e| e.id.clone()).unwrap_or_default();
+        // (no desktop entry: a Wine or Steam game, an AppImage, a script's
+        // window: counted by its class, which the feed shows as its name)
+        let id = h.st.shell.get::<Entries>().and_then(|a| a.entry_for(&c.class)).map(|e| e.id.clone()).unwrap_or_else(|| c.class.clone());
         if tessera_core::wm::own_window(&id) {
             String::new()
         } else {
@@ -57,7 +61,10 @@ impl ScreenTime {
     }
 
     fn flush(&mut self) {
-        let now = now_ms();
+        self.flush_at(now_ms());
+    }
+    /// Counts the time from `since` to `now` for the app in front
+    fn flush_at(&mut self, now: i64) {
         let secs = ((now - self.since) as f64 / 1000.0).round() as i64;
         self.since = now;
         if self.counting.is_empty() || secs <= 0 || secs > 600 {
@@ -70,6 +77,13 @@ impl ScreenTime {
     /// idleness followed (restart on a change), and a flush once a minute
     pub fn tick(&mut self, h: &mut Host) {
         use tessera_core::idle;
+        let now = now_ms();
+        if self.last_tick > 0 && now - self.last_tick > 15_000 {
+            // (asleep since the last tick: the time up to it counts, the gap doesn't)
+            self.flush_at(self.last_tick);
+            self.since = now;
+        }
+        self.last_tick = now;
         h.st.idle_set(idle::SCREEN_TIME, Some((120_000, true)));
         let idle_now = h.st.shell.get::<idle::Idle>().is_some_and(|i| i.is(idle::SCREEN_TIME));
         let want = if idle_now { String::new() } else { Self::app(h) };

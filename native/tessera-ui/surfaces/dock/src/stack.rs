@@ -32,6 +32,8 @@ enum S {
     Folder,
     Dismissed,
     Refresh,
+    /// Downloads as listed on a worker (newest first)
+    Listed(Vec<String>),
 }
 
 enum StackUi {
@@ -251,8 +253,16 @@ impl Part for DownloadsStack {
                 open_folder(&cfg, &downloads_dir());
             }
             S::Dismissed => self.close(st, true),
+            // (listed off the UI thread: a big or network Downloads folder
+            // stalled the stack's spring and every surface every 2 s)
             S::Refresh => {
-                let files = newest(&downloads_dir(), 12);
+                if self.win.is_none() {
+                    return;
+                }
+                let to = st.shell.sender(STACK_NAME);
+                std::thread::spawn(move || to(Box::new(S::Listed(newest(&downloads_dir(), 12)))));
+            }
+            S::Listed(files) => {
                 let Some(w) = self.win.as_ref() else { return };
                 if files != w.files {
                     let rows = file_rows(st, &files, w.material);

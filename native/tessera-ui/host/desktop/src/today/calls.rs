@@ -51,33 +51,43 @@ fn apps() -> [App; 10] {
     ]
 }
 
+/// A browser's program or window class, by its words ("microsoft-edge",
+/// "zen-alpha", "google-chrome"): not any name with "zen", "edge" or
+/// "opera" in it (zenity, knowledge, operator)
 fn is_browser(s: &str) -> bool {
-    has(s, &["firefox", "librewolf", "zen", "floorp", "waterfox", "chrom", "brave", "vivaldi", "edge", "opera", "epiphany", "qutebrowser"])
+    const NAMES: &[&str] = &["firefox", "librewolf", "zen", "floorp", "waterfox", "chrome", "chromium", "brave", "vivaldi", "edge", "opera", "epiphany", "qutebrowser", "thorium"];
+    s.to_lowercase().split(|c: char| !c.is_alphanumeric()).any(|w| NAMES.contains(&w) || w.starts_with("chromium"))
 }
 
 fn meeting_in(title: &str) -> Option<&'static str> {
     let t = title.to_lowercase();
     if t.contains("google meet") || t.starts_with("meet -") || t.starts_with("meet \u{2013}") || t.contains("meet.google") {
         Some("Google Meet")
-    } else if t.contains("zoom") {
+    } else if t.contains("zoom meeting") || t.contains("zoom.us") || t.contains("zoom workplace") {
         Some("Zoom")
     } else if t.contains("microsoft teams") || t.contains("| teams") {
         Some("Teams")
     } else if t.contains("jitsi") {
         Some("Jitsi Meet")
-    } else if t.contains("discord") {
+    } else if t.contains("discord") && call_marked(&t) {
         Some("Discord")
     } else if t.contains("whereby") {
         Some("Whereby")
     } else if t.contains("webex") {
         Some("Webex")
-    } else if t.contains("slack") {
+    } else if t.contains("slack") && call_marked(&t) {
         Some("Slack")
-    } else if t.contains("whatsapp") {
+    } else if t.contains("whatsapp") && call_marked(&t) {
         Some("WhatsApp")
     } else {
         None
     }
+}
+
+/// A chat app's page only counts as a call when its title says so (a
+/// WhatsApp Web tab or "Slack | general" with voice search on is not one)
+fn call_marked(t: &str) -> bool {
+    word_in(t, &["call", "calling", "huddle", "voice", "video"])
 }
 
 /// What describe() works out about the caller and the app
@@ -458,7 +468,8 @@ impl Calls {
             "open" => self.open(h),
             "leave" => self.leave(h),
             "openApp" => {
-                let info = Info { entry_id: args.first().cloned().unwrap_or_default(), keys: args.get(1).cloned().into_iter().collect(), ..Default::default() };
+                // (an empty key matched every window: the newest of any app came up)
+                let info = Info { entry_id: args.first().cloned().unwrap_or_default(), keys: args.get(1).cloned().into_iter().filter(|k| k.len() >= 3).collect(), ..Default::default() };
                 self.open_app(h, &info);
             }
             "state" => {
@@ -522,6 +533,13 @@ mod tests {
         assert!(!(l[1].window)("zoomwebview"));
         assert_eq!(meeting_in("Meet - abc-defg"), Some("Google Meet"));
         assert!(is_browser("firefox"));
+        assert!(is_browser("microsoft-edge") && is_browser("zen-alpha") && is_browser("google-chrome") && is_browser("chromium-browser") && is_browser("brave-browser"));
+        assert!(!is_browser("zenity") && !is_browser("knowledge") && !is_browser("operator"));
+        assert_eq!(meeting_in("Zoom Meeting"), Some("Zoom"));
+        assert_eq!(meeting_in("Why Zoom won - an article"), None);
+        assert_eq!(meeting_in("WhatsApp"), None);
+        assert_eq!(meeting_in("Slack | general"), None);
+        assert_eq!(meeting_in("Huddle with Ana | Slack"), Some("Slack"));
     }
 
     #[test]

@@ -85,9 +85,19 @@ if [[ "$role" == terminal ]]; then
     in_terminal "$term" "$@"
 fi
 
+# The first installed of these. "kitty -e yazi" style entries: a terminal
+# program, needing that program (not only kitty: a terminal flashed and
+# closed when yazi wasn't there), and run in your terminal (Settings ->
+# Default apps, else the first installed), not always kitty
 first() {
     for c in "$@"; do
         local bin="${c%% *}"
+        if [[ "$c" == *" -e "* ]]; then
+            local prog="${c#* -e }"
+            command -v "${prog%% *}" >/dev/null 2>&1 || continue
+            # shellcheck disable=SC2086 # (the program's words, split on purpose)
+            exec "${BASH_SOURCE[0]}" terminal -- $prog
+        fi
         if command -v "$bin" >/dev/null 2>&1; then
             exec sh -c "$c"
         fi

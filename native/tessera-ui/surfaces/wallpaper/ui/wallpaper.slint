@@ -75,8 +75,10 @@ export component WallpaperPicker inherits Window {
     // (out-quad for a flick, else ease-out)
     animate list-offset { duration: glide; easing: flinging ? cubic-bezier(0.5, 1, 0.89, 1) : cubic-bezier(0, 0, 0.58, 1); }
 
+    // (the list sits 4 px in from the strip's clipped edges, so a hovered
+    // first or last thumbnail, grown 3 %, keeps its corners and ring)
     function max-offset() -> length {
-        max(0px, thumbs.length * step - 12px - strip.width)
+        max(0px, thumbs.length * step - 12px - strip.width + 8px)
     }
     function centred(i: int) -> length {
         clamp(i * step + thumb-w / 2 - strip.width / 2, 0px, max-offset())
@@ -227,7 +229,7 @@ export component WallpaperPicker inherits Window {
                 y: title.y + (title.height - self.height) / 2;
                 border-radius: self.height / 2;
                 // (Material: a tonal button, the secondary container with state layers)
-                background: Theme.material ? Theme.m3-secondary-container.mix(Theme.m3-on-secondary-container, 1 - (bt.pressed ? 0.1 : bt.has-hover ? 0.08 : 0)) : bt.has-hover ? Theme.fill-hover : Theme.fill;
+                background: Theme.material ? Theme.m3-secondary-container.mix(Theme.m3-on-secondary-container, 1 - (bt.pressed ? 0.1 : bt.has-hover ? 0.08 : 0)) : bt.pressed ? Theme.fill-pressed : bt.has-hover ? Theme.fill-hover : Theme.fill;
                 accessible-role: button;
                 accessible-label: "Open folder";
                 accessible-action-default => { open-folder(); }
@@ -269,7 +271,7 @@ export component WallpaperPicker inherits Window {
                 }
 
                 for t[i] in thumbs: Rectangle {
-                    x: i * step - list-offset;
+                    x: 4px + i * step - list-offset;
                     width: thumb-w;
                     height: thumb-h + 8px;
                     accessible-role: list-item;
@@ -341,6 +343,8 @@ export component WallpaperPicker inherits Window {
                     horizontal-alignment: center;
                     vertical-alignment: center;
                     text: "No images in " + folder;
+                    // (a long folder path wraps instead of being cut at both sides)
+                    wrap: word-wrap;
                     color: Theme.secondary;
                     font-size: Theme.body;
                 }
