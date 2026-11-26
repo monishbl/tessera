@@ -99,7 +99,9 @@ impl Typist {
         Self { tx }
     }
 
-    pub fn type_stroke(&self, s: Stroke) {
-        let _ = self.tx.send(s);
+    /// False when the typing thread is gone (it could not start, or its
+    /// connection died): the caller drops this typist and makes a new one
+    pub fn type_stroke(&self, s: Stroke) -> bool {
+        self.tx.send(s).is_ok()
     }
 }

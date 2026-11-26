@@ -370,7 +370,12 @@ impl Part for Captions {
             M::Off => crate::shell::ask(NAME, serde_json::json!(["off"])),
             M::Dragging(on) => {
                 self.dragging = on;
-                self.push(st);
+                // (let go: a window that went stale during the drag goes now)
+                if on {
+                    self.push(st);
+                } else {
+                    self.sync(st);
+                }
             }
             M::Released(x, y) => {
                 // (kept here at once: the feed says it again)
@@ -384,7 +389,7 @@ impl Part for Captions {
                 self.feed.bar = place;
                 crate::shell::ask(NAME, serde_json::json!(["place", place.0, place.1]));
                 self.dragging = false;
-                self.push(st);
+                self.sync(st);
             }
         }
     }

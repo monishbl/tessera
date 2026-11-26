@@ -183,7 +183,14 @@ enum M {
     Tick,
     Leave,
     Quit,
+    /// Esc on the cover: leaves once it has been up a while (ESC_AFTER)
+    Escape,
 }
+
+/// Esc ends the cover from this long on (a switch that is still working is
+/// done well before; one whose script hangs need not hold every screen and
+/// the keyboard for the full give-up time)
+const ESC_AFTER: Duration = Duration::from_secs(8);
 
 struct Win {
     output: String,
@@ -212,6 +219,7 @@ pub struct LookCover {
     tick: slint::Timer,
     give_up: slint::Timer,
     quit: slint::Timer,
+    began: Instant,
 }
 
 impl LookCover {
@@ -233,6 +241,7 @@ impl LookCover {
             tick: slint::Timer::default(),
             give_up: slint::Timer::default(),
             quit: slint::Timer::default(),
+            began: Instant::now(),
         }
     }
 
@@ -323,6 +332,8 @@ impl Part for LookCover {
         g.set_material(self.look.material);
         g.set_dark(self.look.dark);
         g.set_leaving(self.leaving);
+        let to = Self::send(st);
+        ui.on_escape(move || to(M::Escape));
         ui.show().expect("show");
         self.wins.push(Win { output: name.to_string(), surface, ui, opened: false, settled: false, shape_px: 0 });
         self.backdrop(st, output, name);
@@ -358,7 +369,11 @@ impl Part for LookCover {
         let Ok(m) = msg.downcast::<M>() else { return };
         match *m {
             M::Poll => {
-                if std::fs::read_to_string(self.dir.join("../status")).is_ok_and(|t| t.trim() == "done") {
+                // (done, or gone: switch-look.sh writes the status before the
+                // cover starts and its exit trap removes the folder, so no file
+                // means the script ended without saying done)
+                let status = std::fs::read_to_string(self.dir.join("../status"));
+                if status.as_ref().is_ok_and(|t| t.trim() == "done") || status.is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
                     self.leave(st);
                 }
             }
@@ -395,6 +410,11 @@ impl Part for LookCover {
                 }
             }
             M::Leave => self.leave(st),
+            M::Escape => {
+                if self.began.elapsed() >= ESC_AFTER {
+                    self.leave(st);
+                }
+            }
             M::Quit => st.exit = true,
         }
     }

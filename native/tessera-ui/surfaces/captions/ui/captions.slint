@@ -67,6 +67,9 @@ export component CaptionsBar inherits Window {
     property <length> ry;
     property <length> gx;
     property <length> gy;
+    // (moved past a few px since the press: a plain click is not a move, and
+    // must neither flip the layer to full screen nor save a place)
+    property <bool> moving;
     property <length> bx: max(0, min(rx, sw - bar-w));
     property <length> by: max(0, min(ry, sh - bar-h));
     callback dragging(bool);
@@ -111,10 +114,15 @@ export component CaptionsBar inherits Window {
                     ry = cy-top;
                     gx = self.mouse-x;
                     gy = self.mouse-y;
+                    moving = false;
                 }
             }
             moved => {
-                if self.pressed {
+                if self.pressed && !moving && (abs(self.mouse-x - gx) > 4px || abs(self.mouse-y - gy) > 4px) {
+                    moving = true;
+                    dragging(true);
+                }
+                if self.pressed && moving {
                     // (the area moves with the bar: the pointer's place on
                     // screen is the bar's plus its own)
                     rx = (full ? box.x : cx) + self.mouse-x - gx;
@@ -122,9 +130,8 @@ export component CaptionsBar inherits Window {
                 }
             }
             changed pressed => {
-                if self.pressed {
-                    dragging(true);
-                } else {
+                if !self.pressed && moving {
+                    moving = false;
                     released(bx, by);
                     dragging(false);
                 }
@@ -137,6 +144,9 @@ export component CaptionsBar inherits Window {
             visible: drag.has-hover || self.hovered;
             icon: x-glyph;
             icon-color: #ffffffb3;
+            // (the bar is dark in every theme: a white state layer, not the
+            // theme's, which is a faint black in the light theme)
+            background: self.hovered ? #ffffff1f : transparent;
             label: "Turn off live captions";
             clicked => { turn-off(); }
         }

@@ -157,6 +157,9 @@ pub fn keysym(ch: &str) -> String {
 /// What a key types now: a letter's capital with Shift or Caps, a shifted
 /// character with Shift, else its own keysym
 pub fn typed(key: &Key, mods: Mods, caps: bool) -> String {
+    // (Caps is for typing, not shortcuts: Ctrl+C with Caps on is still Ctrl+c,
+    // not Ctrl with the keysym C, which some apps read as another shortcut)
+    let caps = caps && !(mods.ctrl || mods.alt || mods.logo);
     if key.letter() {
         if mods.shift != caps { key.label.to_uppercase() } else { key.label.to_string() }
     } else if mods.shift && key.shifted != key.label && key.shifted.chars().count() == 1 {
@@ -283,6 +286,10 @@ mod tests {
         assert_eq!(typed(&find("a"), shift, true), "a");
         assert_eq!(typed(&find("Tab"), shift, false), "Tab");
         assert_eq!(typed(&find(""), none, false), "space");
+        // (caps stays out of shortcuts)
+        let ctrl = Mods { ctrl: true, ..Default::default() };
+        assert_eq!(typed(&find("c"), ctrl, true), "c");
+        assert_eq!(typed(&find("c"), Mods { shift: true, ..ctrl }, true), "C");
     }
 
     #[test]

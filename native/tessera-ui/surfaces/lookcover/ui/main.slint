@@ -14,6 +14,22 @@ export global Lc {
 
 export component LookCover inherits Window {
     background: transparent;
+    // Esc (lib.rs lets it end the cover only after it has been up a while)
+    callback escape();
+    forward-focus: keys;
+    keys := FocusScope {
+        x: 0;
+        y: 0;
+        width: 0;
+        height: 0;
+        key-pressed(e) => {
+            if e.text == Key.Escape {
+                root.escape();
+                return accept;
+            }
+            reject
+        }
+    }
     in property <bool> has-backdrop;
     in property <image> backdrop;
     property <color> ink: Lc.dark ? #ffffff : #1C1C1E;
@@ -115,9 +131,10 @@ export component LookCover inherits Window {
                 // variable font, at its default 400: as it shows, not as it asks)
                 font-weight: Lc.material ? 400 : 600;
             }
-            Text {
+            // (Glass: no second line; it only said "Glass" again)
+            if Lc.material: Text {
                 horizontal-alignment: center;
-                text: Lc.material ? "Material · experimental" : "Glass";
+                text: "Material · experimental";
                 color: root.ink.with-alpha(0.65);
                 font-family: root.family;
                 font-size: 16px;
