@@ -80,9 +80,10 @@ pub fn moved(current: usize, key: &str) -> Option<usize> {
     }
 }
 
-/// The option asked for (Panels.sessionAction), else Shut Down
+/// The option asked for (Panels.sessionAction), else Lock: one stray Enter
+/// on a menu opened with nothing asked for shut the computer down
 pub fn start_at(action: &str) -> usize {
-    OPTIONS.iter().position(|o| o.0 == action).unwrap_or(4)
+    OPTIONS.iter().position(|o| o.0 == action).unwrap_or(0)
 }
 
 enum M {
@@ -124,7 +125,7 @@ pub struct Session {
 
 impl Default for Session {
     fn default() -> Self {
-        Self { win: None, open: String::new(), action: String::new(), current: 4, pressed: None, morph: [0.0; 5], frames: tessera_core::pacing::FrameTimer::default(), hide: slint::Timer::default() }
+        Self { win: None, open: String::new(), action: String::new(), current: 0, pressed: None, morph: [0.0; 5], frames: tessera_core::pacing::FrameTimer::default(), hide: slint::Timer::default() }
     }
 }
 
@@ -456,7 +457,14 @@ impl Part for Session {
         if self.win.as_ref().is_some_and(|w| w.output == name) {
             let w = self.win.take().unwrap();
             st.drop_surface(&w.surface);
-            self.open.clear();
+            // (the shell's told, as when it closes: it counted the menu as
+            // open, and the next shortcut press closed nothing)
+            let which = std::mem::take(&mut self.open);
+            if which == "about" {
+                crate::shell::tell(NAME, serde_json::json!({"close": "about"}));
+            } else if !which.is_empty() {
+                crate::shell::closed(NAME);
+            }
         }
     }
 
@@ -509,7 +517,7 @@ mod tests {
         assert_eq!(moved(4, "\u{f701}"), Some(4));
         assert_eq!(moved(2, "a"), None);
         assert_eq!(start_at("sleep"), 1);
-        assert_eq!(start_at(""), 4);
-        assert_eq!(start_at("nonsense"), 4);
+        assert_eq!(start_at(""), 0);
+        assert_eq!(start_at("nonsense"), 0);
     }
 }
