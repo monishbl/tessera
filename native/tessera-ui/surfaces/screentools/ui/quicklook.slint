@@ -38,14 +38,14 @@ component QlButton inherits Rectangle {
     width: Theme.material ? 40px : 36px;
     height: self.width;
     border-radius: Theme.material ? (touch.pressed && enabled ? 12px : selected ? 14px : self.height / 2) : Theme.radius-control;
-    animate border-radius { duration: 222ms; easing: spring(0.4); } // (springFast)
+    animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); } // (springFast)
     background: Theme.material ? (selected ? Theme.m3-secondary-container.mix(mfg, 1 - layer) : mfg.with-alpha(layer))
         : selected ? Theme.accent.with-alpha(touch.pressed ? 0.28 : 0.18)
         : danger && hot ? Theme.danger.with-alpha(touch.pressed ? 0.24 : 0.14)
         : !enabled ? transparent : touch.pressed ? Theme.fill-pressed : touch.has-hover ? Theme.fill-hover : transparent;
     animate background { duration: Theme.hover; }
     transform-scale: touch.pressed && enabled ? (Theme.material ? 1.06 : 0.97) : 1;
-    animate transform-scale { duration: Theme.material ? 290ms : 100ms; easing: Theme.material ? spring(0.57) : cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate transform-scale { duration: Theme.motion(Theme.material ? 290ms : 100ms); easing: Theme.material ? spring(0.57) : cubic-bezier(0.3333, 1, 0.6667, 1); }
     accessible-role: button;
     accessible-label: done ? done-tooltip : tooltip;
     accessible-enabled: enabled;
@@ -206,7 +206,7 @@ export component QuickLook inherits Window {
     }
 
     animate progress {
-        duration: shown ? 200ms : 140ms;
+        duration: Theme.motion(shown ? 200ms : 140ms);
         easing: shown ? cubic-bezier(0.3333, 1, 0.6667, 1) : cubic-bezier(0.3333, 0, 0.6667, 0);
     }
     changed progress => {
@@ -337,7 +337,7 @@ export component QuickLook inherits Window {
                         border-radius: Theme.material ? 0 : Theme.radius-control;
                         background: Theme.material ? transparent : pt.pressed ? Theme.fill-pressed : pt.has-hover ? Theme.fill : transparent;
                         transform-scale: Theme.material && pt.pressed ? 1.06 : 1;
-                        animate transform-scale { duration: 290ms; easing: spring(0.57); } // (springPress)
+                        animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); } // (springPress)
                         accessible-role: button;
                         accessible-label: playing ? "Pause" : "Play";
                         accessible-action-default => { root.toggle-play(); }
@@ -585,9 +585,9 @@ export component QuickLook inherits Window {
                 horizontal-stretch: 0;
                 width: open-text.preferred-width + (Theme.material ? 32px : 28px);
                 border-radius: Theme.material ? (ot.pressed ? 12px : self.height / 2) : Theme.radius-control;
-                animate border-radius { duration: 222ms; easing: spring(0.4); } // (springFast)
+                animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); } // (springFast)
                 transform-scale: ot.pressed ? (Theme.material ? 1.04 : 0.97) : 1;
-                animate transform-scale { duration: Theme.material ? 290ms : 100ms; easing: Theme.material ? spring(0.57) : cubic-bezier(0.3333, 1, 0.6667, 1); }
+                animate transform-scale { duration: Theme.motion(Theme.material ? 290ms : 100ms); easing: Theme.material ? spring(0.57) : cubic-bezier(0.3333, 1, 0.6667, 1); }
                 background: Theme.material ? Theme.m3-primary.mix(Theme.m3-on-primary, ot.pressed ? 0.88 : ot.has-hover ? 0.92 : 1)
                     : ot.pressed ? Theme.accent.darker(0.2) : ot.has-hover ? Theme.accent.darker(0.1) : Theme.accent;
                 animate background { duration: Theme.hover; }

@@ -48,7 +48,7 @@ component GhostIcon inherits Rectangle {
     height: 28px;
     // (Material: the corners tighten as it's pressed, IconButton.qml)
     border-radius: Theme.material ? (gta.pressed ? 8px : self.height / 2) : Theme.radius-control - 2px;
-    animate border-radius { duration: 150ms; }
+    animate border-radius { duration: Theme.move-fast; }
     background: Theme.material ? Theme.m3-on-surface-variant.with-alpha(gta.pressed ? 0.1 : gta.has-hover ? 0.08 : 0) : gta.pressed ? Theme.fill-pressed : gta.has-hover ? Theme.fill : transparent;
     animate background { duration: SM.hover; }
     accessible-role: AccessibleRole.button;
@@ -118,7 +118,7 @@ component ListItem inherits Rectangle {
     // Material: the row swells a little while pressed and springs back
     // (ListRow's ElasticControl: about 6 %, at most 10 px)
     transform-scale: Theme.material && ta.pressed ? 1 + min(0.06, 10px / max(self.width, self.height)) : 1;
-    animate transform-scale { duration: ta.pressed ? SM.press : 300ms; easing: ta.pressed ? ease-out : cubic-bezier(0.3, 1.6, 0.5, 1); }
+    animate transform-scale { duration: Theme.motion(ta.pressed ? SM.press : 300ms); easing: ta.pressed ? ease-out : cubic-bezier(0.3, 1.6, 0.5, 1); }
     accessible-role: AccessibleRole.list-item;
     accessible-label: o.text;
     accessible-description: o.detail;
@@ -126,7 +126,7 @@ component ListItem inherits Rectangle {
     accessible-action-default => { clicked(); }
     if Theme.material: Rectangle {
         property <length> inner: lit || ta.pressed ? 16px : ta.has-hover ? 12px : 4px;
-        animate inner { duration: 250ms; easing: spring(0.6); }
+        animate inner { duration: Theme.motion(250ms); easing: spring(0.6); }
         border-top-left-radius: first ? 20px : inner;
         border-top-right-radius: first ? 20px : inner;
         border-bottom-left-radius: last ? 20px : inner;
@@ -334,7 +334,7 @@ component SpeedCard inherits VerticalLayout {
                 // (the kit's button height, SButton: 40 in Material; audit #173)
                 height: Theme.material ? 40px : 28px;
                 border-radius: Theme.material ? (ata.pressed ? 8px : self.height / 2) : 14px;
-                animate border-radius { duration: 250ms; easing: spring(0.6); }
+                animate border-radius { duration: Theme.motion(250ms); easing: spring(0.6); }
                 background: Theme.material ? self.m-base.mix(self.m-ink, ata.pressed ? 0.9 : ata.has-hover ? 0.92 : 1)
                     : r.on ? (ata.pressed ? Theme.fill-pressed : ata.has-hover ? Theme.fill-hover : Theme.fill)
                     : (ata.pressed ? Theme.accent.darker(0.2) : ata.has-hover ? Theme.accent.darker(0.1) : Theme.accent);
@@ -344,7 +344,7 @@ component SpeedCard inherits VerticalLayout {
                 accessible-action-default => { SBus.act(r.id, 0, 0, "test"); }
                 // (Glass: it gives a little as it's pressed, 100 ms)
                 transform-scale: !Theme.material && ata.pressed ? 0.97 : 1;
-                animate transform-scale { duration: SM.press; }
+                animate transform-scale { duration: Theme.motion(SM.press); }
                 // Keyboard: a Tab stop; Space or Return press it
                 sfs := FocusScope {
                     // (a click goes to what's under it: keys only; it covered link rows and choices, which then took two clicks or none)
@@ -386,7 +386,7 @@ component SpeedCard inherits VerticalLayout {
             Rectangle {
                 x: 0;
                 width: parent.width * max(0.02, min(1, r.num));
-                animate width { duration: 250ms; easing: ease-out; }
+                animate width { duration: Theme.motion(250ms); easing: ease-out; }
                 border-radius: parent.border-radius;
                 background: Theme.accent;
             }

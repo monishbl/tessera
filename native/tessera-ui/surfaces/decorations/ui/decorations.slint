@@ -82,7 +82,7 @@ component MButton inherits Rectangle {
     width: 24px;
     height: 24px;
     border-radius: touch.pressed ? 8px : self.height / 2;
-    animate border-radius { duration: 150ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate border-radius { duration: Theme.move-fast; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     background: touch.pressed ? Theme.m3-on-surface-variant.with-alpha(0.1) : touch.has-hover ? Theme.m3-on-surface-variant.with-alpha(0.08) : transparent;
     animate background { duration: Theme.hover; }
     accessible-role: button;
@@ -127,8 +127,8 @@ export component WindowControls inherits Window {
     property <length> head: plugin-mode ? 8px : (Theme.material ? 28px : 24px) + 8px;
     property <length> qw: (tiling ? 196px : expanded ? (Theme.material ? 84px : 76px) : 44px) + 2 * m;
     property <length> qh: (tiling ? head + 3 * 32px + 2 * 4px + 8px : expanded ? (Theme.material ? 28px : 24px) : 10px) + 2 * m;
-    animate qw { duration: Theme.hover; }
-    animate qh { duration: Theme.hover; }
+    animate qw { duration: Theme.move-fast; }
+    animate qh { duration: Theme.move-fast; }
     changed hovered => {
         if !hovered {
             tile-delay.running = false;

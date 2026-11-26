@@ -37,7 +37,7 @@ component Chip inherits Rectangle {
     height: Theme.material ? 32px : 30px;
     width: row.preferred-width + (Theme.material ? 24px : 22px);
     border-radius: Theme.material ? (ta.pressed ? 12px : 8px) : self.height / 2;
-    animate border-radius { duration: 150ms; easing: ease-out; }
+    animate border-radius { duration: Theme.move-fast; easing: ease-out; }
     background: Theme.material
         ? (chip.busy || chip.done ? Theme.m3-secondary-container : ta.pressed ? Theme.m3-on-surface.with-alpha(0.12) : ta.has-hover ? Theme.m3-on-surface.with-alpha(0.08) : transparent)
         : (ta.pressed ? Theme.fill-pressed : ta.has-hover ? Theme.fill-hover : Theme.fill);
@@ -45,7 +45,7 @@ component Chip inherits Rectangle {
     border-color: Theme.m3-outline-variant;
     opacity: off && !chip.busy ? 0.5 : 1;
     transform-scale: ta.pressed ? 0.97 : 1;
-    animate transform-scale { duration: 100ms; easing: ease-out; }
+    animate transform-scale { duration: Theme.motion(100ms); easing: ease-out; }
     accessible-role: button;
     accessible-label: chip.label;
     accessible-action-default => { if !off { root.clicked(); } }
@@ -87,13 +87,13 @@ component CsButton inherits Rectangle {
     height: Theme.material ? 40px : 30px;
     width: row.preferred-width + (Theme.material ? 32px : 24px);
     border-radius: Theme.material ? (ta.pressed ? 12px : self.height / 2) : 9px;
-    animate border-radius { duration: 150ms; easing: ease-out; }
+    animate border-radius { duration: Theme.move-fast; easing: ease-out; }
     background: primary
         ? (Theme.material ? Theme.m3-primary : Theme.accent).mix(#000000, ta.pressed ? 0.85 : ta.has-hover ? 0.92 : 1)
         : Theme.material ? Theme.m3-secondary-container.mix(Theme.m3-on-secondary-container, ta.pressed ? 0.88 : ta.has-hover ? 0.92 : 1)
         : ta.pressed ? Theme.fill-pressed : ta.has-hover ? Theme.fill-hover : Theme.fill;
     transform-scale: ta.pressed ? 0.97 : 1;
-    animate transform-scale { duration: 100ms; easing: ease-out; }
+    animate transform-scale { duration: Theme.motion(100ms); easing: ease-out; }
     accessible-role: button;
     accessible-label: label;
     accessible-action-default => { root.clicked(); }
@@ -240,7 +240,7 @@ component Grip inherits TouchArea {
         border-color: #00000033;
         drop-shadow-blur: 6px;
         drop-shadow-color: #00000059;
-        animate width, height { duration: 100ms; easing: ease-out; }
+        animate width, height { duration: Theme.motion(100ms); easing: ease-out; }
     }
 }
 
@@ -351,22 +351,22 @@ export component CircleSearch inherits Window {
         entered when open: {
             entry: 1;
             in {
-                animate entry { duration: 320ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                animate entry { duration: Theme.move-emphasized; easing: cubic-bezier(0.2, 0, 0, 1); }
             }
         }
     ]
     // once something is circled the light draws in to a quarter (spread and
     // strength) and the dim does the rest; the edge light's thread reads it
     out property <float> calm: chosen && open ? 1 : 0;
-    animate calm { duration: 300ms; easing: ease-out; }
+    animate calm { duration: Theme.motion(300ms); easing: ease-out; }
     // the light's strength: three quarters, a quarter of that when calm
     property <float> glow-k: 0.75 * (1 - 0.75 * calm);
     // the bar and the card: in after the circle, out with everything
     property <float> bar-shown: chosen && open ? 1 : 0;
-    animate bar-shown { duration: open ? 220ms : 140ms; easing: open ? ease-out : ease-in; }
+    animate bar-shown { duration: Theme.motion(open ? 220ms : 140ms); easing: open ? ease-out : ease-in; }
     // working: 0..1, so the glow's change is gradual
     property <float> work: busy && open ? 1 : 0;
-    animate work { duration: 600ms; easing: ease-in-out; }
+    animate work { duration: Theme.motion(600ms); easing: ease-in-out; }
 
     // the clock: while it's open (Reduce motion: none). The glow is gradient
     // bands, no blur, so a frame is cheap; the colours flow round the screen
@@ -393,7 +393,7 @@ export component CircleSearch inherits Window {
         + (open && !reduce-motion ? 0.5 * sin(entry * 180deg) : 0));
     // the circled area lifting out
     property <float> lift: chosen && !dragging && open ? 1 : 0;
-    animate lift { duration: open ? 280ms : 140ms; easing: open ? cubic-bezier(0.2, 0, 0, 1) : ease-in; }
+    animate lift { duration: Theme.motion(open ? 280ms : 140ms); easing: open ? cubic-bezier(0.2, 0, 0, 1) : ease-in; }
     // (the busy shimmer over the lifted area, every 1.4 s)
     property <float> cycle: mod(t / 1ms, 1400) / 1400;
     property <brush> trail: @linear-gradient(135deg, pal[0] 0%, pal[1] 35%, pal[2] 70%, pal[3] 100%);
@@ -680,7 +680,7 @@ export component CircleSearch inherits Window {
         border-radius: self.height / 2;
         background: Theme.material ? Theme.m3-inverse-surface : #1a1a1fd9;
         opacity: chosen || dragging ? 0 : reveal;
-        animate opacity { duration: 150ms; easing: ease-out; }
+        animate opacity { duration: Theme.hover; easing: ease-out; }
         hint-text := Text {
             text: hint;
             color: Theme.material ? Theme.m3-inverse-on-surface : #ffffff;
@@ -736,7 +736,7 @@ export component CircleSearch inherits Window {
                         width: 44px;
                         height: 44px;
                         horizontal-stretch: 0;
-                        border-radius: Theme.material ? 12px : 10px;
+                        border-radius: Theme.radius-control;
                         clip: true;
                         background: Theme.material ? Theme.m3-surface-container-highest : Theme.fill;
                         Image {

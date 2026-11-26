@@ -100,7 +100,7 @@ component WavyBar inherits Rectangle {
     property <length> start: ind ? eased * (root.width - root.width * 0.3) : 0;
     property <length> end: start + root.width * shown;
     property <float> amplitude: !ind && (shown <= 0.1 || shown >= 0.95) ? 0 : 3;
-    animate amplitude { duration: 300ms; }
+    animate amplitude { duration: Theme.motion(300ms); }
     height: 10px;
     accessible-role: progress-indicator;
     accessible-value: ind ? "" : round(shown * 100) + "%";
@@ -174,7 +174,7 @@ component DeviceItem inherits Rectangle {
         // 1 + min(6 %, 10 px) on springPress 7.5/0.3 → ω 21.7, ζ 0.43: 290 ms spring(0.57))
         transform-scale: Theme.material ? (down ? 1.06 : 1) : (down ? 0.94 : 1);
         transform-origin: { x: self.width / 2, y: self.height / 2 };
-        animate transform-scale { duration: Theme.material ? 290ms : 100ms; easing: Theme.material ? spring(0.57) : cubic-bezier(0, 0, 1, 1); }
+        animate transform-scale { duration: Theme.motion(Theme.material ? 290ms : 100ms); easing: Theme.material ? spring(0.57) : cubic-bezier(0, 0, 1, 1); }
         if focused: Ring2 { pw: parent.width; ph: parent.height; radius: 38px; }
         // Material: the device on a shape, its kind telling which; a hover morphs it
         if Theme.material: Path {
@@ -391,7 +391,7 @@ export component ShareSheet inherits Window {
     default-font-family: Theme.font;
 
     animate progress {
-        duration: shown ? 220ms : 150ms;
+        duration: Theme.motion(shown ? 220ms : 150ms);
         easing: shown ? cubic-bezier(0.3333, 1, 0.6667, 1) : cubic-bezier(0.3333, 0, 0.6667, 0);
     }
     changed progress => {
@@ -430,7 +430,7 @@ export component ShareSheet inherits Window {
         opacity: max(0, min(1, progress));
         transform-scale: 0.94 + 0.06 * max(0, min(1, progress));
         transform-origin: { x: self.width / 2, y: self.height / 2 };
-        border-radius: Theme.material ? 28px : Theme.radius-panel;
+        border-radius: Theme.radius-panel;
         background: Theme.material ? Theme.m3-surface-container-high : Theme.panel;
         drop-shadow-blur: Theme.material ? 32px : 0;
         drop-shadow-offset-y: Theme.material ? 8px : 0;
@@ -514,7 +514,7 @@ export component ShareSheet inherits Window {
                     // (ElasticControl: springPress, 290 ms spring(0.57))
                     transform-scale: Theme.material && close-ta.pressed ? 1.06 : 1;
                     transform-origin: { x: self.width / 2, y: self.height / 2 };
-                    animate transform-scale { duration: 290ms; easing: spring(0.57); }
+                    animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
                     accessible-role: button;
                     accessible-label: "Close";
                     accessible-action-default => { dismissed(); }
@@ -672,14 +672,14 @@ component CardButton inherits Rectangle {
     property <color> ink: Theme.material ? (b.primary ? Theme.m3-on-primary : Theme.m3-on-secondary-container) : b.primary ? Theme.on-accent : Theme.label;
     border-radius: Theme.material && ta.pressed ? 12px : 20px;
     // (MaterialSpring fast: springFast 12.8/0.54 → 222 ms spring(0.4))
-    animate border-radius { duration: 222ms; easing: spring(0.4); }
+    animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); }
     background: Theme.material ? (b.primary ? Theme.m3-primary : Theme.m3-secondary-container).mix(ink, ta.pressed ? 0.9 : ta.has-hover ? 0.92 : 1)
         : b.primary ? (ta.pressed ? Theme.accent.darker(0.13) : ta.has-hover ? Theme.accent.darker(0.06) : Theme.accent) : ta.pressed ? Theme.fill-pressed : ta.has-hover ? Theme.fill-hover : Theme.fill;
     // (Material: ElasticControl's swell, 1 + min(6 %, 10 px / its width), on
     // springPress, 290 ms spring(0.57); Glass: 0.97, 100 ms linear)
     transform-scale: ta.pressed ? (Theme.material ? 1 + min(0.06, 10px / max(1px, self.width)) : 0.97) : 1;
     transform-origin: { x: self.width / 2, y: self.height / 2 };
-    animate transform-scale { duration: Theme.material ? 290ms : 100ms; easing: Theme.material ? spring(0.57) : cubic-bezier(0, 0, 1, 1); }
+    animate transform-scale { duration: Theme.motion(Theme.material ? 290ms : 100ms); easing: Theme.material ? spring(0.57) : cubic-bezier(0, 0, 1, 1); }
     accessible-role: button;
     accessible-label: b.label;
     accessible-action-default => { clicked(); }
@@ -730,7 +730,7 @@ export component ShareCard inherits Window {
     default-font-family: Theme.font;
 
     animate shown {
-        duration: up ? 320ms * motion : 0ms;
+        duration: Theme.motion(up ? 320ms * motion : 0ms);
         // (Easing.OutBack, overshoot 1.2: peaks ≈ 5.3 % over)
         easing: cubic-bezier(0.34, 1.4, 0.64, 1);
     }
@@ -762,7 +762,7 @@ export component ShareCard inherits Window {
         opacity: max(0, min(1, shown));
         transform-scale: 0.9 + 0.1 * shown;
         transform-origin: { x: self.width / 2, y: self.height / 2 };
-        border-radius: Theme.material ? 28px : Theme.radius-panel;
+        border-radius: Theme.radius-panel;
         background: Theme.material ? Theme.m3-surface-container-high : Theme.panel;
         accessible-role: groupbox;
         accessible-label: sender-name;
@@ -959,7 +959,7 @@ export component LinkCard inherits Window {
     default-font-family: Theme.font;
 
     animate shown {
-        duration: up ? 300ms * motion : 0ms;
+        duration: Theme.motion(up ? 300ms * motion : 0ms);
         easing: cubic-bezier(0.3333, 1, 0.6667, 1);
     }
 
@@ -990,7 +990,7 @@ export component LinkCard inherits Window {
         opacity: max(0, min(1, shown));
         transform-scale: 0.96 + 0.04 * shown;
         transform-origin: { x: self.width / 2, y: self.height / 2 };
-        border-radius: Theme.material ? 28px : Theme.radius-panel;
+        border-radius: Theme.radius-panel;
         background: Theme.material ? Theme.m3-surface-container-high : Theme.panel;
         accessible-role: groupbox;
         accessible-label: heading;
@@ -1109,7 +1109,7 @@ export component LinkCard inherits Window {
                     : done-ta.pressed ? Theme.accent.darker(0.13) : done-ta.has-hover ? Theme.accent.darker(0.06) : Theme.accent;
                 transform-scale: done-ta.pressed ? 0.97 : 1;
                 transform-origin: { x: self.width / 2, y: self.height / 2 };
-                animate transform-scale { duration: 100ms; }
+                animate transform-scale { duration: Theme.motion(100ms); }
                 accessible-role: button;
                 accessible-label: busy ? "Stop sharing" : "Done";
                 accessible-action-default => { done(); }

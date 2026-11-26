@@ -213,7 +213,7 @@ export component CaptionsVideo inherits Window {
         x: (root.width - self.width) / 2;
         y: root.height - self.height;
         height: box-h;
-        border-radius: Theme.material ? 12px : 10px;
+        border-radius: Theme.radius-control;
         background: rgba(0, 0, 0, 0.62);
         opacity: dim ? 0 : 1;
         animate opacity { duration: 500ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }

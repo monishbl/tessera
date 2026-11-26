@@ -119,12 +119,12 @@ export component EditorButton inherits Rectangle {
     height: Theme.material ? 40px : 36px;
     width: label == "" ? self.height : row.preferred-width + (Theme.material ? 32px : 28px);
     border-radius: Theme.material ? (touch.pressed && live ? 8px : selected ? 12px : self.height / 2) : Theme.radius-control;
-    animate border-radius { duration: 222ms; easing: spring(0.4); } // (springFast)
+    animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); } // (springFast)
     background: Theme.material ? mbg : gbg;
     animate background { duration: Theme.hover; }
     // (Glass shrinks on press; Material swells and springs back)
     transform-scale: touch.pressed && live ? (Theme.material ? 1 + min(0.06, 10px / max(1px, max(self.width, self.height))) : 0.97) : 1;
-    animate transform-scale { duration: Theme.material ? 290ms : 100ms; easing: Theme.material ? spring(0.57) : cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate transform-scale { duration: Theme.motion(Theme.material ? 290ms : 100ms); easing: Theme.material ? spring(0.57) : cubic-bezier(0.3333, 1, 0.6667, 1); }
     accessible-role: button;
     accessible-label: label != "" ? label : tooltip;
     accessible-enabled: live;
@@ -407,7 +407,7 @@ component StSwitch inherits Rectangle {
     background: Theme.material ? (checked ? Theme.m3-primary : Theme.m3-surface-container-highest) : checked ? Theme.accent : Theme.toggle-off;
     border-width: Theme.material && !checked ? 2px : 0;
     border-color: Theme.m3-outline;
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     accessible-role: checkbox;
     accessible-checkable: true;
     accessible-checked: checked;
@@ -428,7 +428,7 @@ component StSwitch inherits Rectangle {
         border-radius: knob / 2;
         y: (root.height - self.height) / 2;
         x: Theme.material ? (checked ? root.width - 16px - knob / 2 : 16px - knob / 2) : checked ? root.width - self.width - 2px : 2px;
-        animate x, width, height { duration: Theme.material ? 300ms : Theme.popover; easing: Theme.material ? spring(0.54) : cubic-bezier(0.2, 0.9, 0.1, 1.0); }
+        animate x, width, height { duration: Theme.motion(Theme.material ? 300ms : Theme.popover); easing: Theme.material ? spring(0.54) : cubic-bezier(0.2, 0.9, 0.1, 1.0); }
         background: !Theme.material ? #ffffff : checked ? Theme.m3-on-primary : touch.has-hover || touch.pressed ? Theme.m3-on-surface-variant : Theme.m3-outline;
         if Theme.material && checked: Text {
             text: "\u{e182}";
@@ -465,7 +465,7 @@ component StSegmented inherits Rectangle {
         height: parent.height - 4px;
         border-radius: self.height / 2;
         background: Theme.dark ? #ffffff33 : #ffffff;
-        animate x { duration: 280ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+        animate x { duration: Theme.motion(280ms); easing: cubic-bezier(0.2, 0, 0, 1); }
     }
     for o[i] in options: Rectangle {
         property <bool> chosen: i == current;
@@ -478,10 +478,10 @@ component StSegmented inherits Rectangle {
         border-bottom-left-radius: self.border-top-left-radius;
         border-top-right-radius: !Theme.material ? 0 : i == options.length - 1 ? full : inner;
         border-bottom-right-radius: self.border-top-right-radius;
-        animate border-top-left-radius, border-top-right-radius { duration: 200ms; easing: spring(0.6); }
+        animate border-top-left-radius, border-top-right-radius { duration: Theme.motion(200ms); easing: spring(0.6); }
         background: !Theme.material ? transparent : chosen ? Theme.m3-primary.mix(Theme.m3-on-primary, touch.pressed ? 0.9 : touch.has-hover ? 0.92 : 1)
             : Theme.m3-surface-container-highest.mix(Theme.m3-on-surface-variant, touch.pressed ? 0.9 : touch.has-hover ? 0.92 : 1);
-        animate background { duration: 150ms; }
+        animate background { duration: Theme.hover; }
         accessible-role: tab;
         accessible-label: o;
         accessible-checked: chosen;
@@ -632,7 +632,7 @@ component SmallButton inherits Rectangle {
     border-radius: Theme.material ? (touch.pressed ? 8px : self.height / 2) : Theme.radius-control - 2px;
     background: Theme.material ? (touch.pressed ? Theme.m3-on-surface-variant.with-alpha(0.1) : touch.has-hover ? Theme.m3-on-surface-variant.with-alpha(0.08) : transparent)
         : touch.pressed ? Theme.fill-pressed : touch.has-hover ? Theme.fill : transparent;
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     accessible-role: button;
     accessible-label: label;
     accessible-action-default => { clicked(); }
@@ -720,7 +720,7 @@ export component ScreenToolbar inherits Window {
     }
 
     animate progress {
-        duration: Theme.popover;
+        duration: Theme.move-standard;
         easing: shown ? (Theme.material ? cubic-bezier(0.05, 0.7, 0.1, 1.0) : cubic-bezier(0.2, 0.9, 0.1, 1.0)) : (Theme.material ? cubic-bezier(0.3, 0.0, 0.8, 0.15) : cubic-bezier(0.4, 0.0, 1.0, 1.0));
     }
     changed progress => {
@@ -911,13 +911,13 @@ export component ScreenToolbar inherits Window {
                         // picked one filled in primary
                         border-radius: Theme.material ? (tt.pressed ? 16px : t.picked ? 20px : self.height / 2) : 12px;
                         // (MaterialSpring "fast": springFast 12.8 / 0.54 → ω 28.3, ζ 0.60)
-                        animate border-radius { duration: 222ms; easing: spring(0.4); }
+                        animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); }
                         background: Theme.material ? (t.picked ? Theme.m3-primary : Theme.m3-on-primary-container.with-alpha(parent.active ? 0.1 : tt.has-hover ? 0.08 : 0))
                             : t.picked ? Theme.accent.with-alpha(0.22) : parent.active ? Theme.fill-pressed : tt.has-hover ? Theme.fill : transparent;
                         // (ElasticControl, Material: swells by min(6 %, 10 px) on
                         // springPress 7.5 / 0.3 → ω 21.7, ζ 0.43)
                         transform-scale: Theme.material && tt.pressed ? 1 + min(0.06, 10px / max(1px, max(self.width, self.height))) : 1;
-                        animate transform-scale { duration: 290ms; easing: spring(0.57); }
+                        animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
                         accessible-role: button;
                         accessible-label: t.label;
                         accessible-checked: t.picked;
@@ -980,7 +980,7 @@ export component ScreenToolbar inherits Window {
                         border-radius: 18px;
                         background: !available ? Theme.fill : rt.pressed ? Theme.danger.darker(0.2) : rt.has-hover ? Theme.danger.darker(0.08) : Theme.danger;
                         transform-scale: rt.pressed ? 0.97 : 1;
-                        animate transform-scale { duration: 100ms; }
+                        animate transform-scale { duration: Theme.motion(100ms); }
                         accessible-role: button;
                         accessible-label: "Record";
                         accessible-action-default => { if available { root.record(); } }
@@ -1016,7 +1016,7 @@ export component ScreenToolbar inherits Window {
                             background: Theme.m3-primary.mix(Theme.m3-on-primary, lt.pressed ? 0.9 : lt.has-hover ? 0.92 : 1);
                             animate background { duration: Theme.hover; }
                             transform-scale: lt.pressed ? 1 + min(0.06, 10px / max(1px, max(self.width, self.height))) : 1;
-                            animate transform-scale { duration: 290ms; easing: spring(0.57); }
+                            animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
                             accessible-role: button;
                             accessible-label: "Record";
                             accessible-action-default => { if available { root.record(); } }
@@ -1054,11 +1054,11 @@ export component ScreenToolbar inherits Window {
                             border-top-right-radius: 20px;
                             border-bottom-right-radius: 20px;
                             // (springPress 7.5 / 0.3: ω 21.7, ζ 0.43)
-                            animate border-top-left-radius, border-bottom-left-radius { duration: 290ms; easing: spring(0.57); }
+                            animate border-top-left-radius, border-bottom-left-radius { duration: Theme.motion(290ms); easing: spring(0.57); }
                             background: Theme.m3-primary.mix(Theme.m3-on-primary, tr.pressed ? 0.9 : tr.has-hover ? 0.92 : 1);
                             animate background { duration: Theme.hover; }
                             transform-scale: tr.pressed ? 1 + min(0.06, 10px / max(1px, max(self.width, self.height))) : 1;
-                            animate transform-scale { duration: 290ms; easing: spring(0.57); }
+                            animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
                             accessible-role: button;
                             accessible-label: "More record options";
                             accessible-action-default => { menu-open = !menu-open; }
@@ -1069,7 +1069,7 @@ export component ScreenToolbar inherits Window {
                                 size: 18px;
                                 color: Theme.m3-on-primary;
                                 turn: menu-open ? 360deg : 180deg;
-                                animate turn { duration: Theme.popover; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+                                animate turn { duration: Theme.move-standard; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
                             }
                             tr := TouchArea {
                                 enabled: available;
@@ -1227,7 +1227,7 @@ export component TranslationCard inherits Window {
         height: content.preferred-height + 28px;
         x: max(24px, min(area-x, root.width - self.width - 24px));
         y: max(30px + 24px, min(area-y + area-h + 8px, root.height - self.height - 24px));
-        border-radius: Theme.material ? 24px : 20px;
+        border-radius: Theme.radius-card;
         // (Glass on the plugin: only its glass; Theme.panel over it made it darker than the other Glass panels)
         background: Theme.material ? Theme.m3-surface-container-high : Theme.plugin ? transparent : Theme.panel;
         drop-shadow-blur: Theme.material ? 16px : 0;
@@ -1264,7 +1264,7 @@ export component TranslationCard inherits Window {
                         border-radius: Theme.material && bt.pressed ? 8px : self.width / 2;
                         // (ElasticControl, Material: the press swell on springPress)
                         transform-scale: Theme.material && bt.pressed ? 1.06 : 1;
-                        animate transform-scale { duration: 290ms; easing: spring(0.57); }
+                        animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
                         background: Theme.material ? Theme.m3-secondary-container.mix(Theme.m3-on-secondary-container, bt.pressed ? 0.9 : bt.has-hover ? 0.92 : 1)
                             : bt.has-hover ? Theme.fill-hover : transparent;
                         accessible-role: button;

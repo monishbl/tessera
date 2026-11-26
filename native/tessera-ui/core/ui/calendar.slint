@@ -50,7 +50,7 @@
 // Also exported: Segmented (Segmented.qml) and Tick (a tick box:
 // MaterialCheck.qml in Material).
 
-import { Theme, Icon } from "theme.slint";
+import { Theme, Ease, Icon } from "theme.slint";
 import { IconButton } from "widgets.slint";
 
 export struct NcItem {
@@ -170,16 +170,16 @@ export component Segmented inherits Rectangle {
             border-radius: self.height / 2;
             background: Theme.dark ? #ffffff33 : #ffffff;
             opacity: chosen ? 1 : 0;
-            animate opacity { duration: 280ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+            animate opacity { duration: 280ms; easing: Ease.standard; }
         }
         border-top-left-radius: !Theme.material ? 0 : i == 0 ? full : inner;
         border-bottom-left-radius: self.border-top-left-radius;
         border-top-right-radius: !Theme.material ? 0 : i == options.length - 1 ? full : inner;
         border-bottom-right-radius: self.border-top-right-radius;
-        animate border-top-left-radius, border-top-right-radius { duration: 200ms; easing: spring(0.6); }
+        animate border-top-left-radius, border-top-right-radius { duration: Theme.motion(200ms); easing: spring(0.6); }
         background: !Theme.material ? transparent : chosen ? Theme.m3-primary.mix(Theme.m3-on-primary, touch.pressed ? 0.9 : touch.has-hover ? 0.92 : 1)
             : Theme.m3-surface-container-highest.mix(Theme.m3-on-surface-variant, touch.pressed ? 0.9 : touch.has-hover ? 0.92 : 1);
-        animate background { duration: 150ms; }
+        animate background { duration: Theme.hover; }
         accessible-role: tab;
         accessible-label: o;
         accessible-checked: chosen;
@@ -289,7 +289,7 @@ component CalSwitch inherits Rectangle {
     opacity: enabled ? 1 : 0.4;
     border-radius: self.height / 2;
     background: Theme.material ? (checked ? Theme.m3-primary : Theme.m3-surface-container-highest) : checked ? Theme.accent : Theme.toggle-off;
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     border-width: Theme.material && !checked ? 2px : 0;
     border-color: Theme.m3-outline;
     accessible-role: switch;
@@ -303,7 +303,7 @@ component CalSwitch inherits Rectangle {
         x: checked ? parent.width - self.width - 2px : 2px;
         border-radius: self.width / 2;
         background: #ffffff;
-        animate x { duration: 220ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+        animate x { duration: Theme.move-standard; easing: Ease.standard; }
     }
     if Theme.material: Rectangle {
         property <length> size: t.pressed ? 28px : checked ? 24px : 16px;
@@ -313,8 +313,8 @@ component CalSwitch inherits Rectangle {
         x: checked ? parent.width - 16px - size / 2 : 16px - size / 2;
         border-radius: size / 2;
         background: checked ? Theme.m3-on-primary : t.has-hover || t.pressed ? Theme.m3-on-surface-variant : Theme.m3-outline;
-        animate x, width, height, y { duration: 300ms; easing: spring(0.54); }
-        animate background { duration: 150ms; }
+        animate x, width, height, y { duration: Theme.motion(300ms); easing: spring(0.54); }
+        animate background { duration: Theme.hover; }
         if checked: Icon {
             text: "\u{e182}";
             bold: true;
@@ -372,7 +372,7 @@ component CalChoice inherits Rectangle {
         font-size: Theme.material ? 14px : 11px;
         color: Theme.secondary;
         transform-rotation: Theme.material && open ? 180deg : 0deg;
-        animate transform-rotation { duration: 200ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+        animate transform-rotation { duration: Theme.motion(200ms); easing: Ease.out-cubic; }
     }
     t := TouchArea {
         mouse-cursor: pointer;
@@ -396,7 +396,7 @@ component CalButton inherits Rectangle {
         : kind == 1 ? (Theme.material ? Theme.m3-primary.mix(Theme.m3-on-primary, t.pressed ? 0.9 : t.has-hover ? 0.92 : 1) : t.pressed ? Theme.accent.darker(0.2) : t.has-hover ? Theme.accent.darker(0.1) : Theme.accent)
         : Theme.material ? (t.pressed ? Theme.m3-primary.with-alpha(0.1) : t.has-hover ? Theme.m3-primary.with-alpha(0.08) : transparent)
         : t.pressed ? Theme.fill-pressed : t.has-hover ? Theme.fill-hover : Theme.fill;
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     accessible-role: button;
     accessible-label: text;
     accessible-action-default => { clicked(); }
@@ -1025,7 +1025,7 @@ export component CalendarTab {
         border-radius: root.radius;
         background: Theme.material ? Theme.m3-scrim.with-alpha(0.32) : #00000059;
         opacity: ed-open ? 1 : 0;
-        animate opacity { duration: 150ms; }
+        animate opacity { duration: Theme.hover; }
         visible: self.opacity > 0.01;
         // outside the card closes it
         TouchArea {

@@ -237,7 +237,7 @@ component Flash inherits Rectangle {
     in property <bool> on;
     in property <length> margin: 80px;
     property <float> shown: on ? 1 : 0;
-    animate shown { duration: on ? 150ms : 400ms; easing: on ? ease-out : ease-in; }
+    animate shown { duration: Theme.motion(on ? 150ms : 400ms); easing: on ? ease-out : ease-in; }
     function tell() {
         SBus.reveal-y = self.absolute-position.y;
         SBus.reveal-h = self.height;
@@ -627,7 +627,7 @@ component MoreButton {
                 size: 12px;
                 color: Theme.material ? Theme.m3-on-secondary-container : Theme.accent-ink;
                 transform-rotation: b.on ? 180deg : 0deg;
-                animate transform-rotation { duration: SM.hover; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+                animate transform-rotation { duration: Theme.motion(SM.hover); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
             }
         }
         ta := TouchArea {
@@ -725,7 +725,7 @@ component ScrollBar inherits Rectangle {
     thumb := Rectangle {
         x: (parent.width - self.width) / 2;
         width: ta.has-hover || ta.pressed ? 8px : 6px;
-        animate width { duration: 150ms; }
+        animate width { duration: Theme.move-fast; }
         height: max(28px, parent.height * visible-h / max(1px, viewport-h));
         y: (parent.height - self.height) * max(0, min(1, -content-y / span));
         border-radius: self.width / 2;
@@ -930,7 +930,7 @@ export component SettingsWindow inherits Window {
                 }
                 field := Rectangle {
                     width: side.folded ? 28px : parent.width;
-                    animate width { duration: SM.hover; easing: ease-out; }
+                    animate width { duration: Theme.motion(SM.hover); easing: ease-out; }
                     opacity: side.folded ? 0 : 1;
                     animate opacity { duration: SM.hover; }
                     border-radius: Theme.material ? self.height / 2 : Theme.radius-control - 2px;
@@ -1084,7 +1084,7 @@ export component SettingsWindow inherits Window {
                             background: Theme.m3-secondary-container;
                             // (SpringAnimation spring 12.8, damping 0.54: settles in about
                             // 200 ms, a touch past; measured 140–220 ms in the QML)
-                            animate y { duration: root.pill-placed ? 200ms : 0ms; easing: cubic-bezier(0.3, 1.25, 0.5, 1); }
+                            animate y { duration: Theme.motion(root.pill-placed ? 200ms : 0ms); easing: cubic-bezier(0.3, 1.25, 0.5, 1); }
                         }
                         VerticalLayout {
                             spacing: 2px;
@@ -1519,7 +1519,7 @@ export component SettingsWindow inherits Window {
         // ── The toast (Toast.qml): what just changed, with Undo ──
         toast := Rectangle {
             property <float> p: toast-shown ? 1 : 0;
-            animate p { duration: toast-shown ? 200ms : 140ms; easing: toast-shown ? cubic-bezier(0.3333, 1, 0.6667, 1) : cubic-bezier(0.3333, 0, 0.6667, 0); }
+            animate p { duration: Theme.motion(toast-shown ? 200ms : 140ms); easing: toast-shown ? cubic-bezier(0.3333, 1, 0.6667, 1) : cubic-bezier(0.3333, 0, 0.6667, 0); }
             visible: self.p > 0.01;
             opacity: self.p;
             width: Theme.material ? max(288px, min(560px, toast-row.preferred-width)) : min(520px, toast-row.preferred-width);
@@ -1555,7 +1555,7 @@ export component SettingsWindow inherits Window {
                         animate background { duration: SM.hover; }
                         // (pressed: Material swells, Glass gives a little)
                         transform-scale: uta.pressed ? (Theme.material ? 1.06 : 0.97) : 1;
-                        animate transform-scale { duration: uta.pressed ? SM.press : 300ms; easing: uta.pressed ? ease-out : cubic-bezier(0.3, 1.6, 0.5, 1); }
+                        animate transform-scale { duration: Theme.motion(uta.pressed ? SM.press : 300ms); easing: uta.pressed ? ease-out : cubic-bezier(0.3, 1.6, 0.5, 1); }
                         accessible-role: AccessibleRole.button;
                         accessible-label: "Undo";
                         accessible-action-default => { root.undo(); }

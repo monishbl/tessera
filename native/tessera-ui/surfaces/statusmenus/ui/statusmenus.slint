@@ -78,7 +78,7 @@ component DangerButton inherits Rectangle {
     height: m3 ? 40px : 28px;
     border-radius: self.height / 2;
     background: m3 ? Theme.m3-error.mix(Theme.m3-on-error, t.pressed ? 0.9 : t.has-hover ? 0.92 : 1) : t.pressed ? Theme.danger.darker(0.15) : Theme.danger;
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     opacity: busy ? 0.6 : 1;
     accessible-role: button;
     accessible-label: text;
@@ -184,10 +184,10 @@ component PlayButton inherits Rectangle {
     width: 56px;
     height: 56px;
     border-radius: playing ? 16px : 28px;
-    animate border-radius { duration: 300ms; easing: spring(0.5); }
+    animate border-radius { duration: Theme.motion(300ms); easing: spring(0.5); }
     background: Theme.m3-primary.mix(Theme.m3-on-primary, t.pressed ? 0.9 : t.has-hover ? 0.92 : 1);
     transform-scale: t.pressed ? 1.06 : 1;
-    animate transform-scale { duration: 222ms; easing: spring(0.4); }
+    animate transform-scale { duration: Theme.move-spatial; easing: spring(0.4); }
     opacity: enabled ? 1 : 0.38;
     accessible-role: button;
     accessible-label: playing ? "Pause" : "Play";
@@ -251,7 +251,7 @@ export component StatusMenus inherits Window {
     in property <bool> shown;
     in property <string> panel; // which menu (Panels' name)
     in property <length> anchor-x; // Panels.anchorX: the item's left edge
-    in property <length> cw: 300px; // the content's width (width_)
+    in property <length> cw: Theme.popover-width; // the content's width (width_)
     in property <length> off: 20px; // how far left of the item it starts (targetX)
     in property <CcGlyphs> g;
     in property <SmGlyphs> sg;
@@ -343,11 +343,11 @@ export component StatusMenus inherits Window {
     default-font-family: Theme.font;
 
     property <bool> m3: Theme.material;
-    property <length> pad: 16px;
+    property <length> pad: Theme.popover-pad;
     property <length> mpad: m3 ? 4px : 5px;
 
     animate openness {
-        duration: shown ? 420ms : Theme.popover * 0.7;
+        duration: Theme.motion(shown ? 420ms : Theme.popover * 0.7);
         easing: shown ? spring(0.3) : Theme.material ? cubic-bezier(0.3, 0, 0.8, 0.15) : cubic-bezier(0.4, 0, 1, 1);
     }
     changed openness => {
@@ -380,7 +380,7 @@ export component StatusMenus inherits Window {
             width: cw + 2 * pad;
             height: content.preferred-height + 2 * pad;
             opacity: min(1, openness);
-            border-radius: Theme.radius-control + pad;
+            border-radius: Theme.radius-popover-panel;
             // (Glass: Popover.qml draws only the plugin's glass, its tint the
             // glass's own; the panel tint over it made these darker than the
             // QML's. Without the plugin the tint stands in for the glass)
@@ -434,8 +434,8 @@ export component StatusMenus inherits Window {
                             Text {
                                 text: "Sound";
                                 color: Theme.label;
-                                font-size: Theme.title;
-                                font-weight: 600;
+                                font-size: Theme.menu-title;
+                                font-weight: Theme.menu-title-weight;
                             }
                             Block {
                                 b: volume-block;
@@ -464,8 +464,8 @@ export component StatusMenus inherits Window {
                         Text {
                             text: "In use";
                             color: Theme.label;
-                            font-size: Theme.title;
-                            font-weight: 600;
+                            font-size: Theme.menu-title;
+                            font-weight: Theme.menu-title-weight;
                         }
                         if in-use.length == 0: Text {
                             min-height: nothing-h;
@@ -536,8 +536,8 @@ export component StatusMenus inherits Window {
                                 vertical-alignment: center;
                                 text: "Battery";
                                 color: Theme.label;
-                                font-size: Theme.title;
-                                font-weight: 600;
+                                font-size: Theme.menu-title;
+                                font-weight: Theme.menu-title-weight;
                             }
                             if bat-present: Text {
                                 x: parent.width - self.width;
@@ -641,6 +641,13 @@ export component StatusMenus inherits Window {
                     // ── Resources: CPU, memory and swap as bars ──
                     if panel == "resourcesMenu": VerticalLayout {
                         spacing: 12px;
+                        // (titled as every bar popover is)
+                        Text {
+                            text: "Resources";
+                            color: Theme.label;
+                            font-size: Theme.menu-title;
+                            font-weight: Theme.menu-title-weight;
+                        }
                         for r in bars: VerticalLayout {
                             spacing: 5px;
                             Rectangle {
@@ -672,7 +679,7 @@ export component StatusMenus inherits Window {
                                 Rectangle {
                                     x: 0;
                                     width: parent.width * min(1, max(0, r.value));
-                                    animate width { duration: Theme.popover; }
+                                    animate width { duration: Theme.move-standard; }
                                     height: parent.height;
                                     border-radius: self.height / 2;
                                     background: r.value > 0.9 ? Theme.danger : Theme.accent;
@@ -688,8 +695,8 @@ export component StatusMenus inherits Window {
                             text: wx-place;
                             overflow: elide;
                             color: Theme.label;
-                            font-size: Theme.title;
-                            font-weight: 600;
+                            font-size: Theme.menu-title;
+                            font-weight: Theme.menu-title-weight;
                         }
                         if wx-note != "": Text {
                             wrap: word-wrap;
@@ -937,7 +944,7 @@ export component StatusMenus inherits Window {
         y: menu-y;
         width: menu-w;
         height: menu-h;
-        border-radius: m3 ? 16px : Theme.menu-radius + 2px;
+        border-radius: Theme.radius-menu;
         background: Theme.menu-bg;
         border-width: m3 ? 0 : 0.5px;
         border-color: Theme.separator;
@@ -962,7 +969,7 @@ export component StatusMenus inherits Window {
                     accessible-role: list-item;
                     accessible-label: it.text;
                     accessible-action-default => { menu-pick(j); }
-                    border-radius: m3 ? 8px : Theme.radius-item + 2px;
+                    border-radius: Theme.radius-menu-row;
                     background: mt.has-hover ? (m3 ? Theme.m3-on-surface.with-alpha(0.08) : it.danger ? Theme.danger : Theme.highlight) : transparent;
                     animate background { duration: 100ms; }
                     Text {

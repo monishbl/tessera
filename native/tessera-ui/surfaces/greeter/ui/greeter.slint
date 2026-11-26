@@ -389,7 +389,7 @@ component NameLabel inherits Rectangle {
     height: label.preferred-height + 12px;
     border-radius: self.height / 2;
     background: touch.has-hover ? hover-fill : hover-fill.with-alpha(0);
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     accessible-role: button;
     accessible-label: root.text + ", type another username";
     accessible-action-default => {
@@ -414,7 +414,7 @@ component NameLabel inherits Rectangle {
         color: root.ink;
         size: 14px;
         opacity: touch.has-hover ? 0.8 : 0;
-        animate opacity { duration: 150ms; }
+        animate opacity { duration: Theme.hover; }
     }
     touch := TouchArea {
         enabled: root.enabled;
@@ -1684,7 +1684,7 @@ component LockClock {
     property <length> dial-d: Math.round(s * 1.5 / 1px) * 1px;
     property <float> ah: Greet.hour-angle;
     property <float> am: Greet.minute-angle;
-    animate ah, am { duration: 450ms; easing: ease-out-back; }
+    animate ah, am { duration: Theme.motion(450ms); easing: ease-out-back; }
     Rectangle {
         visible: Greet.face == "analog";
         x: 0px;
@@ -1747,7 +1747,7 @@ component Round {
     }
     Rectangle {
         border-radius: touch.pressed ? 14px : 22px;
-        animate border-radius { duration: 250ms; easing: spring(0.54); }
+        animate border-radius { duration: Theme.motion(250ms); easing: spring(0.54); }
         background: root.danger ? Greet.m.error-container : touch.has-hover ? Greet.m.high-hover : Greet.m.high;
     }
     MIcon {
@@ -1795,7 +1795,7 @@ component MaterialStyle inherits Rectangle {
     in-out property <bool> typing;
     property <bool> open: typing || Greet.other || pw.text != "" || Greet.busy || Greet.error != "" || Greet.power-choice != "";
     out property <float> open-t: open ? 1 : 0;
-    animate open-t { duration: 600ms; easing: spring(0.5); }
+    animate open-t { duration: Theme.motion(600ms); easing: spring(0.5); }
     property <float> ot: Math.max(0, Math.min(1, open-t));
     pure function r(l: length) -> length {
         return Math.round(l / 1px) * 1px;
@@ -2002,7 +2002,7 @@ component MaterialStyle inherits Rectangle {
             width: 40px;
             height: 40px;
             transform-rotation: (Greet.busy ? 40 : 0) * 1deg;
-            animate transform-rotation { duration: 700ms; easing: spring(0.27); }
+            animate transform-rotation { duration: Theme.motion(700ms); easing: spring(0.27); }
             transform-origin: { x: 20px, y: 20px };
             if !Greet.has-picture: Path {
                 width: 100%;
@@ -2134,7 +2134,7 @@ component MaterialStyle inherits Rectangle {
             height: 40px;
             border-radius: 20px;
             background: !root.fingered ? transparent : Greet.finger-match ? Greet.m.primary-container : Greet.finger-miss ? Greet.m.error-container : Greet.m.secondary-container;
-            animate background { duration: 150ms; easing: ease-out; }
+            animate background { duration: Theme.hover; easing: ease-out; }
             accessible-role: AccessibleRole.text;
             accessible-label: Greet.finger-say;
             if root.fingered: FingerGlyph {

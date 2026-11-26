@@ -247,11 +247,11 @@ export component MaterialPill inherits Rectangle {
     width: row.preferred-width + 32px;
     height: h;
     border-radius: touch.pressed ? 8px : self.height / 2;
-    animate border-radius { duration: 100ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate border-radius { duration: Theme.motion(100ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     background: touch.pressed ? Theme.m3-secondary-container.mix(Theme.m3-on-secondary-container, 0.9) : touch.has-hover ? Theme.m3-secondary-container.mix(Theme.m3-on-secondary-container, 0.92) : Theme.m3-secondary-container;
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     transform-scale: touch.pressed ? 0.97 : 1;
-    animate transform-scale { duration: 100ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate transform-scale { duration: Theme.motion(100ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     accessible-role: button;
     accessible-label: text;
     accessible-action-default => { clicked(); }
@@ -521,7 +521,7 @@ export component Expander inherits Rectangle {
     height: 28px;
     border-radius: 14px;
     background: Theme.m3-surface-container-highest.mix(Theme.m3-on-surface, touch.pressed ? 0.9 : touch.has-hover ? 0.92 : 1).with-alpha(Theme.blur ? 1 - 0.4 * (1 - Theme.panel-alpha) / 0.55 : 1);
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     accessible-role: button;
     accessible-label: open ? "Show less" : "Show all " + count;
     accessible-action-default => { clicked(); }
@@ -541,7 +541,7 @@ export component Expander inherits Rectangle {
             font-size: 18px;
             color: Theme.m3-on-surface;
             transform-rotation: open ? 180deg : 0deg;
-            animate transform-rotation { duration: 300ms; easing: spring(0.5); }
+            animate transform-rotation { duration: Theme.motion(300ms); easing: spring(0.5); }
         }
     }
     touch := TouchArea {
@@ -765,7 +765,7 @@ export component MaterialCard {
                     width: 32px;
                     height: 32px;
                     border-radius: send-touch.pressed && ready ? 8px : 16px;
-                    animate border-radius { duration: 100ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+                    animate border-radius { duration: Theme.motion(100ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
                     background: !ready ? transparent : send-touch.pressed ? Theme.m3-primary.mix(Theme.m3-on-primary, 0.9) : send-touch.has-hover ? Theme.m3-primary.mix(Theme.m3-on-primary, 0.92) : Theme.m3-primary;
                     accessible-role: button;
                     accessible-label: "Send reply";
@@ -835,7 +835,7 @@ export component Banners inherits Window {
             // Where it is: the list when expanded, the stack when not (springs)
             property <float> enter: b.entered && !b.leaving ? 1 : 0;
             animate enter {
-                duration: b.leaving ? (Theme.material ? 160ms : 200ms) : (Theme.material ? 520ms : 420ms);
+                duration: Theme.motion(b.leaving ? (Theme.material ? 160ms : 200ms) : (Theme.material ? 520ms : 420ms));
                 easing: b.leaving ? (Theme.material ? cubic-bezier(0.3, 0, 0.8, 0.15) : cubic-bezier(0.3333, 0, 0.6667, 0)) : (Theme.material ? spring(0.5) : cubic-bezier(0.3333, 1.3, 0.6667, 1));
             }
             // Material: a fade of its own, quicker than the slide
@@ -845,11 +845,11 @@ export component Banners inherits Window {
                 easing: b.leaving ? cubic-bezier(0.3, 0, 0.8, 0.15) : cubic-bezier(0.3333, 1, 0.6667, 1);
             }
             property <float> place-y: b.ty / 1px;
-            animate place-y { duration: 420ms; easing: (Theme.material ? spring(0.5) : spring(0.32)); }
+            animate place-y { duration: Theme.motion(420ms); easing: (Theme.material ? spring(0.5) : spring(0.32)); }
             property <float> sc: b.tscale;
-            animate sc { duration: 420ms; easing: (Theme.material ? spring(0.5) : spring(0.32)); }
+            animate sc { duration: Theme.motion(420ms); easing: (Theme.material ? spring(0.5) : spring(0.32)); }
             property <float> op: b.tfade;
-            animate op { duration: 150ms; }
+            animate op { duration: Theme.hover; }
             property <float> shown: op * (Theme.material ? fade : enter);
             property <bool> live: b.front || expanded; // back cards show only their edge
             // its own height (what Rust measures), and the height it's drawn
@@ -857,9 +857,9 @@ export component Banners inherits Window {
             // shows above the front card or through it
             property <length> natural: Theme.material ? mcard.height : gcard.height;
             property <float> drawn-h: (live || b.plate <= 0) ? natural / 1px : b.plate / 1px;
-            animate drawn-h { duration: 300ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+            animate drawn-h { duration: Theme.motion(300ms); easing: cubic-bezier(0.2, 0, 0, 1); }
             property <float> content: live ? 1 : 0;
-            animate content { duration: 150ms; }
+            animate content { duration: Theme.move-fast; }
             // a back card at rest in the folded stack: only what peeks out
             // under the card in front is drawn (stack.rs), not its whole
             // plate under that translucent card; moving, the plate

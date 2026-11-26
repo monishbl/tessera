@@ -66,14 +66,14 @@ export component WallpaperPicker inherits Window {
 
     // Theme.motion.panel, emphasized in and the exit curve out (each look's)
     animate progress {
-        duration: 320ms;
+        duration: Theme.move-emphasized;
         easing: shown ? (Theme.material ? cubic-bezier(0.05, 0.7, 0.1, 1.0) : cubic-bezier(0.2, 0.9, 0.1, 1.0)) : (Theme.material ? cubic-bezier(0.3, 0.0, 0.8, 0.15) : cubic-bezier(0.4, 0.0, 1.0, 1.0));
     }
     changed progress => {
         if !shown && progress <= 0.001 { closed(); }
     }
     // (out-quad for a flick, else ease-out)
-    animate list-offset { duration: glide; easing: flinging ? cubic-bezier(0.5, 1, 0.89, 1) : cubic-bezier(0, 0, 0.58, 1); }
+    animate list-offset { duration: Theme.motion(glide); easing: flinging ? cubic-bezier(0.5, 1, 0.89, 1) : cubic-bezier(0, 0, 0.58, 1); }
 
     // (the list sits 4 px in from the strip's clipped edges, so a hovered
     // first or last thumbnail, grown 3 %, keeps its corners and ring)
@@ -292,12 +292,12 @@ export component WallpaperPicker inherits Window {
                         // (MaterialSpring "default": Qt's SpringAnimation spring 6.08,
                         // damping 0.5, stepped every 16 ms, is critically damped at
                         // about 26 rad/s: Slint's spring() over 2π/26 s, no bounce)
-                        animate border-radius { duration: Theme.material ? 242ms : 0ms; easing: spring(0); }
+                        animate border-radius { duration: Theme.motion(Theme.material ? 242ms : 0ms); easing: spring(0); }
                         background: Theme.material && chosen ? Theme.m3-surface-container : Theme.fill;
                         border-width: chosen ? 3px : i == current ? 2px : 0;
                         border-color: chosen ? Theme.accent : Theme.material ? Theme.m3-secondary : Theme.label;
                         transform-scale: touch.has-hover ? 1.03 : 1;
-                        animate transform-scale { duration: Theme.hover; }
+                        animate transform-scale { duration: Theme.move-fast; }
 
                         // (Material: a gap inside the chosen one's outline)
                         inner := Rectangle {

@@ -76,7 +76,7 @@ component LookPreview {
         y: ta.pressed ? parent.height * 0.01 : 0;
         width: parent.width * (ta.pressed ? 0.98 : 1);
         height: parent.height * (ta.pressed ? 0.98 : 1);
-        animate x, y, width, height { duration: SM.press; easing: ease-out; }
+        animate x, y, width, height { duration: Theme.motion(SM.press); easing: ease-out; }
         border-radius: mat ? 16px : 12px;
         background: black;
         clip: true;
@@ -568,7 +568,7 @@ component ClockFaces inherits Rectangle {
     property <int> chosen: r.index;
     property <float> pos: r.index;
     property <bool> snapping;
-    animate pos { duration: snapping ? 0ms : 320ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+    animate pos { duration: Theme.motion(snapping ? 0ms : 320ms); easing: cubic-bezier(0.2, 0, 0, 1); }
     changed chosen => { pos = chosen; }
     property <length> drag;
     property <length> grab-x;

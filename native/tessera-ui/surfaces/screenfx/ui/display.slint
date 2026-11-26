@@ -17,7 +17,7 @@ component WavyBar inherits Rectangle {
     property <float> phase: mod(t / 1000ms, 1);
     property <length> end: root.width * shown;
     property <float> amplitude: Theme.still || shown <= 0.1 || shown >= 0.95 ? 0 : 3;
-    animate amplitude { duration: 300ms; }
+    animate amplitude { duration: Theme.motion(300ms); }
     height: 10px;
     accessible-role: progress-indicator;
     accessible-value: round(shown * 100) + "%";
@@ -87,11 +87,11 @@ component GlassButton inherits FocusScope {
     Rectangle {
         transform-origin: { x: self.width / 2, y: self.height / 2 };
         transform-scale: touch.pressed ? 0.97 : 1;
-        animate transform-scale { duration: 100ms; }
+        animate transform-scale { duration: Theme.motion(100ms); }
         border-radius: Theme.radius-control;
         background: primary ? (touch.pressed ? Theme.accent.darker(0.2) : touch.has-hover ? Theme.accent.darker(0.1) : Theme.accent)
             : touch.pressed ? Theme.fill-pressed : touch.has-hover ? Theme.fill-hover : Theme.fill;
-        animate background { duration: 150ms; }
+        animate background { duration: Theme.hover; }
         label := Text {
             text: root.text;
             color: primary ? Theme.on-accent : Theme.label;
@@ -133,11 +133,11 @@ component DialogButton inherits FocusScope {
     Rectangle {
         transform-origin: { x: self.width / 2, y: self.height / 2 };
         transform-scale: Theme.press-bounce && touch.pressed ? 1 + min(0.06, 10px / self.width) : 1;
-        animate transform-scale { duration: 420ms; easing: spring(0.3); }
+        animate transform-scale { duration: Theme.motion(420ms); easing: spring(0.3); }
         border-radius: touch.pressed ? 12px : self.height / 2;
-        animate border-radius { duration: 150ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+        animate border-radius { duration: Theme.move-fast; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
         background: (filled ? Theme.m3-primary : Theme.m3-primary.with-alpha(0)).mix(content, touch.pressed ? 0.9 : touch.has-hover ? 0.92 : 1);
-        animate background { duration: 150ms; }
+        animate background { duration: Theme.hover; }
         label := Text {
             text: root.text;
             color: content;
@@ -221,7 +221,7 @@ export component IdentifyMaterial inherits Window {
     in property <string> cookie; // the shape's outline (0..100 box)
     in property <bool> shown;
     property <float> progress: shown ? 1 : 0;
-    animate progress { duration: 520ms; easing: spring(0.4); }
+    animate progress { duration: Theme.motion(520ms); easing: spring(0.4); }
     property <length> m: 24px;
     background: transparent;
     no-frame: true;
@@ -361,7 +361,7 @@ export component ConfirmMaterial inherits Window {
     callback revert();
     callback keep();
     property <float> progress: shown ? 1 : 0;
-    animate progress { duration: 520ms; easing: spring(0.4); }
+    animate progress { duration: Theme.motion(520ms); easing: spring(0.4); }
     property <length> m: 32px;
     // the card, for the input region (window px)
     out property <float> card-x: card.x / 1px;

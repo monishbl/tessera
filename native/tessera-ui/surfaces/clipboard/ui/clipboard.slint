@@ -86,7 +86,7 @@ export component ClipboardPanel inherits Window {
     // (subtle) 4.2 / 0.40: ω 16.2, ζ 0.77 → 388 ms spring(0.23). Closes in
     // Theme.motion.panel × 0.6 (192 ms) on the look's exit curve.
     animate openness {
-        duration: shown ? (Theme.material ? 312ms : 388ms) : Theme.motion-panel * 0.6;
+        duration: Theme.motion(shown ? (Theme.material ? 312ms : 388ms) : Theme.motion-panel * 0.6);
         easing: shown ? (Theme.material ? spring(0.1) : spring(0.23)) : Theme.material ? cubic-bezier(0.3, 0, 0.8, 0.15) : cubic-bezier(0.4, 0, 1, 1);
     }
     changed openness => {
@@ -168,7 +168,7 @@ export component ClipboardPanel inherits Window {
                 property <int> pressing: -1;
                 property <bool> pressed-now;
                 property <float> squeeze: Theme.material && pressing >= 0 && pressed-now ? 1 : 0;
-                animate squeeze { duration: 290ms; easing: spring(0.57); }
+                animate squeeze { duration: Theme.motion(290ms); easing: spring(0.57); }
                 property <length> dd: squeeze * (pressing == 0 ? min(14px, b0 * 0.18) : pressing == 1 ? min(14px, b1 * 0.18) : pressing == 2 ? min(14px, b2 * 0.18) : 0px);
                 property <length> w0: b0 + (pressing == 0 ? dd : pressing == 1 ? -dd / 2 : 0px);
                 property <length> w1: b1 + (pressing == 1 ? dd : pressing == 0 || pressing == 2 ? -dd : 0px);
@@ -184,7 +184,7 @@ export component ClipboardPanel inherits Window {
                     height: parent.height - 4px;
                     border-radius: self.height / 2;
                     background: Theme.dark ? #ffffff33 : #ffffff;
-                    animate x, width { duration: Theme.popover; easing: cubic-bezier(0.2, 0.9, 0.1, 1.0); } // (Theme.motion.emphasized)
+                    animate x, width { duration: Theme.move-standard; easing: cubic-bezier(0.2, 0.9, 0.1, 1.0); } // (Theme.motion.emphasized)
                 }
                 for i in 3: Rectangle {
                     x: i == 0 ? x0 : i == 1 ? x1 : x2;
@@ -201,7 +201,7 @@ export component ClipboardPanel inherits Window {
                         property <length> full: self.height / 2;
                         property <length> inner: chosen ? full : segTa.pressed ? 4px : 8px;
                         // (springFast 12.8 / 0.54: ω 28.3, ζ 0.60)
-                        animate inner { duration: 222ms; easing: spring(0.4); }
+                        animate inner { duration: Theme.move-spatial; easing: spring(0.4); }
                         border-top-left-radius: i == 0 ? full : inner;
                         border-bottom-left-radius: i == 0 ? full : inner;
                         border-top-right-radius: i == 2 ? full : inner;
@@ -286,7 +286,7 @@ export component ClipboardPanel inherits Window {
                             property <length> top: selected || it.first ? 16px : 4px;
                             property <length> bottom: selected || it.last ? 16px : 4px;
                             // (springFast 12.8 / 0.54: ω 28.3, ζ 0.60)
-                            animate top, bottom { duration: 222ms; easing: spring(0.4); }
+                            animate top, bottom { duration: Theme.move-spatial; easing: spring(0.4); }
                             border-top-left-radius: top;
                             border-top-right-radius: top;
                             border-bottom-left-radius: bottom;
@@ -326,7 +326,7 @@ export component ClipboardPanel inherits Window {
                             x: 8px;
                             height: 152px;
                             width: pic-w;
-                            border-radius: Theme.material ? 12px : 10px;
+                            border-radius: Theme.radius-control;
                             background: Theme.fill;
                             clip: true;
                             if it.has-image: Image {
@@ -426,7 +426,7 @@ export component ClipboardPanel inherits Window {
                             y: self.x;
                             width: parent.width - 2 * self.x;
                             height: parent.height - 2 * self.y;
-                            border-radius: Theme.material ? 12px : 10px;
+                            border-radius: Theme.radius-control;
                             background: Theme.fill;
                             clip: true;
                             if it.has-image: Image {
@@ -527,7 +527,7 @@ export component ClipboardPanel inherits Window {
                     x: (parent.width - self.width) / 2;
                     y: sb.ty;
                     width: track.has-hover || thumb-ta.pressed ? 8px : 6px;
-                    animate width { duration: 150ms; }
+                    animate width { duration: Theme.move-fast; }
                     height: sb.th;
                     border-radius: self.width / 2;
                     background: (Theme.dark ? #ffffff : #000000).with-alpha(thumb-ta.pressed ? 0.5 : 0.32);

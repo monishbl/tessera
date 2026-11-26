@@ -504,7 +504,7 @@ export component AboutCtl {
                         width: parent.width * gbar.v;
                         border-radius: 2px;
                         background: Theme.accent;
-                        animate width { duration: 200ms; }
+                        animate width { duration: Theme.motion(200ms); }
                     }
                     if r.num < 0: Rectangle {
                         x: gbar.eased * (parent.width - parent.width * 0.3);
@@ -582,7 +582,7 @@ export component AboutCtl {
                             width: parent.width * pbar.v;
                             border-radius: 2px;
                             background: Theme.accent;
-                            animate width { duration: 200ms; }
+                            animate width { duration: Theme.motion(200ms); }
                         }
                         if r.num < 0: Rectangle {
                             x: pbar.eased * (parent.width - parent.width * 0.3);

@@ -137,6 +137,69 @@ export global Theme {
     // Reduce motion, or battery saver (saver.rs): what moves on its own
     // (wavy progress, loops) holds still
     in property <bool> still: false;
+
+    // ── Shared tokens by role (one place for every surface; derived from the
+    // ones above, so theme.rs fills nothing new). A surface uses these, not
+    // literals; a literal that stays is a deliberate exception, commented.
+
+    // Reduce motion (appearance.reduceMotion, or battery saver: saver.rs
+    // turns it on). The one switch every motion token below reads: what
+    // moves (position, size, scale, a spring) jumps; colour and opacity
+    // changes stay, as short crossfades.
+    out property <bool> reduce-motion: still;
+
+    // Radii (Glass / Material)
+    // rows, bar items, key caps: 6 / 8
+    out property <length> radius-small: radius-item;
+    // cards and widgets: 20 / 24
+    out property <length> radius-card: radius-module;
+    // dropdown and context menus (the bar's, a window's, the dock's, the
+    // desktop's): 14 / 16; their rows 8
+    out property <length> radius-menu: material ? 16px : 14px;
+    out property <length> radius-menu-row: 8px;
+    // the menu bar's popovers (Wi-Fi, Bluetooth, Sound, Battery, ...) and
+    // big panels: 26 / 28 (Theme.radius-panel; radius-control + their 16 px pad)
+    out property <length> radius-popover-panel: radius-panel;
+
+    // The menu bar's popovers: one content width, one padding, one title
+    // (Glass: 15 semibold; Material: title-large, 22 regular)
+    out property <length> popover-width: 300px;
+    out property <length> popover-pad: 16px;
+    out property <length> menu-title: material ? 22px : title;
+    out property <int> menu-title-weight: material ? 400 : 600;
+
+    // Motion: durations by role (already 0.85 for Snappy), 0 with Reduce motion.
+    // hover (above) is the colour/state fade and stays with Reduce motion.
+    // fast: small moves (a knob, a thumb, a press)
+    out property <duration> move-fast: reduce-motion ? 0ms : hover;
+    // standard: a popover or menu opening
+    out property <duration> move-standard: reduce-motion ? 0ms : popover;
+    // emphasized: a panel or a big surface opening
+    out property <duration> move-emphasized: reduce-motion ? 0ms : motion-panel;
+    // close: a popover or menu leaving (0.7 of its open); a panel (0.6)
+    out property <duration> move-close: reduce-motion ? 0ms : popover * 0.7;
+    out property <duration> move-panel-close: reduce-motion ? 0ms : motion-panel * 0.6;
+    // Material's fast spatial spring (springFast: 222 ms, spring(0.4))
+    out property <duration> move-spatial: reduce-motion ? 0ms : 222ms;
+    // Any other movement's duration (a deliberate exception, or a
+    // conditional one): 0 with Reduce motion. A spring with no duration
+    // does not run, so this also turns springs off.
+    public pure function motion(d: duration) -> duration {
+        return reduce-motion ? 0ms : d;
+    }
+}
+
+// Easing curves by role. (Not in Theme: Slint can't hand an easing to Rust,
+// and Theme is every surface's public global. A spring can't be a token:
+// spring() takes a literal; Theme.motion() turns springs off.)
+export global Ease {
+    // Material 3's standard and emphasized enter / exit
+    out property <easing> standard: cubic-bezier(0.2, 0, 0, 1);
+    out property <easing> decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+    out property <easing> accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
+    // Glass's: the QML's OutCubic (in) and InCubic (out)
+    out property <easing> out-cubic: cubic-bezier(0.3333, 1, 0.6667, 1);
+    out property <easing> in-cubic: cubic-bezier(0.3333, 0, 0.6667, 0);
 }
 
 // Phosphor glyphs used here (shell/common/phosphor.js)
@@ -184,9 +247,9 @@ export component BarItem inherits Rectangle {
     callback clicked();
     height: 24px;
     width: row.preferred-width + 18px;
-    border-radius: Theme.material ? self.height / 2 : 6px;
+    border-radius: Theme.material ? self.height / 2 : Theme.radius-small;
     background: Theme.fg.with-alpha(active ? (Theme.material ? 0.16 : 0.22) : touch.pressed ? (Theme.material ? 0.1 : 0.2) : touch.has-hover ? (Theme.material ? 0.08 : 0.12) : 0);
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     accessible-role: button;
     accessible-label: label != "" ? label : text;
     accessible-action-default => { clicked(); }

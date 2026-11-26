@@ -184,8 +184,9 @@ export global SG {
 // Motion (Theme.motion)
 export global SM {
     out property <duration> press: 100ms;
-    out property <duration> hover: 150ms;
-    out property <duration> popover: 220ms;
+    // (the shared tokens: Snappy's pace reaches Settings too)
+    out property <duration> hover: Theme.hover;
+    out property <duration> popover: Theme.popover;
 }
 
 // An icon, Phosphor or (Material) its Material Symbol, as Icon.qml
@@ -285,7 +286,7 @@ export component SSwitch {
             height: self.width;
             y: 2px;
             x: on ? parent.width - self.width - 2px : 2px;
-            animate x { duration: SM.popover; easing: cubic-bezier(0.2, 0, 0, 1); }
+            animate x { duration: Theme.motion(SM.popover); easing: cubic-bezier(0.2, 0, 0, 1); }
             border-radius: self.width / 2;
             background: white;
         }
@@ -295,11 +296,11 @@ export component SSwitch {
         background: on ? Theme.m3-primary : Theme.m3-surface-container-highest;
         border-width: on ? 0 : 2px;
         border-color: Theme.m3-outline;
-        animate background { duration: 150ms; }
+        animate background { duration: Theme.hover; }
         property <length> hs: ta.pressed ? 28px : on ? 24px : 16px;
-        animate hs { duration: 250ms; easing: spring(0.54); }
+        animate hs { duration: Theme.motion(250ms); easing: spring(0.54); }
         property <length> hx: on ? self.width - 16px : 16px;
-        animate hx { duration: 300ms; easing: spring(0.54); }
+        animate hx { duration: Theme.motion(300ms); easing: spring(0.54); }
         Rectangle {
             width: 40px;
             height: 40px;
@@ -315,7 +316,7 @@ export component SSwitch {
             x: parent.hx - parent.hs / 2;
             y: (parent.height - self.height) / 2;
             background: on ? Theme.m3-on-primary : ta.has-hover || ta.pressed ? Theme.m3-on-surface-variant : Theme.m3-outline;
-            animate background { duration: 150ms; }
+            animate background { duration: Theme.hover; }
             if on: SIcon { g: SG.check; size: 13px; bold: true; color: Theme.m3-on-primary-container; }
         }
     }
@@ -411,7 +412,7 @@ export component SSlider {
     }
     if Theme.material: Rectangle {
         property <length> hw: ta.pressed || fs.has-focus ? 2px : 4px;
-        animate hw { duration: 100ms; }
+        animate hw { duration: Theme.motion(100ms); }
         property <length> hx: root.ratio * (self.width - hw);
         if parent.width > 0: Rectangle {
             x: 0;
@@ -519,7 +520,7 @@ export component SSegmented {
     property <length> ix;
     property <length> iw;
     property <bool> placed;
-    animate ix, iw { duration: placed ? SM.popover : 0ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+    animate ix, iw { duration: Theme.motion(placed ? SM.popover : 0ms); easing: cubic-bezier(0.2, 0, 0, 1); }
     height: Theme.material ? 36px : 30px;
     opacity: enabled || Theme.material ? 1 : 0.45;
     accessible-role: AccessibleRole.tab-list;
@@ -592,13 +593,13 @@ export component SSegmented {
                 property <length> inner: chosen ? full : sa.pressed ? 4px : 8px;
                 property <length> lr: i == 0 ? full : inner;
                 property <length> rr: i == root.opts.length - 1 ? full : inner;
-                animate lr, rr { duration: 300ms; easing: spring(0.54); }
+                animate lr, rr { duration: Theme.motion(300ms); easing: spring(0.54); }
                 border-top-left-radius: max(0px, min(full, lr));
                 border-bottom-left-radius: max(0px, min(full, lr));
                 border-top-right-radius: max(0px, min(full, rr));
                 border-bottom-right-radius: max(0px, min(full, rr));
                 background: !root.enabled ? Theme.m3-on-surface.with-alpha(chosen ? 0.12 : 0.06) : chosen ? Theme.m3-primary : Theme.m3-surface-container-highest;
-                animate background { duration: 150ms; }
+                animate background { duration: Theme.hover; }
                 Rectangle {
                     border-top-left-radius: parent.border-top-left-radius;
                     border-bottom-left-radius: parent.border-bottom-left-radius;
@@ -716,7 +717,7 @@ export component SChoice {
         color: Theme.secondary;
         // (Material: the caret turns over while the list is open)
         transform-rotation: Theme.material && root.open ? 180deg : 0deg;
-        animate transform-rotation { duration: Theme.material ? 200ms : 0ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+        animate transform-rotation { duration: Theme.motion(Theme.material ? 200ms : 0ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     }
     ta := TouchArea {
         enabled: root.enabled;
@@ -749,7 +750,7 @@ export component SWavy inherits Rectangle {
     property <length> start: ind ? eased * (root.width - root.width * 0.3) : 0;
     property <length> end: start + root.width * shown;
     property <float> amplitude: !ind && (shown <= 0.1 || shown >= 0.95) ? 0 : 3;
-    animate amplitude { duration: 300ms; }
+    animate amplitude { duration: Theme.motion(300ms); }
     height: 10px;
     accessible-role: progress-indicator;
     accessible-value: ind ? "In progress" : round(shown * 100) + "%";
@@ -860,11 +861,11 @@ export component SButton {
         y: Theme.material ? 0 : (parent.height - self.height) / 2;
         width: Theme.material ? parent.width : parent.width * (ta.pressed ? 0.97 : 1);
         height: Theme.material ? parent.height : parent.height * (ta.pressed ? 0.97 : 1);
-        animate width, height { duration: SM.press; }
+        animate width, height { duration: Theme.motion(SM.press); }
         transform-scale: Theme.material && ta.pressed && !link ? 1 + min(0.06, 10px / max(root.width, root.height)) : 1;
-        animate transform-scale { duration: ta.pressed ? SM.press : 300ms; easing: ta.pressed ? ease-out : cubic-bezier(0.3, 1.6, 0.5, 1); }
+        animate transform-scale { duration: Theme.motion(ta.pressed ? SM.press : 300ms); easing: ta.pressed ? ease-out : cubic-bezier(0.3, 1.6, 0.5, 1); }
         border-radius: Theme.material ? (ta.pressed && !round ? 8px : self.height / 2) : round ? self.height / 2 : Theme.radius-control;
-        animate border-radius { duration: 300ms; easing: spring(0.6); }
+        animate border-radius { duration: Theme.motion(300ms); easing: spring(0.6); }
         background: link ? transparent
             : Theme.material ? (style == 3 ? m3-content.with-alpha(layer) : m3-container.mix(m3-content, 1 - layer))
             : style == 1 ? (ta.pressed ? Theme.accent.darker(0.2) : ta.has-hover ? Theme.accent.darker(0.1) : Theme.accent)

@@ -1463,13 +1463,13 @@ component GlassLock inherits Rectangle {
                 width: grown ? 280px : 240px;
                 height: grown ? 172px : 36px;
                 animate width, height {
-                    duration: instant ? 0ms : grown ? 500ms : 350ms;
+                    duration: Theme.motion(instant ? 0ms : grown ? 500ms : 350ms);
                     easing: cubic-bezier(0.2, 0.9, 0.25, 1.12);
                 }
                 // its glass's share (0: none at all, 1: grown)
                 property <float> t: grown ? 1 : 0;
                 animate t {
-                    duration: instant ? 0ms : grown ? 350ms : 220ms;
+                    duration: Theme.motion(instant ? 0ms : grown ? 350ms : 220ms);
                     easing: ease-out;
                 }
                 body := Rectangle {
@@ -1482,7 +1482,7 @@ component GlassLock inherits Rectangle {
                     transform-origin: { x: self.width / 2, y: self.height };
                     // (after a match's tick has shown)
                     animate y, opacity, transform-scale {
-                        duration: island.instant ? 0ms : 300ms;
+                        duration: Theme.motion(island.instant ? 0ms : 300ms);
                         delay: island.instant ? 0ms : 550ms;
                         easing: ease-in;
                     }
@@ -1598,7 +1598,7 @@ component Dial inherits Rectangle {
         height: d;
         transform-rotation: LockData.angle-h * 1deg;
         transform-origin: { x: self.width / 2, y: self.height / 2 };
-        animate transform-rotation { duration: 450ms; easing: ease-out-back; }
+        animate transform-rotation { duration: Theme.motion(450ms); easing: ease-out-back; }
         Rectangle {
             width: d * 0.085;
             height: d * 0.27 + self.width / 2;
@@ -1613,7 +1613,7 @@ component Dial inherits Rectangle {
         height: d;
         transform-rotation: LockData.angle-m * 1deg;
         transform-origin: { x: self.width / 2, y: self.height / 2 };
-        animate transform-rotation { duration: 450ms; easing: ease-out-back; }
+        animate transform-rotation { duration: Theme.motion(450ms); easing: ease-out-back; }
         Rectangle {
             width: d * 0.05;
             height: d * 0.38 + self.width / 2;
@@ -1758,7 +1758,7 @@ component Wavy inherits Rectangle {
     property <length> gap: 4px;
     property <length> end: self.width * clamp(value, 0, 1);
     property <length> amplitude: paused || value <= 0.1 || value >= 0.95 ? 0px : 3px;
-    animate amplitude { duration: 300ms; }
+    animate amplitude { duration: Theme.motion(300ms); }
     // the track, after a gap, with its stop dot
     Rectangle {
         x: min(root.width, end + gap + (end > 0px ? stroke / 2 : 0px));
@@ -1822,7 +1822,7 @@ component MaterialLock inherits Rectangle {
     property <length> H: self.height;
     property <length> clock-size: round((split ? min(H * 0.2, W * 0.12) : min(H * (ios ? 0.17 : 0.15), W * 0.2)) / 1px) * 1px;
     property <float> small-t: LockData.compact ? 1 : 0;
-    animate small-t { duration: 450ms; easing: spring(0.15); }
+    animate small-t { duration: Theme.motion(450ms); easing: spring(0.15); }
     property <bool> left-aligned: split || small-t > 0.5;
     property <bool> zoom-in: LockData.lock-fx == "zoom";
     property <length> rise: zoom-in ? (1 - reveal) * 32px : 0px;
@@ -1841,7 +1841,7 @@ component MaterialLock inherits Rectangle {
     property <bool> typing;
     property <bool> open: typing || LockData.password != "" || LockData.busy || LockData.error != "";
     property <float> open-t: open ? 1 : 0;
-    animate open-t { duration: 450ms; easing: spring(0.15); }
+    animate open-t { duration: Theme.motion(450ms); easing: spring(0.15); }
     function wake() {
         typing = true;
         idle.stop();
@@ -2025,15 +2025,15 @@ component MaterialLock inherits Rectangle {
                     if b.a != "toggle": Rectangle {
                         border-radius: pt.pressed ? 8px : self.height / 2;
                         background: pt.pressed ? Theme.m3-on-surface-variant.with-alpha(0.1) : pt.has-hover ? Theme.m3-on-surface-variant.with-alpha(0.08) : transparent;
-                        animate border-radius { duration: 150ms; }
+                        animate border-radius { duration: Theme.move-fast; }
                     }
                     if b.a == "toggle": Rectangle {
                         // (selected, playing, squares off as Material's toggles do)
                         border-radius: LockData.playing ? 14px : self.width / 2;
                         background: pt.has-hover ? Theme.m3-primary.mix(Theme.m3-on-primary, pt.pressed ? 0.9 : 0.92) : Theme.m3-primary;
-                        animate border-radius { duration: 300ms; easing: spring(0.3); }
+                        animate border-radius { duration: Theme.motion(300ms); easing: spring(0.3); }
                         transform-scale: pt.pressed ? 1.06 : 1;
-                        animate transform-scale { duration: 250ms; easing: spring(0.4); }
+                        animate transform-scale { duration: Theme.motion(250ms); easing: spring(0.4); }
                     }
                     SymIcon {
                         text: b.a == "toggle" ? (LockData.playing ? "\u{e39e}" : "\u{e3d0}") : b.g;
@@ -2165,7 +2165,7 @@ component MaterialLock inherits Rectangle {
         property <bool> grown: LockData.island-kind != "";
         property <float> gt: grown ? 1 : 0;
         animate gt {
-            duration: LockData.reduce-motion ? 0ms : grown ? 500ms : 350ms;
+            duration: Theme.motion(LockData.reduce-motion ? 0ms : grown ? 500ms : 350ms);
             easing: cubic-bezier(0.2, 0.9, 0.25, 1.12);
         }
         property <length> grow-h: 116px * gt;
@@ -2265,7 +2265,7 @@ component MaterialLock inherits Rectangle {
                     width: 40px;
                     height: 40px;
                     transform-rotation: LockData.busy ? 40deg : 0deg;
-                    animate transform-rotation { duration: 600ms; easing: spring(0.35); }
+                    animate transform-rotation { duration: Theme.motion(600ms); easing: spring(0.35); }
                     if LockData.has-avatar: Image { width: 100%; height: 100%; source: LockData.avatar-cookie; image-fit: cover; }
                     if !LockData.has-avatar: Shape { width: 100%; height: 100%; commands: LockData.cookie9; fill: Theme.m3-primary-container; }
                     if !LockData.has-avatar: SymIcon { text: "\u{e4c2}"; fill: true; font-size: 18px; color: Theme.m3-on-primary-container; }
@@ -2334,7 +2334,7 @@ component MaterialLock inherits Rectangle {
                     property <bool> ready: LockData.password != "";
                     opacity: ready ? 1 : 0.6;
                     transform-scale: sm.pressed ? 1.06 : 1;
-                    animate transform-scale { duration: 250ms; easing: spring(0.4); }
+                    animate transform-scale { duration: Theme.motion(250ms); easing: spring(0.4); }
                     border-radius: 20px;
                     background: ready ? (sm.has-hover ? Theme.m3-primary.mix(Theme.m3-on-primary, sm.pressed ? 0.9 : 0.92) : Theme.m3-primary) : Theme.m3-on-surface.with-alpha(0.12);
                     accessible-role: button;
@@ -2399,7 +2399,7 @@ component MaterialLock inherits Rectangle {
                             height: 100%;
                             commands: finger.phase == "match" ? LockData.cookie9 : LockData.circle;
                             fill: finger.phase == "match" ? Theme.m3-primary-container : finger.phase == "miss" ? Theme.m3-error-container : finger.phase == "waiting" ? Theme.m3-secondary-container : transparent;
-                            animate fill { duration: 150ms; }
+                            animate fill { duration: Theme.hover; }
                         }
                         // (the ridges trace in, as on Glass; the pill shakes, not the glyph)
                         FingerGlyph {
@@ -2431,7 +2431,7 @@ component MaterialLock inherits Rectangle {
                 height: 20px;
                 spacing: 6px;
                 opacity: parent.has-text ? 1 : 0;
-                animate opacity { duration: 150ms; }
+                animate opacity { duration: Theme.hover; }
                 SymIcon { text: LockData.face-text != "" && LockData.finger-text == "" ? "\u{e436}" : "\u{e23e}"; font-size: 16px; color: ink; }
                 Text { vertical-alignment: center; text: LockData.finger-text != "" ? LockData.finger-text : LockData.face-text; color: ink; font-size: 14px; font-weight: 500; }
             }
@@ -2517,7 +2517,7 @@ component Bedside inherits Rectangle {
     stage := Rectangle {
         visible: !blank;
         y: LockData.sb-dy;
-        animate y { duration: LockData.sb-resting || LockData.sb-jump ? 0ms : 3000ms; easing: ease-in-out-sine; }
+        animate y { duration: Theme.motion(LockData.sb-resting || LockData.sb-jump ? 0ms : 3000ms); easing: ease-in-out-sine; }
         width: W;
         height: H;
         opacity: LockData.sb-resting ? 0 : 1;
@@ -2733,15 +2733,15 @@ export component LockScreen inherits Window {
     property <length> H: self.height;
     // Unlock: the content lifts away (LockData.leaving, 220 ms)
     property <float> exit: LockData.leaving ? 1 : 0;
-    animate exit { duration: 220ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate exit { duration: Theme.move-standard; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     // Lock: the entrance, once the first frame has shown
     property <float> reveal: LockData.lock-fx == "none" || LockData.revealed ? 1 : 0;
-    animate reveal { duration: LockData.lock-fx == "none" ? 0ms : 450ms; easing: Theme.material ? cubic-bezier(0.05, 0.7, 0.1, 1.0) : cubic-bezier(0.2, 0.9, 0.1, 1.0); }
+    animate reveal { duration: Theme.motion(LockData.lock-fx == "none" ? 0ms : 450ms); easing: Theme.material ? cubic-bezier(0.05, 0.7, 0.1, 1.0) : cubic-bezier(0.2, 0.9, 0.1, 1.0); }
     property <float> enter: LockData.lock-fx == "zoom" && !LockData.revealed ? 1 : 0;
-    animate enter { duration: 450ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate enter { duration: Theme.motion(450ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     // Lock → Bedside Mode: `sb` runs 0 → 1
     property <float> sb: LockData.standby ? 1 : 0;
-    animate sb { duration: LockData.sb-mode == "none" ? 0ms : LockData.sb-mode == "morph" ? 650ms : 400ms; easing: cubic-bezier(0.65, 0, 0.35, 1); }
+    animate sb { duration: Theme.motion(LockData.sb-mode == "none" ? 0ms : LockData.sb-mode == "morph" ? 650ms : 400ms); easing: cubic-bezier(0.65, 0, 0.35, 1); }
     property <bool> morphable: !Theme.material || (LockData.clock-face == "stacked" && !LockData.compact);
     property <bool> morph-on: LockData.sb-mode == "morph" && LockData.standby-here && LockData.sb-view == 0 && morphable;
     property <bool> morphing: morph-on && sb > 0 && sb < 1;

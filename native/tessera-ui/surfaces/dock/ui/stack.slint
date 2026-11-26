@@ -42,7 +42,7 @@ export component StackGlass inherits Window {
     property <int> rows: ceil(max(1, n) / 4);
     property <float> progress: shown ? 1 : 0;
     // (QML: SpringAnimation spring 4.5, damping 0.34: ω 16.8/s, ζ 0.63)
-    animate progress { duration: 375ms; easing: spring(0.37); }
+    animate progress { duration: Theme.motion(375ms); easing: spring(0.37); }
     background: transparent;
     no-frame: true;
     title: "Downloads";
@@ -210,7 +210,7 @@ export component StackMaterial inherits Window {
     property <int> rows: ceil(max(1, n) / 4);
     property <float> progress: shown ? 1 : 0;
     // (Material's default spatial spring: ζ 0.8, k 380)
-    animate progress { duration: 322ms; easing: spring(0.2); }
+    animate progress { duration: Theme.motion(322ms); easing: spring(0.2); }
     background: transparent;
     no-frame: true;
     title: "Downloads";
@@ -266,7 +266,7 @@ export component StackMaterial inherits Window {
                 height: 32px;
                 border-radius: self.height / 2;
                 background: Theme.m3-primary.with-alpha(ot.pressed ? 0.1 : ot.has-hover ? 0.08 : 0);
-                animate background { duration: 150ms; }
+                animate background { duration: Theme.hover; }
                 accessible-role: button;
                 accessible-label: "Open in Files";
                 accessible-action-default => { root.folder(); }
@@ -300,7 +300,7 @@ export component StackMaterial inherits Window {
                     height: parent.height - 4px;
                     border-radius: 16px;
                     background: Theme.m3-on-surface.with-alpha(ft.pressed ? 0.1 : ft.has-hover || eye.has-hover ? 0.08 : 0);
-                    animate background { duration: 150ms; }
+                    animate background { duration: Theme.hover; }
                 }
                 if f.has-icon: Image {
                     x: (parent.width - 48px) / 2;
@@ -338,9 +338,9 @@ export component StackMaterial inherits Window {
                     // (ElasticControl: swells a little while pressed, on the press spring)
                     transform-origin: { x: self.width / 2, y: self.height / 2 };
                     transform-scale: eye.pressed && Theme.press-bounce ? 1.06 : 1;
-                    animate transform-scale { duration: 290ms; easing: spring(0.57); }
+                    animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
                     border-radius: eye.pressed ? 8px : 14px;
-                    animate border-radius { duration: 150ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+                    animate border-radius { duration: Theme.move-fast; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
                     background: Theme.m3-secondary-container.mix(Theme.m3-on-secondary-container, eye.pressed ? 0.9 : eye.has-hover ? 0.92 : 1);
                     accessible-role: button;
                     accessible-label: "Quick Preview";

@@ -28,7 +28,7 @@ component FpSheet inherits Rectangle {
     // a miss shakes the print; a touch taken bumps it
     property <int> shake-step: 5;
     property <length> shake-x: shake-step == 0 ? -8px : shake-step == 1 ? 7px : shake-step == 2 ? -5px : shake-step == 3 ? 3px : 0px;
-    animate shake-x { duration: 50ms; }
+    animate shake-x { duration: Theme.motion(50ms); }
     changed misses => {
         shake-step = 0;
         shaker.running = true;
@@ -57,7 +57,7 @@ component FpSheet inherits Rectangle {
         }
     }
     property <float> bump: bumped ? 0.96 : 1;
-    animate bump { duration: bumped ? 80ms : 260ms; easing: bumped ? ease-out : ease-out-back; }
+    animate bump { duration: Theme.motion(bumped ? 80ms : 260ms); easing: bumped ? ease-out : ease-out-back; }
 
     property <color> card-color: Theme.material ? Theme.m3-surface-container-high : Theme.dark ? #232327 : white;
     property <color> faint: Theme.dark ? #ffffff29 : #00000021;
@@ -69,7 +69,7 @@ component FpSheet inherits Rectangle {
     property <bool> closing: has-meta && b.data[11].on;
     init => { progress = 1; keys.focus(); }
     changed closing => { progress = closing ? 0 : 1; }
-    animate progress { duration: closing ? 200ms : 300ms; easing: closing ? cubic-bezier(0.3333, 0, 0.6667, 0) : cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate progress { duration: Theme.motion(closing ? 200ms : 300ms); easing: closing ? cubic-bezier(0.3333, 0, 0.6667, 0) : cubic-bezier(0.3333, 1, 0.6667, 1); }
     background: (Theme.dark ? #000000 : #000000).with-alpha((Theme.dark ? 0.5 : 0.3) * progress);
     TouchArea {}
     // (a click cleared a control's focus: Esc is this sheet's again, after
@@ -161,7 +161,7 @@ component FpSheet inherits Rectangle {
                             // done: a check at the bottom right of the print
                             Rectangle {
                                 property <float> s: done ? 1 : 0.4;
-                                animate s { duration: 260ms; easing: ease-out-back; }
+                                animate s { duration: Theme.motion(260ms); easing: ease-out-back; }
                                 x: parent.width - 52px;
                                 y: parent.height - 58px;
                                 width: 44px;
@@ -187,7 +187,7 @@ component FpSheet inherits Rectangle {
                             height: 6px;
                             border-radius: 3px;
                             background: done ? Theme.success : (i < b.data.length && b.data[i].on) ? Theme.accent : i == target ? Theme.accent.with-alpha(0.5) : Theme.toggle-off;
-                            animate width, background { duration: SM.hover; }
+                            animate width, background { duration: Theme.motion(SM.hover); }
                         }
                     }
                     Text {

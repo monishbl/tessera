@@ -127,7 +127,7 @@ component Analog inherits Rectangle {
     property <color> hour-ink: Theme.material ? (c.night ? Theme.m3-tertiary : Theme.m3-primary) : ink;
     property <float> ah: c.angle-h;
     property <float> am: c.angle-m;
-    animate ah, am { duration: 400ms; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
+    animate ah, am { duration: Theme.motion(400ms); easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
     width: 120px;
     height: self.width;
     if !Theme.material: Rectangle {
@@ -767,7 +767,7 @@ component NowPlayingW inherits Rectangle {
         // to a square while paused, MaterialShape's springFast morph: here
         // the square cover and the cookie-cut one trade places)
         property <float> cookie: Theme.material && w.on ? 1 : 0;
-        animate cookie { duration: 260ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+        animate cookie { duration: Theme.motion(260ms); easing: cubic-bezier(0.2, 0, 0, 1); }
         border-radius: 12px;
         background: Theme.material ? transparent : Theme.fill;
         if Theme.material && !w.has-img: Rectangle { border-radius: 12px; background: Theme.m3-surface-container-highest; }
@@ -801,7 +801,7 @@ component NowPlayingW inherits Rectangle {
             width: 40px;
             height: 40px;
             border-radius: w.on ? 12px : 20px;
-            animate border-radius { duration: 250ms; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
+            animate border-radius { duration: Theme.motion(250ms); easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
             background: w.flag ? Theme.m3-primary : Theme.m3-on-surface.with-alpha(0.12);
         }
         for b[i] in [{ g: "\u{e5a4}", a: "previous" }, { g: w.on ? "\u{e39e}" : "\u{e3d0}", a: "toggle" }, { g: "\u{e5a6}", a: "next" }]: Rectangle {
@@ -994,14 +994,14 @@ component ShortcutsW inherits Rectangle {
         width: bw;
         height: bh;
         border-radius: Theme.material ? (ta.pressed ? 12px : 20px) : 12px;
-        animate border-radius { duration: 200ms; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
+        animate border-radius { duration: Theme.motion(200ms); easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
         background: Theme.material ? b.bg.mix(b.ink, ta.pressed ? 0.9 : ta.has-hover ? 0.92 : 1) : b.tint.with-alpha(ta.pressed ? 0.32 : ta.has-hover ? 0.26 : 0.18);
-        animate background { duration: 150ms; }
+        animate background { duration: Theme.hover; }
         // (Material: ElasticControl's press: swells by pressGrow, at most
         // 6% or 10 px, and springs back past its size, springPress ζ 0.3;
         // Glass: 0.95, a 100 ms ScaleAnimator)
         transform-scale: ta.pressed ? (Theme.material ? (Theme.press-bounce ? 1 + min(0.06, 10px / max(bw, bh)) : 1) : 0.95) : 1; // (pressBounce: off with Reduce motion)
-        animate transform-scale { duration: Theme.material ? 420ms : 100ms; easing: Theme.material ? spring(0.3) : linear; }
+        animate transform-scale { duration: Theme.motion(Theme.material ? 420ms : 100ms); easing: Theme.material ? spring(0.3) : linear; }
         accessible-role: button;
         accessible-label: b.title;
         accessible-action-default => { root.act("shortcut", b.title); }
@@ -1234,8 +1234,8 @@ component Frame inherits Rectangle {
         shown = 1;
         grow = 1;
     }
-    animate shown { duration: 260ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
-    animate grow { duration: 420ms; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
+    animate shown { duration: Theme.motion(260ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate grow { duration: Theme.motion(420ms); easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
     // (LockFx.progress: items further from the centre start later; ease-out cubic)
     property <length> fx-cx: w.x + w.w / 2;
     property <length> fx-cy: w.y + w.h / 2;
@@ -1246,7 +1246,7 @@ component Frame inherits Rectangle {
     x: w.x + dx + (fx-s - 1) * (fx-cx - screen-w / 2);
     y: w.y + dy + (fx-s - 1) * (fx-cy - screen-h / 2);
     animate x, y {
-        duration: dragging || fx < 1 ? 0ms : 450ms;
+        duration: Theme.motion(dragging || fx < 1 ? 0ms : 450ms);
         easing: Theme.material ? spring(0.5) : spring(0.38);
     }
     width: w.w;
@@ -1254,7 +1254,7 @@ component Frame inherits Rectangle {
     z: dragging ? 10 : 0; // (above the others while dragged)
     opacity: shown * fx-p;
     property <float> lift: dragging ? 1.04 : 1;
-    animate lift { duration: Theme.hover; }
+    animate lift { duration: Theme.move-fast; }
     transform-scale: lift * grow * fx-s;
     transform-origin: { x: self.width / 2, y: self.height / 2 };
     border-radius: w.pill ? self.height / 2 : Desk.tile;
@@ -1321,7 +1321,7 @@ component Frame inherits Rectangle {
     property <bool> snap;
     property <length> page-y;
     property <float> page-o: 1;
-    animate page-y { duration: snap ? 0ms : 300ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate page-y { duration: Theme.motion(snap ? 0ms : 300ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     animate page-o { duration: snap ? 0ms : 200ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     changed page => {
         snap = true;
@@ -1377,7 +1377,7 @@ component Frame inherits Rectangle {
             Rectangle {
                 width: 5px;
                 height: i == w.stack-i ? 12px : 5px;
-                animate height { duration: 200ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+                animate height { duration: Theme.motion(200ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
                 border-radius: 2.5px;
                 background: Theme.material ? (i == w.stack-i ? Theme.m3-primary : dt.has-hover ? Theme.m3-on-surface-variant : Theme.m3-outline-variant) : i == w.stack-i || dt.has-hover ? Theme.label : Theme.tertiary;
             }
@@ -1389,7 +1389,7 @@ component Frame inherits Rectangle {
     }
     // Remove badge: springs in (5 / 0.35); gone at once when editing ends
     property <float> badge: editing ? 1 : 0;
-    animate badge { duration: 380ms; easing: spring(0.35); }
+    animate badge { duration: Theme.motion(380ms); easing: spring(0.35); }
     if editing: Rectangle {
         x: -8px;
         y: -8px;
@@ -1436,7 +1436,7 @@ component IconCell inherits Rectangle {
     x: ic.x + dx + (fx-s - 1) * (fx-cx - screen-w / 2);
     y: ic.y + dy + (fx-s - 1) * (fx-cy - screen-h / 2);
     animate x, y {
-        duration: dragging || fx < 1 ? 0ms : 450ms;
+        duration: Theme.motion(dragging || fx < 1 ? 0ms : 450ms);
         easing: Theme.material ? spring(0.5) : spring(0.4);
     }
     opacity: fx-p;
@@ -1577,13 +1577,13 @@ export component Desktop inherits Window {
     in property <duration> fx-ms: 0ms;
     in property <bool> fx-zoom: true;
     property <float> fx: fx-to;
-    animate fx { duration: fx-ms; easing: linear; }
+    animate fx { duration: Theme.motion(fx-ms); easing: linear; }
     out property <float> fx-now: fx;
     // Overview open on this screen: the widgets and files step back (its
     // strip cut through a clock widget and left a faint slice under it, #170)
     in property <bool> stepped-back;
     property <float> present: stepped-back ? 0 : 1;
-    animate present { duration: stepped-back ? 140ms : 220ms; easing: ease-out; }
+    animate present { duration: Theme.motion(stepped-back ? 140ms : 220ms); easing: ease-out; }
     callback act(int, string, string); // a widget's control
     callback drag(int, length, length, bool); // a widget dragged (its top left), released
     callback menu(int, length, length); // right-click: a widget's index, or -1 the desktop
@@ -1610,7 +1610,7 @@ export component Desktop inherits Window {
 
     // While editing or dragging: faint cells, and where the widget will land
     property <float> grid-shown: editing || ghost-on ? 1 : 0;
-    animate grid-shown { duration: 220ms; }
+    animate grid-shown { duration: Theme.move-standard; }
     if grid-shown > 0.01: Rectangle {
         opacity: grid-shown;
         for i in cols * rows: Rectangle {
@@ -1626,7 +1626,7 @@ export component Desktop inherits Window {
         if ghost-on: Rectangle {
             x: ghost-x;
             y: ghost-y;
-            animate x, y { duration: 400ms; easing: Theme.material ? spring(0.5) : spring(0.4); }
+            animate x, y { duration: Theme.motion(400ms); easing: Theme.material ? spring(0.5) : spring(0.4); }
             width: ghost-w;
             height: ghost-h;
             border-radius: Desk.tile;
@@ -1688,7 +1688,7 @@ export component Desktop inherits Window {
         y: stack-y;
         width: 4 * 96px + 24px;
         height: min(4, ceil((stack-files.length + (stack-more > 0 ? 1 : 0)) / 4)) * 96px + 48px;
-        border-radius: Theme.material ? Theme.radius-popover : 18px;
+        border-radius: Theme.radius-popover;
         // (Material: its glass is a see-through surface container)
         background: Theme.material ? Theme.m3-surface-container.with-alpha(0.72) : glass-plugin ? transparent : Theme.panel;
         accessible-role: list;
@@ -1768,7 +1768,7 @@ export component DeskMenu inherits Window {
     // (ContextMenu.qml: spring 5 / damping 0.36 in; no exit animation, it goes at once)
     out property <float> progress: shown ? 1 : 0;
     animate progress {
-        duration: shown ? 350ms : 0ms;
+        duration: Theme.motion(shown ? 350ms : 0ms);
         easing: spring(0.36);
     }
     out property <length> panel-x: panel.x;
@@ -1776,7 +1776,7 @@ export component DeskMenu inherits Window {
     out property <length> panel-width: panel.width;
     out property <length> panel-height: panel.height;
     out property <float> panel-scale: panel.transform-scale;
-    out property <length> radius: Theme.material ? 18px : 14px;
+    out property <length> radius: Theme.radius-menu;
     callback chosen(int);
     callback dismissed();
     callback closed();
@@ -1866,7 +1866,7 @@ export component DeskMenu inherits Window {
                         accessible-role: list-item;
                         accessible-label: r.text;
                         accessible-action-default => { if r.enabled { root.chosen(i); } }
-                        border-radius: Theme.material ? 10px : 8px;
+                        border-radius: Theme.radius-menu-row;
                         background: hot ? (r.danger && !Theme.material ? Theme.danger : Theme.highlight) : transparent;
                         Text {
                             x: 12px;
@@ -1926,7 +1926,7 @@ export component Gallery inherits Window {
     property <length> m: 24px;
     property <float> preview-scale: 0.56;
     property <float> progress: shown ? 1 : 0;
-    animate progress { duration: shown ? 520ms : 192ms; easing: shown ? spring(0.4) : cubic-bezier(0.4, 0.0, 1.0, 1.0); }
+    animate progress { duration: Theme.motion(shown ? 520ms : 192ms); easing: shown ? spring(0.4) : cubic-bezier(0.4, 0.0, 1.0, 1.0); }
     changed progress => {
         if !shown && progress <= 0.001 {
             closed();
@@ -2056,7 +2056,7 @@ export component Gallery inherits Window {
                     width: dl.preferred-width + (Theme.material ? 48px : 32px);
                     height: Theme.material ? 40px : 32px;
                     border-radius: Theme.material && dt.pressed ? 8px : self.height / 2;
-                    animate border-radius { duration: 150ms; }
+                    animate border-radius { duration: Theme.move-fast; }
                     background: Theme.material ? Theme.m3-primary.mix(Theme.m3-on-primary, dt.pressed ? 0.9 : dt.has-hover ? 0.92 : 1)
                         : dt.pressed ? Theme.accent.darker(0.15) : Theme.accent;
                     accessible-role: button;
@@ -2092,7 +2092,7 @@ export component Gallery inherits Window {
                             width: s.w * preview-scale;
                             height: s.h * preview-scale;
                             transform-scale: at.pressed ? 0.95 : at.has-hover ? 1.04 : 1;
-                            animate transform-scale { duration: 220ms; easing: spring(0.35); }
+                            animate transform-scale { duration: Theme.move-standard; easing: spring(0.35); }
                             accessible-role: button;
                             accessible-label: "Add " + root.kind-label + ", " + s.name;
                             accessible-action-default => { root.add(si); }

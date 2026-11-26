@@ -2,7 +2,7 @@
 // shell/common: KeyCombo.qml, IconButton.qml, Spinner.qml, MaterialShape.qml,
 // and the search fields of the emoji picker and clipboard panel).
 
-import { Theme, Icon } from "theme.slint";
+import { Theme, Ease, Icon } from "theme.slint";
 
 // A ghost icon button (IconButton.qml): transparent, a fill on hover, darker
 // pressed. Material: round, a state layer in the icon's colour, squaring off
@@ -23,8 +23,8 @@ export component IconButton inherits Rectangle {
     border-radius: Theme.material ? (touch.pressed ? min(8px, self.height / 2) : self.height / 2) : Theme.radius-control - 2px;
     background: Theme.material ? (touch.pressed ? Theme.m3-on-surface-variant.with-alpha(0.1) : touch.has-hover ? Theme.m3-on-surface-variant.with-alpha(0.08) : transparent)
         : touch.pressed ? Theme.fill-pressed : touch.has-hover ? Theme.fill : transparent;
-    animate background { duration: 150ms; }
-    animate border-radius { duration: 150ms; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+    animate background { duration: Theme.hover; }
+    animate border-radius { duration: Theme.move-fast; easing: Ease.out-cubic; }
     accessible-role: button;
     accessible-label: label;
     accessible-enabled: enabled;
@@ -239,12 +239,12 @@ export component TextButton inherits Rectangle {
     // (PickerButton.qml: Material's corners on the fast spatial spring; a
     // press swells it (Theme.motion.pressGrow: ~6%, at most 10 px) on the
     // press spring, Glass presses in to 97%)
-    animate border-radius { duration: 222ms; easing: spring(0.4); }
+    animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); }
     transform-scale: touch.pressed ? (Theme.material ? (Theme.press-bounce ? 1 + min(0.06, 10px / max(1px, self.width)) : 1) : 0.97) : 1;
-    animate transform-scale { duration: Theme.material ? 290ms : 100ms; easing: Theme.material ? spring(0.57) : ease-out; }
+    animate transform-scale { duration: Theme.motion(Theme.material ? 290ms : 100ms); easing: Theme.material ? spring(0.57) : ease-out; }
     background: Theme.material ? (primary ? Theme.m3-primary : Theme.m3-secondary-container).mix(ink, touch.pressed ? 0.9 : touch.has-hover ? 0.92 : 1)
         : primary ? (touch.pressed ? Theme.accent.darker(0.2) : touch.has-hover ? Theme.accent.darker(0.1) : Theme.accent) : touch.pressed ? Theme.fill-pressed : touch.has-hover ? Theme.fill-hover : Theme.fill;
-    animate background { duration: 150ms; }
+    animate background { duration: Theme.hover; }
     accessible-role: button;
     accessible-label: text;
     accessible-enabled: enabled;
@@ -263,5 +263,40 @@ export component TextButton inherits Rectangle {
         enabled: root.enabled;
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
+    }
+}
+
+// The one scroll indicator (ScrollIndicator.qml): a thin bar over a list's
+// right edge while it scrolls, gone 0.9 s after it stops. Lay it over the
+// Flickable (same y and height, at its right edge) and hand it the
+// Flickable's numbers; it shows only when there is more than fits.
+export component ScrollIndicator inherits Rectangle {
+    in property <length> content-y;
+    in property <length> content-height;
+    in property <length> view-height;
+    width: 12px;
+    visible: content-height > view-height + 1px;
+    property <bool> moving;
+    property <bool> moved;
+    changed content-y => {
+        moving = true;
+        moved = true;
+    }
+    Timer {
+        interval: 900ms;
+        running: root.moving;
+        triggered => {
+            if root.moved { root.moved = false; } else { root.moving = false; }
+        }
+    }
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        width: 6px;
+        border-radius: self.width / 2;
+        height: max(28px, root.view-height * root.view-height / max(1px, root.content-height));
+        y: (root.view-height - self.height) * max(0, min(1, -root.content-y / max(1px, root.content-height - root.view-height)));
+        background: Theme.dark ? #ffffff52 : #00000052;
+        opacity: root.moving ? 1 : 0;
+        animate opacity { duration: root.moving ? Theme.hover : 400ms; easing: ease-out; }
     }
 }

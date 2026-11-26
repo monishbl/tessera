@@ -548,11 +548,11 @@ impl StatusMenus {
         let rows: Vec<ui::SmUse> = model::in_use(p).into_iter().map(|u| ui::SmUse { app: u.app.into(), what: u.what.into(), icon: tessera_core::icons::glyph(u.icon).into(), tint: hex(u.color) }).collect();
         let small = self.small();
         w.ui.set_in_use(model(rows));
-        w.ui.set_nothing_h(bridge::text_height("Nothing is using your microphone, camera, location or screen.", small, 260.0));
+        w.ui.set_nothing_h(bridge::text_height("Nothing is using your microphone, camera, location or screen.", small, model::W));
         w.ui.set_sharing(p["screenShared"].as_bool().unwrap_or(false));
         w.ui.set_stopping(p["stopping"].as_bool().unwrap_or(false));
         let failed = model::stop_failed(p);
-        w.ui.set_stop_failed_h(bridge::text_height(&failed, small, 260.0));
+        w.ui.set_stop_failed_h(bridge::text_height(&failed, small, model::W));
         w.ui.set_stop_failed(failed.into());
         let _ = st;
     }
@@ -570,7 +570,7 @@ impl StatusMenus {
         w.ui.set_bat_level(level as f32);
         w.ui.set_bat_low(level <= 0.2 && !model::charging(&b));
         let status = model::battery_status(&b);
-        w.ui.set_bat_status_h(bridge::text_height(&status, small, 280.0));
+        w.ui.set_bat_status_h(bridge::text_height(&status, small, model::W));
         w.ui.set_bat_status(status.into());
         w.ui.set_bat_watts(model::watts_line(&b, health).into());
         let rows: Vec<ui::SmPair> = if b.present { model::health_rows(health) } else { vec![] }
@@ -585,11 +585,11 @@ impl StatusMenus {
         let perf = power["hasPerformance"].as_bool().unwrap_or(state.bool("power.performance"));
         let profile = power["profile"].as_str().filter(|s| !s.is_empty()).unwrap_or(state.str("power.profile")).to_string();
         w.ui.set_ppd(ppd);
-        w.ui.set_power_short_h(bridge::text_height(&short, small, 280.0));
+        w.ui.set_power_short_h(bridge::text_height(&short, small, model::W));
         w.ui.set_power_short(short.into());
         let (opts, cur) = model::energy_modes(perf, &profile);
         let seg = Block { kind: BlockKind::Seg, id: "mode".into(), options: opts.iter().map(|o| o.to_string()).collect(), current: cur, ..Default::default() };
-        w.ui.set_modes(block(&seg, true, true, Self::material(st), self.fonts(), 280.0));
+        w.ui.set_modes(block(&seg, true, true, Self::material(st), self.fonts(), model::W));
     }
 
     fn push_resources(&self) {

@@ -218,7 +218,7 @@ export component OverviewPanel inherits Window {
     // Glass expressive 3.6 / 0.30 → ω 15, ζ 0.63 (419 ms, bounce 0.37).
     // Closes in popover × 0.7 (154 ms) InCubic.
     animate openness {
-        duration: shown ? (Theme.material ? 307ms : 419ms) : Theme.popover * 0.7;
+        duration: Theme.motion(shown ? (Theme.material ? 307ms : 419ms) : Theme.popover * 0.7);
         easing: shown ? (Theme.material ? spring(0.11) : spring(0.37)) : cubic-bezier(0.3333, 0, 0.6667, 0);
     }
     changed openness => {
@@ -301,7 +301,7 @@ export component OverviewPanel inherits Window {
                     width: t.w;
                     height: t.h;
                     transform-scale: pressed-cell == t.id && !tile.dragged ? 0.97 : hover-cell == t.id ? 1.03 : 1;
-                    animate transform-scale { duration: 150ms; }
+                    animate transform-scale { duration: Theme.move-fast; }
                     transform-origin: { x: self.width / 2, y: self.height / 2 };
                     // the current space, or where a dragged one (or a window) lands
                     if t.current || tile.target || tile.hot: Rectangle {
@@ -372,8 +372,8 @@ export component OverviewPanel inherits Window {
                 width: p.size;
                 height: p.size;
                 border-radius: Theme.material && plus-pressed == i ? 12px : self.width / 2;
-                animate border-radius { duration: 100ms; }
-                animate transform-scale { duration: 200ms; easing: spring(0.5); }
+                animate border-radius { duration: Theme.motion(100ms); }
+                animate transform-scale { duration: Theme.motion(200ms); easing: spring(0.5); }
                 property <bool> hot: new-plus == i;
                 background: Theme.material ? Theme.m3-secondary-container.mix(Theme.m3-on-secondary-container, plus-pressed == i || self.hot ? 0.9 : plus-hover == i ? 0.92 : 1)
                     : plus-pressed == i || self.hot ? Theme.fill-hover : plus-hover == i ? Theme.fill : transparent;
@@ -451,7 +451,7 @@ export component OverviewPanel inherits Window {
                     // (SpringAnimation spring + 1, damping + 0.04: Material 7.08 / 0.54 → ω 21, ζ 0.80;
                     // Glass expressive 4.0 / 0.26 → ω 15.8, ζ 0.51)
                     animate transform-scale {
-                        duration: Theme.material ? 299ms : 397ms;
+                        duration: Theme.motion(Theme.material ? 299ms : 397ms);
                         easing: Theme.material ? spring(0.2) : spring(0.49);
                     }
                     transform-origin: { x: self.width / 2, y: self.height / 2 };
@@ -498,7 +498,7 @@ export component OverviewPanel inherits Window {
                         height: w.h;
                         // a new place glides there (once settled; not while dragged)
                         animate x, y, width, height {
-                            duration: root.settled && drag-win != w.address ? 200ms : 0ms;
+                            duration: Theme.motion(root.settled && drag-win != w.address ? 200ms : 0ms);
                             easing: cubic-bezier(0.3333, 1, 0.6667, 1);
                         }
                         radius: w.radius;
@@ -635,7 +635,7 @@ export component OverviewPanel inherits Window {
                 width: 36px;
                 height: 36px;
                 border-radius: Theme.material ? (chip-hot == ch.id ? 18px : 12px) : 10px;
-                animate border-radius { duration: 100ms; }
+                animate border-radius { duration: Theme.motion(100ms); }
                 background: chip-hot == ch.id ? Theme.accent : Theme.material && ch.current ? Theme.m3-secondary-container : Theme.fill;
                 border-width: ch.current && chip-hot != ch.id && !Theme.material ? 2px : 0;
                 border-color: Theme.accent.with-alpha(0.55);
