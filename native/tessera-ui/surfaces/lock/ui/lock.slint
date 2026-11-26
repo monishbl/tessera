@@ -551,7 +551,7 @@ component BedCalendar inherits Rectangle {
             }
         }
         if LockData.cal-items.length == 0: Text {
-            text: "Nothing on this day. Double-click a date to add something.";
+            text: "Nothing on this day."; // (nothing can be added from the lock)
             color: root.ink3;
             font-size: Theme.small;
             wrap: word-wrap;
