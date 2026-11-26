@@ -2034,119 +2034,123 @@ component Marquee inherits Rectangle {
 
 // One side of the collapsed live activity (IslandLive): art or icon, title,
 // time, dancing bars | its controls
-// Dictation's open card (menubar dictation.rs makes it from the host's state)
+// Dictation's live activity (menubar dictation.rs makes it from the host's state)
 export struct DictView {
     stage: string, // listening | writing | done
-    words: string, // the words so far (a draft, its newest end), or the first ones typed
-    lines: [string], // the same as the card's lines, the newest last (bright)
-    placeholder: bool, // no words yet: the line is a prompt, dim
-    mic-icon: string, // the microphone's glyph
-    hint: string, // "Release to type · Esc to cancel"
-    source: string, // "<mic> · <language>"
     elapsed: string, // "0:12"
-    left: string, // "8 s left" (the last 10 s of the time limit)
-    ring: string, // the time limit's arc, in a 44 × 44 viewbox
-    warn: bool, // the last 10 s
-    picking: bool, // the mic and language list is open
+    elapsed-shape: string, // the same with every digit a 0 (its width: no wobble as it counts)
+    status: string, // "Listening", "8 s left", "Writing…", "Typed"
+    warn: bool, // the time limit's last 10 s
+    said: string, // every word so far (for screen readers)
+    hint: string, // "Release to type · Esc to cancel" (the same)
 }
 
-// The flowing wave: the microphone's last ~3 s as a soft ribbon (Rust's path,
-// 64 levels in a 630 × 100 viewbox, one past the right edge), each new level
-// sliding in from the right over the 50 ms until the next. Off (writing), it
-// melts flat. Reduce motion: a still level bar instead.
-component DictWave inherits Rectangle {
-    in property <string> wave;
-    in property <float> level;
+// One word of what you said: `fresh` ones arrive blurred and sharpen into
+// place; `settled` ones are in the ink, the ones still being guessed dim
+export struct DictWord {
+    id: int,
+    text: string,
+    fresh: bool,
+    settled: bool,
+    index: int, // its place in all the words (the writing shimmer runs along them)
+}
+
+// A word arriving "blur to sharp": Slint has no blur, so it's faked with six
+// faint copies a pixel or two apart that close in on the word (≈220 ms) as
+// it comes up from nothing. Reduce motion: it only fades in. Writing: a soft
+// highlight runs along the words (their ink brightening in turn), no box.
+component DictWordItem inherits Rectangle {
+    in property <string> text;
+    in property <bool> fresh;
+    in property <bool> settled;
+    in property <int> index;
+    in property <bool> writing;
     in property <bool> reduce-motion;
-    in property <color> tint;
-    in property <bool> shown;
-    clip: true;
+    in property <color> ink;
+    in property <color> ink2;
+    in property <length> font-size;
+    width: word.preferred-width;
+    height: word.preferred-height;
     property <duration> t0;
-    changed wave => { t0 = animation-tick(); }
-    property <float> phase: reduce-motion || !shown ? 0 : max(0, min(1, (animation-tick() - t0) / 50ms));
-    accessible-role: text;
-    accessible-label: "Listening, level " + (level < 0.15 ? "quiet" : level < 0.5 ? "medium" : "loud");
-    if !reduce-motion: Path {
-        x: -phase * root.width / 62;
-        y: (root.height - self.height) / 2;
-        width: root.width * 63 / 62;
-        height: shown ? root.height : 2px;
-        animate height { duration: Theme.move-emphasized; easing: ease-in-out; }
-        viewbox-width: 630;
-        viewbox-height: 100;
-        commands: wave;
-        fill: tint.with-alpha(0.22);
-        stroke: tint;
-        stroke-width: 2px;
-    }
-    if reduce-motion: Rectangle {
-        y: (root.height - self.height) / 2;
-        height: 6px;
-        border-radius: 3px;
-        background: tint.with-alpha(0.22);
-        Rectangle {
-            x: 0;
-            width: parent.width * max(0.02, min(1, shown ? level : 0));
-            border-radius: 3px;
-            background: tint;
-            animate width { duration: Theme.move-fast; }
+    property <bool> revealing;
+    init => {
+        if fresh {
+            t0 = animation-tick();
+            revealing = true;
         }
     }
+    // (done: no longer bound to the clock)
+    Timer {
+        interval: 260ms;
+        running: revealing;
+        triggered => { revealing = false; }
+    }
+    property <float> lin: !revealing ? 1 : max(0, min(1, (animation-tick() - t0) / 220ms));
+    property <float> e: 1 - (1 - lin) * (1 - lin) * (1 - lin);
+    property <color> c: settled ? ink : ink2;
+    property <float> glow: writing && !reduce-motion ? Math.pow(max(0, Math.sin(animation-tick() / 1600ms * 360deg - index * 24deg)), 6) : 0;
+    accessible-role: none;
+    if revealing && !reduce-motion: Rectangle {
+        for g in [{ dx: -2, dy: 0 }, { dx: 2, dy: 0 }, { dx: 0, dy: -1.5 }, { dx: 0, dy: 1.5 }, { dx: -1.4, dy: 1.1 }, { dx: 1.4, dy: -1.1 }]: Text {
+            x: g.dx * 1px * (1 - e);
+            y: g.dy * 1px * (1 - e);
+            width: root.width;
+            height: root.height;
+            text: root.text;
+            color: root.c;
+            font-size: root.font-size;
+            opacity: 0.22 * (1 - e) + 0.08;
+        }
+    }
+    word := Text {
+        text: root.text;
+        color: root.c;
+        font-size: root.font-size;
+        font-weight: settled ? 500 : 400;
+        opacity: (reduce-motion ? lin : e * e) * (writing ? 0.62 + 0.38 * glow : 1);
+        animate color { duration: Theme.hover; }
+    }
 }
 
-// Writing: three dots pulsing one after another, and "Writing…"
+// Writing: three dots pulsing one after another (inside the tile)
 component DictDots inherits Rectangle {
     in property <color> tint;
-    in property <color> ink2;
     in property <bool> reduce-motion;
     in property <bool> shown;
     opacity: shown ? 1 : 0;
-    animate opacity { duration: 260ms; delay: 120ms; }
+    animate opacity { duration: Theme.move-standard; }
     HorizontalLayout {
         alignment: center;
-        spacing: 6px;
+        spacing: 4px;
         for i in 3: VerticalLayout {
             alignment: center;
             Rectangle {
                 property <float> p: reduce-motion || !shown ? 0.6 : 0.5 + 0.5 * Math.sin(animation-tick() / 900ms * 360deg - i * 70deg);
-                width: 7px;
-                height: 7px;
-                border-radius: 3.5px;
+                width: 5px;
+                height: 5px;
+                border-radius: 2.5px;
                 background: tint;
                 opacity: 0.3 + 0.7 * p;
             }
         }
-        Rectangle {
-            width: 4px;
-        }
-        Text {
-            text: "Writing…";
-            color: ink2;
-            font-size: Theme.small;
-            font-weight: 500;
-            vertical-alignment: center;
-        }
     }
 }
 
-// Dictation's open card, a big live activity in both looks: the badge with
-// the time limit's ring round it, "Listening" and the time (red, "8 s left",
-// only in the last 10 s), Cancel and Stop; the wave across the card on its
-// own panel (writing: the dots); the words so far, the older lines dim and
-// the newest bright (shimmering while they're corrected); the microphone
-// and language (a click: switch them) and the key hint. Done: a tick and the
-// first words typed.
+// Dictation, open, as iOS's recorder in the Dynamic Island: one slim row (a
+// tile with your voice as bars, the time in bold with what's happening under
+// it, Cancel on a quiet circle and Done on the accent) and under it up to
+// two lines of your words, the newest at the bottom right. Writing: the bars
+// settle into three pulsing dots; Typed: a tick.
 component DictCard inherits VerticalLayout {
     in property <Live> card;
     in property <DictView> dict;
-    in property <string> wave;
-    in property <float> level;
-    in property <[LevelRow]> rows;
+    in property <[float]> bars;
+    in property <[DictWord]> top;
+    in property <[DictWord]> bottom;
     in property <bool> reduce-motion;
     in property <color> ink;
     in property <color> ink2;
     callback control(int);
-    callback pick(string);
     spacing: 10px;
     property <bool> listening: dict.stage == "listening";
     property <bool> writing: dict.stage == "writing";
@@ -2154,260 +2158,148 @@ component DictCard inherits VerticalLayout {
     property <color> warn-color: Theme.material ? Theme.m3-error : Theme.danger;
     property <color> accent: Theme.material ? Theme.m3-primary : Theme.accent;
     property <color> tint: dict.warn && listening ? warn-color : accent;
-    // (the panels inside the card: a quiet surface of its own in each look)
-    property <color> panel: Theme.material ? Theme.m3-surface-container-highest : ink.with-alpha(0.07);
-    property <length> panel-r: Theme.material ? 16px : 12px;
-    Rectangle {
-        height: 44px;
-        badge := Rectangle {
-            x: 0;
-            y: 0;
-            width: 44px;
-            height: 44px;
-            border-radius: 22px;
-            background: Theme.material ? (dict.warn && listening ? Theme.m3-error-container : Theme.m3-primary-container) : tint.with-alpha(0.18);
-            animate background { duration: Theme.hover; }
-            // (the time limit: its track, and the arc of the time gone)
-            if listening: Rectangle {
-                border-radius: 22px;
-                border-width: 2.5px;
-                border-color: ink.with-alpha(0.12);
+    property <color> quiet: Theme.material ? Theme.m3-surface-container-highest : ink.with-alpha(0.12);
+    property <length> word-size: Theme.material ? 14px : 13px;
+    HorizontalLayout {
+        height: 40px;
+        spacing: 12px;
+        // the tile: your voice as bars (the dots while writing, a tick when typed)
+        Rectangle {
+            accessible-role: text;
+            accessible-label: "Dictation, " + dict.status + ", " + dict.elapsed + ". " + dict.hint;
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            background: Theme.material ? Theme.m3-surface-container-highest : #ffffff14;
+            if listening: HorizontalLayout {
+                alignment: center;
+                spacing: 2.5px;
+                for b in root.bars: VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 3px;
+                        height: max(3px, b * 26px);
+                        animate height { duration: Theme.motion(90ms); easing: ease-out; }
+                        border-radius: 1.5px;
+                        background: root.tint;
+                        animate background { duration: Theme.hover; }
+                    }
+                }
             }
-            if listening: Path {
-                width: 100%;
-                height: 100%;
-                viewbox-width: 44;
-                viewbox-height: 44;
-                commands: dict.ring;
-                stroke: tint;
-                stroke-width: 2.5px;
+            DictDots {
+                tint: root.accent;
+                reduce-motion: root.reduce-motion;
+                shown: writing;
             }
-            SymIcon {
+            if done: SymIcon {
                 text: card.icon;
-                fill: true;
-                font-size: 20px;
-                color: Theme.material ? (dict.warn && listening ? Theme.m3-on-error-container : Theme.m3-on-primary-container) : tint;
-                // (done: the tick pops in)
-                property <float> pop: done ? 1 : 0;
+                bold: true;
+                font-size: 18px;
+                color: root.accent;
+                property <float> pop: 0;
+                init => { pop = 1; }
                 animate pop { duration: Theme.motion(380ms); easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
-                opacity: done ? pop : 1;
+                opacity: pop;
             }
         }
-        ctls := HorizontalLayout {
-            x: parent.width - self.width;
-            width: self.preferred-width;
-            y: (44px - 36px) / 2;
-            height: 36px;
-            spacing: 6px;
-            for c[i] in card.controls: Rectangle {
-                width: 36px;
-                height: 36px;
-                border-radius: 18px;
-                // (Stop filled in the accent, Cancel on the quiet panel)
-                background: c.fill ? accent : panel;
+        // the time in bold (as wide as with zeros: it doesn't shift as it counts), and what's happening
+        VerticalLayout {
+            alignment: center;
+            spacing: 0;
+            Rectangle {
+                height: time.preferred-height;
+                width: max(time.preferred-width, time-shape.preferred-width);
+                time := Text {
+                    x: 0;
+                    text: dict.elapsed;
+                    color: dict.warn && listening ? warn-color : ink;
+                    font-size: Theme.material ? 18px : 17px;
+                    font-weight: 700;
+                    animate color { duration: Theme.hover; }
+                }
+                time-shape := Text {
+                    visible: false;
+                    text: dict.elapsed-shape;
+                    font-size: Theme.material ? 18px : 17px;
+                    font-weight: 700;
+                }
+            }
+            Text {
+                text: dict.status;
+                color: dict.warn && listening ? warn-color : ink2;
+                font-size: Theme.caption;
+                font-weight: 500;
+                overflow: elide;
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+        // Cancel on a quiet circle, Done on the accent (the activity's own controls)
+        for c[i] in card.controls: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 32px;
+                height: 32px;
+                border-radius: 16px;
+                background: c.fill ? accent : quiet;
                 opacity: c.on ? 1 : 0.4;
                 IconButton {
                     width: 100%;
                     height: 100%;
                     icon: c.icon;
                     fill: c.fill;
-                    size: 18px;
+                    size: 16px;
                     ink: c.fill ? (Theme.material ? Theme.m3-on-primary : #ffffff) : root.ink;
                     label: c.name;
                     clicked => { if c.on { root.control(i); } }
                 }
             }
         }
-        VerticalLayout {
-            x: badge.width + 12px;
-            width: max(0px, ctls.x - 10px - self.x);
-            y: 0;
-            height: 44px;
-            alignment: center;
-            spacing: 1px;
-            Text {
-                text: done ? "Typed" : writing ? "Writing…" : "Listening";
-                color: ink;
-                font-size: Theme.material ? 16px : 15px;
-                font-weight: Theme.material ? 500 : 600;
-                overflow: elide;
-            }
-            if listening: Text {
-                text: dict.left != "" ? dict.left : dict.elapsed;
-                color: dict.warn ? warn-color : ink2;
-                font-size: Theme.small;
-                font-weight: dict.warn ? 600 : 500;
-                overflow: elide;
+    }
+    // the words: two lines at most, the newest at the bottom right; a line
+    // too long loses its oldest end on the left; no box behind them
+    if top.length > 0 || bottom.length > 0: VerticalLayout {
+        spacing: 2px;
+        if top.length > 0: Rectangle {
+            height: word-size + 6px;
+            clip: true;
+            HorizontalLayout {
+                x: min(0px, parent.width - self.preferred-width);
+                width: self.preferred-width;
+                spacing: 4px;
+                for w in root.top: DictWordItem {
+                    text: w.text;
+                    fresh: w.fresh;
+                    settled: w.settled;
+                    index: w.index;
+                    writing: root.writing;
+                    reduce-motion: root.reduce-motion;
+                    ink: root.ink;
+                    ink2: root.ink2;
+                    font-size: root.word-size;
+                }
             }
         }
-    }
-    // the wave across the card on its panel, melting into the dots once
-    // it's writing (the list open: its room)
-    if !done && !(listening && dict.picking): Rectangle {
-        height: 56px;
-        border-radius: panel-r;
-        background: panel;
-        clip: true;
-        // (the middle line it rides on)
         Rectangle {
-            x: 14px;
-            y: (parent.height - 1px) / 2;
-            width: parent.width - 28px;
-            height: 1px;
-            background: tint.with-alpha(0.18);
-            opacity: listening ? 1 : 0;
-        }
-        DictWave {
-            x: 10px;
-            y: 6px;
-            width: parent.width - 20px;
-            height: parent.height - 12px;
-            wave: root.wave;
-            level: root.level;
-            reduce-motion: root.reduce-motion;
-            tint: root.tint;
-            shown: listening;
-            opacity: listening ? 1 : 0;
-            animate opacity { duration: Theme.move-standard; }
-        }
-        DictDots {
-            tint: root.tint;
-            ink2: root.ink2;
-            reduce-motion: root.reduce-motion;
-            shown: writing;
-        }
-    }
-    // the words: the older lines dim, the newest bright; shimmering while
-    // they're corrected
-    if dict.lines.length > 0: Rectangle {
-        height: words.preferred-height;
-        clip: true;
-        words := VerticalLayout {
-            width: parent.width;
-            spacing: 2px;
-            for l[i] in dict.lines: Text {
-                text: l;
-                color: dict.placeholder || i < dict.lines.length - 1 ? ink2 : ink;
-                font-size: 14px;
-                font-weight: done || (!dict.placeholder && i == dict.lines.length - 1) ? 500 : 400;
-                overflow: elide;
-                opacity: writing && !reduce-motion ? 0.6 + 0.25 * (0.5 + 0.5 * Math.sin(animation-tick() / 1400ms * 360deg)) : writing ? 0.7 : 1;
-            }
-        }
-        if writing && !reduce-motion: Rectangle {
-            x: -90px + (parent.width + 180px) * Math.mod(animation-tick() / 1400ms, 1);
-            y: 0;
-            width: 90px;
-            height: parent.height;
-            background: @linear-gradient(90deg, ink.with-alpha(0) 0%, ink.with-alpha(0.2) 50%, ink.with-alpha(0) 100%);
-        }
-    }
-    // the microphone and language (a click: switch them) and the key hint
-    if listening: HorizontalLayout {
-        height: 26px;
-        spacing: 8px;
-        Rectangle {
-            horizontal-stretch: 0;
-            width: min(src.preferred-width + 20px, root.width * 0.58);
-            border-radius: 13px;
-            background: srct.pressed ? ink.with-alpha(0.16) : srct.has-hover || dict.picking ? ink.with-alpha(0.12) : panel;
-            animate background { duration: Theme.hover; }
-            accessible-role: button;
-            accessible-label: "Microphone and language: " + dict.source;
-            accessible-action-default => { root.pick("toggle"); }
-            src := HorizontalLayout {
-                x: 10px;
-                width: parent.width - 20px;
-                spacing: 5px;
-                SymIcon {
-                    text: dict.mic-icon;
-                    font-size: 11px;
-                    color: ink2;
-                }
-                Text {
-                    text: dict.source;
-                    color: ink2;
-                    font-size: Theme.caption;
-                    font-weight: 500;
-                    overflow: elide;
-                    vertical-alignment: center;
-                    accessible-role: none;
-                }
-                SymIcon {
-                    text: dict.picking ? "\u{e13c}" : "\u{e136}"; // caret-up | caret-down
-                    font-size: 10px;
-                    color: ink2;
-                }
-            }
-            srct := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.pick("toggle"); }
-            }
-        }
-        Text {
-            horizontal-stretch: 1;
-            text: dict.hint;
-            color: ink2;
-            font-size: Theme.caption;
-            horizontal-alignment: right;
-            vertical-alignment: center;
-            overflow: elide;
-        }
-    }
-    // the list: microphones, then "Language ›" (its page: each language), and Settings
-    if listening && dict.picking: Flickable {
-        // (six lines at most: the island's surface is 420 px tall; the rest scroll)
-        height: min(rows.length, 6) * 30px;
-        viewport-height: rows.length * 30px;
-        VerticalLayout {
-            width: root.width;
-            for l in rows: Rectangle {
-                height: 30px;
-                border-radius: 9px;
-                property <bool> sel: l.kind == "choice" && l.on;
-                background: Theme.material && sel ? Theme.m3-tertiary-container : lt.pressed ? ink.with-alpha(0.14) : lt.has-hover ? ink.with-alpha(0.08) : transparent;
-                animate background { duration: Theme.hover; }
-                accessible-role: button;
-                accessible-label: l.title;
-                accessible-action-default => { root.pick(l.id); }
-                lt := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => { root.pick(l.id); }
-                }
-                SymIcon {
-                    x: 6px;
-                    width: 20px;
-                    text: l.icon;
-                    fill: true;
-                    font-size: 14px;
-                    color: Theme.material && sel ? Theme.m3-on-tertiary-container : l.kind == "back" || l.kind == "settings" ? ink2 : ink;
-                }
-                Text {
-                    x: 32px;
-                    width: parent.width - 32px - 28px;
-                    height: parent.height;
-                    text: l.title;
-                    color: Theme.material && sel ? Theme.m3-on-tertiary-container : ink;
-                    font-size: 13px;
-                    font-weight: sel ? 600 : 400;
-                    overflow: elide;
-                    vertical-alignment: center;
-                    accessible-role: none;
-                }
-                if sel: SymIcon {
-                    x: parent.width - 24px;
-                    width: 20px;
-                    text: "\u{e182}"; // check
-                    bold: true;
-                    font-size: 13px;
-                    color: Theme.material ? Theme.m3-on-tertiary-container : ink;
-                }
-                if l.kind == "nav": SymIcon {
-                    x: parent.width - 24px;
-                    width: 20px;
-                    text: "\u{e13a}"; // caret-right
-                    font-size: 13px;
-                    color: ink2;
+            height: word-size + 6px;
+            clip: true;
+            accessible-role: text;
+            accessible-label: dict.said;
+            HorizontalLayout {
+                x: min(0px, parent.width - self.preferred-width);
+                width: self.preferred-width;
+                spacing: 4px;
+                for w in root.bottom: DictWordItem {
+                    text: w.text;
+                    fresh: w.fresh;
+                    settled: w.settled;
+                    index: w.index;
+                    writing: root.writing;
+                    reduce-motion: root.reduce-motion;
+                    ink: root.ink;
+                    ink2: root.ink2;
+                    font-size: root.word-size;
                 }
             }
         }
@@ -2622,15 +2514,13 @@ export component Island inherits Rectangle {
     in property <string> cookie;
     // a recording microphone's level, 0..1 (the card's meter)
     in property <float> mic-level;
-    // dictation (menubar dictation.rs): its card, the wave (the card's and
-    // the pill's, 20 a second while listening), the level, the mic and
-    // language list; a pick in it ("toggle": the list opens or closes)
+    // dictation (menubar dictation.rs): its row, the tile's bars and the
+    // pill's (20 a second while listening), and its words in two lines
     in property <DictView> dict;
-    in property <string> dict-wave;
+    in property <[float]> dict-tile;
     in property <[float]> dict-bars;
-    in property <float> dict-level;
-    in property <[LevelRow]> dict-rows;
-    callback dict-pick(string);
+    in property <[DictWord]> dict-top;
+    in property <[DictWord]> dict-bottom;
     // The focus moved (a wheel, a page dot, a new activity): the shown one
     // swaps in, from the side it came from (IslandView's swap, its in half:
     // 260 ms OutBack 1.6; OutCubic with reduce motion)
@@ -3157,18 +3047,17 @@ export component Island inherits Rectangle {
                                 clicked => { root.control(card.kind, i, true); }
                             }
                         }
-                        // Dictation: the wave, the words so far, the time limit (DictCard)
+                        // Dictation: one slim row and two lines of words (DictCard)
                         if card.kind == "dictation": DictCard {
                             card: root.card;
                             dict: root.dict;
-                            wave: root.dict-wave;
-                            level: root.dict-level;
-                            rows: root.dict-rows;
+                            bars: root.dict-tile;
+                            top: root.dict-top;
+                            bottom: root.dict-bottom;
                             reduce-motion: root.reduce-motion;
                             ink: root.ink;
                             ink2: root.ink2;
                             control(i) => { root.control(card.kind, i, true); }
-                            pick(id) => { root.dict-pick(id); }
                         }
                         // Timer, stopwatch, recording (a caption over a big number);
                         // transfer, call, sharing, update (the title over the detail)
@@ -3541,7 +3430,8 @@ export component Island inherits Rectangle {
                             control(k, j) => { root.control(k, j, true); }
                         }
                     }
-                    if !event-inside: IslandStatus {
+                    // (not under dictation: its live activity stays clean)
+                    if !event-inside && !(card-on && card.kind == "dictation"): IslandStatus {
                         s: stats;
                         shown: expanded;
                         delay: act-n * 45ms;

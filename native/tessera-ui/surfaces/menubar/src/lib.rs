@@ -151,8 +151,6 @@ enum M {
     OpenCast,
     /// the recording microphone's level (0..1), read while its card shows
     MicLevel(f32),
-    /// dictation's card: its mic and language line or a line of its list
-    DictPick(String),
     PosTick,
     /// the player's position (s) and volume (None: it has none)
     Position(String, Option<f64>, Option<f64>),
@@ -296,13 +294,16 @@ pub struct Menubar {
     levels: Rows<ui::LevelRow>,
     /// the Recent list's lines (by hid)
     recent_rows: Rows<ui::RecentRow>,
-    /// dictation's card (open by itself, its list) and its wave (dictation.rs)
+    /// dictation's row (open by itself), its levels and its words (dictation.rs)
     dict: dictation::Card,
     dict_wave: dictation::Wave,
-    dict_rows: Rows<ui::LevelRow>,
-    /// the pill's five bars, and the card's lines of words (changed in place)
+    dict_words: dictation::Words,
+    /// the tile's seven bars and the pill's five, and the two lines of
+    /// words (changed in place: a word keeps its element while it stays)
+    dict_tile: Rows<f32>,
     dict_bars: Rows<f32>,
-    dict_lines: Rows<SharedString>,
+    dict_top: Rows<ui::DictWord>,
+    dict_bottom: Rows<ui::DictWord>,
     /// the music card: where the song was (bus, seconds, when read) and the
     /// player's volume (None: it has none, the system's is used), read each
     /// second while an island is open with music (IslandFocusCard's positionChanged)
@@ -947,17 +948,12 @@ impl Menubar {
         if dict_stage != "listening" && !self.dict_wave.is_empty() {
             self.dict_wave.clear();
             self.dict_bars.set(Vec::new());
-            for b in &self.bars {
-                b.ui.set_dict_wave(SharedString::new());
-                b.ui.set_dict_level(0.0);
-            }
+            self.dict_tile.set(Vec::new());
         }
         // (in every activity mode: while it's on, dictation's card is the open island's)
         let dictating = self.island.activities.iter().any(|a| a.kind == "dictation");
         let dict_open = self.dict.open() && dictating;
-        let dict_view = self.dict_view(st, &dc, now_ms);
-        let dict_rows = self.dict_rows_now(st, &dc);
-        self.dict_rows.set_keyed(dict_rows, |l| l.id.clone());
+        let dict_view = self.dict_view(&dc, now_ms);
         let mut bars = std::mem::take(&mut self.bars);
         let mut any_expanded = false;
         for b in &mut bars {
@@ -2098,91 +2094,61 @@ impl Menubar {
         if self.dict.stage != "listening" {
             return;
         }
-        let eased = self.dict_wave.push(raw);
-        let wave = SharedString::from(self.dict_wave.path(dictation::WAVE_N));
-        self.dict_bars.set(dictation::bars(&self.dict_wave));
-        for b in &self.bars {
-            b.ui.set_dict_wave(wave.clone());
-            b.ui.set_dict_level(eased);
-        }
+        self.dict_wave.push(raw);
+        self.dict_tile.set(dictation::bars(&self.dict_wave, dictation::TILE_BARS));
+        self.dict_bars.set(dictation::bars(&self.dict_wave, dictation::PILL_BARS));
         if self.dict.heard(raw) {
             self.refresh(st);
         }
     }
 
-    /// The default microphone's name (its nick, else its description)
-    fn mic_name(st: &State) -> String {
-        let Some(snd) = st.shell.get::<tessera_core::services::audio::Sound>() else { return String::new() };
-        snd.sources.iter().find(|d| d.name == snd.default_source).map(|d| if d.nick.is_empty() { d.description.clone() } else { d.nick.clone() }).unwrap_or_default()
-    }
-
-    /// Dictation's card from the host's state (`dictation`)
-    fn dict_view(&self, st: &State, dc: &serde_json::Value, now_ms: f64) -> ui::DictView {
+    /// Dictation's row and its words, from the host's state (`dictation`):
+    /// the words keep their elements while they stay the same; new and
+    /// corrected ones arrive blurred (fresh), guesses dim until they settle
+    fn dict_view(&mut self, dc: &serde_json::Value, now_ms: f64) -> ui::DictView {
         let s = |k: &str| dc[k].as_str().unwrap_or("").to_string();
         let stage = s("stage");
         let listening = stage == "listening";
         let started = dc["startedAt"].as_f64().unwrap_or(0.0);
         let max = dc["maxSeconds"].as_f64().unwrap_or(120.0);
         let elapsed = if started > 0.0 { ((now_ms - started) / 1000.0).max(0.0) } else { 0.0 };
-        let partial = s("partial");
-        let (words, placeholder) = if stage == "done" {
-            (s("typed"), false)
-        } else if !partial.is_empty() {
-            (partial.clone(), false) // (the card shows its newest lines: dictation::lines)
-        } else if listening {
-            ("Start speaking…".to_string(), true)
-        } else {
-            (String::new(), false)
+        let said = match stage.as_str() {
+            "done" => s("typed"),
+            "listening" | "writing" => s("partial"),
+            _ => String::new(),
         };
-        let mic = Self::mic_name(st);
-        let lang = dictation::language_name(&s("language"));
+        if stage.is_empty() {
+            self.dict_words.clear();
+        } else {
+            self.dict_words.update(&said, now_ms);
+        }
+        let list = self.dict_words.list();
+        let (top, bottom) = dictation::two_lines(list, dictation::LINE_CHARS);
+        let word = |i: usize| {
+            let w = &list[i];
+            ui::DictWord {
+                id: w.id as i32,
+                text: w.text.as_str().into(),
+                fresh: now_ms - w.born < dictation::FRESH_MS,
+                settled: stage == "done" || now_ms - w.born >= dictation::SETTLE_MS,
+                index: i as i32,
+            }
+        };
+        let (top, bottom): (Vec<ui::DictWord>, Vec<ui::DictWord>) = (top.into_iter().map(word).collect(), bottom.into_iter().map(word).collect());
+        self.dict_top.set_keyed(top, |w| w.id);
+        self.dict_bottom.set_keyed(bottom, |w| w.id);
         let left = if listening { dictation::left(elapsed, max) } else { None };
         let secs = elapsed.floor() as i64;
+        let time = format!("{}:{:02}", secs / 60, secs % 60);
         ui::DictView {
             stage: stage.as_str().into(),
-            lines: {
-                self.dict_lines.set(dictation::lines(&words, dictation::LINE_CHARS, dictation::MAX_LINES).into_iter().map(SharedString::from).collect());
-                self.dict_lines.model()
-            },
-            words: words.into(),
-            mic_icon: glyph("microphone").into(),
-            placeholder,
-            hint: dictation::hint(&s("mode")).into(),
-            source: if mic.is_empty() { lang } else { format!("{mic} · {lang}") }.into(),
-            elapsed: format!("{}:{:02}", secs / 60, secs % 60).into(),
+            elapsed_shape: zeros(&time).into(),
+            elapsed: time.into(),
+            status: dictation::status(&stage, left.as_deref()).into(),
             warn: left.is_some(),
-            left: left.unwrap_or_default().into(),
-            ring: island::arc(22.0, 22.0, 20.0, dictation::used(elapsed, max)).into(),
-            picking: self.dict.picking && listening,
+            said: said.into(),
+            hint: dictation::hint(&s("mode")).into(),
         }
-    }
-
-    /// Dictation's list (its mic and language line clicked): the
-    /// microphones, "Language ›", Dictation settings; or the languages
-    fn dict_rows_now(&self, st: &State, dc: &serde_json::Value) -> Vec<ui::LevelRow> {
-        if !self.dict.picking {
-            return Vec::new();
-        }
-        let row = |id: String, kind: &str, title: &str, icon: &str, on: bool| ui::LevelRow { id: id.into(), kind: kind.into(), title: title.into(), icon: if icon.is_empty() { SharedString::new() } else { glyph(icon).into() }, on, ..Default::default() };
-        let mut v = Vec::new();
-        if self.dict.page == "lang" {
-            let set = dc["languageSet"].as_str().unwrap_or("");
-            v.push(row("page:".into(), "back", "Language", "caret-left", false));
-            for (code, label) in dictation::LANGUAGES {
-                v.push(row(format!("lang:{code}"), "choice", *label, "", *code == set));
-            }
-        } else {
-            if let Some(snd) = st.shell.get::<tessera_core::services::audio::Sound>() {
-                for d in &snd.sources {
-                    let title = if d.nick.is_empty() { d.description.clone() } else { d.nick.clone() };
-                    v.push(row(format!("source:{}", d.name), "choice", title.as_str(), "microphone", d.name == snd.default_source));
-                }
-            }
-            let lang = dictation::language_name(dc["language"].as_str().unwrap_or(""));
-            v.push(row("page:lang".into(), "nav", format!("Language · {lang}").as_str(), "translate", false));
-            v.push(row("settings".into(), "settings", "Dictation settings", "gear", false));
-        }
-        v
     }
 
     /// While an island is open with music: read it each second
@@ -2431,25 +2397,6 @@ impl Menubar {
                 for b in &self.bars {
                     b.ui.set_mic_level(v);
                 }
-            }
-            M::DictPick(id) => {
-                use tessera_core::services::audio::{self, Cmd};
-                if id == "toggle" {
-                    self.dict.toggle_pick();
-                } else if let Some(page) = id.strip_prefix("page:") {
-                    self.dict.page = page.to_string();
-                } else if id == "settings" {
-                    // (the host cancels the dictation first, nothing pasted, then opens Settings)
-                    tessera_core::shell::ask("dictation.settings", serde_json::json!([]));
-                    self.dict.picked();
-                } else if let Some(n) = id.strip_prefix("source:") {
-                    audio::send(Cmd::DefaultSource(n.to_string()));
-                    self.dict.picked();
-                } else if let Some(code) = id.strip_prefix("lang:") {
-                    tessera_core::shell::ask("dictation.language", serde_json::json!([code]));
-                    self.dict.picked();
-                }
-                self.refresh(st);
             }
             M::PosTick => self.read_position(st),
             M::Position(bus, pos, vol) => {
@@ -3010,12 +2957,10 @@ impl Part for Menubar {
             let t = to.clone();
             ui.on_level_mute(move |id| t(Box::new(M::LevelMute(id.to_string()))));
         }
-        ui.set_dict_rows(self.dict_rows.model());
+        ui.set_dict_tile(self.dict_tile.model());
         ui.set_dict_bars(self.dict_bars.model());
-        {
-            let t = to.clone();
-            ui.on_dict_pick(move |id| t(Box::new(M::DictPick(id.to_string()))));
-        }
+        ui.set_dict_top(self.dict_top.model());
+        ui.set_dict_bottom(self.dict_bottom.model());
         ui.show().expect("show bar");
         // (files dragged over the bar can be dropped on the shelf item)
         st.accept_drops(&surface, true);

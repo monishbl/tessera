@@ -6,10 +6,10 @@
 // outlined instead of cut out of the fill.)
 
 import { Theme, Icons } from "@tessera/theme.slint";
-import { Spaces, Chip, Island, Live, Ctl, AlertRow, Ring, IslandStats, BatteryGlyph, ActRow, RecentRow, LevelRow, DictView } from "island.slint";
+import { Spaces, Chip, Island, Live, Ctl, AlertRow, Ring, IslandStats, BatteryGlyph, ActRow, RecentRow, LevelRow, DictView, DictWord } from "island.slint";
 import { Symbols, SymIcon } from "@tessera/symbols.slint";
 
-export { Chip, Live, Ctl, AlertRow, Ring, IslandStats, ActRow, RecentRow, LevelRow, DictView, Symbols }
+export { Chip, Live, Ctl, AlertRow, Ring, IslandStats, ActRow, RecentRow, LevelRow, DictView, DictWord, Symbols }
 
 // One item on the right (items.rs: Entry)
 export struct Entry {
@@ -470,13 +470,12 @@ export component Bar inherits Window {
     callback focus-at(int);
     in property <string> cookie;
     in property <float> mic-level;
-    // dictation's card, its waves and level, its mic and language list (Island's)
+    // dictation's row, its bars (the tile's and the pill's) and its two lines of words (Island's)
     in property <DictView> dict;
-    in property <string> dict-wave;
+    in property <[float]> dict-tile;
     in property <[float]> dict-bars;
-    in property <float> dict-level;
-    in property <[LevelRow]> dict-rows;
-    callback dict-pick(string);
+    in property <[DictWord]> dict-top;
+    in property <[DictWord]> dict-bottom;
     // ResourceHover: the popover under a figure (its key) opens or closes, at x (centre), y (top)
     callback res-popover(string, bool, length, length);
 
@@ -779,11 +778,10 @@ export component Bar inherits Window {
         cookie: root.cookie;
         mic-level: root.mic-level;
         dict: root.dict;
-        dict-wave: root.dict-wave;
+        dict-tile: root.dict-tile;
         dict-bars: root.dict-bars;
-        dict-level: root.dict-level;
-        dict-rows: root.dict-rows;
-        dict-pick(id) => { root.dict-pick(id); }
+        dict-top: root.dict-top;
+        dict-bottom: root.dict-bottom;
         live-index: root.live-index;
         alerts: root.alerts;
         pill-text: root.pill-text;

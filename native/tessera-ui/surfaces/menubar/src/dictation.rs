@@ -1,23 +1,22 @@
 //! Dictation's live activity in the island (host/desktop dictation.rs and
-//! dictation_live.rs say what's happening): it springs open into a card when
-//! you start, and shrinks to the pill after 3 s of you speaking (a hover or
-//! a click opens it again); "Writing…" and the typed words open it again.
+//! dictation_live.rs say what's happening), as iOS's recorder in the Dynamic
+//! Island: one slim row (a tile with your voice as bars, the time in bold
+//! with "Listening" / "Writing…" / "Typed" under it, Cancel and Done) and
+//! under it up to two lines of your words, each word arriving blurred and
+//! sharpening into place. It opens by itself as you start and shrinks to the
+//! pill after 3 s of you speaking (a hover or a click opens it again);
+//! "Writing…" and "Typed" open it again.
 //!
-//! The wave: the microphone's level, told 20 times a second, eased (quick up,
-//! slow down) and kept for the last ~3 s; drawn as a soft ribbon that rolls
-//! right to left (island.slint slides it one step between levels), and the
-//! pill's own little one. With Reduce motion the card shows a still level bar.
+//! The level comes 20 times a second; it's eased (quick up, slow down) and
+//! the newest few are the bars (the tile's seven, the pill's five).
 
 use std::collections::VecDeque;
-use std::fmt::Write;
 
-/// The card's wave: its points (one more than shows: it slides in from the right)
-pub const WAVE_N: usize = 64;
-/// The pill's bars (the newest levels, rising and falling)
-pub const MINI_BARS: usize = 5;
-/// The card's words: characters a line, lines at most
-pub const LINE_CHARS: usize = 46;
-pub const MAX_LINES: usize = 3;
+/// Levels kept (the tile's bars are the newest of them)
+pub const KEEP: usize = 16;
+/// The tile's bars and the pill's
+pub const TILE_BARS: usize = 7;
+pub const PILL_BARS: usize = 5;
 /// One level each 50 ms
 pub const FRAME_MS: f64 = 50.0;
 /// A level this high is you speaking (for the shrink)
@@ -26,9 +25,12 @@ pub const SPEECH: f32 = 0.18;
 pub const SHRINK_AFTER_MS: f64 = 3000.0;
 /// The last seconds of the time limit, warned about
 pub const WARN_S: f64 = 10.0;
-/// The ribbon's viewbox: STEP across per point, HEIGHT high
-pub const STEP: f32 = 10.0;
-pub const HEIGHT: f32 = 100.0;
+/// The words: characters a line (a little more than fit: the oldest end of a
+/// line that's too long is cut off on the left), and how long a word is new
+/// (it arrives blurred) or still a guess (dim)
+pub const LINE_CHARS: usize = 50;
+pub const FRESH_MS: f64 = 600.0;
+pub const SETTLE_MS: f64 = 1500.0;
 
 /// The levels heard, newest last
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -45,7 +47,7 @@ impl Wave {
         let k = if raw > self.eased { 0.65 } else { 0.25 };
         self.eased += (raw - self.eased) * k;
         self.hist.push_back(self.eased);
-        while self.hist.len() > WAVE_N {
+        while self.hist.len() > KEEP {
             self.hist.pop_front();
         }
         self.eased
@@ -70,51 +72,15 @@ impl Wave {
         v.extend(self.hist.iter().skip(self.hist.len() - have));
         v
     }
-    /// The ribbon of the newest `n` levels (see `ribbon`)
-    pub fn path(&self, n: usize) -> String {
-        ribbon(&self.tail(n))
-    }
 }
 
-/// Half the ribbon's height at a level, in the viewbox (a hairline when quiet)
-fn half(v: f32) -> f32 {
-    1.5 + (HEIGHT / 2.0 - 4.0 - 1.5) * v.clamp(0.0, 1.0)
+/// `n` bars: the newest levels (newest on the right), each at least a dot's
+/// height (0..1 of the bar's room), so they're visibly alive when you're quiet
+pub fn bars(w: &Wave, n: usize) -> Vec<f32> {
+    w.tail(n).iter().map(|v| (0.22 + 0.78 * v.clamp(0.0, 1.0)).min(1.0)).collect()
 }
 
-/// A soft ribbon through levels, as an SVG path in a viewbox
-/// `(len - 1) * STEP` by `HEIGHT`: mirrored about the middle, its oldest end
-/// tapering in, curved through the midpoints between levels
-pub fn ribbon(levels: &[f32]) -> String {
-    let n = levels.len();
-    if n < 2 {
-        return String::new();
-    }
-    let mid = HEIGHT / 2.0;
-    let taper = 6.0f32;
-    let pts: Vec<(f32, f32)> = levels.iter().enumerate().map(|(i, &v)| (i as f32 * STEP, half(v) * (i as f32 / taper).min(1.0).max(0.25))).collect();
-    let top: Vec<(f32, f32)> = pts.iter().map(|&(x, h)| (x, mid - h)).collect();
-    let bottom: Vec<(f32, f32)> = pts.iter().rev().map(|&(x, h)| (x, mid + h)).collect();
-    let mut s = String::with_capacity(n * 40);
-    let _ = write!(s, "M {:.1} {:.1}", top[0].0, top[0].1);
-    smooth(&mut s, &top);
-    let _ = write!(s, " L {:.1} {:.1}", bottom[0].0, bottom[0].1);
-    smooth(&mut s, &bottom);
-    s.push_str(" Z");
-    s
-}
-
-/// Quadratic curves through the midpoints, ending on the last point
-fn smooth(s: &mut String, pts: &[(f32, f32)]) {
-    for w in pts.windows(2) {
-        let (a, b) = (w[0], w[1]);
-        let _ = write!(s, " Q {:.1} {:.1} {:.1} {:.1}", a.0, a.1, (a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
-    }
-    if let Some(l) = pts.last() {
-        let _ = write!(s, " L {:.1} {:.1}", l.0, l.1);
-    }
-}
-
-/// The card: open or the pill, and the mic and language list
+/// The card: open by itself or the pill
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Card {
     /// the host's stage: listening | writing | done | "" (none)
@@ -122,9 +88,6 @@ pub struct Card {
     session: i64,
     speech_ms: f64,
     open: bool,
-    /// the mic and language list is open; its page ("" the mics, "lang")
-    pub picking: bool,
-    pub page: String,
 }
 
 impl Card {
@@ -142,10 +105,6 @@ impl Card {
                 "writing" | "done" => self.open = true,
                 _ => self.open = false,
             }
-            if stage != "listening" {
-                self.picking = false;
-                self.page.clear();
-            }
             self.stage = stage.to_string();
             self.session = session;
         }
@@ -153,7 +112,7 @@ impl Card {
     }
     /// A level heard (one each FRAME_MS): true when it shrinks to the pill
     pub fn heard(&mut self, level: f32) -> bool {
-        if self.stage != "listening" || !self.open || self.picking {
+        if self.stage != "listening" || !self.open {
             return false;
         }
         if level >= SPEECH {
@@ -169,31 +128,84 @@ impl Card {
     pub fn open(&self) -> bool {
         self.open
     }
-    /// The mic and language line clicked: the list opens (and the card stays
-    /// open while it is) or closes (open for another 3 s of speech)
-    pub fn toggle_pick(&mut self) {
-        if self.stage != "listening" {
-            return;
+}
+
+/// One word shown: kept (its id) while it stays the same word in the same
+/// place, so only new and corrected words arrive (blurred, sharpening)
+#[derive(Clone, Debug, PartialEq)]
+pub struct Word {
+    pub id: u64,
+    pub text: String,
+    /// when it arrived (ms)
+    pub born: f64,
+}
+
+/// The words so far, as drafts come and are corrected
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Words {
+    list: Vec<Word>,
+    next: u64,
+}
+
+impl Words {
+    /// The newest words: each one the same as before (allowing for a word
+    /// put in or left out) keeps its id and its arrival; the others are new
+    pub fn update(&mut self, text: &str, now: f64) {
+        let new: Vec<&str> = text.split_whitespace().collect();
+        let old = std::mem::take(&mut self.list);
+        let mut out = Vec::with_capacity(new.len());
+        let mut j = 0usize;
+        for (i, w) in new.iter().enumerate() {
+            if old.get(j).is_some_and(|o| o.text == *w) {
+                out.push(old[j].clone());
+                j += 1;
+            } else if old.get(j + 1).is_some_and(|o| o.text == *w) {
+                // (the old word here was left out)
+                out.push(old[j + 1].clone());
+                j += 2;
+            } else {
+                self.next += 1;
+                out.push(Word { id: self.next, text: w.to_string(), born: now });
+                // (a word put in: the old one comes next; else this one replaced it)
+                let inserted = new.get(i + 1).is_some_and(|n| old.get(j).is_some_and(|o| o.text == *n));
+                if !inserted {
+                    j += 1;
+                }
+            }
         }
-        self.picking = !self.picking;
-        self.page.clear();
-        self.open = true;
-        self.speech_ms = 0.0;
+        self.list = out;
     }
-    /// Something in the list picked: it closes, the card stays a while
-    pub fn picked(&mut self) {
-        self.picking = false;
-        self.page.clear();
-        self.speech_ms = 0.0;
+    pub fn clear(&mut self) {
+        self.list.clear();
+    }
+    pub fn list(&self) -> &[Word] {
+        &self.list
     }
 }
 
-/// How much of the time limit is gone (the ring), 0..1
-pub fn used(elapsed_s: f64, max_s: f64) -> f32 {
-    if max_s <= 0.0 {
-        return 0.0;
+/// The two lines shown: the newest words that fit one line (the bottom one),
+/// and the words before them that fit another (the top one); the older ones
+/// have scrolled off. Indices into `words`.
+pub fn two_lines(words: &[Word], per_line: usize) -> (Vec<usize>, Vec<usize>) {
+    let mut lines: [Vec<usize>; 2] = [Vec::new(), Vec::new()];
+    let mut line = 1usize;
+    let mut used = 0usize;
+    for i in (0..words.len()).rev() {
+        let n = words[i].text.chars().count();
+        let need = if used == 0 { n } else { used + 1 + n };
+        if need > per_line && used > 0 {
+            if line == 0 {
+                break;
+            }
+            line = 0;
+            used = n;
+        } else {
+            used = need;
+        }
+        lines[line].insert(0, i);
     }
-    (elapsed_s / max_s).clamp(0.0, 1.0) as f32
+    let [top, bottom] = lines;
+    (top, bottom)
 }
 
 /// In the last WARN_S seconds: how many are left ("8 s left")
@@ -202,97 +214,22 @@ pub fn left(elapsed_s: f64, max_s: f64) -> Option<String> {
     (max_s > 0.0 && rest <= WARN_S).then(|| format!("{} s left", rest.ceil() as i64))
 }
 
-/// The key hint for how it was started
+/// The line under the time
+pub fn status(stage: &str, left: Option<&str>) -> String {
+    match stage {
+        "writing" => "Writing…".into(),
+        "done" => "Typed".into(),
+        _ => left.map(str::to_string).unwrap_or_else(|| "Listening".into()),
+    }
+}
+
+/// The key hint for how it was started (the row's accessible description)
 pub fn hint(mode: &str) -> &'static str {
     if mode == "hold" {
         "Release to type · Esc to cancel"
     } else {
         "Press again to stop · Esc to cancel"
     }
-}
-
-/// The newest end of the words so far, about `max` characters (two lines of
-/// the card), from a word's start: "…and send it today"
-pub fn tail_words(text: &str, max: usize) -> String {
-    let text = text.trim();
-    let n = text.chars().count();
-    if n <= max {
-        return text.to_string();
-    }
-    let tail: String = text.chars().skip(n - max).collect();
-    let from_word = match tail.find(char::is_whitespace) {
-        Some(i) if i + 1 < tail.len() => tail[i..].trim_start().to_string(),
-        _ => tail,
-    };
-    format!("…{from_word}")
-}
-
-/// The words as the card's lines (about `per_line` characters each, broken
-/// between words), the newest `max` of them; "…" first when older ones were
-/// left out. The card draws the older lines dim and the newest bright.
-pub fn lines(text: &str, per_line: usize, max: usize) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    for w in text.split_whitespace() {
-        let w: String = if w.chars().count() > per_line { w.chars().take(per_line).collect() } else { w.to_string() };
-        if !cur.is_empty() && cur.chars().count() + 1 + w.chars().count() > per_line {
-            out.push(std::mem::take(&mut cur));
-        }
-        if !cur.is_empty() {
-            cur.push(' ');
-        }
-        cur.push_str(&w);
-    }
-    if !cur.is_empty() {
-        out.push(cur);
-    }
-    if out.len() > max {
-        out.drain(..out.len() - max);
-        if let Some(first) = out.first_mut() {
-            first.insert(0, '…');
-        }
-    }
-    out
-}
-
-/// The pill's five bars: the newest levels, each at least a dot's height
-/// (0..1 of the bar's room), so it's visibly alive even when you're quiet
-pub fn bars(w: &Wave) -> Vec<f32> {
-    w.tail(MINI_BARS).iter().map(|v| (0.22 + 0.78 * v.clamp(0.0, 1.0)).min(1.0)).collect()
-}
-
-/// The languages Settings → Dictation offers (pages/input/dictation.rs's)
-pub const LANGUAGES: &[(&str, &str)] = &[
-    ("", "Same as the system"),
-    ("auto", "Automatic"),
-    ("en", "English"),
-    ("hi", "Hindi"),
-    ("es", "Spanish"),
-    ("fr", "French"),
-    ("de", "German"),
-    ("it", "Italian"),
-    ("pt", "Portuguese"),
-    ("nl", "Dutch"),
-    ("ru", "Russian"),
-    ("ar", "Arabic"),
-    ("zh", "Chinese"),
-    ("ja", "Japanese"),
-    ("ko", "Korean"),
-    ("ta", "Tamil"),
-    ("te", "Telugu"),
-    ("bn", "Bengali"),
-    ("ur", "Urdu"),
-    ("tr", "Turkish"),
-    ("pl", "Polish"),
-    ("uk", "Ukrainian"),
-];
-
-/// A language's name, for the code whisper listens for ("en": English)
-pub fn language_name(code: &str) -> String {
-    if code.is_empty() || code == "auto" {
-        return "Automatic".into();
-    }
-    LANGUAGES.iter().find(|l| l.0 == code).map(|l| l.1.to_string()).unwrap_or_else(|| code.to_uppercase())
 }
 
 #[cfg(test)]
@@ -311,7 +248,7 @@ mod tests {
         for _ in 0..200 {
             w.push(0.5);
         }
-        assert_eq!(w.len(), WAVE_N);
+        assert_eq!(w.len(), KEEP);
         assert!((w.level() - 0.5).abs() < 1e-3);
         w.clear();
         assert!(w.is_empty());
@@ -319,35 +256,18 @@ mod tests {
     }
 
     #[test]
-    fn the_tail_is_padded_with_silence() {
+    fn the_bars_stay_alive() {
         let mut w = Wave::default();
-        w.push(1.0);
-        w.push(1.0);
-        let t = w.tail(5);
-        assert_eq!(t.len(), 5);
-        assert!(t[..3].iter().all(|&x| x == 0.0));
-        assert!(t[4] > t[3]);
-        assert_eq!(w.tail(1).len(), 1);
-    }
-
-    #[test]
-    fn the_ribbon_spans_its_viewbox() {
-        assert_eq!(ribbon(&[0.5]), "");
-        let p = ribbon(&[0.0, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0]);
-        assert!(p.starts_with("M 0.0 "), "{p}");
-        assert!(p.ends_with(" Z"));
-        // its right end at (n-1) steps, never taller than the box
-        assert!(p.contains(&format!(" {:.1} ", 7.0 * STEP)));
-        for n in p.split(' ').filter_map(|t| t.parse::<f32>().ok()) {
-            assert!((0.0..=HEIGHT.max(7.0 * STEP)).contains(&n), "{n}");
+        let quiet = bars(&w, TILE_BARS);
+        assert_eq!(quiet.len(), TILE_BARS);
+        assert!(quiet.iter().all(|&b| b > 0.2 && b < 0.3));
+        for _ in 0..3 {
+            w.push(1.0);
         }
-        // louder is taller: the top edge of a loud wave goes higher
-        let quiet = ribbon(&[0.1; 10]);
-        let loud = ribbon(&[0.9; 10]);
-        let top = |p: &str| p.split(' ').filter_map(|t| t.parse::<f32>().ok()).skip(1).step_by(2).fold(HEIGHT, f32::min);
-        assert!(top(&loud) < top(&quiet));
-        // silence is a hairline, not nothing
-        assert!(top(&ribbon(&[0.0; 10])) < HEIGHT / 2.0);
+        let loud = bars(&w, PILL_BARS);
+        assert_eq!(loud.len(), PILL_BARS);
+        // the newest on the right, taller than the silence before it
+        assert!(loud[4] > loud[1] && loud[4] <= 1.0);
     }
 
     #[test]
@@ -383,86 +303,66 @@ mod tests {
         assert!(c.follow("listening", 2));
     }
 
-    #[test]
-    fn the_list_keeps_it_open() {
-        let mut c = Card::default();
-        c.follow("listening", 1);
-        c.toggle_pick();
-        assert!(c.picking);
-        for _ in 0..200 {
-            assert!(!c.heard(0.9));
-        }
-        c.picked();
-        assert!(!c.picking && c.open());
-        // writing closes the list
-        c.toggle_pick();
-        c.follow("writing", 1);
-        assert!(!c.picking);
-        c.toggle_pick(); // (not while writing)
-        assert!(!c.picking);
+    fn ids(w: &Words) -> Vec<u64> {
+        w.list().iter().map(|x| x.id).collect()
     }
 
     #[test]
-    fn the_time_limit() {
-        assert_eq!(used(30.0, 120.0), 0.25);
-        assert_eq!(used(500.0, 120.0), 1.0);
-        assert_eq!(used(5.0, 0.0), 0.0);
+    fn only_new_and_corrected_words_arrive() {
+        let mut w = Words::default();
+        w.update("send the", 0.0);
+        let first = ids(&w);
+        assert_eq!(first.len(), 2);
+        // more words: the first two stay as they were
+        w.update("send the report", 100.0);
+        assert_eq!(&ids(&w)[..2], &first[..]);
+        assert_eq!(w.list()[2].born, 100.0);
+        // a correction: only that word is new
+        w.update("send a report", 200.0);
+        let now = ids(&w);
+        assert_eq!(now[0], first[0]);
+        assert_ne!(now[1], first[1]);
+        assert_eq!(w.list()[2].born, 100.0);
+        // a word put in, one left out
+        w.update("please send a report", 300.0);
+        assert_eq!(&ids(&w)[1..], &now[..]);
+        w.update("please send report", 400.0);
+        assert_eq!(ids(&w)[2], now[2]);
+        // (the same text twice: nothing new)
+        let same = ids(&w);
+        w.update("please send report", 500.0);
+        assert_eq!(ids(&w), same);
+        w.clear();
+        assert!(w.list().is_empty());
+    }
+
+    fn words(s: &str) -> Vec<Word> {
+        s.split_whitespace().enumerate().map(|(i, t)| Word { id: i as u64, text: t.into(), born: 0.0 }).collect()
+    }
+
+    #[test]
+    fn two_lines_newest_at_the_bottom() {
+        assert_eq!(two_lines(&[], 10), (vec![], vec![]));
+        assert_eq!(two_lines(&words("one two"), 10), (vec![], vec![0, 1]));
+        // "one two" / "three four" (9 a line)
+        assert_eq!(two_lines(&words("one two three four"), 10), (vec![0, 1], vec![2, 3]));
+        // older ones scroll off the top
+        assert_eq!(two_lines(&words("a b c d e f g"), 3), (vec![3, 4], vec![5, 6]));
+        // a word longer than a line still shows (cut on the left)
+        assert_eq!(two_lines(&words("x extraordinarily"), 5), (vec![0], vec![1]));
+    }
+
+    #[test]
+    fn status_and_the_time_limit() {
         assert_eq!(left(100.0, 120.0), None);
         assert_eq!(left(110.0, 120.0).as_deref(), Some("10 s left"));
         assert_eq!(left(111.5, 120.0).as_deref(), Some("9 s left"));
         assert_eq!(left(130.0, 120.0).as_deref(), Some("0 s left"));
-    }
-
-    #[test]
-    fn the_newest_words_show() {
-        assert_eq!(tail_words("  Hello there  ", 90), "Hello there");
-        // (the last 9 are "hree four": from the next whole word)
-        assert_eq!(tail_words("one two three four", 9), "…four");
-        assert_eq!(tail_words("one two three four", 11), "…three four");
-        let long = "word ".repeat(60);
-        let t = tail_words(&long, 90);
-        assert!(t.starts_with("…word") && t.chars().count() <= 91, "{t}");
-        // (one long word: cut, not lost)
-        assert_eq!(tail_words("abcdefghij", 4), "…ghij");
-        // (not on a character's middle)
-        assert_eq!(tail_words("ééééé ü", 3), "…ü");
-    }
-
-    #[test]
-    fn the_words_as_lines_newest_last() {
-        assert!(lines("", 10, 3).is_empty());
-        assert_eq!(lines("one two three", 20, 3), vec!["one two three"]);
-        assert_eq!(lines("one two three four", 9, 3), vec!["one two", "three", "four"]);
-        // older lines left out: "…" before the first one kept
-        assert_eq!(lines("a b c d e f", 3, 2), vec!["…c d", "e f"]);
-        // a word longer than a line is cut to it
-        assert_eq!(lines("abcdefghijkl", 5, 3), vec!["abcde"]);
-        for l in lines(&"word ".repeat(80), LINE_CHARS, MAX_LINES) {
-            assert!(l.chars().count() <= LINE_CHARS + 1);
-        }
-        assert_eq!(lines(&"word ".repeat(80), LINE_CHARS, MAX_LINES).len(), MAX_LINES);
-    }
-
-    #[test]
-    fn the_pill_bars_stay_alive() {
-        let mut w = Wave::default();
-        let quiet = bars(&w);
-        assert_eq!(quiet.len(), MINI_BARS);
-        assert!(quiet.iter().all(|&b| b > 0.2 && b < 0.3));
-        for _ in 0..3 {
-            w.push(1.0);
-        }
-        let loud = bars(&w);
-        // the newest on the right, taller than the silence before it
-        assert!(loud[4] > loud[1] && loud[4] <= 1.0);
-    }
-
-    #[test]
-    fn hints_and_names() {
+        assert_eq!(status("listening", None), "Listening");
+        assert_eq!(status("listening", Some("8 s left")), "8 s left");
+        assert_eq!(status("writing", Some("8 s left")), "Writing…");
+        assert_eq!(status("done", None), "Typed");
         assert_eq!(hint("hold"), "Release to type · Esc to cancel");
         assert_eq!(hint("toggle"), "Press again to stop · Esc to cancel");
-        assert_eq!(language_name("en"), "English");
-        assert_eq!(language_name("auto"), "Automatic");
-        assert_eq!(language_name("xx"), "XX");
     }
 }
