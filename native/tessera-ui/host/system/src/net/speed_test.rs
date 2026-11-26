@@ -24,6 +24,30 @@ pub const OOKLA_INSTALL: &str = "Install Ookla's speedtest with “paru -S ookla
 
 // ── Strings (the QML's format helpers) ─────────────────────────────────────
 
+/// iw's SSID text as the name: every non-ASCII byte is printed as \xNN (and '\' as \\)
+pub fn iw_unescape(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'\\' && i + 3 < b.len() && b[i + 1] == b'x' {
+            if let Some(v) = std::str::from_utf8(&b[i + 2..i + 4]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                out.push(v);
+                i += 4;
+                continue;
+            }
+        }
+        if b[i] == b'\\' && b.get(i + 1) == Some(&b'\\') {
+            out.push(b'\\');
+            i += 2;
+            continue;
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 fn to_fixed(v: f64, d: usize) -> String {
     format!("{v:.d$}")
 }
@@ -62,7 +86,8 @@ pub fn format_bytes(b: f64) -> String {
 /// How a line is for everyday use, from the numbers of a result ({download,
 /// upload, ping, loadedDown, loadedUp}; "" for none)
 pub fn verdict(r: &Value) -> String {
-    if r.is_null() || r["download"].as_f64().unwrap_or(-1.0) < 0.0 {
+    // (no upload figure, an older cancelled run's: no verdict rather than a wrong one)
+    if r.is_null() || r["download"].as_f64().unwrap_or(-1.0) < 0.0 || r["upload"].as_f64().unwrap_or(-1.0) < 0.0 {
         return String::new();
     }
     let f = |k: &str, d: f64| r[k].as_f64().unwrap_or(d);
@@ -125,12 +150,12 @@ pub fn parse_link(text: &str) -> Value {
         if let Some(rest) = s.strip_prefix("nm=") {
             // NetworkManager's view: security, and the rest when iw isn't
             // installed (nmcli -t escapes ":" inside fields)
-            let f: Vec<String> = rest.replace("\\:", "\u{1}").split(':').map(|x| x.replace('\u{1}', ":")).collect();
+            let f = super::network_feed::nm_fields(rest);
             let g = |i: usize| f.get(i).cloned().unwrap_or_default();
             l.insert("security".into(), json!(if g(0) == "--" { String::new() } else { g(0) }));
             nm = Some(json!({"ssid": g(1), "percent": num_prefix(&g(2)).unwrap_or(0.0), "freq": num_prefix(&g(3)), "rate": num_prefix(&g(4))}));
         } else if let Some(v) = s.strip_prefix("SSID: ") {
-            l.insert("ssid".into(), json!(v));
+            l.insert("ssid".into(), json!(iw_unescape(v)));
         } else if let Some(v) = s.strip_prefix("freq: ") {
             if let Some(f) = num_prefix(v) {
                 l.insert("freq".into(), json!(f.round()));
@@ -168,7 +193,8 @@ pub fn parse_link(text: &str) -> Value {
         }
     }
     if let Some(nm) = nm {
-        if l.get("ssid").and_then(Value::as_str).unwrap_or("").is_empty() {
+        // (NetworkManager's name is the network's own; iw's is escaped bytes)
+        if l.get("ssid").and_then(Value::as_str).unwrap_or("").is_empty() || !nm["ssid"].as_str().unwrap_or("").is_empty() {
             l.insert("ssid".into(), nm["ssid"].clone());
         }
         if l.get("freq").and_then(Value::as_f64).unwrap_or(0.0) == 0.0 {
@@ -241,6 +267,8 @@ pub struct SpeedTest {
     client: Value,
     result_url: String,
     error: String,
+    /// Ookla's last error line (it often carries on after one): shown only if no result comes
+    log_error: String,
     finished_at: f64,
     has_ookla: bool,
     has_ookla_py: bool,
@@ -272,6 +300,7 @@ impl Default for SpeedTest {
             client: json!({}),
             result_url: String::new(),
             error: String::new(),
+            log_error: String::new(),
             finished_at: 0.0,
             has_ookla: false,
             has_ookla_py: false,
@@ -362,6 +391,7 @@ impl SpeedTest {
         self.client = json!({});
         self.result_url.clear();
         self.error.clear();
+        self.log_error.clear();
         self.stage = "latency".into();
         self.phase_start = now_ms();
         self.backend_run = backend.into();
@@ -508,14 +538,16 @@ impl SpeedTest {
                 self.finish(h);
             }
             "log" if j["level"] == "error" => {
-                self.error = format!("Ookla's speedtest failed: {}. Try again, or switch to Cloudflare.", j["message"].as_str().unwrap_or("unknown error"));
-                self.stage = "error".into();
+                // (kept aside: it recovers from most, a server that didn't answer)
+                self.log_error = format!("Ookla's speedtest failed: {}. Try again, or switch to Cloudflare.", j["message"].as_str().unwrap_or("unknown error"));
             }
             _ => {}
         }
     }
 
     fn finish(&mut self, h: &Host) {
+        self.error.clear();
+        self.log_error.clear();
         self.live = 0.0;
         self.progress = 1.0;
         self.finished_at = now_ms();
@@ -590,13 +622,14 @@ impl Service for SpeedTest {
             M::Exit(_, cancelled) => {
                 self.watch = None;
                 if cancelled {
-                    self.stage = if self.download >= 0.0 { "done" } else { "idle" }.into();
-                    if self.download >= 0.0 {
-                        self.save(h);
-                    }
+                    // (a cancelled run isn't saved: without its upload it would
+                    // read as a poor line, and become the 'last' result)
+                    self.stage = "idle".into();
+                    self.live = 0.0;
+                    self.progress = 0.0;
                 } else if self.stage != "error" && self.running() {
                     // ended without a result
-                    self.error = "The speed test stopped before it finished. Check your connection and try again.".into();
+                    self.error = if self.log_error.is_empty() { "The speed test stopped before it finished. Check your connection and try again.".into() } else { std::mem::take(&mut self.log_error) };
                     self.stage = "error".into();
                 }
             }
@@ -646,6 +679,10 @@ mod tests {
         let laggy = json!({"download": 50e6, "upload": 10e6, "ping": 30.0, "loadedDown": 400.0});
         assert!(verdict(&laggy).starts_with("Fast, but lag"));
         assert_eq!(verdict(&Value::Null), "");
+        assert_eq!(verdict(&json!({"download": 300e6, "upload": -1.0, "ping": 10.0})), "");
+        assert_eq!(iw_unescape(r"Caf\xc3\xa9"), "Café");
+        assert_eq!(iw_unescape(r"a\\b"), r"a\b");
+        assert_eq!(iw_unescape(r"plain\x"), r"plain\x");
         assert!(verdict(&json!({"download": 1e6, "upload": 1e6, "ping": 10.0})).starts_with("Slow"));
     }
 

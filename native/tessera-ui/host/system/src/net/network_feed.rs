@@ -37,10 +37,29 @@ pub struct Ap {
     pub enterprise: bool,
 }
 
+/// One `nmcli -t` line's fields: split on ':' that aren't escaped, and every
+/// `\x` read as x (nmcli writes ':' as `\:` and '\' as `\\`)
+pub fn nm_fields(line: &str) -> Vec<String> {
+    let mut out = vec![String::new()];
+    let mut it = line.chars();
+    while let Some(c) = it.next() {
+        match c {
+            '\\' => {
+                if let Some(n) = it.next() {
+                    out.last_mut().unwrap().push(n);
+                }
+            }
+            ':' => out.push(String::new()),
+            c => out.last_mut().unwrap().push(c),
+        }
+    }
+    out
+}
+
 pub fn parse_list(text: &str) -> Vec<Ap> {
     let mut out: Vec<Ap> = vec![];
     for l in text.lines() {
-        let f: Vec<String> = l.replace("\\:", "\u{1}").split(':').map(|x| x.replace('\u{1}', ":")).collect();
+        let f = nm_fields(l);
         if f.len() < 4 || f[1].is_empty() {
             continue;
         }
@@ -73,7 +92,7 @@ pub fn parse_list(text: &str) -> Vec<Ap> {
 /// Names of the saved Wi-Fi profiles (`nmcli -t -f NAME,TYPE connection show`)
 pub fn parse_known(text: &str) -> BTreeSet<String> {
     text.lines().filter_map(|l| {
-        let f: Vec<String> = l.replace("\\:", "\u{1}").split(':').map(|x| x.replace('\u{1}', ":")).collect();
+        let f = nm_fields(l);
         (f.len() >= 2 && f[f.len() - 1] == "802-11-wireless").then(|| f[..f.len() - 1].join(":"))
     }).collect()
 }
@@ -578,6 +597,13 @@ impl Service for NetworkFeed {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nmcli_escapes_are_undone_once() {
+        assert_eq!(nm_fields(r"*:Cafe\\Bar:80:WPA2"), vec!["*", r"Cafe\Bar", "80", "WPA2"]);
+        assert_eq!(nm_fields(r" :a\:b:50:"), vec![" ", "a:b", "50", ""]);
+        assert_eq!(parse_list("*:Cafe\\\\Bar:80:WPA2\n")[0].name, r"Cafe\Bar");
+    }
 
     #[test]
     fn active_wifi_connections() {

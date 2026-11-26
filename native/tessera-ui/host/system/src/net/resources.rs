@@ -87,6 +87,8 @@ pub struct Resources {
     gpu_path: String,
     gpu_kind: String,
     gpu_searched: bool,
+    /// nvidia-smi failures in a row (one, a time limit while the card wakes, isn't the end)
+    nvidia_fails: u32,
     gpu_searching: bool,
     gpu: f64,
     gpu_temp: f64,
@@ -286,7 +288,10 @@ impl Service for Resources {
             }
             M::Nvidia(code, t) => {
                 self.nvidia_busy = false;
-                if code != 0 {
+                self.nvidia_fails = if code != 0 { self.nvidia_fails + 1 } else { 0 };
+                if code != 0 && self.nvidia_fails < 3 {
+                    // (a brief failure: the graph stays, the next tick asks again)
+                } else if code != 0 {
                     // nvidia-smi doesn't work (driver/library mismatch after an update):
                     // no GPU graph rather than a failing process every second
                     self.gpu_path.clear();
