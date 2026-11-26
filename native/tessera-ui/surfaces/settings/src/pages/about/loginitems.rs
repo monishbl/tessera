@@ -232,7 +232,8 @@ fn item_row(cx: &mut Ctx, it: &Value, start_at_login: bool) -> Row {
     let icon_name = s(&it["icon"]);
     let stem = file.trim_end_matches(".desktop").to_string();
     let px = if cx.material { 64 } else { 56 };
-    let icon = app_icon(cx, &[icon_name.as_str(), stem.as_str()], px);
+    // (the generic app icon last: an item whose own icon is missing had a blank square)
+    let icon = app_icon(cx, &[icon_name.as_str(), stem.as_str(), "application-x-executable"], px);
     let (f, n) = (file.clone(), name.clone());
     let toggle = cx.on(move |cx, _| {
         let on_now = cx.local.get("about.login.patch").and_then(|p| p[&f]["enabled"].as_bool());
