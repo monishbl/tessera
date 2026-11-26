@@ -433,6 +433,36 @@ MANAGERS = {
 ORDER = list(MANAGERS)
 
 
+def _ver(v):
+    return tuple(int(x) for x in v.lstrip("v").split("."))
+
+
+def nvm_default(versions, default, nd=""):
+    """The one installed version nvm's default alias means, or None: "20"
+    the newest v20.x (not v2.x nor v200), "20.11" the newest v20.11.x, an
+    alias (lts/iron, or one of yours) followed through nvm's alias folder,
+    "node" or "stable" the newest of all"""
+    d = (default or "").strip()
+    for _ in range(5):  # (an alias naming an alias)
+        f = os.path.join(nd, "alias", d) if nd and d and ".." not in d and not d.startswith("/") else ""
+        if f and os.path.isfile(f) and not re.fullmatch(r"v?[0-9.]+", d):
+            try:
+                d = open(f).read().strip()
+            except OSError:
+                break
+        else:
+            break
+    if not versions or not d:
+        return None
+    if d in ("node", "stable"):
+        return max(versions, key=_ver)
+    want = d.lstrip("v")
+    if not re.fullmatch(r"[0-9]+(\.[0-9]+){0,2}", want):
+        return None
+    hits = [v for v in versions if v.lstrip("v") == want or v.lstrip("v").startswith(want + ".")]
+    return max(hits, key=_ver) if hits else None
+
+
 def nvm_dir():
     return os.environ.get("NVM_DIR") or os.path.join(os.path.expanduser("~"), ".nvm")
 
@@ -617,10 +647,11 @@ def inventory_apps(ctx):
         except OSError:
             pass
         vd = os.path.join(nd, "versions", "node")
-        for v in sorted(os.listdir(vd)) if os.path.isdir(vd) else []:
-            if NODE.match(v):
-                is_default = bool(default) and (v == default or v.lstrip("v").startswith(default.lstrip("v")))
-                apps.append(entry("nvm", "node", v, "nvm" + (", the default" if is_default else ""), "nvm install " + v, default=is_default))
+        versions = [v for v in sorted(os.listdir(vd)) if NODE.match(v)] if os.path.isdir(vd) else []
+        chosen = nvm_default(versions, default, nd)
+        for v in versions:
+            is_default = v == chosen
+            apps.append(entry("nvm", "node", v, "nvm" + (", the default" if is_default else ""), "nvm install " + v, default=is_default))
     # rustup: toolchains, their components and targets, the default
     if find_bin("rustup"):
         managers["rustup"] = {"present": True}
@@ -1299,6 +1330,9 @@ def undo(path, ctx):
 
 # ── Apps back ───────────────────────────────────────────────────────────
 FLATHUB = "https://dl.flathub.org/repo/flathub.flatpakrepo"
+# (Flathub's own remotes by name: each to its own .flatpakrepo, which carries
+# its signing key; any other remote is added again only from a .flatpakrepo)
+FLATHUB_REMOTES = {"flathub": FLATHUB, "flathub-beta": "https://dl.flathub.org/beta-repo/flathub-beta.flatpakrepo"}
 
 
 def install_steps(a, remotes_here):
@@ -1312,10 +1346,9 @@ def install_steps(a, remotes_here):
         scope = "--user" if a.get("installation") == "user" else "--system"
         steps = []
         if remote not in remotes_here:
-            url = a.get("url") or ""
-            if remote == "flathub" or "dl.flathub.org" in url:
-                url = FLATHUB
-            if not HTTPS.match(url):
+            url = FLATHUB_REMOTES.get(remote) or a.get("url") or ""
+            # (a repository's address alone has no GPG key: flatpak refuses it)
+            if not HTTPS.match(url) or not url.split("?", 1)[0].endswith(".flatpakrepo"):
                 return None
             steps.append(["flatpak", "remote-add", "--if-not-exists", scope, remote, url])
         steps.append(["flatpak", "install", "-y", "--noninteractive", scope, remote, n])
@@ -1481,6 +1514,11 @@ def main(argv):
     except OSError as err:
         say({"ok": False, "error": "Couldn't %s: %s. Check there's free space and the folder is yours, then try again." % (
             {"create": "save the backup", "restore": "restore it", "undo": "put things back"}.get(a.cmd, "read the backup"), err.strerror or err)})
+    except Exception as err:  # noqa: BLE001
+        # (a damaged or odd file: an answer Settings can show, never a
+        # traceback and "the backup helper didn't answer")
+        say({"ok": False, "error": NOT_BACKUP if a.cmd not in ("inventory", "create") else
+             "Something went wrong (%s). Try again; if it keeps happening, Settings → Health has the details." % type(err).__name__})
     return 1
 
 
