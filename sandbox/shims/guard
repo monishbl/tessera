@@ -15,21 +15,23 @@ args=" $* "
 block=0
 case $name in
     nmcli)
-        for w in connect disconnect down up delete modify add reapply rescan; do
+        for w in connect disconnect down up delete modify add reapply rescan hotspot import clone load export; do
             [[ $args == *" $w "* ]] && block=1
         done
         # (radio / networking alone only read the state; with on/off they change it)
         [[ ($args == *" radio "* || $args == *" networking "*) && ($args == *" on "* || $args == *" off "*) ]] && block=1
+        # (general hostname alone reads it; with a name it sets it)
+        [[ $args == *" general hostname "* && $args != *" general hostname " ]] && block=1
         # (a list with --rescan yes would scan: make it read the cache)
         [[ $args == *" --rescan yes "* || $args == *" --rescan auto "* ]] && block=1 ;;
     bluetoothctl)
         [[ $# -eq 0 ]] && block=1 # interactive: could do anything
-        for w in power connect disconnect pair cancel-pairing remove trust untrust block unblock scan discoverable pairable agent default-agent; do
+        for w in power connect disconnect pair cancel-pairing remove trust untrust block unblock scan discoverable pairable agent default-agent advertise system-alias reset-alias set-alias; do
             [[ $args == *" $w "* ]] && block=1
         done ;;
     rfkill) [[ $args == *" block "* || $args == *" unblock "* || $args == *" toggle "* ]] && block=1 ;;
     powerprofilesctl) [[ $args == *" set "* || $args == *" launch "* ]] && block=1 ;;
-    warp-cli) [[ $args == *" connect "* || $args == *" disconnect "* || $args == *" mode "* ]] && block=1 ;;
+    warp-cli) [[ $args == *" connect "* || $args == *" disconnect "* || $args == *" mode "* || $args == *" set-mode "* || $args == *" registration new "* || $args == *" registration delete "* || $args == *" registration license "* ]] && block=1 ;;
     *) block=1 ;;
 esac
 if (( block )); then
