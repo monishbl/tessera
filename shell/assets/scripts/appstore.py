@@ -328,6 +328,15 @@ def aur_apps(results, repo_pkgs):
     } for r in best.values()]
 
 
+FLATPAK_ID = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+){2,}")
+
+
+def flatpak_id_ok(app_id):
+    """A real Flathub app id (reverse-DNS, three parts or more): nothing that
+    flatpak would read as an option ("--all") goes on its command line"""
+    return isinstance(app_id, str) and len(app_id) <= 255 and FLATPAK_ID.fullmatch(app_id) is not None
+
+
 def flathub_app(h):
     return {
         "key": "flathub:" + h["app_id"], "source": "flathub", "pkg": h["app_id"],
@@ -389,6 +398,7 @@ class Store:
         self.flatpaks = installed_flatpaks()
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         self.cache = {}  # (query, sources, limit) -> (when, apps)
+        self.desktop_cache = {}  # (pkg, version) -> its desktop files
 
     def refresh(self):
         self.pkgs = installed_packages()
@@ -438,7 +448,7 @@ class Store:
         aur = self.pool.submit(self.remote, lambda: self.fetch(f"{AUR}/search/{urllib.parse.quote(q)}?by=name-desc").get("results", []), []) if "aur" in sources else None
         flat = self.pool.submit(self.remote, lambda: self.fetch(f"{FLATHUB}/search", {"query": q}).get("hits", []), [])
         repo = [dict(a) for a in self.repo if match_score(a, q) > 0]
-        hits = [h for h in flat.result() if h.get("type") in (None, "desktop-application", "desktop") and h.get("app_id")]
+        hits = [h for h in flat.result() if h.get("type") in (None, "desktop-application", "desktop") and flatpak_id_ok(h.get("app_id"))]
         flathub = [flathub_app(h) for h in hits]
         # (an AUR search still looks at the others: for the same app's logo)
         aur_found = borrow_icons(aur_apps(aur.result(), self.repo_pkgs), repo + flathub) if aur else []
@@ -450,7 +460,7 @@ class Store:
         flat = []
         for c in cats:
             flat += self.remote(lambda c=c: self.fetch(f"{FLATHUB}/collection/category/{c}?page=1&per_page=24").get("hits", []), [])
-        apps = [flathub_app(h) for h in flat if h.get("app_id")]
+        apps = [flathub_app(h) for h in flat if flatpak_id_ok(h.get("app_id"))]
         repo = sorted((dict(a) for a in self.repo if set(a["categories"]) & set(cats)), key=lambda a: a["name"].lower())
         # (the repos' copy of an app first, then Flathub's popular ones)
         seen = {norm(a["name"]) for a in repo}
@@ -464,7 +474,7 @@ class Store:
         if picks:
             sections.append({"title": "Essentials", "apps": self.finish(picks)})
         if popular:
-            sections.append({"title": "Popular on Flathub", "apps": self.finish([flathub_app(h) for h in popular if h.get("app_id")])})
+            sections.append({"title": "Popular on Flathub", "apps": self.finish([flathub_app(h) for h in popular if flatpak_id_ok(h.get("app_id"))])})
         return sections
 
     def installed(self):
@@ -476,11 +486,12 @@ class Store:
             foreign = subprocess.run(["pacman", "-Qm"], capture_output=True, text=True, timeout=10).stdout.splitlines()
         except (OSError, subprocess.TimeoutExpired):
             foreign = []
-        for line in foreign:
-            pkg, _, version = line.partition(" ")
-            if pkg in known:
-                continue
-            desktops = [d for d in glob.glob(f"/usr/share/applications/{pkg}*.desktop")]
+        foreign = [(pkg, version) for pkg, _, version in (line.partition(" ") for line in foreign) if pkg and pkg not in known]
+        owned = self.owned_desktops(foreign)
+        for pkg, version in foreign:
+            # (the desktop files the package itself owns: a name that merely
+            # starts the same, "code-features" or "go", is another app's)
+            desktops = owned.get((pkg, version), [])
             if desktops:
                 apps.append({"key": "aur:" + pkg, "source": "aur", "pkg": pkg, "name": pkg, "summary": "", "icon": "",
                              "iconName": os.path.basename(desktops[0])[:-8], "categories": [], "version": version,
@@ -489,6 +500,26 @@ class Store:
             apps.append({"key": "flathub:" + app_id, "source": "flathub", "pkg": app_id, "name": app_id.split(".")[-1],
                          "summary": "", "icon": "", "iconName": app_id, "categories": [], "desktop": app_id + ".desktop"})
         return self.finish(sorted(apps, key=lambda a: (a.get("name") or a["pkg"]).lower()))
+
+    def owned_desktops(self, pkgs):
+        """{(pkg, version): [its /usr/share/applications/*.desktop]}, asked of
+        pacman once for the packages not seen at that version before"""
+        cache = self.desktop_cache
+        missing = [p for p in pkgs if p not in cache]
+        if missing:
+            found = {name: [] for name, _ in missing}
+            try:
+                out = subprocess.run(["pacman", "-Ql", "--", *[name for name, _ in missing]], capture_output=True, text=True, timeout=20).stdout
+            except (OSError, subprocess.TimeoutExpired):
+                out = None
+            if out is not None:
+                for line in out.splitlines():
+                    name, _, path = line.partition(" ")
+                    if name in found and path.startswith("/usr/share/applications/") and path.endswith(".desktop") and "/" not in path[len("/usr/share/applications/"):]:
+                        found[name].append(path)
+                for p in missing:
+                    cache[p] = sorted(found[p[0]])
+        return {p: cache.get(p, []) for p in pkgs}
 
     def status(self):
         return {"catalogue": bool(self.repo), "flatpak": bool(shutil.which("flatpak")),
@@ -519,10 +550,14 @@ class Requests:
 
 def latest_only(reqs):
     """Searches typed past while one was being answered: only the newest is
-    worth doing (the others are answered as stale, so nothing waits on them)"""
+    worth doing (the others are answered as stale, so nothing waits on them).
+    Per asker: Spotlight's look-ups stream, the store window's don't, and
+    one's newest must not make the other's stale"""
     searches = [r for r in reqs if isinstance(r, dict) and r.get("op") == "search"]
-    stale = searches[:-1]
-    return [r for r in reqs if r not in stale], stale
+    stale = []
+    for stream in (False, True):
+        stale += [r for r in searches if bool(r.get("stream")) == stream][:-1]
+    return [r for r in reqs if not any(r is s for s in stale)], [r for r in searches if any(r is s for s in stale)]
 
 
 def serve():

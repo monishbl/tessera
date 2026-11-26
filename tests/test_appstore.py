@@ -5,6 +5,7 @@ import importlib.util
 import os
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "shell/assets/scripts/appstore.py"
@@ -168,6 +169,29 @@ class AppStore(unittest.TestCase):
         todo, stale = self.m.latest_only(reqs)
         self.assertEqual([r["id"] for r in todo], [2, 3])
         self.assertEqual([r["id"] for r in stale], [1])
+
+    def test_spotlight_and_the_window_do_not_stale_each_other(self):
+        reqs = [{"id": 1, "op": "search", "q": "ob"}, {"id": 2, "op": "search", "q": "ob", "stream": True},
+                {"id": 3, "op": "search", "q": "obs", "stream": True}]
+        todo, stale = self.m.latest_only(reqs)
+        self.assertEqual([r["id"] for r in todo], [1, 3])
+        self.assertEqual([r["id"] for r in stale], [2])
+
+    def test_flathub_ids_that_look_like_options_are_dropped(self):
+        self.assertTrue(self.m.flatpak_id_ok("org.mozilla.firefox"))
+        self.assertTrue(self.m.flatpak_id_ok("app.zen_browser.zen"))
+        for bad in ("--all", "-x.y.z", "org.mozilla", "org..x", "a b.c.d", None, "x" * 300 + ".a.b"):
+            self.assertFalse(self.m.flatpak_id_ok(bad), bad)
+
+    def test_installed_aur_apps_by_the_desktop_files_they_own(self):
+        store = self.m.Store.__new__(self.m.Store)
+        store.desktop_cache = {}
+        out = "go /usr/bin/go\ncode /usr/share/applications/code.desktop\ncode /usr/share/applications/sub/x.desktop\n"
+        with mock.patch.object(self.m.subprocess, "run", return_value=mock.Mock(stdout=out)) as run:
+            got = store.owned_desktops([("go", "1"), ("code", "2")])
+            self.assertEqual(got, {("go", "1"): [], ("code", "2"): ["/usr/share/applications/code.desktop"]})
+            store.owned_desktops([("go", "1")])
+            self.assertEqual(run.call_count, 1)
 
 
 if __name__ == "__main__":

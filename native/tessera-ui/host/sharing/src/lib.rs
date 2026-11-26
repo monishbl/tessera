@@ -955,7 +955,7 @@ impl Service for Sharing {
                 "phone-pair" => self.phone_pair_exit(gen),
                 "fast-watch" => self.fast_exit(h, gen),
                 "airplay" => self.air_child_exit(gen, code, &err),
-                "appstore" => self.store_exit(gen),
+                "appstore" => self.store_exit(h, gen),
                 "pointer" => self.shelf_pointer_exit(gen),
                 "copies" => self.copies_exit(gen),
                 _ => {}
