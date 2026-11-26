@@ -280,9 +280,82 @@ pub fn js(v: &Value, k: &str) -> String {
     v[k].as_str().unwrap_or("").to_string()
 }
 
+// ── Changes not handed to a helper yet ──────────────────────────────────
+// A change waits in a service's queue while the helper runs (a sync can take
+// a minute), and a deletion waits out its Undo: shown as made all that time,
+// so they're kept on disk too and sent at the next start (audit #321: they
+// lived only in memory; quitting, a crash or logging out lost them).
+
+/// A queued change, or a deletion waiting out its Undo (`at`: when it was hidden)
+#[derive(Clone, Debug, PartialEq)]
+pub struct Waiting {
+    pub request: Value,
+    pub key: String,
+    pub at: Option<i64>,
+}
+
+/// Where a service keeps its waiting changes ($XDG_STATE_HOME/tessera/<name>-waiting.json)
+pub fn waiting_path(name: &str) -> std::path::PathBuf {
+    tessera_core::util::state_dir().join(format!("{name}-waiting.json"))
+}
+
+/// The waiting changes whose command is one of `changes` (never a sign-in,
+/// which can carry a password) written down, or the file removed when none
+pub fn save_waiting(path: &std::path::Path, items: &[Waiting], changes: &[&str]) {
+    let kept: Vec<Value> = items
+        .iter()
+        .filter(|w| changes.contains(&js(&w.request, "cmd").as_str()))
+        .map(|w| json!({"request": w.request, "key": w.key, "at": w.at}))
+        .collect();
+    if kept.is_empty() {
+        let _ = std::fs::remove_file(path);
+        return;
+    }
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let text = Value::Array(kept).to_string();
+    // (owner-only: titles and notes of events and tasks)
+    let new = !path.exists();
+    if tessera_core::util::write_atomic(path, text.as_bytes()).is_ok() && new {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+}
+
+/// The waiting changes written at the last run (read once, at start)
+pub fn load_waiting(path: &std::path::Path, changes: &[&str]) -> Vec<Waiting> {
+    let Ok(text) = std::fs::read_to_string(path) else { return vec![] };
+    let Ok(Value::Array(items)) = serde_json::from_str::<Value>(&text) else { return vec![] };
+    items
+        .into_iter()
+        .filter(|w| w["request"].is_object() && changes.contains(&js(&w["request"], "cmd").as_str()))
+        .map(|w| Waiting { request: w["request"].clone(), key: js(&w, "key"), at: w["at"].as_i64() })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn waiting_changes_survive_a_restart_but_never_a_sign_in() {
+        let dir = std::env::temp_dir().join(format!("tessera-waiting-{}", std::process::id()));
+        let path = dir.join("svc-waiting.json");
+        let changes = ["taskAdd", "eventDelete"];
+        let items = vec![
+            Waiting { request: json!({"cmd": "taskAdd", "listId": "l"}), key: "k1".into(), at: None },
+            Waiting { request: json!({"cmd": "connectICloud", "password": "secret"}), key: String::new(), at: None },
+            Waiting { request: json!({"cmd": "eventDelete", "id": "e"}), key: "k2".into(), at: Some(5) },
+        ];
+        save_waiting(&path, &items, &changes);
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("secret"));
+        let back = load_waiting(&path, &changes);
+        assert_eq!(back, vec![items[0].clone(), items[2].clone()]);
+        save_waiting(&path, &[], &changes);
+        assert!(!path.exists());
+        assert!(load_waiting(&path, &changes).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     #[test]
     fn root_messages_lose_their_prefix() {
         assert_eq!(root_message("tessera-root: nope\n"), "nope");

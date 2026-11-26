@@ -90,7 +90,10 @@ running in between.
 ### Changes made offline, and conflicts
 
 Every change to an event or task is written to an outbox on disk before it's
-sent, and shows as made right away, including after a restart. If Google
+sent, and shows as made right away, including after a restart (a change
+waiting its turn while a sync runs, or a deletion waiting out its Undo, is
+kept on disk too, in `$XDG_STATE_HOME/tessera/google-waiting.json`, and sent
+at the next start). If Google
 can't be reached, it waits: Tessera tries again after 30 seconds, then 2, 8 and
 30 minutes, and before every sync. Changes go out in the order you made them.
 

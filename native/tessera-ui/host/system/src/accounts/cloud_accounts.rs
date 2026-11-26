@@ -51,6 +51,10 @@ struct Deleting {
     at: i64,
 }
 
+/// The changes kept on disk while they wait (common::save_waiting); never a
+/// sign-in, which carries the app-specific password
+const CHANGES: [&str; 6] = ["eventInsert", "eventPatch", "eventDelete", "taskInsert", "taskPatch", "taskDelete"];
+
 #[derive(Default)]
 pub struct CloudAccounts {
     tx: Option<Tx>,
@@ -210,13 +214,44 @@ impl CloudAccounts {
     // ── The helper: one request at a time ───────────────────────────────
     fn send(&mut self, request: Value, key: &str) {
         self.queue.push(Req { request, key: key.to_string() });
+        self.persist();
         self.pump();
+    }
+    /// The queue and the deletions waiting out their Undo, on disk
+    /// (not from unit tests: they'd write the real state folder)
+    fn persist(&self) {
+        if cfg!(test) {
+            return;
+        }
+        let mut items: Vec<Waiting> = self.queue.iter().map(|q| Waiting { request: q.request.clone(), key: q.key.clone(), at: None }).collect();
+        items.extend(self.deleting.iter().map(|d| Waiting { request: d.request.clone(), key: d.key.clone(), at: Some(d.at) }));
+        save_waiting(&waiting_path("cloud-accounts"), &items, &CHANGES);
+    }
+    /// What waited when the last run ended: queued again (a deletion hidden
+    /// again, sent when its Undo time is up)
+    fn restore_waiting(&mut self) {
+        if cfg!(test) {
+            return;
+        }
+        for w in load_waiting(&waiting_path("cloud-accounts"), &CHANGES) {
+            match w.at {
+                Some(at) => {
+                    if !w.key.is_empty() {
+                        self.set_override(&w.key, Some(json!({"hidden": true})));
+                    }
+                    self.deleting.push(Deleting { key: w.key, request: w.request, at });
+                }
+                None => self.queue.push(Req { request: w.request, key: w.key }),
+            }
+        }
+        self.persist();
     }
     fn pump(&mut self) {
         if self.running || self.queue.is_empty() {
             return;
         }
         let next = self.queue.remove(0);
+        self.persist();
         let request = self.fresh_etag(next.request);
         self.current = Some(Req { request: request.clone(), key: next.key });
         self.running = true;
@@ -248,10 +283,12 @@ impl CloudAccounts {
         self.set_override(key, Some(json!({"hidden": true})));
         self.deleting.retain(|d| d.key != key);
         self.deleting.push(Deleting { key: key.to_string(), request, at: now_ms() });
+        self.persist();
     }
     fn unhide(&mut self, key: &str) {
         self.deleting.retain(|d| d.key != key);
         self.set_override(key, None);
+        self.persist();
     }
     fn freshen(&mut self, age: i64) {
         if self.arr("accounts").is_empty() || self.running || !self.queue.is_empty() || locked() {
@@ -295,6 +332,7 @@ impl Service for CloudAccounts {
         self.state = json!({});
         self.read_cfg(h.cfg());
         self.send(json!({"cmd": "status"}), "");
+        self.restore_waiting();
         let t2 = tx.clone();
         self.start_t.start(slint::TimerMode::SingleShot, Duration::from_secs(20), move || t2.send(M::Start));
         self.publish();

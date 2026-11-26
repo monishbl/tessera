@@ -53,6 +53,9 @@ struct Deleting {
     at: i64,
 }
 
+/// The changes kept on disk while they wait (common::save_waiting)
+const CHANGES: [&str; 7] = ["taskAdd", "taskUpdate", "taskDelete", "eventAdd", "eventInsert", "eventPatch", "eventDelete"];
+
 pub struct Google {
     tx: Option<Tx>,
     account: Value,
@@ -294,14 +297,45 @@ impl Google {
             }
         }
         self.queue.push(Queued { request, key: key.to_string(), also });
+        self.persist();
         self.pump();
         true
+    }
+    /// The queue and the deletions waiting out their Undo, on disk
+    /// (not from unit tests: they'd write the real state folder)
+    fn persist(&self) {
+        if cfg!(test) {
+            return;
+        }
+        let mut items: Vec<Waiting> = self.queue.iter().map(|q| Waiting { request: q.request.clone(), key: q.key.clone(), at: None }).collect();
+        items.extend(self.deleting.iter().map(|d| Waiting { request: d.request.clone(), key: d.key.clone(), at: Some(d.at) }));
+        save_waiting(&waiting_path("google"), &items, &CHANGES);
+    }
+    /// What waited when the last run ended: queued again (a deletion hidden
+    /// again, sent when its Undo time is up)
+    fn restore_waiting(&mut self) {
+        if cfg!(test) {
+            return;
+        }
+        for w in load_waiting(&waiting_path("google"), &CHANGES) {
+            match w.at {
+                Some(at) => {
+                    if !w.key.is_empty() {
+                        self.set_override(&w.key, Some(json!({"hidden": true})));
+                    }
+                    self.deleting.push(Deleting { key: w.key, request: w.request, at });
+                }
+                None => self.queue.push(Queued { request: w.request, key: w.key, also: vec![] }),
+            }
+        }
+        self.persist();
     }
     fn pump(&mut self) {
         if self.running || self.queue.is_empty() {
             return;
         }
         let next = self.queue.remove(0);
+        self.persist();
         let req = next.request.clone();
         self.current = Some(next);
         self.start_request(req);
@@ -319,10 +353,12 @@ impl Google {
         self.set_override(key, Some(json!({"hidden": true})));
         self.deleting.retain(|d| d.key != key);
         self.deleting.push(Deleting { key: key.to_string(), request, at: now_ms() });
+        self.persist();
     }
     fn unhide(&mut self, key: &str) {
         self.deleting.retain(|d| d.key != key);
         self.set_override(key, None);
+        self.persist();
     }
     fn resend_interval(&self) -> Duration {
         let ms = (30_000f64 * 4f64.powi(self.send_failures.saturating_sub(1) as i32)).min(30.0 * 60_000.0);
@@ -475,6 +511,7 @@ impl Service for Google {
         self.tx = Some(tx.clone());
         self.read_cfg(h.cfg());
         self.run(json!({"cmd": "status"}));
+        self.restore_waiting();
         self.publish();
     }
     fn config_changed(&mut self, h: &mut Host) {
