@@ -93,7 +93,6 @@ case "${1:-help}" in
             echo "Native helpers rebuilt; restart the shell to use them (tessera repair)"
         fi
         "$SRC/tools/build-native.sh" && echo "tessera-ui and tessera-events are up to date; restart the shell to use new ones (tessera repair)"
-        pacman -Q hyprland 2>/dev/null | awk '{print $2}' | sed 's/-[0-9.]*$//; s/^[0-9]*://; s/\.r[0-9].*//' >"$DATA/tessera/tessera-glass.built-for"
         ;;
     repair)
         exec "$CONFIG/quickshell/tessera/assets/scripts/repair-shell.sh"
