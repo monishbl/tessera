@@ -68,7 +68,7 @@ b("sidebar-o", "$MOD + O", "Shell", "AI and tools sidebar (alternative)", shell(
 b("notifications", "$MOD + N", "Shell", "Notification Center", shell("notificationCenter"))
 b("control-center", "$MOD + ALT + C", "Shell", "Quick Settings", shell("controlCenter"))
 b("settings", "$MOD + I", "Shell", "Settings", shell("settings"))
-b("settings-comma", "$MOD + Comma", "Shell", "Settings (macOS key)", shell("settings"))
+b("settings-comma", "$MOD + Comma", "Shell", "Settings (second key)", shell("settings"))
 b("cheatsheet", "$MOD + Slash", "Shell", "Keyboard shortcuts", shell("cheatsheet"))
 b("keyboard", "$MOD + K", "Shell", "On-screen keyboard", shell("keyboard"))
 b("overlay", "$MOD + G", "Shell", "Overlay widgets", shell("overlay"))
@@ -171,7 +171,7 @@ b("scratchpad-send", "$MOD + ALT + S", "Workspace", "Send window to the scratchp
 
 # ── Session ────────────────────────────────────────────────────────────────
 b("lock", "$MOD + L", "Session", "Lock", shell("lock"))
-b("lock-mac", "$MOD + CTRL + Q", "Session", "Lock (macOS key)", shell("lock"))
+b("lock-mac", "$MOD + CTRL + Q", "Session", "Lock (second key)", shell("lock"))
 b("sleep", "$MOD + SHIFT + L", "Session", "Sleep", {"exec": "systemctl suspend || loginctl suspend"}, locked=True)
 b("poweroff", "CTRL + SHIFT + ALT + $MOD + Delete", "Session", "Shut down", {"exec": "systemctl poweroff || loginctl poweroff"})
 

@@ -171,7 +171,7 @@
   "id": "settings-comma",
   "keys": "$MOD + Comma",
   "group": "Shell",
-  "label": "Settings (macOS key)",
+  "label": "Settings (second key)",
   "action": {
    "shell": "settings"
   }
@@ -1399,7 +1399,7 @@
   "id": "lock-mac",
   "keys": "$MOD + CTRL + Q",
   "group": "Session",
-  "label": "Lock (macOS key)",
+  "label": "Lock (second key)",
   "action": {
    "shell": "lock"
   }

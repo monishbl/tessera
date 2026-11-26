@@ -534,7 +534,7 @@ pub fn windows(cx: &mut Ctx, p: &mut Page) {
                 "Hover the handle at the top of the focused window for close, minimize and zoom. With the compositor glass plugin it's drawn on every window and never lags behind."
             }
         } else if deco == "titlebars" {
-            "macOS-style title bars with traffic lights. Double-click a title bar to zoom."
+            "Title bars with red, yellow and green window buttons. Double-click a title bar to zoom."
         } else {
             "Borderless windows; use the Window menu for window actions."
         })

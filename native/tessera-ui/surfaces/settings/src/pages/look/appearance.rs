@@ -157,7 +157,7 @@ pub fn appearance(cx: &mut Ctx, p: &mut Page) {
     };
     let shown = if style == "look" { if cx.material { "themed" } else { "clear" } } else { style.as_str() };
     let detail = match style.as_str() {
-        "look" => if cx.material { "Your apps' own logos in your colours, like Android's themed icons" } else { "Your apps' own logos, frosted, like iOS's clear icons" },
+        "look" => if cx.material { "Your apps' own logos in your colours, like Android's themed icons" } else { "Your apps' own logos, frosted and clear" },
         "themed" => if cx.material { "In your colours, like Android's themed icons" } else { "" },
         "dark" => "Dark backgrounds, colourful artwork",
         "clear" => "Frosted and colourless",
@@ -289,7 +289,7 @@ pub fn appearance(cx: &mut Ctx, p: &mut Page) {
         .row(Row::new("Reduce transparency").visible(!cx.material).detail("Solid surfaces instead of glass, whatever the material above").switch(reduce, rt))
         .row(Row::new("Reduce motion").detail("Fades instead of movement: island alerts, connecting a display (windows move without gliding) and the morning screen").switch(motion, rm))
         .row(Row::new("Text contrast")
-            .detail(["Light secondary text, as on macOS", "Easier-to-read text, icons and controls", "The clearest text, icons and controls"][level])
+            .detail(["Light secondary text, the standard look", "Easier-to-read text, icons and controls", "The clearest text, icons and controls"][level])
             .segmented(&["Standard", "Higher", "Maximum"], level as i32, cp)
             .width(280.0));
 
@@ -506,9 +506,9 @@ pub fn glass(cx: &mut Ctx, p: &mut Page) {
             .row(material)
             .row(Row::new("Motion")
                 .detail(match motion.as_str() {
-                    "expressive" => "More pull toward the pointer and bouncier springs, like iOS 26",
+                    "expressive" => "More pull toward the pointer and bouncier springs",
                     "snappy" => "Quick springs that settle at once, with little pull: the quickest feel",
-                    _ => "Springs with a touch of overshoot, like macOS",
+                    _ => "Springs with a touch of overshoot",
                 })
                 .segmented(&["Subtle", "Snappy", "Expressive"], idx(&mv, &motion), mp)
                 .width(300.0))
