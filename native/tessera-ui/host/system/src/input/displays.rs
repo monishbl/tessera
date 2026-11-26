@@ -73,7 +73,7 @@ fn is_builtin(name: &str) -> bool {
 pub fn nice_name(m: &Value) -> String {
     let name = m["name"].as_str().unwrap_or("");
     if is_builtin(name) {
-        return "Built-in Display".into();
+        return "Built-in display".into();
     }
     let model = m["model"].as_str().unwrap_or("").trim();
     let make = m["make"].as_str().unwrap_or("").trim();
@@ -1117,7 +1117,7 @@ mod tests {
         assert_eq!(m.len(), 2);
         assert_eq!(m[1]["text"], "2560x1440@144.00");
         assert_eq!(rate_text(59.9512), "59.95");
-        assert_eq!(nice_name(&json!({"name": "eDP-1"})), "Built-in Display");
+        assert_eq!(nice_name(&json!({"name": "eDP-1"})), "Built-in display");
         assert_eq!(nice_name(&json!({"name": "DP-1", "make": "Dell", "model": "U2720Q"})), "Dell U2720Q");
         assert_eq!(nice_name(&json!({"name": "DP-1", "make": "Dell", "model": "Dell U27"})), "Dell U27");
         assert_eq!(nice_name(&json!({"name": "DP-2", "model": "0x0000"})), "DP-2");

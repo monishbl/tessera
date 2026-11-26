@@ -469,7 +469,7 @@ mod tests {
     fn a_display_is_named_once() {
         assert_eq!(heading("WAYLAND-1", "WAYLAND-1"), "WAYLAND-1");
         assert_eq!(heading("", "DP-1"), "DP-1");
-        assert_eq!(heading("Built-in Display", "eDP-1"), "Built-in Display (eDP-1)");
+        assert_eq!(heading("Built-in display", "eDP-1"), "Built-in display (eDP-1)");
         assert_eq!(tile_text("WAYLAND-1", 1920.0, 1080.0), "WAYLAND-1 · 1920 × 1080");
         assert_eq!(tile_text("", 1920.0, 1080.0), "1920 × 1080");
         assert_eq!(tile_text("DP-1", 0.0, 0.0), "DP-1");
