@@ -55,7 +55,8 @@ pub struct Updates {
 
 impl Default for Updates {
     fn default() -> Self {
-        let run = std::env::var("XDG_RUNTIME_DIR").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/tmp".into());
+        // (sysupdate.py's own fallback: /run/user/<uid>)
+        let run = crate::util::runtime_dir().to_string_lossy().into_owned();
         Self {
             count: 0,
             list: vec![],

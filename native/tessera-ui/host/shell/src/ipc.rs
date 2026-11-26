@@ -13,7 +13,7 @@
 
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -80,12 +80,23 @@ fn serve(mut s: UnixStream) {
     let _ = s.write_all(reply.as_bytes());
 }
 
+/// The socket's folder is safe to listen in: ours, and nobody else may write in it
+pub fn dir_is_private(owner: u32, mode: u32, me: u32) -> bool {
+    owner == me && mode & 0o022 == 0
+}
+
 /// Listen on the socket (a stale one from a shell that died is replaced; one
 /// that answers is not: a second shell would fight the first)
 pub fn listen(path: &Path) -> std::io::Result<UnixListener> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
         let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        // (a folder someone else made, or one others may write in, could have the
+        // socket swapped under us: refuse it rather than answer through it)
+        let m = std::fs::metadata(dir)?;
+        if !dir_is_private(m.uid(), m.permissions().mode(), unsafe { libc::getuid() }) {
+            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, format!("{} isn't private to this user", dir.display())));
+        }
     }
     if path.exists() {
         if UnixStream::connect(path).is_ok() {
@@ -113,9 +124,19 @@ impl Service for IpcServer {
             Ok(l) => {
                 self.path = Some(path);
                 std::thread::spawn(move || {
+                    use std::sync::atomic::{AtomicUsize, Ordering};
+                    static OPEN: AtomicUsize = AtomicUsize::new(0);
                     for s in l.incoming().flatten() {
-                        // (a thread each: a slow client never holds up the next)
-                        std::thread::spawn(move || serve(s));
+                        // (a thread each: a slow client never holds up the next;
+                        // at most 32 at once, so a runaway script can't pile them up)
+                        if OPEN.fetch_add(1, Ordering::SeqCst) >= 32 {
+                            OPEN.fetch_sub(1, Ordering::SeqCst);
+                            continue;
+                        }
+                        std::thread::spawn(move || {
+                            serve(s);
+                            OPEN.fetch_sub(1, Ordering::SeqCst);
+                        });
                     }
                 });
             }
@@ -182,6 +203,14 @@ pub fn stale(e: &std::io::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_socket_folder_must_be_ours_and_closed() {
+        assert!(dir_is_private(1000, 0o40700, 1000));
+        assert!(!dir_is_private(1001, 0o40700, 1000));
+        assert!(!dir_is_private(1000, 0o40777, 1000));
+        assert!(!dir_is_private(1000, 0o41777, 1000));
+    }
 
     #[test]
     fn requests_are_json_arrays_with_or_without_call() {
