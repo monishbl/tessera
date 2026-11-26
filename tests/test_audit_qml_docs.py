@@ -1,7 +1,11 @@
 """The 20 Nov audit's fixes in the QML fallback, the scripts that restart a
 shell, the website and the docs: each rule as it stands now, so it can't
 quietly come undone. Nothing here touches the real system: files are read
-from the checkout, and site/build.sh's scrub runs on a throwaway copy."""
+from the checkout, and site/build.sh's scrub runs on a throwaway copy.
+
+SOURCE-TEXT checks (audit #676): Most tests here assert on the text of the files,
+not on what they do. A backstop against a rule quietly coming undone; a
+green run here is not behaviour coverage."""
 import json
 import re
 import subprocess

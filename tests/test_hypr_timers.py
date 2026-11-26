@@ -1,7 +1,12 @@
 """Hyprland 0.57 crashes (CEventLoopManager::scheduleRecalc) when a timer is
 made while it first reads its config: at login, and on every
 `Hyprland --verify-config` the installer runs (22 Nov). Every hl.timer in the
-shipped config is made by a start() that runs once Hyprland is running."""
+shipped config is made by a start() that runs once Hyprland is running.
+
+SOURCE-TEXT checks (audit #676): These assert on the text of the files,
+not on what they do. A backstop against a rule quietly coming undone; a
+green run here is not behaviour coverage.
+(tests/test_findpointer_timers.py runs one file under a stub `hl`.)"""
 import re
 import unittest
 from pathlib import Path
