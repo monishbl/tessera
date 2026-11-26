@@ -52,6 +52,7 @@ CAL = 'https://www.googleapis.com/calendar/v3'
 TASK = 'https://tasks.googleapis.com/tasks/v1'
 WINDOW = timedelta(days=366)  # events kept: a year either side of now
 SKEW = 60  # seconds asked for again on each task sync (clocks differ)
+REFETCH = 30 * 86400  # (s) a calendar read in full again after this: its window moves on
 
 
 class HttpError(RuntimeError):
@@ -95,6 +96,33 @@ def atomic(path, value):
             os.unlink(tmp)
 
 
+LOCK_WAIT = 120  # (s) a change waits this long for another run (a sync takes a minute)
+
+
+def hold_lock(directory, wait):
+    """One run at a time over these files (the QML fallback shell beside
+    tessera-ui, a run after a crash-restart while a sync still runs): an
+    flock held until the process ends. `wait` 0: don't wait (a status only
+    reads). Returns the descriptor, or None when it couldn't be had in time
+    (the run goes on as before)."""
+    import fcntl
+    try:
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        fd = os.open(os.path.join(directory, ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError:
+        return None
+    end = time.monotonic() + wait
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except OSError:
+            if time.monotonic() >= end:
+                os.close(fd)
+                return None
+            time.sleep(0.2)
+
+
 def read(path):
     try:
         return json.loads(path.read_text())
@@ -131,6 +159,14 @@ def request(url, data=None, token=None, method=None, form=False, headers=None):
         raise HttpError(hints.get(exc.code, 'Google request failed (HTTP %s).' % exc.code), exc.code) from None
     except (urllib.error.URLError, TimeoutError, ConnectionError):
         raise Offline("Can't reach Google. Check your connection; changes are kept and sent when you're back online.") from None
+
+
+def google_time(value):
+    """An RFC 3339 time from Google ("2026-11-26T10:00:00.000Z") in seconds, or None."""
+    try:
+        return datetime.fromisoformat(str(value).replace('Z', '+00:00')).timestamp()
+    except (TypeError, ValueError):
+        return None
 
 
 def quote(value):
@@ -258,9 +294,11 @@ class Account:
     def linked(self):
         return self.tokens.exists() or bool(self.goa)
 
-    def status(self):
+    def status(self, accounts=None):
+        """`accounts`: Online Accounts' list when the caller has it already
+        (each GetManagedObjects can wait 30 s on a stuck goa-daemon)"""
         connection = read(self.connection)
-        accounts = self.broker.accounts()
+        accounts = self.broker.accounts() if accounts is None else accounts
         identity = (connection.get('identity') or read(self.meta).get('identity')
                     or next((a['name'] for a in accounts if a['id'] == connection.get('account')), ''))
         return dict(read(self.cache), connected=self.tokens.exists() or bool(connection.get('account')),
@@ -400,6 +438,10 @@ class Account:
             full, cache = True, {}
         position = {} if full else read(self.position)
         cal_pos = dict(position.get('calendars', {}))
+        # (when each calendar was last read in full: its sync token only
+        # reports changes, so the far end of the year-long window would stay
+        # where it was at the first sync)
+        cal_full = dict(position.get('calendarsFull', {}))
         task_pos = dict(position.get('tasks', {}))
 
         # Calendars (the list itself has a sync token too)
@@ -428,6 +470,9 @@ class Account:
         for cid in list(cal_pos):
             if cid not in calendars:
                 del cal_pos[cid]
+        for cid in list(cal_full):
+            if cid not in calendars:
+                del cal_full[cid]
         for cid, calendar in calendars.items():
             path = CAL + '/calendars/' + urllib.parse.quote(cid, safe='') + '/events'
             # (an existing event keeps its colour and calendar name current)
@@ -435,6 +480,8 @@ class Account:
                 if key[0] == cid:
                     e.update(color=calendar['color'], calendar=calendar['title'], writable=calendar.get('writable', True))
             since = cal_pos.get(cid, '')
+            if since and started - cal_full.get(cid, 0) > REFETCH:
+                since = ''
             rows = None
             # (one calendar Google won't give, a subscription whose owner
             # deleted it or took access back: its events as last seen and its
@@ -451,6 +498,7 @@ class Account:
                                                         timeMin=(now - WINDOW).isoformat(), timeMax=(now + WINDOW).isoformat())
                     for key in [k for k in events if k[0] == cid]:
                         del events[key]
+                    cal_full[cid] = started
             except HttpError as exc:
                 if exc.code not in (403, 404):
                     raise
@@ -489,16 +537,23 @@ class Account:
             else:
                 for key in [k for k in tasks if k[0] == lid]:
                     del tasks[key]
+            latest = None
             for row in self.pages(TASK + '/lists/' + urllib.parse.quote(lid, safe='') + '/tasks', token, **params):
                 if row.get('deleted'):
                     tasks.pop((lid, row['id']), None)
                 else:
                     tasks[(lid, row['id'])] = self.task(row, listing)
-            task_pos[lid] = started
+                seen = google_time(row.get('updated'))
+                if seen is not None and (latest is None or seen > latest):
+                    latest = seen
+            # (by Google's clock, the newest change seen: with this computer's
+            # clock running ahead, a change made on a phone in between was
+            # never asked for again)
+            task_pos[lid] = latest - 1 if latest is not None else (since or started)
         # Publish only once everything succeeded: a failed sync keeps the last complete one
         atomic(self.cache, dict(events=kept_events, tasks=list(tasks.values()), taskLists=lists,
                                 calendars=list(calendars.values()), syncedAt=started * 1000))
-        atomic(self.position, dict(calendarList=list_token, calendars=cal_pos, tasks=task_pos))
+        atomic(self.position, dict(calendarList=list_token, calendars=cal_pos, calendarsFull=cal_full, tasks=task_pos))
         # An account signed in with your own client has no name from Online
         # Accounts: its primary calendar's id is its address
         primary = next((c['id'] for c in calendars.values() if c.get('primary')), '')
@@ -510,9 +565,20 @@ class Account:
 
     # One change from the outbox, sent as it is. A deletion of something
     # already gone counts as done; an edit of something gone is a conflict.
-    def send(self, op):
+    def send(self, op, retry=False):
+        """`retry`: this change was sent before, and no answer came"""
         token = self.access()
         cmd = op['cmd']
+        if cmd == 'taskAdd' and retry and op.get('tried'):
+            # (Tasks takes no id of ours: a task with this title made since
+            # the first try is that try's)
+            title = op.get('patch', {}).get('text')
+            since = datetime.fromtimestamp(op['tried'] - SKEW, timezone.utc).isoformat()
+            rows = self.pages(TASK + '/lists/' + quote(op['listId']) + '/tasks', token, maxResults=100,
+                              showCompleted='true', showHidden='true', updatedMin=since)
+            made = next((r for r in rows if not r.get('deleted') and title and r.get('title') == title), None)
+            if made:
+                return made
         match = {'If-Match': op['etag']} if op.get('etag') else None
         if cmd.startswith('task'):
             url = TASK + '/lists/' + quote(op['listId']) + '/tasks'
@@ -539,6 +605,8 @@ class Account:
             elif cmd != 'eventInsert':
                 url += '/' + quote(op['id'])
             body = None if cmd == 'eventDelete' else event_body(fields, patching=cmd == 'eventPatch')
+            if cmd == 'eventInsert' and op.get('eventId'):
+                body['id'] = op['eventId']
             method = {'eventInsert': 'POST', 'eventPatch': 'PATCH', 'eventDelete': 'DELETE'}[cmd]
         try:
             reply = request(url, body, token=token, method=method, headers=match if cmd not in ('taskAdd', 'eventInsert') else None)
@@ -547,6 +615,8 @@ class Account:
             if not cmd.endswith('Delete'):
                 raise Conflict('It was deleted on Google.') from None
         except HttpError as exc:
+            if exc.code == 409 and cmd == 'eventInsert' and op.get('eventId'):
+                return {}  # (made by an earlier try whose answer never came)
             if exc.code != 404:
                 raise
             if not cmd.endswith('Delete'):
@@ -610,8 +680,16 @@ class Account:
             self.sync(full=bool(req.get('full')))
         elif cmd == 'disconnect':
             tokens = read(self.tokens)
+            told = True
             if tokens.get('refresh_token'):
-                request('https://oauth2.googleapis.com/revoke', {'token': tokens['refresh_token']}, form=True)
+                # (offline, or a token Google already revoked or expired: signed
+                # out here all the same; it stayed connected with no way out)
+                try:
+                    request('https://oauth2.googleapis.com/revoke', {'token': tokens['refresh_token']}, form=True)
+                except (Offline, HttpError, OSError):
+                    told = False
+            if not told:
+                emit({'error': "Signed out on this computer, but Google couldn't be told. You can remove Tessera's access at myaccount.google.com/permissions."})
             self.tokens.unlink(missing_ok=True)
             self.connection.unlink(missing_ok=True)
             self.cache.unlink(missing_ok=True)
@@ -709,6 +787,10 @@ class Hub:
         cmd = req['cmd']
         op = {k: v for k, v in req.items() if k in ('cmd', 'listId', 'id', 'calendarId', 'patch', 'fields', 'text', 'etag', 'title', 'series', 'was')}
         op.update(account=aid, op=secrets.token_hex(4), at=time.time())
+        if cmd == 'eventInsert':
+            # (the event's id chosen here: sent again after a timeout whose
+            # first try did reach Google, it's a 409, not a second event)
+            op['eventId'] = secrets.token_hex(16)
         # Checked now, not when it's sent: a mistake shows while you're there
         if cmd.startswith('event') and cmd != 'eventAdd':
             calendar = account.calendar(op['calendarId'])
@@ -811,9 +893,15 @@ class Hub:
                 except (RuntimeError, HttpError) as exc:
                     blocked[account.id] = exc
                     continue
+                retry = bool(op.get('tried'))
+                if op['cmd'] in ('taskAdd', 'eventInsert', 'eventAdd') and not retry:
+                    # (marked before it goes: a try cut off by a timeout or the
+                    # helper being stopped is known as one when sent again)
+                    op = ops[0] = dict(op, tried=time.time())
+                    self.save(kept + ops)
                 try:
                     op = self.current(op)
-                    reply = account.send(op)
+                    reply = account.send(op, retry)
                     if op.get('id') and not op.get('series') and op['cmd'] in ('taskUpdate', 'eventPatch'):
                         self.replaced(op, reply)
                     sent = True
@@ -859,8 +947,9 @@ class Hub:
         result = dict(accounts=[], events=[], tasks=[], calendars=[], taskLists=[])
         used = set()
         oldest = None
+        goa = self.broker.accounts()
         for account in self.accounts():
-            st = account.status()
+            st = account.status(goa)
             aid = account.id
             used.add(account.goa)
             result['accounts'].append(dict(id=aid, identity=st.get('identity', ''), backend=st.get('backend', ''),
@@ -871,7 +960,6 @@ class Hub:
             oldest = synced if oldest is None else min(oldest, synced)
         ops = self.ops()
         self.overlay(result, ops)
-        goa = self.broker.accounts()
         first = result['accounts'][0] if result['accounts'] else {}
         result.update(connected=bool(result['accounts']), configured=self.client.exists(),
                       identity=first.get('identity', ''), backend=first.get('backend', ''),
@@ -1028,9 +1116,18 @@ class Hub:
 
 
 def main():
+    line = sys.stdin.readline()
+    try:
+        req = json.loads(line)
+    except ValueError:
+        req = None
+    cmd = req.get('cmd', 'status') if isinstance(req, dict) else 'status'
+    _lock = hold_lock(sys.argv[1], 0 if cmd == 'status' else LOCK_WAIT)  # noqa: F841 (held until exit)
     account = Hub(sys.argv[1])
     try:
-        emit({'data': account.run(json.loads(sys.stdin.readline()))})
+        if not isinstance(req, dict):
+            raise ValueError('Tessera sent a request the Google helper couldn\'t read.')
+        emit({'data': account.run(req)})
     except (OSError, ValueError, KeyError, RuntimeError) as exc:
         # Do not print paths or raw network errors that could carry account details.
         message = str(exc) if isinstance(exc, (ValueError, RuntimeError)) else 'Google connection or local storage failed. Check your connection and try again.'

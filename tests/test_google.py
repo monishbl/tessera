@@ -309,6 +309,51 @@ class GoogleTests(unittest.TestCase):
         self.assertFalse(self.account.tokens.exists())
         self.assertFalse(self.account.cache.exists())
 
+    def test_disconnect_offline_or_already_revoked_still_signs_out_here(self):
+        # (audit #335: it stayed connected, with "Remove local data" the only way out)
+        for failure in (google.Offline("Can't reach Google."), google.HttpError('Invalid request.', 400)):
+            google.atomic(self.account.tokens, {'refresh_token': 'refresh'})
+            google.atomic(self.account.cache, {'tasks': [1]})
+            out = io.StringIO()
+            with patch.object(google, 'request', side_effect=failure), contextlib.redirect_stdout(out):
+                self.account.run({'cmd': 'disconnect'})
+            self.assertFalse(self.account.tokens.exists())
+            self.assertFalse(self.account.cache.exists())
+            self.assertIn("Google couldn't be told", out.getvalue())
+
+    def test_an_event_sent_again_after_a_lost_answer_is_not_made_twice(self):
+        # (audit #300: the event's id is chosen here; Google answers 409 to the second try)
+        op = {'cmd': 'eventInsert', 'calendarId': 'primary', 'fields': {'title': 'Dentist', 'start': 0, 'end': 3600000}, 'eventId': 'abc123'}
+        with patch.object(self.account, 'access', return_value='token'), patch.object(google, 'request', return_value={'id': 'abc123'}) as req:
+            self.account.send(op)
+            self.assertEqual(req.call_args.args[1]['id'], 'abc123')
+        with patch.object(self.account, 'access', return_value='token'), \
+                patch.object(google, 'request', side_effect=google.HttpError('The item changed on Google.', 409)):
+            self.assertEqual(self.account.send(op, retry=True), {})
+
+    def test_one_run_at_a_time_over_the_files(self):
+        # (audit #328: a second writer silently undid the first's outbox)
+        d = os.path.join(self.temp.name, 'locked')
+        first = google.hold_lock(d, 0)
+        self.assertIsNotNone(first)
+        self.assertIsNone(google.hold_lock(d, 0))
+        self.assertIsNone(google.hold_lock(d, 0.3))
+        os.close(first)
+        again = google.hold_lock(d, 0)
+        self.assertIsNotNone(again)
+        os.close(again)
+
+    def test_status_asks_online_accounts_once(self):
+        # (audit #332: once per account plus once more, each up to 30 s)
+        root = Path(self.temp.name) / 'hub'
+        hub = google.Hub(root)
+        for _ in range(3):
+            account = hub.fresh()
+            google.atomic(account.connection, {'account': '/goa/x'})
+        with patch.object(hub.broker, 'accounts', return_value=[]) as goa:
+            hub.status()
+        self.assertEqual(goa.call_count, 1)
+
     def test_a_task_change_refreshes_only_its_list(self):
         google.atomic(self.account.cache, {'events': ['kept'], 'taskLists': [{'id': 'a', 'title': 'A'}, {'id': 'b', 'title': 'B'}],
                                            'tasks': [{'id': '1', 'listId': 'a'}, {'id': '2', 'listId': 'b'}]})
@@ -400,6 +445,37 @@ class IncrementalSync(unittest.TestCase):
         position = google.read(self.account.position)
         self.assertEqual(position['calendars'], {})
         self.assertEqual(position['tasks'], {})
+
+    def test_a_calendar_is_read_in_full_again_after_a_month(self):
+        # (audit #333: the window's far end stayed where the first sync put it)
+        position = google.read(self.account.position)
+        self.assertIn('work', position['calendarsFull'])
+        position['calendarsFull']['work'] = google.time.time() - 31 * 86400
+        google.atomic(self.account.position, position)
+        with self.api.serving(self.account):
+            self.account.sync()
+        self.assertTrue(any('timeMin=' in u for u in self.api.requests if '/events' in u))
+        self.api.requests.clear()
+        with self.api.serving(self.account):
+            self.account.sync()
+        self.assertFalse(any('timeMin=' in u for u in self.api.requests if '/events' in u))
+
+    def test_the_tasks_position_follows_googles_clock(self):
+        # (audit #334: this computer's clock ahead of Google's lost changes)
+        self.api.tasks['inbox']['t3'] = {'id': 't3', 'title': 'Eggs', 'updated': '2026-01-01T10:00:00.000Z', '_updated': google.time.time()}
+        with self.api.serving(self.account):
+            self.account.sync()
+        expected = google.google_time('2026-01-01T10:00:00.000Z') - 1
+        self.assertEqual(google.read(self.account.position)['tasks']['inbox'], expected)
+
+    def test_a_task_sent_again_after_a_lost_answer_is_found_not_made_twice(self):
+        now = google.time.time()
+        self.api.tasks['inbox']['t9'] = {'id': 't9', 'title': 'Bread', 'status': 'needsAction', '_updated': now}
+        op = {'cmd': 'taskAdd', 'listId': 'inbox', 'patch': {'text': 'Bread'}, 'tried': now - 5}
+        with self.api.serving(self.account):
+            made = self.account.send(op, retry=True)
+        self.assertEqual(made['id'], 't9')
+        self.assertEqual(len(self.api.tasks['inbox']), 2)  # (no second Bread)
 
     def test_sync_position_is_private_and_a_failed_sync_keeps_it(self):
         self.assertEqual(self.account.position.stat().st_mode & 0o777, 0o600)

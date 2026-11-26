@@ -247,6 +247,7 @@ class FakeGraph(http.server.ThreadingHTTPServer):
                               "start": {"dateTime": "2026-12-25T00:00:00.0000000", "timeZone": "UTC"},
                               "end": {"dateTime": "2026-12-26T00:00:00.0000000", "timeZone": "UTC"}, "isAllDay": True}}
         self.busy = 0  # (answers 503 to this many calls first)
+        self.busy_patch = 0  # (answers 503 to this many PATCHes first)
         self.tasks = {"t1": {"id": "t1", "title": "Buy milk", "status": "notStarted",
                              "dueDateTime": {"dateTime": "2026-11-03T00:00:00.0000000", "timeZone": "UTC"}}}
 
@@ -275,6 +276,9 @@ class GraphHandler(http.server.BaseHTTPRequestHandler):
             return self.reply(401, {"error": {}})
         if srv.busy > 0:
             srv.busy -= 1
+            return self.reply(503, {"error": {}})
+        if method == "PATCH" and srv.busy_patch > 0:
+            srv.busy_patch -= 1
             return self.reply(503, {"error": {}})
         p = path.path.replace("/v1.0", "")
         if p == "/me":
@@ -684,6 +688,39 @@ class MicrosoftOffline(unittest.TestCase):
         self.assertEqual(post[3]["title"], "Call mum")
         self.assertEqual(patch[1], "/v1.0/me/todo/lists/l1/tasks/t2")  # (the server's id, not the pending one)
         self.assertEqual(patch[3], {"status": "completed"})
+
+    def test_a_new_items_change_keeps_its_id_when_the_network_goes_between_them(self):
+        # (audit #329: the pending id's server id lived only in one flush; the edit was dropped unsaid)
+        self.point(f"http://127.0.0.1:{free_port()}/v1.0")
+        s = run({"cmd": "taskInsert", "account": self.acc, "listId": "l1", "fields": {"text": "Call mum"}}, self.env)
+        pending = next(t for t in s["tasks"] if t["text"] == "Call mum")
+        s = run({"cmd": "taskPatch", "account": self.acc, "listId": "l1", "id": pending["id"], "fields": {"done": True}}, self.env)
+        self.assertEqual(s["outbox"], 2)
+        self.point(self.graph)
+        self.srv.busy_patch = 1
+        s = run({"cmd": "flush"}, self.env)
+        self.assertEqual(s["outbox"], 1)
+        outbox = json.loads(Path(self.state.name, "tessera/cloud/outbox.json").read_text())
+        self.assertEqual(outbox[0]["id"], "t2")
+        s = run({"cmd": "flush"}, self.env)
+        self.assertEqual(s["outbox"], 0)
+        self.assertEqual(self.srv.tasks["t2"]["status"], "completed")
+
+    def test_a_new_event_carries_its_transaction_id(self):
+        # (audit #300: a POST whose answer was lost made a second event when sent again)
+        s = run({"cmd": "eventInsert", "account": self.acc, "calendarId": "cal1",
+                 "fields": {"title": "Dentist", "start": 1793000000000, "end": 1793003600000}}, self.env)
+        self.assertNotIn("error", s)
+        post = next(c for c in self.srv.calls if c[0] == "POST" and c[1].endswith("/events"))
+        self.assertTrue(post[3]["transactionId"].startswith("pending-"))
+
+    def test_a_damaged_accounts_file_is_kept_aside_not_emptied(self):
+        # (audit #327: read as empty, then [] written over it)
+        self.accounts.write_text('[{"id": "x", "provi')
+        s = run({"cmd": "flush"}, self.env)
+        self.assertIn("damaged", s["error"])
+        self.assertEqual(Path(str(self.accounts) + ".bad").read_text(), '[{"id": "x", "provi')
+        self.assertFalse(self.accounts.exists())
 
     def test_a_busy_server_keeps_the_change_waiting(self):
         # (audit #2: a 503 dropped every waiting change)

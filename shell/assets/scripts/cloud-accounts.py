@@ -51,6 +51,7 @@ import re
 import secrets as pysecrets
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -113,21 +114,70 @@ def state_dir():
     return d
 
 
+# files found damaged this run (unreadable JSON: a power cut mid-write)
+DAMAGED = []
+
+
 def read(name, default):
+    path = os.path.join(state_dir(), name)
     try:
-        with open(os.path.join(state_dir(), name)) as f:
+        with open(path) as f:
             return json.load(f)
-    except (OSError, ValueError):
+    except OSError:
+        return default
+    except ValueError:
+        # (kept aside, not taken for empty: an empty list saved over a
+        # damaged accounts.json left the keyring's password and the cache
+        # with no account to remove them from)
+        try:
+            os.replace(path, path + ".bad")
+        except OSError:
+            pass
+        DAMAGED.append(name)
         return default
 
 
 def write(name, value):
     path = os.path.join(state_dir(), name)
-    tmp = path + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump(value, f)
-    os.replace(tmp, path)
+    # (a temporary name of its own, 0600: two writers never publish each
+    # other's half-written file; flushed to disk before it's renamed over)
+    fd, tmp = tempfile.mkstemp(dir=state_dir(), prefix="." + name + ".")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(value, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+LOCK_WAIT = 120  # (s) a change waits this long for another run (a sync takes a minute)
+
+
+def hold_lock(directory, wait):
+    """One run at a time over these files (the QML fallback shell beside
+    tessera-ui, a run after a crash-restart while a sync still runs): an
+    flock held until the process ends. `wait` 0: don't wait (a status only
+    reads). Returns the descriptor, or None when it couldn't be had in time
+    (the run goes on as before)."""
+    import fcntl
+    try:
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        fd = os.open(os.path.join(directory, ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError:
+        return None
+    end = time.monotonic() + wait
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except OSError:
+            if time.monotonic() >= end:
+                os.close(fd)
+                return None
+            time.sleep(0.2)
 
 
 # ── Secrets: the keyring (secret-tool) ──────────────────────────────────
@@ -720,6 +770,8 @@ class Dav:
         elif etag:
             h["If-Match"] = etag
         st, headers, _ = http("PUT", url, ics, h, auth=self.auth)
+        if st == 412 and create:
+            return ""  # (already there: an earlier try whose answer was lost)
         if st == 412:
             raise Failed("This event changed on your other devices. It shows as it is there now.")
         _check(st, "the change")
@@ -880,7 +932,9 @@ class Hub:
         self.passwords = {}
 
     def save(self):
-        write("accounts.json", self.accounts)
+        # (not over a damaged list this run: kept aside as accounts.json.bad)
+        if "accounts.json" not in DAMAGED or self.accounts:
+            write("accounts.json", self.accounts)
         write("cache.json", self.cache)
         write("outbox.json", self.outbox)
 
@@ -1065,7 +1119,10 @@ class Hub:
             self.dav(a).put(url, new_ics(uid, f), create=True)
             new = url
         else:
-            new = self.graph(a).call("POST", f"/me/calendars/{urllib.parse.quote(req['calendarId'])}/events", graph_event_body(f)).get("id", "")
+            body = graph_event_body(f)
+            if req.get("pending"):
+                body["transactionId"] = req["pending"]
+            new = self.graph(a).call("POST", f"/me/calendars/{urllib.parse.quote(req['calendarId'])}/events", body).get("id", "")
         if refresh:
             self.refreshed(a)
         return new
@@ -1157,10 +1214,24 @@ class Hub:
     # shown as made (the cache changed here), and sent first at the next
     # sync or "flush". A new item gets its id now: iCloud's link is chosen
     # here anyway; Microsoft's is "pending-…" until the server gives one.
+    def named(self, req):
+        """A new item with the id it keeps on every try: iCloud's link
+        (a PUT with If-None-Match: a second one answers 412, already there),
+        Microsoft's transactionId (events; a repeat POST isn't made twice)."""
+        req = dict(req)
+        a = self.account(req["account"])
+        uid = str(uuid.uuid4()).upper()
+        if a["provider"] == "icloud":
+            req["uid"] = uid
+            req["href"] = req["calendarId" if req["cmd"] == "eventInsert" else "listId"].rstrip("/") + "/" + uid + ".ics"
+        else:
+            req["pending"] = "pending-" + uid
+        return req
+
     def keep(self, req):
         req = dict(req)
         a = self.account(req["account"])
-        if req["cmd"] in ("eventInsert", "taskInsert"):
+        if req["cmd"] in ("eventInsert", "taskInsert") and not (req.get("href") or req.get("pending")):
             uid = str(uuid.uuid4()).upper()
             if a["provider"] == "icloud":
                 req["uid"] = uid
@@ -1246,6 +1317,11 @@ class Hub:
                 new = self.change(r, refresh=False)
                 if r.get("pending") and new:
                     ids[r["pending"]] = new
+                    # (and into the changes still waiting, saved below: the
+                    # network gone before them, the next run still knows it)
+                    for later in self.outbox[1:]:
+                        if later.get("id") == r["pending"]:
+                            later["id"] = new
                 touched.add(r["account"])
             except (Offline, Later) as e:
                 offline = e
@@ -1285,6 +1361,9 @@ def main():
         req = json.loads(sys.stdin.readline() or "{}")
     except ValueError:
         req = {}
+    if not isinstance(req, dict):
+        req = {}
+    _lock = hold_lock(state_dir(), 0 if req.get("cmd", "status") == "status" else LOCK_WAIT)  # noqa: F841 (held until exit)
     hub = Hub()
     cmd = req.get("cmd", "status")
     out = {}
@@ -1314,6 +1393,10 @@ def main():
             if why:
                 raise Offline("You're offline. The change is saved on this computer and goes to your account when you're back online.")
         elif cmd in CHANGES:
+            if cmd in ("eventInsert", "taskInsert"):
+                # (its id chosen before the first try and kept with it: an
+                # answer lost after the server made it can't make a second)
+                req = hub.named(req)
             try:
                 hub.change(req)
             except Offline:
@@ -1333,6 +1416,10 @@ def main():
         out["error"] = f"Tessera sent an incomplete request ({e})."
     except Exception as e:  # noqa: BLE001 (the shell always gets an answer)
         out["error"] = f"Something went wrong: {e}"
+    if DAMAGED and "error" not in out:
+        out["error"] = ("Tessera's record of your cloud accounts was damaged and is kept aside (accounts.json.bad). Connect your accounts again in Settings."
+                        if "accounts.json" in DAMAGED else
+                        "Some of Tessera's saved cloud data was damaged and is kept aside (" + ", ".join(n + ".bad" for n in DAMAGED) + "); the next sync fetches your events and tasks again.")
     out.update(hub.state(), cmd=cmd)
     print(json.dumps(out))
     return 0
