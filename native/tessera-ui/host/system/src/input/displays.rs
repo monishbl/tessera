@@ -620,7 +620,20 @@ impl Displays {
             return;
         }
         // A second change while confirming keeps the oldest state to go back to
-        if risky && self.pending_revert.is_none() {
+        // and adds the states of displays it hadn't touched, so 'Go back' undoes both
+        if let Some(p) = self.pending_revert.as_mut() {
+            for b in before {
+                if !p.iter().any(|x| x.name == b.name) {
+                    p.push(b);
+                }
+            }
+            if risky {
+                // (a new risky change gets its own full countdown)
+                self.confirm_left = 15;
+                self.countdown_gen += 1;
+                after(h.sender("Displays"), 1000, M::Countdown(self.countdown_gen));
+            }
+        } else if risky {
             self.pending_revert = Some(before);
             self.confirm_left = 15;
             self.countdown_gen += 1;

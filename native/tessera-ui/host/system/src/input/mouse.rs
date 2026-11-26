@@ -78,6 +78,22 @@ pub fn on_urgent(input_age_ms: Option<i64>, already_active: bool) -> &'static st
 
 // ── Hyprland device config ────────────────────────────────────────────────
 
+/// A device name inside a Lua "…" string: backslash and quote escaped, and
+/// control characters as \ddd (a name with a line break would leave the string
+/// unfinished, and Hyprland would refuse every setting sent with it)
+pub fn lua_str(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => out.push_str(&format!("\\{:03}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 pub fn is_mouse(name: &str) -> bool {
     let n = name.to_lowercase();
     !["touchpad", "trackpad", "ydotool", "virtual", "wacom", "stylus", "pen"].iter().any(|k| n.contains(k))
@@ -109,7 +125,7 @@ pub fn device_spec(name: &str, m: &Value) -> String {
     let sens = num(m, "speed", 0.0).clamp(-1.0, 1.0);
     format!(
         "hl.device({{ name = \"{}\", accel_profile = \"{}\", sensitivity = {:.2}, natural_scroll = {}, scroll_factor = {:.2}, left_handed = {}, middle_button_emulation = {} }})",
-        name.replace('\\', "\\\\").replace('"', "\\\""),
+        lua_str(name),
         if text(m, "accelProfile", "adaptive") == "flat" { "flat" } else { "adaptive" },
         sens,
         tf(flag(m, "naturalScroll", false)),
@@ -140,7 +156,7 @@ pub fn paste_spec(m: &Value) -> String {
 }
 
 pub fn touchpad_device(name: &str, tp: &Value) -> String {
-    format!("hl.device({{ name = \"{}\", sensitivity = {:.2} }})", name.replace('\\', "\\\\").replace('"', "\\\""), num(tp, "speed", 0.0).clamp(-1.0, 1.0))
+    format!("hl.device({{ name = \"{}\", sensitivity = {:.2} }})", lua_str(name), num(tp, "speed", 0.0).clamp(-1.0, 1.0))
 }
 
 /// Any setting change (Mouse.signature)
@@ -161,7 +177,7 @@ enum M {
     /// the plugin's name, version, and whether its pointer hook is in place
     /// (a "nohook:<why>" in the ping: boundaries can't work, the rest can)
     Plugin(String, i64, bool),
-    LookAgain,
+    LookAgain(u64),
     UdevLine,
     UdevEnded,
     ApplyLater(u64),
@@ -337,18 +353,10 @@ impl Mouse {
     }
 }
 
-impl Service for Mouse {
-    fn name(&self) -> &'static str {
-        "Mouse"
-    }
-    fn calls(&self) -> &'static [&'static str] {
-        &["mouse"]
-    }
-    fn start(&mut self, h: &mut Host) {
-        self.sig = signature(h.cfg());
-        // (only the events it acts on: every title change of a busy terminal woke it)
-        spawn_hypr_events(&["configreloaded", "openwindow", "urgent", "workspace", "workspacev2", "activespecial", "activespecialv2", "closewindow", "movewindowv2", "changefloatingmode"], h.sender("Mouse"));
-        // the glass plugin: its name and version (a ping answers "<name> <version>")
+impl Mouse {
+    /// The glass plugin: its name and version (a ping answers "<name> <version>");
+    /// none answering: version 0 (its pointer features are off)
+    fn ping_plugin(h: &Host) {
         let send = h.sender("Mouse");
         std::thread::spawn(move || {
             for n in ["tessera-glass"] {
@@ -361,7 +369,27 @@ impl Service for Mouse {
                     }
                 }
             }
+            send(Box::new(M::Plugin("tessera-glass".into(), 0, true)));
         });
+    }
+}
+
+impl Service for Mouse {
+    /// (a plugin loaded later, after Build glass or an update's rebuild, or gone)
+    fn plugin_changed(&mut self, h: &mut Host) {
+        Self::ping_plugin(h);
+    }
+    fn name(&self) -> &'static str {
+        "Mouse"
+    }
+    fn calls(&self) -> &'static [&'static str] {
+        &["mouse"]
+    }
+    fn start(&mut self, h: &mut Host) {
+        self.sig = signature(h.cfg());
+        // (only the events it acts on: every title change of a busy terminal woke it)
+        spawn_hypr_events(&["configreloaded", "openwindow", "urgent", "workspace", "workspacev2", "activespecial", "activespecialv2", "closewindow", "movewindowv2", "changefloatingmode"], h.sender("Mouse"));
+        Self::ping_plugin(h);
         // udev says when a mouse comes or goes; without udevadm, every 60 s
         // (asked on the thread: `udevadm --version` on the loop held up the start)
         let send = h.sender("Mouse");
@@ -487,10 +515,14 @@ impl Service for Mouse {
             M::UdevLine => {
                 self.look_gen += 1;
                 let g = self.look_gen;
-                let _ = g;
-                after(h.sender("Mouse"), 800, M::LookAgain);
+                // (one look for a burst of udev lines: only the last one's runs)
+                after(h.sender("Mouse"), 800, M::LookAgain(g));
             }
-            M::LookAgain => self.look(h),
+            M::LookAgain(g) => {
+                if g == self.look_gen {
+                    self.look(h);
+                }
+            }
             M::UdevEnded => {}
             M::Poll => {
                 self.look(h);
@@ -558,6 +590,13 @@ impl Service for Mouse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_names_stay_inside_their_lua_string() {
+        assert_eq!(lua_str("Logi \"MX\" \\ 3"), "Logi \\\"MX\\\" \\\\ 3");
+        assert_eq!(lua_str("Buds\nPro"), "Buds\\010Pro");
+        assert!(!device_spec("a\nb", &json!({})).contains('\n'));
+    }
 
     fn ev(n: &str, d: &str) -> Raw {
         Raw { name: n.into(), data: d.into() }

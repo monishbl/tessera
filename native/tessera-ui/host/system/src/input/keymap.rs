@@ -551,7 +551,15 @@ impl Keymap {
                 let arr = u["shortcuts"].as_array().cloned().unwrap_or_default();
                 let i = sid.and_then(|sid| arr.iter().position(|x| x["id"] == sid));
                 let dup = arr.iter().any(|x| canonical(x["keys"].as_str().unwrap_or("")) == canonical(s["keys"].as_str().unwrap_or("")) && Self::same_action(&x["action"], &s["action"]));
-                let label_of = |n: &Value| n["label"].as_str().filter(|l| !l.is_empty()).map(String::from).unwrap_or_else(|| self.describe(&n["action"]));
+                // (the file's label alone could say 'Open Terminal' over any command:
+                // what it will really do is always shown beside it)
+                let label_of = |n: &Value| {
+                    let does = self.describe(&n["action"]);
+                    match n["label"].as_str().filter(|l| !l.is_empty() && *l != does) {
+                        Some(l) => format!("{l} ({does})"),
+                        None => does,
+                    }
+                };
                 if let Some(i) = i {
                     let next = Self::clean_shortcut(s);
                     if arr[i].to_string() == next.to_string() {
