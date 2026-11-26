@@ -137,6 +137,25 @@ pub fn scales(m: &Value) -> Vec<(f64, String)> {
     list.into_iter().map(|(v, w, h)| (v, format!("{}%  ·  looks like {w} × {h}", (v * 100.0).round()))).collect()
 }
 
+/// The chosen display's heading: "Dell U2723QE (DP-1)", the connector once
+/// when that's all there is to say ("WAYLAND-1", not "WAYLAND-1 (WAYLAND-1)")
+pub fn heading(label: &str, name: &str) -> String {
+    if label.is_empty() || label.eq_ignore_ascii_case(name) {
+        name.to_string()
+    } else if name.is_empty() {
+        label.to_string()
+    } else {
+        format!("{label} ({name})")
+    }
+}
+
+/// What a display's tile says under its number: its name and size
+/// ("Built-in Display · 2560 × 1600"; the size alone when there's no name)
+pub fn tile_text(label: &str, w: f64, h: f64) -> String {
+    let size = if w > 0.0 && h > 0.0 { format!("{} × {}", w.round(), h.round()) } else { String::new() };
+    [label, size.as_str()].iter().filter(|x| !x.is_empty()).cloned().collect::<Vec<_>>().join(" · ")
+}
+
 /// "1" for a Value (a number as JS writes it)
 fn num_text(v: &Value) -> String {
     v.as_f64().map_or(String::new(), |n| if n.fract() == 0.0 { format!("{}", n as i64) } else { format!("{n}") })
@@ -149,6 +168,9 @@ pub fn displays(cx: &mut Ctx, p: &mut Page) {
     let selected = cx.local_s("displays.selected");
     let current = mons.iter().find(|m| s(&m["name"]) == selected).or_else(|| mons.iter().find(|m| m["enabled"].as_bool() == Some(true))).or(mons.first()).cloned();
     let placed: Vec<Value> = mons.iter().filter(|m| m["enabled"].as_bool() == Some(true) && s(&m["mirror"]).is_empty()).cloned().collect();
+    // (never an empty arrangement: with nothing placed, the first display;
+    // audit #155/#174)
+    let placed: Vec<Value> = if placed.is_empty() { mons.iter().take(1).cloned().collect() } else { placed };
     let enabled_count = mons.iter().filter(|m| m["enabled"].as_bool() == Some(true)).count();
     let cur_name = current.as_ref().map(|m| s(&m["name"])).unwrap_or_default();
     let number = |m: &Value| num_text(&m["number"]);
@@ -188,7 +210,7 @@ pub fn displays(cx: &mut Ctx, p: &mut Page) {
         let mut b = Block::default();
         for m in &placed {
             let pl = placed_of(m);
-            let mut r = Row::new(number(m)).detail(s(&m["label"]));
+            let mut r = Row::new(number(m)).detail(tile_text(&s(&m["label"]), m["width"].as_f64().unwrap_or(0.0), m["height"].as_f64().unwrap_or(0.0)));
             r.id = pl.name.clone();
             r.on = pl.name == cur_name;
             r.value = if m["builtIn"].as_bool() == Some(true) { "builtIn".into() } else { String::new() };
@@ -318,7 +340,7 @@ pub fn displays(cx: &mut Ctx, p: &mut Page) {
         let flip = cx.on(move |cx, _| ask(cx, "displaysSet", json!([n, {"transform": (t % 4) + if t >= 4 { 0 } else { 4 }}])));
         rows.push(Row::new("Flip").visible(shown).detail("Mirror image, for teleprompters and projectors").switch(t >= 4, flip));
 
-        let g = p.group(format!("{} ({})", s(&m["label"]), name));
+        let g = p.group(heading(&s(&m["label"]), &name));
         g.footer(if on { s(&m["description"]) } else { "This display is off. Turn it on to change its resolution and arrangement.".into() });
         for r in rows {
             g.row(r);
@@ -441,6 +463,16 @@ mod tests {
         let moved = drop_at(&ps, "B", -1300.0, 40.0);
         assert_eq!(moved, vec![("A".to_string(), 1280.0, 0.0), ("B".to_string(), 0.0, 0.0)]);
         assert_eq!(bounds(&ps), (0.0, 0.0, 3200.0, 1080.0));
+    }
+
+    #[test]
+    fn a_display_is_named_once() {
+        assert_eq!(heading("WAYLAND-1", "WAYLAND-1"), "WAYLAND-1");
+        assert_eq!(heading("", "DP-1"), "DP-1");
+        assert_eq!(heading("Built-in Display", "eDP-1"), "Built-in Display (eDP-1)");
+        assert_eq!(tile_text("WAYLAND-1", 1920.0, 1080.0), "WAYLAND-1 · 1920 × 1080");
+        assert_eq!(tile_text("", 1920.0, 1080.0), "1920 × 1080");
+        assert_eq!(tile_text("DP-1", 0.0, 0.0), "DP-1");
     }
 
     #[test]

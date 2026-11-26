@@ -181,8 +181,14 @@ fn ago(ms: f64) -> String {
     } else if m < 1440 {
         format!("{} h ago", (m as f64 / 60.0).round())
     } else {
-        format!("{} d ago", (m as f64 / 1440.0).round())
+        days_ago((m as f64 / 1440.0).round() as i64)
     }
+}
+
+/// "1 day ago", "26 days ago" (#156: "26 d ago" read oddly; Health and the
+/// history write days out)
+pub fn days_ago(d: i64) -> String {
+    if d == 1 { "1 day ago".into() } else { format!("{d} days ago") }
 }
 
 /// SpeedTestCard's texts (RustBridgeDevices.qml speedCard), from bus "SpeedTest"
@@ -423,7 +429,12 @@ impl DevicesBridge {
         match p {
             "network" => {
                 f["wifi"] = self.wifi_feed(h);
-                f["backends"] = if h.state("backends").is_object() { h.state("backends").clone() } else { json!({}) };
+                // (as the Wi-Fi menu says it: no "No network service" beside a
+                // route out; offline: no connection or saved result; #156/#173)
+                let st = g("SpeedTest");
+                let net_off = crate::net::network_feed::offline(&h.state("backends"), &st["link"]);
+                f["backends"] = if h.state("backends").is_object() { crate::net::network_feed::shown_backends(&h.state("backends"), &st["link"]) } else { json!({}) };
+                f["netOffline"] = json!(net_off);
                 let bt = h.st.shell.get::<Bluetooth>();
                 let mut devices = serde_json::Map::new();
                 for d in bt.map(|b| b.devices.as_slice()).unwrap_or(&[]) {
@@ -436,7 +447,7 @@ impl DevicesBridge {
                     );
                 }
                 f["bt"] = json!({"adapter": bt.is_some_and(|b| b.present), "enabled": bt.is_some_and(|b| b.powered), "name": self.bt_name, "devices": devices});
-                let st = g("SpeedTest");
+                let st = crate::net::network_feed::speed_state(&st, net_off);
                 f["speed"] = speed_card(&st);
                 f["speedTest"] = speed_test(&st);
             }

@@ -25,6 +25,7 @@ export struct CItem {
     image: image,
     has-image: bool, // decoded and ready
     picture: bool, // a picture entry (shows a preview, ready or not)
+    detail: string, // a picture's type, size and time ("PNG · 640×480 · 31 KiB · Just now")
     aspect: float,
     pinned: bool,
     first: bool, // first row of its section (Material's rounder corners)
@@ -41,6 +42,7 @@ export component ClipboardPanel inherits Window {
     in property <int> kind; // 0 all, 1 text, 2 images
     in property <bool> grid;
     in property <int> history-count; // (Clear history: how many)
+    in property <bool> history-empty; // only pins listed: "Nothing copied yet" under them
     in property <bool> confirm-clear;
     in property <bool> sel-image;
     in property <bool> sel-pinned;
@@ -235,7 +237,7 @@ export component ClipboardPanel inherits Window {
                 y: 36px + 12px;
                 width: parent.width;
                 height: parent.height - self.y - 28px - 8px;
-                content-height: max(self.height, items-height + (toolbar ? 64px + 12px : 0));
+                content-height: max(self.height, items-height + (history-empty ? 52px : 0) + (toolbar ? 64px + 12px : 0));
                 content-y <=> root.list-y;
                 changed content-y => { scrolled(self.content-y); }
                 accessible-role: AccessibleRole.list;
@@ -262,18 +264,24 @@ export component ClipboardPanel inherits Window {
                     // ── a row ──
                     if near && it.kind == 1: Rectangle {
                         accessible-role: list-item;
-                        accessible-label: it.picture ? (it.pinned ? "Pinned picture" : "Picture") : it.text;
+                        accessible-label: it.picture ? (it.pinned ? "Pinned picture" : "Picture") + (it.detail != "" ? ", " + it.detail : "") : it.text;
                         accessible-item-selectable: true;
                         accessible-item-selected: selected;
                         accessible-action-default => { activate(it.index, false, false); }
-                        // Glass: the accent behind the chosen row, a fill on hover
+                        // a picture's width, and the room beside it for what it is
+                        property <length> pic-w: max(96px, min(self.width - 120px, it.aspect > 0 ? 152px * it.aspect : 200px));
+                        property <length> side-w: self.width - (8px + pic-w + 12px) - actions.width - 16px;
+                        // Glass: a light accent tint and an accent edge on the chosen
+                        // row (what's in it stays readable), a fill on hover
                         if !Theme.material: Rectangle {
                             border-radius: Theme.radius-control;
-                            background: selected ? Theme.accent.with-alpha(Theme.dark ? 0.32 : 0.16) : rowTa.has-hover ? Theme.fill : transparent;
+                            background: selected ? Theme.accent.with-alpha(Theme.dark ? 0.16 : 0.10) : rowTa.has-hover ? Theme.fill : transparent;
+                            border-width: selected ? 1.5px : 0;
+                            border-color: Theme.accent.with-alpha(0.8);
                         }
                         // Material: a segmented list, each section a group (16 px
                         // outer corners, 4 px between); the chosen row rounds
-                        // fully in secondary container
+                        // fully, half secondary container, edged in primary
                         if Theme.material: Rectangle {
                             property <length> top: selected || it.first ? 16px : 4px;
                             property <length> bottom: selected || it.last ? 16px : 4px;
@@ -283,7 +291,9 @@ export component ClipboardPanel inherits Window {
                             border-top-right-radius: top;
                             border-bottom-left-radius: bottom;
                             border-bottom-right-radius: bottom;
-                            background: selected ? Theme.m3-secondary-container.mix(Theme.m3-on-secondary-container, rowTa.pressed ? 0.9 : 1) : Theme.m3-surface-container-high;
+                            background: selected ? Theme.m3-secondary-container.mix(Theme.m3-surface-container-high, rowTa.pressed ? 0.6 : 0.5) : Theme.m3-surface-container-high;
+                            border-width: selected ? 2px : 0;
+                            border-color: Theme.m3-primary;
                             animate background { duration: Theme.hover; }
                         }
                         rowTa := TouchArea {
@@ -310,11 +320,12 @@ export component ClipboardPanel inherits Window {
                             font-size: 16px;
                             color: Theme.material ? (selected ? Theme.m3-on-secondary-container : Theme.m3-on-surface-variant) : Theme.tertiary;
                         }
-                        // the picture, its own shape (wide ones capped)
+                        // the picture, its own shape (wide ones capped); one that
+                        // can't be shown: a picture symbol in its place
                         if it.picture: Rectangle {
                             x: 8px;
                             height: 152px;
-                            width: max(96px, min(parent.width - 120px, it.aspect > 0 ? self.height * it.aspect : 200px));
+                            width: pic-w;
                             border-radius: Theme.material ? 12px : 10px;
                             background: Theme.fill;
                             clip: true;
@@ -323,6 +334,48 @@ export component ClipboardPanel inherits Window {
                                 height: parent.height;
                                 source: it.image;
                                 image-fit: cover;
+                                accessible-role: none;
+                            }
+                            if !it.has-image: VerticalLayout {
+                                width: parent.width;
+                                height: parent.height;
+                                alignment: center;
+                                spacing: 6px;
+                                padding: 8px;
+                                Icon {
+                                    text: "\u{e2ca}";
+                                    font-size: 32px;
+                                    color: Theme.material ? Theme.m3-on-surface-variant : Theme.secondary;
+                                }
+                                Text {
+                                    horizontal-alignment: center;
+                                    text: "No preview";
+                                    color: Theme.material ? Theme.m3-on-surface-variant : Theme.secondary;
+                                    font-size: Theme.caption;
+                                    accessible-role: none;
+                                }
+                            }
+                        }
+                        // beside it: what it is, its type, size and time
+                        if it.picture && side-w >= 60px: VerticalLayout {
+                            x: 8px + pic-w + 12px;
+                            width: side-w;
+                            height: parent.height;
+                            alignment: center;
+                            spacing: 2px;
+                            Text {
+                                text: it.pinned ? "Pinned picture" : "Picture";
+                                overflow: elide;
+                                color: Theme.material && selected ? Theme.m3-on-secondary-container : Theme.label;
+                                font-size: Theme.body;
+                                font-weight: 500;
+                                accessible-role: none;
+                            }
+                            if it.detail != "": Text {
+                                text: it.detail;
+                                wrap: word-wrap;
+                                color: Theme.material ? Theme.m3-on-surface-variant : Theme.secondary;
+                                font-size: Theme.small;
                                 accessible-role: none;
                             }
                         }
@@ -364,7 +417,7 @@ export component ClipboardPanel inherits Window {
                         border-width: selected ? (Theme.material ? 3px : 2px) : 0;
                         border-color: Theme.accent;
                         accessible-role: list-item;
-                        accessible-label: it.pinned ? "Pinned picture" : "Picture";
+                        accessible-label: (it.pinned ? "Pinned picture" : "Picture") + (it.detail != "" ? ", " + it.detail : "");
                         accessible-item-selectable: true;
                         accessible-item-selected: selected;
                         accessible-action-default => { activate(it.index, false, false); }
@@ -382,6 +435,27 @@ export component ClipboardPanel inherits Window {
                                 source: it.image;
                                 image-fit: cover;
                                 accessible-role: none;
+                            }
+                            // no preview: a picture symbol, its type, size and time
+                            if !it.has-image: VerticalLayout {
+                                width: parent.width;
+                                height: parent.height;
+                                alignment: center;
+                                spacing: 6px;
+                                padding: 12px;
+                                Icon {
+                                    text: "\u{e2ca}";
+                                    font-size: 32px;
+                                    color: Theme.material ? Theme.m3-on-surface-variant : Theme.secondary;
+                                }
+                                Text {
+                                    horizontal-alignment: center;
+                                    text: it.detail != "" ? it.detail : "No preview";
+                                    wrap: word-wrap;
+                                    color: Theme.material ? Theme.m3-on-surface-variant : Theme.secondary;
+                                    font-size: Theme.caption;
+                                    accessible-role: none;
+                                }
                             }
                         }
                         TouchArea {
@@ -421,6 +495,16 @@ export component ClipboardPanel inherits Window {
                             }
                         }
                     }
+                }
+
+                // only pins: nothing copied yet, under them
+                if history-empty: Text {
+                    x: Theme.material ? 16px : 10px;
+                    y: items-height + 16px;
+                    width: parent.width - 2 * self.x;
+                    text: kind == 2 ? "No images copied yet" : "Nothing copied yet";
+                    color: Theme.secondary;
+                    font-size: Theme.body;
                 }
             }
 

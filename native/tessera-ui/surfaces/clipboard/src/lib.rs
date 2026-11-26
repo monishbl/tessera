@@ -450,6 +450,7 @@ impl Clipboard {
 
     fn push_items(&self) {
         let Some(w) = &self.win else { return };
+        let now = crate::util::now_ms();
         let items: Vec<ui::CItem> = self
             .items
             .iter()
@@ -460,6 +461,20 @@ impl Clipboard {
                     None => (slint::Image::default(), false, 0.0),
                 };
                 let text = clip::norm(&r.text);
+                // a picture's type, size and time, beside it (and the only
+                // thing shown for one that can't be decoded)
+                let detail = match &r.image {
+                    Some(path) => {
+                        let when = match &r.pin {
+                            Some(pin) => pin.source.as_ref().and_then(|s| self.history.stamps.get(s)).copied().filter(|t| *t > 0).map(|t| clip::section_for(t, now)).unwrap_or_default(),
+                            None => r.section.clone(),
+                        };
+                        // (a pin has no cliphist label: its file's size)
+                        let bytes = if r.pin.is_some() { std::fs::metadata(path).ok().map(|m| m.len()) } else { None };
+                        picture_detail(&text, Some(path.as_path()), bytes, &when)
+                    }
+                    None => String::new(),
+                };
                 let is_color = r.image.is_none() && clip::is_color(&r.text);
                 let swatch = if is_color { u32::from_str_radix(&text.trim()[1..], 16).map(|v| slint::Color::from_rgb_u8((v >> 16) as u8, (v >> 8) as u8, v as u8)).unwrap_or_default() } else { Default::default() };
                 ui::CItem {
@@ -481,6 +496,7 @@ impl Clipboard {
                     image,
                     has_image,
                     picture: r.image.is_some(),
+                    detail: detail.into(),
                     aspect,
                     pinned: r.pinned(),
                     first: p.first,
@@ -500,6 +516,8 @@ impl Clipboard {
         ui.set_kind(self.kind as i32);
         ui.set_grid(self.grid());
         ui.set_history_count(self.history.entries.len() as i32);
+        // only pins listed: a line under them says nothing has been copied
+        ui.set_history_empty(history_empty(&self.rows, &self.query));
         ui.set_confirm_clear(self.confirm);
         ui.set_query(self.query.trim().into());
         let r = self.rows.get(self.sel);
@@ -676,6 +694,66 @@ fn copy_blocking(r: &Row, plain: bool) -> bool {
     }
 }
 
+/// A size as the panel says it: "512 B", "31 KiB", "2.4 MiB"
+pub fn human_size(bytes: u64) -> String {
+    const K: f64 = 1024.0;
+    let b = bytes as f64;
+    if b < K {
+        format!("{bytes} B")
+    } else if b < K * K {
+        format!("{} KiB", (b / K).round() as u64)
+    } else if b < K * K * K {
+        format!("{:.1} MiB", b / (K * K))
+    } else {
+        format!("{:.1} GiB", b / (K * K * K))
+    }
+}
+
+/// What a picture row says beside (or, undecoded, instead of) its preview:
+/// its type, size in pixels and bytes and when it was copied, as much as is
+/// known: "PNG · 640×480 · 31 KiB · 2 hours ago". `label` is cliphist's
+/// "[[ binary data 31 KiB png 640x480 ]]" (a history entry), `path` the
+/// picture's file (its type by name when the label has none), `bytes` the
+/// file's size (a pin: no label), `when` its section ("Earlier": no time)
+pub fn picture_detail(label: &str, path: Option<&std::path::Path>, bytes: Option<u64>, when: &str) -> String {
+    let (mut kind, mut dims, mut size) = (None::<String>, None::<String>, None::<String>);
+    if let Some(rest) = label.trim().strip_prefix("[[ binary data ") {
+        let words: Vec<&str> = rest.trim_end_matches("]]").split_whitespace().collect();
+        let mut i = 0;
+        while i < words.len() {
+            let w = words[i];
+            let unit = words.get(i + 1).copied().filter(|u| matches!(*u, "B" | "KiB" | "MiB" | "GiB" | "KB" | "MB" | "GB"));
+            if let (Some(u), true) = (unit, w.parse::<f64>().is_ok()) {
+                size = Some(format!("{w} {u}"));
+                i += 2;
+                continue;
+            }
+            if let Some((a, b)) = w.split_once('x') {
+                if !a.is_empty() && !b.is_empty() && a.bytes().all(|c| c.is_ascii_digit()) && b.bytes().all(|c| c.is_ascii_digit()) {
+                    dims = Some(format!("{a}\u{d7}{b}"));
+                    i += 1;
+                    continue;
+                }
+            }
+            if kind.is_none() {
+                let t = w.rsplit('/').next().unwrap_or(w);
+                if t.bytes().next().is_some_and(|c| c.is_ascii_alphabetic()) && t.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'+') {
+                    kind = Some(t.to_ascii_uppercase());
+                }
+            }
+            i += 1;
+        }
+    }
+    if kind.is_none() {
+        kind = path.and_then(|p| p.to_str()).and_then(image_type).map(|t| t.trim_start_matches("image/").to_ascii_uppercase());
+    }
+    if size.is_none() {
+        size = bytes.map(human_size);
+    }
+    let when = (!when.is_empty() && when != "Earlier").then(|| when.to_string());
+    [kind, dims, size, when].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} ")
+}
+
 /// A picture's type by its name ("a.png": image/png); None: unknown
 pub fn image_type(path: &str) -> Option<&'static str> {
     let ext = path.rsplit_once('.')?.1.to_ascii_lowercase();
@@ -687,6 +765,12 @@ pub fn image_type(path: &str) -> Option<&'static str> {
         "bmp" => "image/bmp",
         _ => return None,
     })
+}
+
+/// Pins listed but nothing copied (without a search: a search's misses are
+/// its own message)
+pub fn history_empty(rows: &[Row], query: &str) -> bool {
+    query.trim().is_empty() && !rows.is_empty() && rows.iter().all(|r| r.pinned())
 }
 
 impl Part for Clipboard {
@@ -894,6 +978,29 @@ mod tests {
         assert_eq!(image_type("/s/a b.JPG"), Some("image/jpeg"));
         assert_eq!(image_type("/s/noext"), None);
         assert_eq!(image_type("/s/x.tiff"), None);
+    }
+
+    #[test]
+    fn pictures_say_what_they_are_without_a_preview() {
+        let p = PathBuf::from("/run/tessera-clip/11.png");
+        assert_eq!(picture_detail("[[ binary data 31 KiB png 640x480 ]]", Some(p.as_path()), None, "2 hours ago"), "PNG \u{b7} 640\u{d7}480 \u{b7} 31 KiB \u{b7} 2 hours ago");
+        assert_eq!(picture_detail("[[ binary data 2 MiB JPEG 4000x3000 ]]", None, None, "Earlier"), "JPEG \u{b7} 4000\u{d7}3000 \u{b7} 2 MiB");
+        assert_eq!(picture_detail("[[ binary data 1 KiB image/webp ]]", None, None, ""), "WEBP \u{b7} 1 KiB");
+        // a pin: no label, its file's type and size
+        let pin = PathBuf::from("/s/clip-pins/1.jpg");
+        assert_eq!(picture_detail("", Some(pin.as_path()), Some(48_000), "Yesterday"), "JPEG \u{b7} 47 KiB \u{b7} Yesterday");
+        assert_eq!(picture_detail("", Some(std::path::Path::new("/s/noext")), None, ""), "");
+        assert_eq!(human_size(512), "512 B");
+        assert_eq!(human_size(3 * 1024 * 1024 / 2 * 2 + 400_000), "3.4 MiB");
+    }
+
+    #[test]
+    fn only_pins_says_nothing_copied() {
+        let pin = Row { pin: Some(Pin::default()), ..row("Pinned", true) };
+        assert!(history_empty(&[pin.clone()], ""));
+        assert!(!history_empty(&[pin.clone()], "cat"));
+        assert!(!history_empty(&[pin, row("Just now", false)], ""));
+        assert!(!history_empty(&[], ""));
     }
 
     #[test]

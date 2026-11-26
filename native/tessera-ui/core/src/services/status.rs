@@ -35,6 +35,14 @@ pub struct Wifi {
     pub strength: u8,  // 0..100
 }
 
+/// What the Wi-Fi pages say when NetworkManager isn't running and no other
+/// manager is found, yet this computer is online (its Wi-Fi link up, or a
+/// route out): something runs the network all the same, so "No network
+/// service is running" would be false beside the connection (audit #156/#173)
+pub const OUTSIDE_TITLE: &str = "The network is managed outside Tessera";
+pub const OUTSIDE_REASON: &str = "This computer is online, but not through NetworkManager, which Tessera's Wi-Fi menus need. Choose networks with the tool that set up this connection.";
+pub const OUTSIDE_SHORT: &str = "Managed outside Tessera";
+
 fn watch<T: Send + Clone + PartialEq + 'static>(
     tx: Sender<Msg>,
     sender: &'static str,

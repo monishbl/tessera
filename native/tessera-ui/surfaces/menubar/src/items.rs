@@ -88,10 +88,31 @@ pub fn elapsed(secs: i64) -> String {
     format!("{}:{:02}", s / 60, s % 60)
 }
 
+/// The Wi-Fi item's glyph, from the same reading the Wi-Fi menu shows
+/// (audit #149/#166: the bar drew the full fan while the menu said "No
+/// Wi-Fi adapter"). `elsewhere`: NetworkManager isn't running but the
+/// computer has a Wi-Fi card; `service`: something else (iwd, ConnMan…)
+/// runs the network then, `link_up` whether its link is up. Slashed
+/// (`on` false) with no adapter, no network service, or Wi-Fi off; the
+/// signal's arcs only while connected.
+pub fn wifi_glyph(w: &Wifi, elsewhere: bool, service: bool, link_up: bool) -> Glyph {
+    if elsewhere {
+        // (no NetworkManager reading: the other manager's link, at full)
+        let on = service;
+        return Glyph::Wifi { on, connected: on && link_up, strength: if on && link_up { 1.0 } else { 0.0 } };
+    }
+    let on = w.present && w.enabled;
+    let connected = on && !w.ssid.is_empty();
+    Glyph::Wifi { on, connected, strength: if connected { w.strength as f32 / 100.0 } else { 0.0 } }
+}
+
 /// The Wi-Fi item's tip (MenuBar.qml)
 pub fn wifi_tip(w: &Wifi, elsewhere: bool, short: &str) -> String {
     if elsewhere {
         return format!("Wi-Fi · {short}");
+    }
+    if !w.present {
+        return "No Wi-Fi adapter".into();
     }
     if !w.enabled {
         return "Wi-Fi off".into();
@@ -300,15 +321,15 @@ pub fn entries(i: &Inputs) -> Vec<Entry> {
         out.push(Entry { bold: true, tip: i.bt.summary(), ..e("bluetooth", "bluetoothMenu", i.bt.icon()) });
     }
     // Wi-Fi
-    let elsewhere = s.bool("wifi.elsewhere");
+    // (a NetworkManager reading wins over the probe's "elsewhere": both
+    // can be said for a moment while NetworkManager starts)
+    let elsewhere = s.bool("wifi.elsewhere") && !i.wifi.present;
+    // (no "service" said, an older host: as before, a manager runs it)
+    let service = s.get("wifi.service").as_bool().unwrap_or(true);
     if bar.wifi && (i.wifi.present || elsewhere) {
         out.push(Entry {
-            glyph: Glyph::Wifi {
-                on: i.wifi.enabled || elsewhere,
-                connected: !i.wifi.ssid.is_empty() || (elsewhere && s.bool("wifi.linkUp")),
-                strength: if elsewhere { 1.0 } else { i.wifi.strength as f32 / 100.0 },
-            },
-            tip: wifi_tip(i.wifi, elsewhere, s.str("wifi.short")),
+            glyph: wifi_glyph(i.wifi, elsewhere, service, s.bool("wifi.linkUp")),
+            tip: if elsewhere && !service { "Wi-Fi off · no network service".into() } else { wifi_tip(i.wifi, elsewhere, s.str("wifi.short")) },
             ..e("wifi", "wifiMenu", "")
         });
     }
@@ -445,12 +466,39 @@ mod tests {
         assert_eq!(wifi_tip(&Wifi { enabled: false, ..w.clone() }, false, ""), "Wi-Fi off");
         assert_eq!(wifi_tip(&Wifi { ssid: "".into(), ..w.clone() }, false, ""), "Wi-Fi on · not connected");
         assert_eq!(wifi_tip(&w, true, "Managed by iwd"), "Wi-Fi · Managed by iwd");
+        assert_eq!(wifi_tip(&Wifi { present: false, ..w.clone() }, false, ""), "No Wi-Fi adapter");
         // the battery's glyph: plugged when full or holding
         let mut wd = world();
         wd.battery.state = 4;
         wd.bar.battery_percent = "inside".into();
         let v = run(&wd, false, false);
         assert_eq!(v.iter().find(|e| e.id == "battery").unwrap().glyph, Glyph::Battery { level: 0.64, charging: false, plugged: true, low_power: false, show_percent: true });
+    }
+
+    #[test]
+    fn the_wifi_glyph_follows_the_menus_reading() {
+        let w = Wifi { present: true, enabled: true, ssid: "Home".into(), strength: 80 };
+        assert_eq!(wifi_glyph(&w, false, true, false), Glyph::Wifi { on: true, connected: true, strength: 0.8 });
+        // off, no adapter, not connected: slashed, or no arcs
+        assert_eq!(wifi_glyph(&Wifi { enabled: false, ..w.clone() }, false, true, true), Glyph::Wifi { on: false, connected: false, strength: 0.0 });
+        assert_eq!(wifi_glyph(&Wifi { present: false, ..w.clone() }, false, true, true), Glyph::Wifi { on: false, connected: false, strength: 0.0 });
+        assert_eq!(wifi_glyph(&Wifi { ssid: "".into(), ..w.clone() }, false, true, true), Glyph::Wifi { on: true, connected: false, strength: 0.0 });
+        // run by iwd: its link; no network service at all: slashed, whatever the link says
+        let none = Wifi::default();
+        assert_eq!(wifi_glyph(&none, true, true, true), Glyph::Wifi { on: true, connected: true, strength: 1.0 });
+        assert_eq!(wifi_glyph(&none, true, true, false), Glyph::Wifi { on: true, connected: false, strength: 0.0 });
+        assert_eq!(wifi_glyph(&none, true, false, true), Glyph::Wifi { on: false, connected: false, strength: 0.0 });
+        // through entries(): a card, no service running (audit #149/#166)
+        let mut wd = world();
+        wd.wifi = Wifi::default();
+        wd.shell = ShellState(json!({"open": "", "screen": "", "wifi": {"elsewhere": true, "service": false, "linkUp": true, "short": "Needs NetworkManager"}}));
+        let v = run(&wd, false, false);
+        let e = v.iter().find(|e| e.id == "wifi").unwrap();
+        assert_eq!(e.glyph, Glyph::Wifi { on: false, connected: false, strength: 0.0 });
+        assert_eq!(e.tip, "Wi-Fi off · no network service");
+        // no card and nothing said: no item
+        wd.shell = ShellState(json!({"open": "", "screen": ""}));
+        assert!(!ids(&run(&wd, false, false)).contains(&"wifi"));
     }
 
     #[test]

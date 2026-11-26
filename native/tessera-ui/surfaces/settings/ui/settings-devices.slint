@@ -290,7 +290,7 @@ component SpeedCard inherits VerticalLayout {
     padding-bottom: Theme.material ? 16px : 14px;
     spacing: 10px;
     HorizontalLayout {
-        height: 28px;
+        height: Theme.material ? 40px : 28px;
         spacing: 8px;
         SIcon { g: DG.gauge; size: 16px; color: Theme.secondary; }
         VerticalLayout {
@@ -316,7 +316,8 @@ component SpeedCard inherits VerticalLayout {
                 property <color> m-base: r.on ? Theme.m3-secondary-container : Theme.m3-primary;
                 property <color> m-ink: r.on ? Theme.m3-on-secondary-container : Theme.m3-on-primary;
                 width: at.preferred-width + (Theme.material ? 32px : 24px);
-                height: Theme.material ? 32px : 28px;
+                // (the kit's button height, SButton: 40 in Material; audit #173)
+                height: Theme.material ? 40px : 28px;
                 border-radius: Theme.material ? (ata.pressed ? 8px : self.height / 2) : 14px;
                 animate border-radius { duration: 250ms; easing: spring(0.6); }
                 background: Theme.material ? self.m-base.mix(self.m-ink, ata.pressed ? 0.9 : ata.has-hover ? 0.92 : 1)

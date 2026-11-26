@@ -60,6 +60,32 @@ pub fn step(v: f64, d: f64) -> f64 {
     ((v + d) * 1000.0).round().clamp(0.0, 1000.0) / 1000.0
 }
 
+/// What the OSD is told when a sound or brightness key is pressed, so it
+/// shows on every press: at 100% or 0% (no change, so no reading to show
+/// it) and when the key can't do anything (no sound server, no output, no
+/// backlight), then with why as its title. None: not such a key
+pub fn osd_cue(name: &str, server_up: bool, has_sink: bool, has_source: bool, backlight: bool) -> Option<Value> {
+    if name == "brightnessUp" || name == "brightnessDown" {
+        let mut v = json!({"key": "brightness"});
+        if !backlight {
+            v["reason"] = json!("Brightness can't be changed");
+        }
+        return Some(v);
+    }
+    let (kind, there, missing) = match name {
+        "volumeUp" | "volumeDown" | "volumeMute" => ("volume", has_sink, "No sound output"),
+        "micMute" => ("mic", has_source, "No microphone"),
+        _ => return None,
+    };
+    let mut v = json!({"key": kind});
+    if !server_up {
+        v["reason"] = json!("Sound isn't running");
+    } else if !there {
+        v["reason"] = json!(missing);
+    }
+    Some(v)
+}
+
 impl Shortcuts {
     /// Audio.setVolume(Audio.volume ± 0.05): unmutes, as the QML's
     fn set_volume(&mut self, h: &Host, d: f64) {
@@ -172,7 +198,7 @@ impl Shortcuts {
             }
             "volumeMute" => Self::toggle_mute(h, false),
             "micMute" => Self::toggle_mute(h, true),
-            // (no backlight: no OSD either)
+            // (no backlight: nothing to set; the OSD still says so, below)
             "brightnessUp" | "brightnessDown" => {
                 if let Some(b) = h.st.shell.get::<tessera_core::services::brightness::Backlight>().filter(|b| b.present) {
                     let now = now_ms();
@@ -184,6 +210,13 @@ impl Shortcuts {
                 }
             }
             other => eprintln!("tessera-ui: host: no shortcut {other}"),
+        }
+        // the OSD shows on every sound and brightness key, whatever the level did
+        let snd = h.st.shell.get::<tessera_core::services::audio::Sound>();
+        let (up, sink, source) = snd.map_or((false, false, false), |s| (s.up, s.sink().is_some(), s.source().is_some()));
+        let backlight = h.st.shell.get::<tessera_core::services::brightness::Backlight>().is_some_and(|b| b.present);
+        if let Some(cue) = osd_cue(name, up, sink, source, backlight) {
+            h.tell("osd", cue);
         }
     }
 }
@@ -270,6 +303,25 @@ mod tests {
         }
         assert!(seen > 40, "only {seen} QML shortcuts found");
         assert!(ours.iter().any(|o| o == "snap-left"));
+    }
+
+    #[test]
+    fn sound_keys_always_tell_the_osd() {
+        // a working output: shown, no reason (also at 100%: nothing here looks at the level)
+        assert_eq!(osd_cue("volumeUp", true, true, true, true), Some(json!({"key": "volume"})));
+        assert_eq!(osd_cue("volumeDown", true, true, false, true), Some(json!({"key": "volume"})));
+        assert_eq!(osd_cue("volumeMute", true, true, true, true), Some(json!({"key": "volume"})));
+        assert_eq!(osd_cue("micMute", true, true, true, true), Some(json!({"key": "mic"})));
+        // nothing to change: still shown, saying why
+        assert_eq!(osd_cue("volumeUp", true, false, true, true), Some(json!({"key": "volume", "reason": "No sound output"})));
+        assert_eq!(osd_cue("micMute", true, true, false, true), Some(json!({"key": "mic", "reason": "No microphone"})));
+        assert_eq!(osd_cue("volumeUp", false, false, false, true), Some(json!({"key": "volume", "reason": "Sound isn't running"})));
+        // brightness: shown at the limit too, and with no backlight saying why
+        assert_eq!(osd_cue("brightnessUp", true, true, true, true), Some(json!({"key": "brightness"})));
+        assert_eq!(osd_cue("brightnessDown", false, false, false, true), Some(json!({"key": "brightness"})));
+        assert_eq!(osd_cue("brightnessUp", true, true, true, false), Some(json!({"key": "brightness", "reason": "Brightness can't be changed"})));
+        // other keys: no word to the OSD
+        assert_eq!(osd_cue("lock", true, true, true, true), None);
     }
 
     #[test]

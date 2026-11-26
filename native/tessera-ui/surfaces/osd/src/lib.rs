@@ -17,6 +17,9 @@
 //! (`{"to":"osd","preview":"volume"}`); this one says on stdout while the
 //! capsule shows (`{"src":"ui","kind":"osd","shown":true}`), so the
 //! notification banners move down under it as they do for the QML one.
+//! Standalone the host's shortcuts say every sound and brightness key press
+//! (`{"to":"osd","key":"volume"}`, with a `reason` when nothing could
+//! change), so it shows at 100% and 0% and without a sound output too.
 //!
 //! Not like the QML yet: Material draws Phosphor icons, not Material Symbols
 //! (Slint can't set the font's FILL axis); the apps in App volumes show a
@@ -170,6 +173,13 @@ fn kind_named(s: &str) -> Option<Kind> {
         "mic" => Some(Kind::Mic),
         _ => None,
     }
+}
+
+/// A sound key's word from the host ({"key": "volume", "reason": "No sound
+/// output"}): what to show and the title saying why it couldn't change
+pub fn key_cue(v: &serde_json::Value) -> Option<(Kind, String)> {
+    let k = v["key"].as_str().and_then(kind_named)?;
+    Some((k, v["reason"].as_str().unwrap_or_default().to_string()))
 }
 
 impl Osd {
@@ -670,6 +680,14 @@ impl Part for Osd {
                     self.armed = true;
                     self.show(st, k, String::new());
                 }
+                // a sound key (the host's shortcuts): shows on every press,
+                // also when the level can't move (at 100% or 0%, no output:
+                // then `reason` is its title)
+                if let Some((k, reason)) = key_cue(&v) {
+                    self.armed = true;
+                    self.quiet_until[slot(k)] = 0;
+                    self.show(st, k, reason);
+                }
                 return;
             }
             Err(m) => m,
@@ -831,5 +849,26 @@ impl Part for Osd {
         if self.told_shown {
             crate::surfaces::tell(serde_json::json!({"src": "ui", "kind": "osd", "shown": false}));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sound_key_asks_for_the_osd() {
+        use serde_json::json;
+        assert_eq!(key_cue(&json!({"to": "osd", "key": "volume"})), Some((Kind::Volume, String::new())));
+        assert_eq!(key_cue(&json!({"key": "volume", "reason": "No sound output"})), Some((Kind::Volume, "No sound output".to_string())));
+        assert_eq!(key_cue(&json!({"key": "mic"})), Some((Kind::Mic, String::new())));
+        assert_eq!(key_cue(&json!({"key": "brightness", "reason": "Brightness can't be changed"})), Some((Kind::Brightness, "Brightness can't be changed".to_string())));
+        assert_eq!(key_cue(&json!({"hush": "sound"})), None);
+        assert_eq!(key_cue(&json!({"key": "nonsense"})), None);
+        // with a reason it shows even right after Tessera's own slider set
+        // the level (`device` set: quiet doesn't hold it back), and with the
+        // shell armed, wherever it goes
+        assert_ne!(logic::place(true, true, true, false, true), logic::Place::Nowhere);
+        assert_eq!(logic::place(true, false, false, false, false), logic::Place::Hud);
     }
 }

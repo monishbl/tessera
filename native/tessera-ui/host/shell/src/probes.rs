@@ -7,7 +7,7 @@
 //! State (set_state): "backends" {ready, found{…}, nmActive, netManager, wifiTitle,
 //! wifiReason, wifiShort, hasWifiHardware, wifiLinkUp, wifiUnmanaged, ppd, powerShort,
 //! powerReason, btState, btShort, btFix…}, plus the menu bar's "wifi" {elsewhere, short,
-//! linkUp} and "power.ppd"; "needs"; "priority" {available, on, busy, error};
+//! linkUp, service} and "power.ppd"; "needs"; "priority" {available, on, busy, error};
 //! "conflicts" {found, fresh, checked}; "health" {checks, checking, checkedAt, fixing,
 //! error, polkit}; "keybinds" {groups}; "hyprland.linked"; "bugreport".
 //!
@@ -77,19 +77,26 @@ pub fn backends(found: &BTreeMap<String, String>, ready: bool) -> Value {
     let has_wifi = !g("wifi_iface").is_empty();
     let nm_installed = g("nm_installed") == "1";
     let wifi_app = g("wifi_app");
-    let wifi_title = if !wifi_unmanaged { String::new() } else if net == "networkmanager" { "Restart Tessera for Wi-Fi".into() } else if !manager.is_empty() { format!("Wi-Fi is managed by {manager}") } else { "No network service is running".into() };
+    // (no service found on the bus, but the Wi-Fi link is up: something
+    // runs it all the same, so "No network service is running" would be
+    // false beside the connection the pages show; audit #156/#173)
+    let link_up = g("wifi_up") == "1";
+    let outside = manager.is_empty() && link_up;
+    let wifi_title = if !wifi_unmanaged { String::new() } else if net == "networkmanager" { "Restart Tessera for Wi-Fi".into() } else if !manager.is_empty() { format!("Wi-Fi is managed by {manager}") } else if outside { tessera_core::services::status::OUTSIDE_TITLE.into() } else { "No network service is running".into() };
     let wifi_reason = if !wifi_unmanaged {
         String::new()
     } else if net == "networkmanager" {
         "NetworkManager started after Tessera did. Restart Tessera (Settings → About) to use its Wi-Fi menus.".into()
     } else if !manager.is_empty() {
         format!("Tessera's Wi-Fi menus need NetworkManager. Use {} to choose a network.", if wifi_app.is_empty() { format!("{manager}'s own tools") } else { wifi_app_name(wifi_app) })
+    } else if outside {
+        tessera_core::services::status::OUTSIDE_REASON.into()
     } else if nm_installed {
         "Tessera's Wi-Fi menus need NetworkManager, which is installed but not running.".into()
     } else {
         format!("Tessera's Wi-Fi menus need NetworkManager. Install it ({}), or set up another network service.", tessera_core::util::install_hint("networkmanager", "network-manager", "NetworkManager"))
     };
-    let wifi_short = if !wifi_unmanaged { String::new() } else if !manager.is_empty() && net != "networkmanager" { format!("Managed by {manager}") } else { "Needs NetworkManager".into() };
+    let wifi_short = if !wifi_unmanaged { String::new() } else if !manager.is_empty() && net != "networkmanager" { format!("Managed by {manager}") } else if outside { tessera_core::services::status::OUTSIDE_SHORT.into() } else { "Needs NetworkManager".into() };
     // energy modes
     let ppd = !ready || g("ppd") == "1";
     let power_daemon = g("powerd");
@@ -158,7 +165,9 @@ pub fn backends(found: &BTreeMap<String, String>, ready: bool) -> Value {
     };
     json!({
         "ready": ready, "found": found, "nmActive": nm_active, "netManager": net, "netManagerName": manager,
-        "hasWifiHardware": has_wifi, "wifiLinkUp": g("wifi_up") == "1", "wifiUnmanaged": wifi_unmanaged,
+        "hasWifiHardware": has_wifi, "wifiLinkUp": link_up, "wifiUnmanaged": wifi_unmanaged,
+        // something runs the network (a manager on the bus, or a link that's up)
+        "wifiService": !manager.is_empty() || link_up,
         "wifiTitle": wifi_title, "wifiReason": wifi_reason, "wifiShort": wifi_short, "nmInstalled": nm_installed,
         "canStartNm": wifi_unmanaged && net == "none" && nm_installed,
         "wifiApp": wifi_app, "wifiAppTerminal": g("wifi_app_terminal") == "1", "wifiAppName": wifi_app_name(wifi_app),
@@ -342,7 +351,7 @@ impl Probes {
 
     fn publish_stack(&self, h: &mut Host) {
         let b = backends(&self.stack, self.stack_ready);
-        h.set_state("wifi", json!({"elsewhere": b["wifiUnmanaged"] == true && b["hasWifiHardware"] == true, "short": b["wifiShort"], "linkUp": b["wifiLinkUp"]}));
+        h.set_state("wifi", json!({"elsewhere": b["wifiUnmanaged"] == true && b["hasWifiHardware"] == true, "short": b["wifiShort"], "linkUp": b["wifiLinkUp"], "service": b["wifiService"]}));
         h.set_state("power.ppd", b["ppd"].clone());
         h.set_state("backends", b);
     }
@@ -996,6 +1005,14 @@ mod tests {
         assert!(cm["wifiReason"].as_str().unwrap().contains("connmanctl"));
         let none = backends(&parse_stack("net=none\nnm_installed=1\n"), true);
         assert_eq!(none["canStartNm"], true);
+        // (no service on the bus: none running, unless the link is up all the same)
+        let off = backends(&parse_stack("net=none\nwifi_iface=wlan0\n"), true);
+        assert_eq!((off["wifiTitle"].as_str(), off["wifiService"].as_bool()), (Some("No network service is running"), Some(false)));
+        assert_eq!(off["wifiShort"], "Needs NetworkManager");
+        let up = backends(&parse_stack("net=none\nwifi_iface=wlan0\nwifi_up=1\n"), true);
+        assert_eq!((up["wifiTitle"].as_str(), up["wifiService"].as_bool()), (Some("The network is managed outside Tessera"), Some(true)));
+        assert_eq!(up["wifiShort"], "Managed outside Tessera");
+        assert_eq!(iwd["wifiService"], true);
         let bare = backends(&parse_stack("net=none\n"), true);
         assert!(bare["wifiReason"].as_str().unwrap().starts_with("Tessera's Wi-Fi menus need NetworkManager. Install it ("));
         // (tuned-ppd answers power-profiles-daemon's name: modes work)

@@ -136,7 +136,11 @@ pub fn ago(now: i64, at: i64) -> String {
     } else if m < 1440 {
         format!("{} h ago", (m as f64 / 60.0).round() as i64)
     } else {
-        format!("{} d ago", (m as f64 / 1440.0).round() as i64)
+        // (days written out, as Settings' Health and history: "26 days ago")
+        match (m as f64 / 1440.0).round() as i64 {
+            1 => "1 day ago".into(),
+            d => format!("{d} days ago"),
+        }
     }
 }
 
@@ -357,7 +361,9 @@ mod tests {
         assert_eq!(ago(now, now - 5 * 60_000), "5 min ago");
         assert_eq!(ago(now, now - 59 * 60_000), "59 min ago");
         assert_eq!(ago(now, now - 90 * 60_000), "2 h ago"); // (1.5 h rounds up, as Math.round)
-        assert_eq!(ago(now, now - 3 * 1440 * 60_000), "3 d ago");
+        assert_eq!(ago(now, now - 3 * 1440 * 60_000), "3 days ago");
+        assert_eq!(ago(now, now - 1440 * 60_000), "1 day ago");
+        assert_eq!(ago(now, now - 26 * 1440 * 60_000), "26 days ago");
     }
 
     #[test]

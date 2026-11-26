@@ -158,6 +158,46 @@ pub fn build_speed(st: &Value) -> Value {
     })
 }
 
+/// A route out, as the speed test's link reading says (SpeedTest.link: `ip
+/// route get`'s device)
+fn has_route(link: &Value) -> bool {
+    !link["iface"].as_str().unwrap_or("").is_empty()
+}
+
+/// No network to speak of (audit #156/#173): NetworkManager isn't running,
+/// nothing else is found running the network (Backends' wifiService) and
+/// there's no route out. The Wi-Fi menu and Settings then hide the
+/// connection's details and the saved speed result (an old test's numbers
+/// and provider under "No network service is running")
+pub fn offline(backends: &Value, link: &Value) -> bool {
+    backends["wifiUnmanaged"] == true && backends["wifiService"] != true && !has_route(link)
+}
+
+/// Backends as the Wi-Fi menu and Settings say it: "No network service is
+/// running" beside a route out (read by the speed test itself) would be
+/// false, so it says the network is managed outside Tessera instead
+pub fn shown_backends(backends: &Value, link: &Value) -> Value {
+    let mut b = backends.clone();
+    if b.is_object() && b["wifiUnmanaged"] == true && b["wifiService"] != true && has_route(link) {
+        use tessera_core::services::status::{OUTSIDE_REASON, OUTSIDE_SHORT, OUTSIDE_TITLE};
+        b["wifiTitle"] = json!(OUTSIDE_TITLE);
+        b["wifiReason"] = json!(OUTSIDE_REASON);
+        b["wifiShort"] = json!(OUTSIDE_SHORT);
+        b["wifiService"] = json!(true);
+    }
+    b
+}
+
+/// The SpeedTest bus state without its saved result while offline: the
+/// card says "Test speed", not an old test's numbers
+pub fn speed_state(st: &Value, offline: bool) -> Value {
+    let mut st = st.clone();
+    if offline && st.is_object() {
+        st["last"] = Value::Null;
+    }
+    st
+}
+
 /// The Wi-Fi menu's notice when NetworkManager doesn't answer, as WifiList.qml:
 /// Backends' title and reason (who manages Wi-Fi instead: iwd, ConnMan…),
 /// and its button (start NetworkManager, or open that manager's own app).
@@ -319,13 +359,15 @@ impl NetworkFeed {
         }).collect();
         json!({
             "adapter": st.present, "enabled": st.enabled, "unmanaged": unmanaged,
-            "notice": notice(unmanaged, &h.state("backends")),
+            "notice": notice(unmanaged, &shown_backends(&h.state("backends"), &crate::bus::get("SpeedTest")["link"])),
             "networks": nets,
         })
     }
 
     fn send(&mut self, h: &mut Host, force: bool) {
-        let mut v = json!({"wifi": self.wifi(h), "speed": build_speed(&crate::bus::get("SpeedTest"))});
+        let st = crate::bus::get("SpeedTest");
+        let off = offline(&h.state("backends"), &st["link"]);
+        let mut v = json!({"wifi": self.wifi(h), "speed": build_speed(&speed_state(&st, off))});
         if let Some(x) = h.state("panels.anchorX").as_f64() {
             v["anchorX"] = json!(x);
         }
@@ -570,6 +612,30 @@ mod tests {
         let aps = parse_list("*:Кафе 🙂:70:WPA2\n:東京\\:5G:40:\n");
         assert_eq!(aps[0].name, "Кафе 🙂");
         assert_eq!(aps[1].name, "東京:5G");
+    }
+
+    #[test]
+    fn no_network_hides_the_connection_and_says_who_runs_it() {
+        let none = json!({"ready": true, "wifiUnmanaged": true, "wifiService": false, "wifiTitle": "No network service is running", "wifiReason": "x"});
+        let no_link = json!({});
+        let link = json!({"iface": "wlan0", "kind": "wifi"});
+        assert!(offline(&none, &no_link));
+        assert!(!offline(&none, &link));
+        // NetworkManager running, or iwd: never offline, whatever the link
+        assert!(!offline(&json!({"wifiUnmanaged": false}), &no_link));
+        assert!(!offline(&json!({"wifiUnmanaged": true, "wifiService": true}), &no_link));
+        // (Backends not looked yet: nothing hidden)
+        assert!(!offline(&Value::Null, &no_link));
+        // a route out beside "no service": managed outside Tessera
+        assert_eq!(shown_backends(&none, &no_link)["wifiTitle"], "No network service is running");
+        let b = shown_backends(&none, &link);
+        assert_eq!(b["wifiTitle"], tessera_core::services::status::OUTSIDE_TITLE);
+        assert_eq!(notice(true, &b)["title"], tessera_core::services::status::OUTSIDE_TITLE);
+        // offline: the saved result goes, a test still shows
+        let st = json!({"stage": "idle", "running": false, "last": {"at": 5.0, "download": 100e6}});
+        assert_eq!(build_speed(&speed_state(&st, true))["showStats"], false);
+        assert_eq!(build_speed(&speed_state(&st, true))["lastAt"], 0.0);
+        assert_eq!(build_speed(&speed_state(&st, false))["showStats"], true);
     }
 
     #[test]

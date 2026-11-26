@@ -112,7 +112,24 @@ fn mirror_name(list: &[Value], of: &Value) -> String {
     list.iter().find(|m| m["id"].to_string().trim_matches('"') == key).and_then(|m| m["name"].as_str()).map(String::from).unwrap_or(key)
 }
 
+/// Is it on? Hyprland's "disabled", but the focused display is on whatever
+/// that says (audit #155/#174: the only display, showing Settings, read as
+/// off in a nested session, so its switch was off and the arrangement empty)
+pub fn is_on(m: &Value) -> bool {
+    !m["disabled"].as_bool().unwrap_or(false) || m["focused"].as_bool() == Some(true)
+}
+
 pub fn parse(list: &[Value]) -> Vec<Mon> {
+    let mut mons = parse_raw(list);
+    // (none on: one is, the one drawing this; the first with a size)
+    if !mons.is_empty() && !mons.iter().any(|m| m.enabled) {
+        let i = mons.iter().position(|m| m.width > 0 && m.height > 0).unwrap_or(0);
+        mons[i].enabled = true;
+    }
+    mons
+}
+
+fn parse_raw(list: &[Value]) -> Vec<Mon> {
     list.iter()
         .filter(|m| {
             let n = m["name"].as_str().unwrap_or("");
@@ -135,7 +152,7 @@ pub fn parse(list: &[Value]) -> Vec<Mon> {
                 y: m["y"].as_i64().unwrap_or(0),
                 scale: m["scale"].as_f64().unwrap_or(1.0),
                 transform: m["transform"].as_i64().unwrap_or(0),
-                enabled: !m["disabled"].as_bool().unwrap_or(false),
+                enabled: is_on(m),
                 mirror,
                 built_in: is_builtin(&name),
                 modes: parse_modes(&m["availableModes"]),
@@ -1117,6 +1134,26 @@ mod tests {
         let n = neighbours(b, &[("A".into(), a)]);
         assert_eq!(n[0].0, "A");
         assert_eq!(lead_for("liquid"), 620);
+    }
+
+    #[test]
+    fn a_display_showing_something_is_on() {
+        let m = |name: &str, extra: Value| {
+            let mut v = json!({"name": name, "width": 1920, "height": 1080, "refreshRate": 60.0});
+            for (k, x) in extra.as_object().unwrap() {
+                v[k] = x.clone();
+            }
+            v
+        };
+        // (no "disabled" at all: on)
+        assert!(parse(&[m("WAYLAND-1", json!({}))])[0].enabled);
+        // disabled but focused: on
+        assert!(is_on(&m("WAYLAND-1", json!({"disabled": true, "focused": true}))));
+        // the only one, said off: on all the same (it draws this page)
+        assert!(parse(&[m("WAYLAND-1", json!({"disabled": true}))])[0].enabled);
+        // two, one truly off: kept off
+        let two = parse(&[m("DP-1", json!({"disabled": false})), m("DP-2", json!({"disabled": true}))]);
+        assert!(two[0].enabled && !two[1].enabled);
     }
 
     #[test]

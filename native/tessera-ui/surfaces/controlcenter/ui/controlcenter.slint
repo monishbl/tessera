@@ -2344,6 +2344,15 @@ export component ControlCenter inherits Window {
             if key(e.text, e.modifiers.shift) { return accept; }
             return reject;
         }
+        // Glass: the screen behind dims while it's open, fading with the
+        // panel (and, on the plugin, blurs: lib.rs backdrop_shape), so the
+        // desktop doesn't show sharp between the tiles; the menu bar's strip
+        // (BACKDROP_TOP) stays clear
+        if !Theme.material && panel-opacity > 0.001: Rectangle {
+            y: 30px;
+            height: parent.height - 30px;
+            background: #000000.with-alpha((Theme.dark ? 0.22 : 0.14) * panel-opacity);
+        }
         // A click outside closes it
         TouchArea {
             enabled: shown;

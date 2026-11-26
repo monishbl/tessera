@@ -513,6 +513,9 @@ pub fn network(cx: &mut Ctx, p: &mut Page) {
         r.label = s(&be["wifiTitle"]);
         r.text = action;
         r.busy = s(&f["healthFixing"]) == "networkmanager";
+        // (alone in its group: Material's whole rounded card, as the
+        // others; it was a middle tile, square-cornered; audit #173)
+        r.step = 3.0;
         rows.push(r);
     } else if enabled {
         if let Some(form) = cx.local.get("wifi.form").cloned() {
@@ -693,21 +696,26 @@ pub fn network(cx: &mut Ctx, p: &mut Page) {
         .row(r);
 
     // ── Connection ──
+    // (no network service and no route out: no connection to describe,
+    // only the notice above says so; audit #156/#173)
+    let offline = f["netOffline"].as_bool().unwrap_or(false);
     let link = &stt["link"];
     let kind = s(&link["kind"]);
     let iface = s(&link["iface"]);
     let num = |k: &str| link[k].as_f64();
-    let g = p.group("Connection");
-    g.footer(if kind == "wifi" { "Signal above −67 dBm is good for calls and video; below −75 dBm, move closer to the router or switch to 5 GHz." } else { "" });
-    g.row(Row::new("Not connected").visible(iface.is_empty()).detail("Connect to Wi-Fi or plug in a cable to see its details"));
-    g.row(Row::new("Network").visible(kind == "wifi").shows(s(&link["ssid"])));
-    if kind == "wifi" && link["signal"].is_number() {
-        let mut r = Row::new("Signal").ctl("devices", "signal", String::new());
-        r.num = num("quality").unwrap_or(0.0) as f32;
-        r.value = format!("{} dBm · {}", num("signal").unwrap_or(0.0), s(&stt["signalWords"]));
-        g.row(r);
+    if !offline {
+        let g = p.group("Connection");
+        g.footer(if kind == "wifi" { "Signal above −67 dBm is good for calls and video; below −75 dBm, move closer to the router or switch to 5 GHz." } else { "" });
+        g.row(Row::new("Not connected").visible(iface.is_empty()).detail("Connect to Wi-Fi or plug in a cable to see its details"));
+        g.row(Row::new("Network").visible(kind == "wifi").shows(s(&link["ssid"])));
+        if kind == "wifi" && link["signal"].is_number() {
+            let mut r = Row::new("Signal").ctl("devices", "signal", String::new());
+            r.num = num("quality").unwrap_or(0.0) as f32;
+            r.value = format!("{} dBm · {}", num("signal").unwrap_or(0.0), s(&stt["signalWords"]));
+            g.row(r);
+        }
+        g.row(Row::new("Ethernet").visible(kind == "wired").shows(ethernet_speed(link["speed"].as_f64().or_else(|| s(&link["speed"]).parse().ok()).unwrap_or(0.0))));
     }
-    g.row(Row::new("Ethernet").visible(kind == "wired").shows(ethernet_speed(link["speed"].as_f64().or_else(|| s(&link["speed"]).parse().ok()).unwrap_or(0.0))));
 
     // ── More options ──
     p.more(cx);
