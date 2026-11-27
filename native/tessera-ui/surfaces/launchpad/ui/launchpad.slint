@@ -17,6 +17,10 @@ export struct LpCell {
     count: int,
     previews: [image], // a folder's first icons
     letter: string,
+    lettered: bool, // no icon of its own: a tile with its initial in `tile`
+    initial: string,
+    tile: color,
+    dark: bool, // a dark logo: a light backing behind it on a dark sheet
 }
 
 export struct LpLetter {
@@ -135,9 +139,19 @@ export component LaunchpadPanel inherits Window {
     }
     // Glass: the dialog's box (content + padding 24), for its glass
     out property <length> gw: min(1120px, root.width - 160px) + 48px;
-    out property <length> gh: min(720px, root.height - 200px) + 48px;
+    // The sheet's height: what its rows need, up to the most it may be (a
+    // third of it stood empty under two rows of folders; #232, #265). Its
+    // top stays where the tallest sheet's is; while searching it doesn't
+    // shrink under the results, so it doesn't jump at each letter
+    property <length> cap-h: Theme.material ? min(780px, root.height - 120px) : min(720px, root.height - 200px) + 48px;
+    property <int> fit-cols: max(1, floor((sheet.width - 48px) / (Theme.material ? (apps ? 116px : 212px) : (apps ? 120px : 210px))));
+    property <length> fit-h: min(cap-h, 48px + grid.y + max(1, ceil(cells.length / fit-cols)) * cell-h + (Theme.material ? 80px : 0px));
+    property <length> held-h;
+    changed has-text => { if has-text { held-h = fit-h; } }
+    property <length> sheet-h: has-text ? min(cap-h, max(held-h, fit-h)) : fit-h;
+    out property <length> gh: sheet-h;
     out property <length> gx: round((root.width - gw) / 2 / 1px) * 1px;
-    out property <length> gy: round((root.height - gh) / 2 / 1px) * 1px - 40px;
+    out property <length> gy: round((root.height - cap-h) / 2 / 1px) * 1px - 40px;
     out property <float> gscale: 0.96 + 0.04 * progress;
     // The grid (Rust needs its columns for the arrows)
     out property <int> cols: max(1, floor(grid.width / (Theme.material ? (apps ? 116px : 212px) : (apps ? 120px : 210px))));
@@ -202,9 +216,9 @@ export component LaunchpadPanel inherits Window {
     // The sheet (Material) or the dialog (Glass)
     sheet := Rectangle {
         property <length> sw: Theme.material ? min(1120px, root.width - 160px) : gw;
-        property <length> sh: Theme.material ? min(780px, root.height - 120px) : gh;
+        property <length> sh: sheet-h;
         x: Theme.material ? round((root.width - sw) / 2 / 1px) * 1px : gx;
-        y: Theme.material ? round((root.height - sh) / 2 / 1px) * 1px + (1 - progress) * 96px : gy;
+        y: Theme.material ? round((root.height - cap-h) / 2 / 1px) * 1px + (1 - progress) * 96px : gy;
         width: sw;
         height: sh;
         border-radius: 28px;
@@ -463,6 +477,37 @@ export component LaunchpadPanel inherits Window {
                         if Theme.material: Rectangle {
                             border-radius: parent.border-radius;
                             background: (cell.sel || cell.lit ? Theme.m3-on-secondary-container : Theme.m3-on-surface).with-alpha(at.pressed ? 0.1 : at.has-hover ? 0.08 : 0);
+                        }
+                        // (a dark logo on a dark sheet: on a light backing, or it vanished)
+                        if c.has-icon && c.dark && Theme.dark: Rectangle {
+                            x: (parent.width - 60px) / 2;
+                            y: 10px;
+                            width: 60px;
+                            height: 60px;
+                            border-radius: Theme.material ? 18px : 14px;
+                            background: #ececf0;
+                            transform-scale: at.pressed ? (Theme.material ? (Theme.press-bounce ? 1.06 : 1) : 0.94) : 1;
+                            animate transform-scale { duration: Theme.motion(Theme.material ? 235ms : 100ms * pace); easing: Theme.material ? spring(0.53) : linear; }
+                        }
+                        // (no icon of its own: a tile with its initial, in its own colour)
+                        if c.lettered: Rectangle {
+                            x: (parent.width - 56px) / 2;
+                            y: 12px;
+                            width: 56px;
+                            height: 56px;
+                            border-radius: Theme.material ? 28px : 13px;
+                            background: c.tile;
+                            transform-scale: at.pressed ? (Theme.material ? (Theme.press-bounce ? 1.06 : 1) : 0.94) : 1;
+                            animate transform-scale { duration: Theme.motion(Theme.material ? 235ms : 100ms * pace); easing: Theme.material ? spring(0.53) : linear; }
+                            Text {
+                                text: c.initial;
+                                color: white;
+                                font-size: 26px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                accessible-role: none;
+                            }
                         }
                         if c.has-icon: Image {
                             x: (parent.width - 56px) / 2;

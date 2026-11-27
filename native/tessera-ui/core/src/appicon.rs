@@ -538,6 +538,26 @@ fn inked(mut img: Img, ink: Option<[u8; 3]>) -> Img {
     img
 }
 
+/// Is a drawn icon dark through and through (LibreOffice's Start Center:
+/// black on clear), so it would vanish on a dark tile? Its opaque pixels'
+/// mean luma under 0.22, with hardly any light part of its own (a light
+/// backing goes behind it then; #260, #232)
+pub fn dark_logo(px: impl Iterator<Item = [u8; 4]>) -> bool {
+    let (mut n, mut sum, mut light) = (0u32, 0f32, 0u32);
+    for p in px {
+        if p[3] < 128 {
+            continue;
+        }
+        let l = (0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32) / 255.0;
+        n += 1;
+        sum += l;
+        if l > 0.6 {
+            light += 1;
+        }
+    }
+    n >= 16 && sum / n as f32 <= 0.22 && light * 10 < n
+}
+
 /// An icon file, drawn at `size` pixels in a style, ready for Slint
 /// (`ink`: a symbolic icon's colour)
 pub fn render(path: &Path, size: u32, s: &Style, ink: Option<[u8; 3]>) -> Option<SharedPixelBuffer<Rgba8Pixel>> {
@@ -618,6 +638,19 @@ mod tests {
         assert!(!i.plate && !i.square);
         let f = fit(&i, 0);
         assert!(f.scale < 1.0 && (f.x - 0.5).abs() < 0.02);
+    }
+
+    #[test]
+    fn dark_logos_are_told_apart() {
+        let px = |c: [u8; 4], n: usize| std::iter::repeat(c).take(n);
+        // black on clear: dark
+        assert!(dark_logo(px([20, 20, 24, 255], 400).chain(px([0; 4], 600))));
+        // a coloured logo, or a dark one with a white part of its own: not
+        assert!(!dark_logo(px([30, 90, 230, 255], 400)));
+        assert!(!dark_logo(px([20, 20, 24, 255], 300).chain(px([250, 250, 250, 255], 100))));
+        // nearly nothing opaque, or nothing at all: not
+        assert!(!dark_logo(px([0, 0, 0, 255], 4).chain(px([0; 4], 996))));
+        assert!(!dark_logo(std::iter::empty()));
     }
 
     #[test]
