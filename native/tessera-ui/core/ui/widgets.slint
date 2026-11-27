@@ -742,7 +742,9 @@ export component TextField inherits Rectangle {
 // A context or dropdown menu's row (ContextMenu.qml): a heading, a
 // separator, or an item that lights in the highlight while `hot` (under the
 // pointer or the arrows; `hovered` says the pointer came onto it); danger
-// items read red (Glass: a red highlight). The menu around it is its own.
+// items read red (Glass: a red highlight). `armed`: a danger item waiting
+// for a second click, filled red with its `confirm` text ("Quit?").
+// The menu around it is its own.
 export component MenuRow inherits Rectangle {
     in property <string> text;
     in property <bool> header;
@@ -750,13 +752,16 @@ export component MenuRow inherits Rectangle {
     in property <bool> enabled: true;
     in property <bool> danger;
     in property <bool> hot;
+    in property <bool> armed;
+    in property <string> confirm;
     callback activate();
     callback hovered();
     property <bool> item: !header && !separator;
     property <bool> lit: hot && enabled && item;
+    property <string> shown-text: armed && item ? confirm : text;
     height: separator ? 11px : header ? 26px : 28px;
     accessible-role: list-item;
-    accessible-label: text;
+    accessible-label: shown-text;
     accessible-enabled: enabled;
     accessible-action-default => { if enabled && item { activate(); } }
     if separator: Rectangle {
@@ -776,17 +781,18 @@ export component MenuRow inherits Rectangle {
     }
     if item: Rectangle {
         border-radius: Theme.radius-menu-row;
-        background: lit ? (danger && !Theme.material ? Theme.danger : Theme.highlight) : rt.pressed ? Theme.fill-pressed : transparent;
+        background: armed ? Theme.danger : lit ? (danger && !Theme.material ? Theme.danger : Theme.highlight) : rt.pressed ? Theme.fill-pressed : transparent;
         Text {
             x: 12px;
             width: parent.width - 24px;
             height: parent.height;
-            text: root.text;
+            text: root.shown-text;
             font-size: Theme.body;
+            font-weight: armed ? 600 : 400;
             vertical-alignment: center;
             overflow: elide;
             // (on-highlight: dark text on a light accent, both looks)
-            color: lit && !(Theme.material && danger) ? (danger ? #ffffff : Theme.on-highlight) : !enabled ? Theme.tertiary : danger ? Theme.danger : Theme.label;
+            color: armed ? (Theme.material ? Theme.m3-on-error : #ffffff) : lit && !(Theme.material && danger) ? (danger ? #ffffff : Theme.on-highlight) : !enabled ? Theme.tertiary : danger ? Theme.danger : Theme.label;
             accessible-role: none;
         }
     }
