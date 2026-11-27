@@ -8,7 +8,7 @@
 // selection, the keys, the inline AI answer); this draws it.
 
 import { Theme } from "@tessera/theme.slint";
-import { Busy } from "@tessera/widgets.slint";
+import { Busy, ScrollIndicator } from "@tessera/widgets.slint";
 
 // Material's see-through containers (Theme.qml's controlAlpha: Settings'
 // transparency; the shared Theme has the panel's, 1 - 0.55 t)
@@ -763,7 +763,7 @@ export component SpotlightPanel inherits Window {
             border-width: 0.5px;
             border-color: Theme.separator;
             TouchArea { }
-            if !Theme.material: Flickable {
+            if !Theme.material: sb-list766 := Flickable {
                 x: 8px;
                 y: 8px;
                 width: parent.width - 16px;
@@ -803,6 +803,16 @@ export component SpotlightPanel inherits Window {
                         activate => { root.activate(r.index); }
                     }
                 }
+                // (the kit's scroll indicator, held still over the list's right
+                // edge while the content moves under it, #358 #1037)
+                ScrollIndicator {
+                    x: sb-list766.width - self.width;
+                    y: -sb-list766.content-y;
+                    height: sb-list766.height;
+                    content-y: sb-list766.content-y;
+                    content-height: sb-list766.content-height;
+                    view-height: sb-list766.height;
+                }
             }
         }
         g-answer := Rectangle {
@@ -840,7 +850,7 @@ export component SpotlightPanel inherits Window {
                         vertical-alignment: center;
                     }
                 }
-                if quick-shown: Flickable {
+                if quick-shown: sb-list843 := Flickable {
                     height: min(g-text.preferred-height, 360px);
                     content-height: g-text.preferred-height;
                     g-text := VerticalLayout {
@@ -857,6 +867,16 @@ export component SpotlightPanel inherits Window {
                             font-size: Theme.title;
                             wrap: word-wrap;
                         }
+                    }
+                    // (the kit's scroll indicator, held still over the list's right
+                    // edge while the content moves under it, #358 #1037)
+                    ScrollIndicator {
+                        x: sb-list843.width - self.width;
+                        y: -sb-list843.content-y;
+                        height: sb-list843.height;
+                        content-y: sb-list843.content-y;
+                        content-height: sb-list843.content-height;
+                        view-height: sb-list843.height;
                     }
                 }
                 if quick-done: HorizontalLayout {
@@ -892,7 +912,7 @@ export component SpotlightPanel inherits Window {
                 height: max(0, parent.height - 56px);
                 clip: true;
                 visible: self.height > 1px;
-                if !answering: Flickable {
+                if !answering: sb-list895 := Flickable {
                     x: 12px;
                     y: 8px;
                     width: parent.width - 24px;
@@ -949,6 +969,16 @@ export component SpotlightPanel inherits Window {
                             }
                         }
                     }
+                    // (the kit's scroll indicator, held still over the list's right
+                    // edge while the content moves under it, #358 #1037)
+                    ScrollIndicator {
+                        x: sb-list895.width - self.width;
+                        y: -sb-list895.content-y;
+                        height: sb-list895.height;
+                        content-y: sb-list895.content-y;
+                        content-height: sb-list895.content-height;
+                        view-height: sb-list895.height;
+                    }
                 }
                 // Inline AI answer
                 if answering: m-body := VerticalLayout {
@@ -990,7 +1020,7 @@ export component SpotlightPanel inherits Window {
                             vertical-alignment: center;
                         }
                     }
-                    if quick-shown: Flickable {
+                    if quick-shown: sb-list993 := Flickable {
                         height: min(m-text.preferred-height, 360px);
                         content-height: m-text.preferred-height;
                         m-text := VerticalLayout {
@@ -1007,6 +1037,16 @@ export component SpotlightPanel inherits Window {
                                 font-size: 16px;
                                 wrap: word-wrap;
                             }
+                        }
+                        // (the kit's scroll indicator, held still over the list's right
+                        // edge while the content moves under it, #358 #1037)
+                        ScrollIndicator {
+                            x: sb-list993.width - self.width;
+                            y: -sb-list993.content-y;
+                            height: sb-list993.height;
+                            content-y: sb-list993.content-y;
+                            content-height: sb-list993.content-height;
+                            view-height: sb-list993.height;
                         }
                     }
                     if quick-done: HorizontalLayout {
