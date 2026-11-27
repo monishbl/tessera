@@ -25,6 +25,12 @@ From a shell script:
 
     python3 -I settings_file.py set appearance.look glass   (the value as JSON when it parses)
 
+The QML fallback's Config.qml writes only the settings it declares; around
+each of its writes (compat, audit #667):
+
+    python3 -I settings_file.py keep CONFIG COPY   the file as it is, kept (0600)
+    python3 -I settings_file.py fill CONFIG COPY   keys the write left out put back
+
 Other files shared with the shell (health.jsonl) use lock_file(path): an
 flock on a lock file beside it, taken the same way.
 """
@@ -276,7 +282,61 @@ def get(c, dotted, default=None):
     return at
 
 
+def missing_from(c, kept):
+    """The keys of `kept` that `c` has no key for, put back into c (in
+    sections both have, at every depth); never a value c has changed. True
+    when any was put back"""
+    added = False
+    for k, v in kept.items():
+        if k not in c:
+            c[k] = v
+            added = True
+        elif isinstance(c[k], dict) and isinstance(v, dict):
+            added = missing_from(c[k], v) or added
+    return added
+
+
+def keep(path, copy):
+    """The settings as they are now, kept in `copy` (private) before a
+    writer that knows only some keys writes the file (the QML fallback's
+    Config.qml); False when there's nothing to keep"""
+    with Lock(path):
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+            c = json.loads(data)
+        except (OSError, ValueError):
+            return False
+        if not isinstance(c, dict):
+            return False
+        write_whole(copy, data, 0o600)
+    return True
+
+
+def fill(path, copy):
+    """What that writer left out put back from `copy`, under the lock (keys
+    it doesn't know only: its own values stay); True when written"""
+    try:
+        with open(copy, encoding="utf-8") as f:
+            kept = json.load(f)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(kept, dict):
+        return False
+    done = edit(lambda c: missing_from(c, kept), path=path, missing=None) if os.path.exists(path) else False
+    with contextlib.suppress(OSError):
+        os.unlink(copy)
+    return done
+
+
 def main(argv):
+    if len(argv) == 3 and argv[0] in ("keep", "fill"):
+        try:
+            ok = (keep if argv[0] == "keep" else fill)(argv[1], argv[2])
+        except OSError as e:
+            print(f"settings_file: {argv[0]}: {e.strerror or e}", file=sys.stderr)
+            return 1
+        return 0 if ok or argv[0] == "fill" else 1
     if len(argv) >= 3 and argv[0] == "set" and len(argv) % 2 == 1:
         pairs = []
         for i in range(1, len(argv), 2):

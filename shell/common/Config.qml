@@ -20,13 +20,56 @@ Singleton {
     Timer {
         id: writeTimer
         interval: 300 // after a slider stops moving, not on every step
-        onTriggered: file.writeAdapter()
+        onTriggered: root.save()
+    }
+
+    // The adapter writes only the settings it declares, and the file holds
+    // more (the Rust shell's own, per-display and per-app maps): the file as
+    // it was is kept first, and what the adapter left out goes back in after
+    // its write, under the shell's settings lock (settings_file.py keep /
+    // fill: only keys missing are added, never a value changed). A save asked
+    // for meanwhile runs after (compat, audit #667)
+    readonly property string helper: Quickshell.shellDir + "/assets/scripts/settings_file.py"
+    readonly property string kept: Paths.state + "/.config-kept.json"
+    property bool saveAgain: false
+    function save() {
+        if (keepProc.running || fillProc.running) {
+            root.saveAgain = true;
+            return;
+        }
+        keepProc.running = true;
+    }
+    Process {
+        id: keepProc
+        command: ["python3", "-I", root.helper, "keep", file.path, root.kept]
+        onExited: code => {
+            file.writeAdapter();
+            // (only with a copy of what was there: else as before, adapter alone)
+            if (code === 0)
+                fillProc.running = true;
+            else if (root.saveAgain) {
+                root.saveAgain = false;
+                root.save();
+            }
+        }
+    }
+    Process {
+        id: fillProc
+        command: ["python3", "-I", root.helper, "fill", file.path, root.kept]
+        onExited: {
+            if (root.saveAgain) {
+                root.saveAgain = false;
+                root.save();
+            }
+        }
     }
 
     FileView {
         id: file
         path: root.dir + "/config.json"
         watchChanges: true
+        // (the write is done when writeAdapter returns: fill runs after it)
+        blockWrites: true
         onFileChanged: reload()
         onAdapterUpdated: writeTimer.restart()
         onLoaded: {

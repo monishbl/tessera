@@ -130,6 +130,40 @@ class SettingsFile(unittest.TestCase):
         self.assertEqual(c["dock"]["iconSize"], 56)
 
 
+class FallbackKeepsUnknownKeys(unittest.TestCase):
+    """(audit #667) the QML fallback writes only what it declares: what it
+    left out goes back in after its write"""
+
+    def test_keep_then_fill(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg, copy = os.path.join(d, "config.json"), os.path.join(d, "state", ".config-kept.json")
+            rust = {"dock": {"iconSize": 48, "rustOnly": {"per-app": {"kitty": 1}}}, "displays": {"DP-1": {"scale": 2}},
+                    "performance": {"gpu": "low"}}
+            with open(cfg, "w") as f:
+                json.dump(rust, f)
+            self.assertTrue(SF.keep(cfg, copy))
+            self.assertEqual(os.stat(copy).st_mode & 0o777, 0o600)
+            # the adapter's write: its own keys only, one value changed
+            with open(cfg, "w") as f:
+                json.dump({"dock": {"iconSize": 64, "autohide": False}, "performance": {}}, f)
+            self.assertTrue(SF.fill(cfg, copy))
+            c = json.load(open(cfg))
+            self.assertEqual(c["dock"], {"iconSize": 64, "autohide": False, "rustOnly": {"per-app": {"kitty": 1}}})
+            self.assertEqual(c["displays"], {"DP-1": {"scale": 2}})
+            self.assertEqual(c["performance"], {"gpu": "low"})
+            self.assertFalse(os.path.exists(copy))
+            # nothing kept (a first start): fill changes nothing
+            self.assertFalse(SF.fill(cfg, copy))
+            self.assertFalse(SF.keep(os.path.join(d, "none.json"), copy))
+
+    def test_config_qml_saves_through_keep_and_fill(self):
+        qml = (SCRIPTS.parent.parent / "common/Config.qml").read_text()
+        self.assertIn('onTriggered: root.save()', qml)
+        self.assertIn('"keep", file.path', qml)
+        self.assertIn('"fill", file.path', qml)
+        self.assertIn("blockWrites: true", qml)
+
+
 class EveryScriptUsesIt(unittest.TestCase):
     def test_no_script_writes_the_settings_on_its_own(self):
         # (each of these rewrites config.json: through the helper only)
