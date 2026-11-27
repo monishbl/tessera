@@ -8,7 +8,7 @@
 // button group.
 
 import { Theme } from "@tessera/theme.slint";
-import { Keycap } from "@tessera/widgets.slint";
+import { Keycap, ScrollIndicator } from "@tessera/widgets.slint";
 
 export struct CsBind {
     description: string,
@@ -309,6 +309,16 @@ export component Cheatsheet inherits Window {
                                     width: (content.width - 2 * 24px) / 3;
                                 }
                             }
+                        }
+                        // (the kit's scroll indicator, held still over the list's right
+                        // edge while the content moves under it, #358 #1037)
+                        ScrollIndicator {
+                            x: list.width - self.width;
+                            y: -list.content-y;
+                            height: list.height;
+                            content-y: list.content-y;
+                            content-height: list.content-height;
+                            view-height: list.height;
                         }
                     }
                     // (none yet, or Hyprland gave none with a description)
