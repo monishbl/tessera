@@ -288,3 +288,4 @@ Removed: the passkeys daemon, its Settings group, its polkit-dialog requests and
 |---|---|---|---|
 | Overview, Mission Control and the switcher call a space "Space" (untitled spaces "Space N", never "Desktop N") and say "No windows" when one is empty (#536) | 27 Nov | done, unchecked | (this commit) |
 | Desktop: the widget and file grid keeps room for the dock as it really is (its icon size and look; none when it is off or auto-hides) instead of a fixed 110 px, and re-places when the dock settings change (#499) | 27 Nov | done, unchecked (unit tests) | (this commit) |
+| Window controls (without the glass plugin): the pill hides while another window is over its place (a floating, pinned or picture-in-picture window above the focused one), instead of being drawn over that window and taking its clicks (#494) | 27 Nov | done, unchecked (unit tests; check on the laptop) | (this commit) |

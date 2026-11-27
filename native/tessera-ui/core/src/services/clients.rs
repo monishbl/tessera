@@ -52,6 +52,9 @@ pub struct Client {
     pub focus_history_id: i32,
     #[serde(default)]
     pub grouped: Vec<String>,
+    /// Kept on all spaces (above the others; the window controls hide under it)
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 fn far() -> i32 {
@@ -168,7 +171,7 @@ fn snapshot(urgent: &BTreeSet<String>) -> Option<Windows> {
 const RELEVANT: &[&str] = &[
     "openwindow>>", "closewindow>>", "movewindow>>", "movewindowv2>>", "activewindowv2>>",
     "changefloatingmode>>", "fullscreen>>", "workspacev2>>", "focusedmonv2>>", "monitoraddedv2>>", "monitorremovedv2>>",
-    "urgent>>", "minimized>>", "resizewindow>>",
+    "urgent>>", "minimized>>", "resizewindow>>", "pin>>",
 ];
 
 /// "0x55d1…" from an event's first field (Hyprland gives it without the 0x)
