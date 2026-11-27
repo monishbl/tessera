@@ -1419,10 +1419,50 @@ export component TodoTab {
             horizontal-alignment: center;
             vertical-alignment: center;
         }
-        for t in todos: Rectangle {
+        // (each row takes the keyboard: Space toggles, F2 renames, Delete
+        // deletes, Menu opens its menu; right-click or a long press opens the
+        // menu too. The hover × waits a moment before it can be pressed: a
+        // finger moves the pointer there and taps at once, which deleted the
+        // to-do under a tap at the row's right end; #880)
+        for t in todos: row := FocusScope {
+            property <bool> hot: th.has-hover || xb.hovered;
+            property <bool> x-ready;
+            changed hot => { if !hot { x-ready = false; } }
             height: t.due != "" ? (Theme.material ? 48px : 40px) : Theme.material ? 40px : 30px;
+            focus-on-click: false;
+            accessible-role: list-item;
+            accessible-label: t.text + (t.due != "" ? ", " + t.due : "") + (t.done ? ", done" : "");
+            accessible-action-default => { toggle(t.key); }
+            key-pressed(e) => {
+                if renaming == t.key { return reject; }
+                if e.text == " " || e.text == Key.Return { toggle(t.key); return accept; }
+                if e.text == Key.Delete || e.text == Key.Backspace { remove(t.key); return accept; }
+                if e.text == Key.F2 { renaming = t.key; return accept; }
+                if e.text == Key.Menu || (e.text == Key.F10 && e.modifiers.shift) {
+                    root.open-row-menu(t.key, t.text, 40px, self.y + col.y + self.height, true);
+                    return accept;
+                }
+                reject
+            }
+            if row.has-focus && renaming != t.key: Rectangle {
+                x: -4px;
+                width: parent.width + 8px;
+                border-radius: Theme.material ? 12px : 8px;
+                border-width: Theme.material ? 3px : 2px;
+                border-color: Theme.material ? Theme.m3-secondary : Theme.accent;
+            }
+            hover-wait := Timer {
+                interval: 300ms;
+                running: hot && !x-ready;
+                triggered => { x-ready = true; }
+            }
             th := TouchArea {
                 double-clicked => { renaming = t.key; }
+                pointer-event(e) => {
+                    if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                        root.open-row-menu(t.key, t.text, self.mouse-x, row.y + col.y + self.mouse-y, false);
+                    }
+                }
             }
             Tick {
                 x: 0;
@@ -1491,8 +1531,8 @@ export component TodoTab {
             // (made while the row is there, shown while the row or the button
             // itself has the pointer: made on the row's hover alone, it went
             // away under the pointer and clicks missed; audit #180)
-            if renaming != t.key: IconButton {
-                visible: th.has-hover || self.hovered;
+            xb := IconButton {
+                visible: renaming != t.key && x-ready && (th.has-hover || self.hovered);
                 x: parent.width - self.width + 6px;
                 y: (parent.height - self.height) / 2;
                 width: 24px;
@@ -1524,6 +1564,86 @@ export component TodoTab {
                 TouchArea {
                     mouse-cursor: pointer;
                     clicked => { restore(); }
+                }
+            }
+        }
+    }
+    // A to-do's menu (right-click, a long press, or the Menu key on a row):
+    // Rename and Delete, under the pointer, kept inside the list
+    property <string> menu-key;
+    property <string> menu-text;
+    property <length> menu-x;
+    property <length> menu-y;
+    property <int> menu-hi;
+    property <length> menu-row-h: Theme.material ? 36px : 28px;
+    function open-row-menu(key: string, text: string, x: length, y: length, by-keys: bool) {
+        menu-key = key;
+        menu-text = text;
+        menu-hi = by-keys ? 0 : -1;
+        menu-x = max(4px, min(x, root.width - 164px));
+        menu-y = max(4px, min(y, root.height - 2 * menu-row-h - 14px));
+    }
+    function menu-do(i: int) {
+        let k = menu-key;
+        menu-key = "";
+        if i == 0 { renaming = k; }
+        if i == 1 { remove(k); }
+    }
+    if menu-key != "": Rectangle {
+        TouchArea {
+            clicked => { menu-key = ""; }
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down && e.button == PointerEventButton.right { menu-key = ""; }
+            }
+        }
+        Rectangle {
+            x: menu-x;
+            y: menu-y;
+            width: 160px;
+            height: 2 * menu-row-h + 10px;
+            border-radius: Theme.material ? 16px : Theme.menu-radius;
+            background: Theme.material ? Theme.m3-surface-container : Theme.menu-bg;
+            border-width: 1px;
+            border-color: Theme.material ? transparent : Theme.separator;
+            drop-shadow-blur: 16px;
+            drop-shadow-offset-y: 4px;
+            drop-shadow-color: #00000033;
+            accessible-role: list;
+            accessible-label: "Options for “" + menu-text + "”";
+            TouchArea { }
+            FocusScope {
+                focus-on-click: false;
+                init => { self.focus(); }
+                key-pressed(e) => {
+                    if e.text == Key.UpArrow { menu-hi = max(0, menu-hi - 1); return accept; }
+                    if e.text == Key.DownArrow { menu-hi = min(1, menu-hi + 1); return accept; }
+                    if (e.text == Key.Return || e.text == " ") && menu-hi >= 0 { menu-do(menu-hi); return accept; }
+                    if e.text == Key.Escape { menu-key = ""; return accept; }
+                    reject
+                }
+            }
+            for word[i] in ["Rename", "Delete"]: Rectangle {
+                property <bool> lit: mt.has-hover || i == menu-hi;
+                x: 5px;
+                y: 5px + i * menu-row-h;
+                width: parent.width - 10px;
+                height: menu-row-h;
+                border-radius: Theme.material ? 8px : 7px;
+                background: Theme.material ? (lit ? Theme.m3-on-surface.with-alpha(0.08) : transparent) : lit ? (i == 1 ? Theme.danger : Theme.accent) : transparent;
+                accessible-role: button;
+                accessible-label: word;
+                accessible-action-default => { menu-do(i); }
+                Text {
+                    x: 10px;
+                    width: parent.width - 20px;
+                    text: word;
+                    color: Theme.material ? (i == 1 ? Theme.m3-error : Theme.label) : lit ? Theme.on-accent : i == 1 ? Theme.danger : Theme.label;
+                    font-size: Theme.body;
+                    vertical-alignment: center;
+                }
+                mt := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { menu-do(i); }
                 }
             }
         }
