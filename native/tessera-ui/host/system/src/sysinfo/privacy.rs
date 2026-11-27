@@ -673,7 +673,10 @@ mod tests {
 
 [{"index":5,"properties":{"pipewire.sec.pid":"66"}},{"index":7,"properties":{"pipewire.sec.pid":"20"}},{"index":8,"properties":{}}]
 "#;
-        let (a, s) = parse_mic_with(t, &fake_exe);
+        // (pactl prints each list on one line: the streams' array is wrapped
+        // above only to read)
+        let t = t.replace("},\n                    {", "},{");
+        let (a, s) = parse_mic_with(&t, &fake_exe);
         // spy shows; the shell's own and pavucontrol's meter don't; a stream
         // claiming pavucontrol's pid is still the program the server saw
         assert_eq!(a, vec!["Spy", "Liar"]);
