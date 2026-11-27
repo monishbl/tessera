@@ -1219,7 +1219,7 @@ impl Menubar {
                 b.ui.set_all_mode(all_mode);
                 let mut rows = if all_mode { self.act_rows(material, &theme) } else { Vec::new() };
                 // (what fits under the card and above the status line; "+N more" for the rest, #363)
-                let card_h = if card.is_some() { if card.as_ref().is_some_and(|c| c.kind == "music") { 200.0 } else { 120.0 } + 10.0 } else { 0.0 };
+                let card_h = if card.is_some() { (if card.as_ref().is_some_and(|c| c.kind == "music") { 200.0 } else { 120.0 }) + 10.0 } else { 0.0 };
                 let heights: Vec<f32> = rows.iter().map(|r| if r.kind == "captions" && slint::Model::row_count(&r.lines) > 0 { (20.0 + slint::Model::row_count(&r.lines) as f32 * 18.0).max(36.0) } else if r.progress >= 0.0 { 42.0 } else { 36.0 }).collect();
                 let keep = island::fit(&heights, 10.0, island::room(ISLAND_H as f32, false) - card_h - 32.0, 18.0);
                 let more = rows.len().saturating_sub(keep);

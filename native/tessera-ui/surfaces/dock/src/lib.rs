@@ -1008,11 +1008,11 @@ impl Part for Dock {
             // Opening any panel closes the menu (DockLogic's Panels.onOpenChanged)
             let open = s.str("open").to_string();
             let badges: HashMap<String, i64> = s.get("badges.counts").as_object().map(|o| o.iter().filter_map(|(k, v)| v.as_i64().map(|n| (k.clone(), n))).collect()).unwrap_or_default();
+            // (the on-screen keyboard came or went: the dock steps aside or back)
+            let (kb_open, kb_screen) = s.keyboard();
             if self.menu.as_ref().is_some_and(|m| m.open && m.open_was != open) {
                 self.close_menu(st);
             }
-            // (the on-screen keyboard came or went: the dock steps aside or back)
-            let (kb_open, kb_screen) = s.keyboard();
             let kb_changed = self.wins.iter().any(|w| w.under_keyboard != layout::under_keyboard(&kb_open, &kb_screen, &w.output));
             if badges != self.badges {
                 self.badges = badges;
