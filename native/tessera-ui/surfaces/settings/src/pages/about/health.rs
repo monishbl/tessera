@@ -309,7 +309,10 @@ mod tests {
         assert_eq!(fix_label("Restore the login screen", true, false, true), "Fixing…");
         // (health-check.py names the button for the login rescue's Restore, audit #805)
         let src = include_str!("../../../../../../../shell/assets/scripts/health-check.py");
-        assert!(src.contains("FIX_LABELS = {\"loginrestore\": \"Restore the login screen\"}"));
+        // (and the approved-build fix's, #802)
+        let labels = src.lines().find(|l| l.starts_with("FIX_LABELS = {")).expect("FIX_LABELS");
+        assert!(labels.contains("\"loginrestore\": \"Restore the login screen\""), "{labels}");
+        assert!(labels.contains("\"loginui\": \"Use it at the login screen\""), "{labels}");
     }
 
     #[test]
