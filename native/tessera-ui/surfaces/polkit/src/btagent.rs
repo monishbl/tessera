@@ -176,7 +176,9 @@ pub struct Notice {
 pub fn notice(kind: &Kind, name: &str) -> Notice {
     let n = name.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
     let body = match kind {
-        Kind::Confirm(code) => format!("{n} wants to pair with this computer. Pair only if it shows {}.", passkey_text(*code)),
+        // (a code check is never accepted unseen: its six digits are in the
+        // notification, and Pair is your word that both devices show them)
+        Kind::Confirm(code) => return Notice { title: format!("Pair with {name}?"), body: format!("Check it shows {:06}. Pair only if it does.", code % 1_000_000) },
         Kind::PinCode | Kind::Passkey => format!("{n} wants to pair with this computer. Pair asks for its code."),
         Kind::DisplayPinCode(_) | Kind::DisplayPasskey(..) => format!("{n} wants to pair with this computer. Pair shows the code to type on it."),
         Kind::Authorize => format!("{n} wants to pair with this computer."),
@@ -684,8 +686,12 @@ mod tests {
             assert_eq!(notice_do(&Kind::DisplayPinCode("1".into()), choice), NoticeDo::StopPairing);
         }
         // the words: the code to check is in them; the device's name can't be markup
-        let n = notice(&Kind::Confirm(12345), "Phone <b>x</b> & co");
-        assert!(n.body.contains("012 345") && n.body.contains("&lt;b&gt;") && n.body.contains("&amp; co") && !n.body.contains("<b>"));
+        // a code check: the six digits in it, so Pair is never given unseen
+        let n = notice(&Kind::Confirm(123456), "Phone");
+        assert_eq!((n.title.as_str(), n.body.as_str()), ("Pair with Phone?", "Check it shows 123456. Pair only if it does."));
+        assert!(notice(&Kind::Confirm(42), "Phone").body.contains("000042"));
+        let n = notice(&Kind::PinCode, "Phone <b>x</b> & co");
+        assert!(n.body.contains("&lt;b&gt;") && n.body.contains("&amp; co") && !n.body.contains("<b>"));
         assert!(notice(&Kind::Authorize, "Speaker").body.starts_with("Speaker wants to pair"));
         // (one of a device this computer isn't pairing: not ours)
         assert!(!started_here("/org/bluez/hci0/dev_00_11_22_33_44_55"));
