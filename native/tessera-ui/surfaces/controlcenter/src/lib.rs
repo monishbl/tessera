@@ -242,8 +242,10 @@ pub struct ControlCenter {
     model: Rc<VecModel<ui::CcMod>>,
     menu: Option<(MenuOf, Vec<MenuItem>)>,
     kbd: i32,
-    /// the page's row the keyboard is on (-1: none)
+    /// the page's block the keyboard is on (-1: none, SWITCH_STOP: the
+    /// header's switch), and in a row of buttons which one
     pkbd: i32,
+    pkbd_sub: i32,
     /// the album art shown, by its address
     art_url: String,
     art: Option<slint::Image>,
@@ -278,6 +280,7 @@ impl Default for ControlCenter {
             menu: None,
             kbd: -1,
             pkbd: -1,
+            pkbd_sub: 0,
             art_url: String::new(),
             art: None,
             hushed: None,
@@ -837,11 +840,14 @@ impl ControlCenter {
         }
         // (the keyboard's row by its id, not its place: rows come and go
         // with every scan, and Enter must click the row the ring was on)
-        let focused = usize::try_from(self.pkbd).ok().and_then(|i| self.shown_page.blocks.get(i)).map(|b| b.id.clone()).filter(|id| !id.is_empty());
+        let focused = usize::try_from(self.pkbd).ok().and_then(|i| self.shown_page.blocks.get(i)).filter(|b| !b.id.is_empty()).map(|b| (b.id.clone(), b.kind));
         self.shown_page = page;
-        if let Some(id) = focused {
-            let at = self.shown_page.blocks.iter().position(|b| b.id == id && b.kind == BlockKind::Row && !b.disabled);
-            self.set_pkbd(at.map_or(-1, |i| i as i32));
+        if let Some((id, kind)) = focused {
+            let at = self.shown_page.blocks.iter().position(|b| b.id == id && b.kind == kind && !b.disabled);
+            let sub = at.and_then(|i| self.shown_page.blocks.get(i)).map_or(0, |b| self.pkbd_sub.clamp(0, (b.options.len() as i32 - 1).max(0)));
+            self.set_pkbd_at(at.map_or(-1, |i| i as i32), sub);
+        } else if self.pkbd == SWITCH_STOP && !self.shown_page.switch {
+            self.set_pkbd(-1);
         }
         let Some(w) = &self.win else { return };
         let ui = &w.ui;
@@ -1115,21 +1121,30 @@ impl ControlCenter {
     }
 
     fn set_pkbd(&mut self, k: i32) {
+        self.set_pkbd_at(k, 0);
+    }
+
+    fn set_pkbd_at(&mut self, k: i32, sub: i32) {
         self.pkbd = k;
+        self.pkbd_sub = sub;
         if let Some(w) = &self.win {
             w.ui.set_page_kbd(k);
+            w.ui.set_page_kbd_sub(sub);
         }
     }
 
-    /// Keys on an open page: Tab or the arrows go from row to row, Space or
-    /// Enter acts, the Menu key opens a row's menu (ListRow's keys)
+    /// Keys on an open page: Tab or Up/Down go from stop to stop (the
+    /// header's switch, rows, segmented controls, sliders, apps, a notice's
+    /// fix, each button of a row: `page_stops`), Left/Right change the one
+    /// it's on (`page_nudge`), Space or Enter acts, the Menu key opens a
+    /// row's menu (ListRow's keys)
     fn page_key(&mut self, st: &mut State, text: &str, shift: bool) {
         let is = |key: Key| text == SharedString::from(key).as_str();
-        let rows: Vec<usize> = self.shown_page.blocks.iter().enumerate().filter(|(_, b)| b.kind == BlockKind::Row && !b.disabled).map(|(i, _)| i).collect();
-        if rows.is_empty() {
+        let stops = page_stops(&self.shown_page);
+        if stops.is_empty() {
             return;
         }
-        let at = rows.iter().position(|&i| i as i32 == self.pkbd);
+        let at = stops.iter().position(|&s| s == (self.pkbd, self.pkbd_sub));
         let step = if is(Key::DownArrow) || (is(Key::Tab) && !shift) {
             1
         } else if is(Key::UpArrow) || is(Key::Backtab) || (is(Key::Tab) && shift) {
@@ -1138,19 +1153,49 @@ impl ControlCenter {
             0
         };
         if step != 0 {
-            let n = rows.len() as i32;
+            let n = stops.len() as i32;
             let k = match at {
                 None => if step > 0 { 0 } else { n - 1 },
                 Some(a) => (a as i32 + step).clamp(0, n - 1),
             };
-            self.set_pkbd(rows[k as usize] as i32);
+            let (b, s) = stops[k as usize];
+            self.set_pkbd_at(b, s);
             return;
         }
         let Some(a) = at else { return };
-        let i = rows[a];
+        let (bi, sub) = stops[a];
+        if bi == SWITCH_STOP {
+            if text == " " || is(Key::Return) {
+                shell::ask("cc.block", json!([self.page, "", "switch", ""]));
+            }
+            return;
+        }
+        let i = bi as usize;
+        let Some(b) = self.shown_page.blocks.get(i).cloned() else { return };
+        if is(Key::LeftArrow) || is(Key::RightArrow) {
+            let d = if is(Key::RightArrow) { 1 } else { -1 };
+            let level = self.held.or(&format!("block:{}", b.id), b.value as f32);
+            match page_nudge(&b, sub, level, d) {
+                Some(Nudge::Seg(c)) => self.block(st, i, "seg", &c.to_string()),
+                Some(Nudge::Slide(v)) => self.block_slide(st, i, v),
+                Some(Nudge::Button(s)) => self.set_pkbd_at(bi, s),
+                None => {}
+            }
+            return;
+        }
         if text == " " || is(Key::Return) {
-            self.block(st, i, "click", "");
-        } else if is(Key::Menu) || (shift && is(Key::F10)) {
+            match b.kind {
+                BlockKind::Row => self.block(st, i, "click", ""),
+                BlockKind::App => self.block(st, i, "mute", ""),
+                BlockKind::Notice if !b.busy => self.block(st, i, "click", ""),
+                BlockKind::Buttons if !(b.busy && sub == b.current) => {
+                    if let Some(o) = b.options.get(sub.max(0) as usize) {
+                        self.block(st, i, "btn", o);
+                    }
+                }
+                _ => {}
+            }
+        } else if b.kind == BlockKind::Row && (is(Key::Menu) || (shift && is(Key::F10))) {
             let b = self.shown_page.blocks[i].clone();
             if !b.menu.is_empty() {
                 let (x, y) = self.win.as_ref().map_or((0.0, 0.0), |w| (w.ui.get_panel_x(), w.ui.get_panel_y() + 100.0));
@@ -1793,9 +1838,104 @@ impl Part for ControlCenter {
     }
 }
 
+/// The page's header switch as a keyboard stop (`pkbd`)
+const SWITCH_STOP: i32 = -2;
+
+/// Where the keys stop on a page (#351): the header's switch, then each
+/// row, segmented control, slider, app (its mute button) and notice with a
+/// fix that isn't disabled, and each button of a row of buttons; as
+/// (block, button), block SWITCH_STOP for the switch
+fn page_stops(p: &Page) -> Vec<(i32, i32)> {
+    let mut v = Vec::new();
+    if p.switch {
+        v.push((SWITCH_STOP, 0));
+    }
+    for (i, b) in p.blocks.iter().enumerate().filter(|(_, b)| !b.disabled) {
+        match b.kind {
+            BlockKind::Row | BlockKind::Seg | BlockKind::Slider | BlockKind::App => v.push((i as i32, 0)),
+            BlockKind::Notice if !b.action.is_empty() => v.push((i as i32, 0)),
+            BlockKind::Buttons => v.extend((0..b.options.len() as i32).map(|k| (i as i32, k))),
+            _ => {}
+        }
+    }
+    v
+}
+
+/// What Left/Right (`d` -1 or 1) do on a page's stop
+#[derive(Debug, PartialEq)]
+enum Nudge {
+    /// a segmented control: choose this one
+    Seg(i32),
+    /// a slider: this level (5 % on from `level`)
+    Slide(f32),
+    /// a row of buttons: the keyboard on this one
+    Button(i32),
+}
+
+fn page_nudge(b: &Block, sub: i32, level: f32, d: i32) -> Option<Nudge> {
+    match b.kind {
+        BlockKind::Seg => {
+            let c = (b.current + d).clamp(0, (b.options.len() as i32 - 1).max(0));
+            (!b.options.is_empty() && c != b.current).then_some(Nudge::Seg(c))
+        }
+        BlockKind::Slider => {
+            let v = ((level + 0.05 * d as f32) * 100.0).round() / 100.0;
+            let v = v.clamp(0.0, 1.0);
+            ((v - level).abs() > 1e-4).then_some(Nudge::Slide(v))
+        }
+        BlockKind::Buttons => {
+            let s = (sub + d).clamp(0, (b.options.len() as i32 - 1).max(0));
+            (s != sub).then_some(Nudge::Button(s))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_page_s_keys_stop_on_its_switch_sliders_choices_and_buttons() {
+        let blk = |kind: BlockKind| Block { kind, ..Default::default() };
+        let page = Page {
+            switch: true,
+            blocks: vec![
+                blk(BlockKind::Head),
+                blk(BlockKind::Row),
+                Block { disabled: true, ..blk(BlockKind::Row) },
+                blk(BlockKind::Slider),
+                Block { options: vec!["Off".into(), "On".into()], ..blk(BlockKind::Seg) },
+                blk(BlockKind::Note),
+                blk(BlockKind::App),
+                blk(BlockKind::Notice),
+                Block { action: "Fix".into(), ..blk(BlockKind::Notice) },
+                Block { options: vec!["Cancel".into(), "Join".into()], ..blk(BlockKind::Buttons) },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(page_stops(&page), vec![(SWITCH_STOP, 0), (1, 0), (3, 0), (4, 0), (6, 0), (8, 0), (9, 0), (9, 1)]);
+        assert!(page_stops(&Page::default()).is_empty());
+    }
+
+    #[test]
+    fn left_and_right_change_the_stop_the_keyboard_is_on() {
+        let seg = Block { kind: BlockKind::Seg, options: vec!["A".into(), "B".into(), "C".into()], current: 1, ..Default::default() };
+        assert_eq!(page_nudge(&seg, 0, 0.0, 1), Some(Nudge::Seg(2)));
+        assert_eq!(page_nudge(&seg, 0, 0.0, -1), Some(Nudge::Seg(0)));
+        let last = Block { current: 2, ..seg.clone() };
+        assert_eq!(page_nudge(&last, 0, 0.0, 1), None);
+        let slider = Block { kind: BlockKind::Slider, ..Default::default() };
+        assert_eq!(page_nudge(&slider, 0, 0.5, 1), Some(Nudge::Slide(0.55)));
+        assert_eq!(page_nudge(&slider, 0, 0.5, -1), Some(Nudge::Slide(0.45)));
+        assert_eq!(page_nudge(&slider, 0, 0.98, 1), Some(Nudge::Slide(1.0)));
+        assert_eq!(page_nudge(&slider, 0, 1.0, 1), None);
+        assert_eq!(page_nudge(&slider, 0, 0.0, -1), None);
+        let btns = Block { kind: BlockKind::Buttons, options: vec!["Cancel".into(), "Join".into()], ..Default::default() };
+        assert_eq!(page_nudge(&btns, 0, 0.0, 1), Some(Nudge::Button(1)));
+        assert_eq!(page_nudge(&btns, 1, 0.0, 1), None);
+        assert_eq!(page_nudge(&Block::default(), 0, 0.0, 1), None);
+    }
 
     #[test]
     fn the_battery_tile_says_held_at_the_limit() {

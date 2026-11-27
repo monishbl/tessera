@@ -9,6 +9,7 @@
 import { Theme } from "@tessera/theme.slint";
 import { Squircle } from "@tessera/squircle.slint";
 import { ScrollIndicator } from "@tessera/widgets.slint";
+import { RowRing } from "@tessera/focus.slint";
 
 // An icon: Phosphor, or in Material the matching Material Symbols glyph (sym)
 export struct CcIc {
@@ -1298,6 +1299,7 @@ component QsMedia {
 export component Block inherits VerticalLayout {
     in property <CcBlock> b;
     in property <bool> focused; // the keyboard is on it
+    in property <int> sub; // a row of buttons: the one the keyboard is on
     in property <CcGlyphs> g;
     in property <color> accent-glyph;
     callback do(string, string); // what, text
@@ -1346,14 +1348,9 @@ export component Block inherits VerticalLayout {
         }
         // (drawn inside the row: rows fill their Flickable's width, and the
         // Flickable clips, which cut a ring drawn outside to two short lines)
-        if focused: Rectangle {
-            x: 0;
-            y: 0;
-            width: parent.width;
-            height: parent.height;
-            border-radius: m3 ? 20px : Theme.radius-control;
-            border-width: 2px;
-            border-color: m3 ? Theme.m3-primary : Theme.accent;
+        RowRing {
+            shown: focused;
+            radius: m3 ? 20px : Theme.radius-control;
         }
         rt := TouchArea {
             enabled: !b.dis;
@@ -1535,6 +1532,11 @@ export component Block inherits VerticalLayout {
             }
         }
         }
+        // (the keyboard's: Left/Right choose, #351)
+        RowRing {
+            shown: focused;
+            radius: parent.border-radius;
+        }
     }
 
     // Slider (CCSlider.qml): Glass's thin track, Material's medium slider
@@ -1587,6 +1589,15 @@ export component Block inherits VerticalLayout {
         icon: b.icon;
         value: b.value;
         moved(v) => { slide(v); }
+      }
+      // (the keyboard's: Left/Right move it 5 %, #351)
+      RowRing {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: m3 ? 48px : 26px;
+        shown: focused;
+        radius: m3 ? 16px : 13px;
       }
     }
 
@@ -1749,6 +1760,10 @@ export component Block inherits VerticalLayout {
                     mouse-cursor: pointer;
                     clicked => { do("click", ""); }
                 }
+                RowRing {
+                    shown: focused;
+                    radius: parent.border-radius;
+                }
             }
         }
     }
@@ -1907,6 +1922,10 @@ export component Block inherits VerticalLayout {
                 mouse-cursor: pointer;
                 clicked => { do("btn", o); }
             }
+            RowRing {
+                shown: focused && k == root.sub;
+                radius: parent.border-radius;
+            }
         }
     }
     if b.kind == 7: Rectangle {
@@ -1948,6 +1967,10 @@ export component Block inherits VerticalLayout {
                 mouse-cursor: pointer;
                 clicked => { do("mute", ""); }
             }
+            RowRing {
+                shown: focused;
+                radius: parent.border-radius;
+            }
         }
         Text {
             x: 38px;
@@ -1972,6 +1995,7 @@ component PageHeader {
     in property <bool> back;
     in property <bool> has-switch;
     in property <bool> switch-on;
+    in property <bool> switch-focused; // the keyboard is on the switch (#351)
     in property <string> switch-label;
     in property <bool> refresh;
     in property <CcGlyphs> g;
@@ -2042,6 +2066,14 @@ component PageHeader {
                 mouse-cursor: pointer;
                 clicked => { toggled(); }
             }
+            RowRing {
+                x: -3px;
+                y: -3px;
+                width: parent.width + 6px;
+                height: parent.height + 6px;
+                shown: root.switch-focused;
+                radius: parent.border-radius + 3px;
+            }
         }
     }
     if m3: Rectangle {
@@ -2109,6 +2141,10 @@ component PageHeader {
             mouse-cursor: pointer;
             clicked => { toggled(); }
         }
+        RowRing {
+            shown: root.switch-focused;
+            radius: parent.border-radius;
+        }
         // Material 3 Expressive's switch: an outlined track, the handle grows when on
         Rectangle {
             x: parent.width - 16px - 52px;
@@ -2153,7 +2189,10 @@ export component PageView {
     in property <CcGlyphs> g;
     in property <color> accent-glyph;
     in property <length> cap: 360px;
+    // the block the keyboard is on (-1 none, -2 the header's switch) and,
+    // in a row of buttons, which one
     in property <int> kbd: -1;
+    in property <int> kbd-sub;
     // (false: no header at all, DetailPage's with no title, back or switch:
     // the menu bar's Sound menu, tessera-statusmenus)
     in property <bool> show-header: true;
@@ -2176,6 +2215,7 @@ export component PageView {
         back: back;
         has-switch: has-switch;
         switch-on: switch-on;
+        switch-focused: kbd == -2;
         switch-label: switch-label;
         refresh: refresh;
         g: g;
@@ -2199,6 +2239,7 @@ export component PageView {
             for b[i] in blocks: Block {
                 b: b;
                 focused: i == kbd;
+                sub: kbd-sub;
                 g: g;
                 accent-glyph: accent-glyph;
                 do(what, text) => { block(i, what, text); }
@@ -2313,7 +2354,8 @@ export component ControlCenter inherits Window {
     out property <float> menu-go;
     in property <int> menu-kbd: -1; // the menu's row the keyboard is on
     in property <bool> bounce: true; // Material's press bounce (Reduce motion: off)
-    in property <int> page-kbd: -1; // the page's row the keyboard is on
+    in property <int> page-kbd: -1; // the page's row the keyboard is on (-2 its switch)
+    in property <int> page-kbd-sub; // in a row of buttons, which one
     in property <length> page-cap: 4000px; // its list scrolls past this (Wi-Fi, Bluetooth: 360)
 
     out property <float> openness: shown ? 1 : 0;
@@ -3055,6 +3097,7 @@ export component ControlCenter inherits Window {
                     refresh: page-refresh;
                     blocks: blocks;
                     kbd: page-kbd;
+                    kbd-sub: page-kbd-sub;
                     g: g;
                     accent-glyph: accent-glyph;
                     go-back => { back(); }
@@ -3097,6 +3140,7 @@ export component ControlCenter inherits Window {
                 refresh: page-refresh;
                 blocks: blocks;
                 kbd: page-kbd;
+                kbd-sub: page-kbd-sub;
                 g: g;
                 accent-glyph: accent-glyph;
                 go-back => { back(); }
