@@ -258,7 +258,7 @@ export component SSwitch {
     callback toggled();
     width: Theme.material ? 52px : 38px;
     height: Theme.material ? 32px : 22px;
-    opacity: enabled ? 1 : 0.4;
+    opacity: enabled ? 1 : Theme.disabled-alpha;
     accessible-role: AccessibleRole.checkbox;
     accessible-label: label;
     accessible-checkable: true;
@@ -351,7 +351,7 @@ export component SSlider {
     property <float> key-step: step > 0 ? step : (to - from) / 20;
     preferred-width: 180px;
     height: Theme.material ? 32px : 22px;
-    opacity: enabled ? 1 : 0.45;
+    opacity: enabled ? 1 : Theme.disabled-alpha;
     accessible-role: AccessibleRole.slider;
     accessible-label: label;
     accessible-value: round(shown * 100) / 100;
@@ -522,7 +522,7 @@ export component SSegmented {
     property <bool> placed;
     animate ix, iw { duration: Theme.motion(placed ? SM.popover : 0ms); easing: cubic-bezier(0.2, 0, 0, 1); }
     height: Theme.material ? 36px : 30px;
-    opacity: enabled || Theme.material ? 1 : 0.45;
+    opacity: enabled || Theme.material ? 1 : Theme.disabled-alpha;
     accessible-role: AccessibleRole.tab-list;
     accessible-label: label;
     forward-focus: fs;
@@ -663,7 +663,7 @@ export component SChoice {
     preferred-width: self.min-width;
     height: Theme.material ? 40px : 28px;
     // (Dropdown.qml doesn't fade when it can't be used: AI's "No models added")
-    opacity: enabled || dropdown ? 1 : Theme.material ? 0.38 : 0.45;
+    opacity: enabled || dropdown ? 1 : Theme.material ? 0.38 : Theme.disabled-alpha;
     accessible-role: AccessibleRole.combobox;
     accessible-label: label;
     accessible-value: said;
@@ -840,7 +840,7 @@ export component SButton {
     property <color> ink: style == 5 ? (Theme.material ? Theme.m3-error : Theme.danger) : Theme.material ? m3-content : link ? Theme.accent-ink : style == 1 ? Theme.on-accent : style == 2 ? Theme.danger : Theme.label;
     width: link ? row.preferred-width : round ? (Theme.material ? 40px : 26px) : row.preferred-width + (Theme.material ? (style == 3 ? 24px : 32px) : compact ? 20px : 24px);
     height: link ? max(20px, row.preferred-height) : round ? self.width : Theme.material ? 40px : compact ? 26px : 28px;
-    opacity: Theme.material || enabled ? 1 : 0.45;
+    opacity: Theme.material || enabled ? 1 : Theme.disabled-alpha;
     accessible-role: AccessibleRole.button;
     accessible-label: text != "" ? text : label;
     accessible-description: label;
@@ -936,7 +936,7 @@ export component SField {
     changed text => { input.text = root.text; }
     preferred-width: 220px;
     height: Theme.material ? 40px : 28px;
-    opacity: enabled ? 1 : 0.45;
+    opacity: enabled ? 1 : Theme.disabled-alpha;
     if Theme.material: SFilled { active: input.has-focus; hovered: ta.has-hover; }
     if !Theme.material: Rectangle {
         border-radius: Theme.radius-control - 2px;
@@ -1002,7 +1002,7 @@ export component SChip {
     property <float> layer: ta.pressed ? 0.1 : ta.has-hover ? 0.08 : 0;
     width: t.preferred-width + (Theme.material ? (ticked ? 8px + 18px + 8px + 16px : 32px) : 20px);
     height: Theme.material ? 32px : 26px;
-    opacity: enabled ? 1 : Theme.material ? 0.38 : 0.45;
+    opacity: enabled ? 1 : Theme.material ? 0.38 : Theme.disabled-alpha;
     accessible-role: AccessibleRole.checkbox;
     accessible-label: text;
     accessible-checked: on;

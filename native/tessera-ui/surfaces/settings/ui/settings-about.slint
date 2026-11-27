@@ -665,7 +665,7 @@ export component AboutCtl {
                     AppPic {
                         source: r.image;
                         size: Theme.material ? 32px : 28px;
-                        opacity: r.enabled ? 1 : 0.45;
+                        opacity: r.enabled ? 1 : Theme.disabled-alpha;
                     }
                 }
                 VerticalLayout {
@@ -702,13 +702,14 @@ export component AboutCtl {
                             width: 28px;
                             height: 28px;
                             border-radius: Theme.material ? 14px : Theme.radius-control - 2px;
-                            background: mta.pressed ? Theme.fill-pressed : mta.has-hover ? Theme.fill : transparent;
+                            // (Glass: a faint fill at rest, so the button shows before the pointer finds it, #254)
+                            background: mta.pressed ? Theme.fill-pressed : mta.has-hover ? Theme.fill-hover : Theme.material ? transparent : Theme.fill;
                             accessible-role: AccessibleRole.button;
                             accessible-label: "Options for " + r.label;
                             accessible-action-default => { SBus.menu(r.text, self.absolute-position.x, self.absolute-position.y, self.width, self.height); }
                             // (the label's colour while its menu is open: about-loginitems.qml 218–225)
                             property <bool> shown: SBus.menu-shown == r.text && r.text != "";
-                            SIcon { g: SG.dots; size: 16px; color: menu-btn.shown ? Theme.label : Theme.tertiary; }
+                            SIcon { g: SG.dots; size: 16px; color: menu-btn.shown || mta.has-hover ? Theme.label : Theme.secondary; }
                             // (keyboard: a Tab stop; Return, Space or Menu open it)
                             mfs := FocusScope {
                                 focus-on-click: false;

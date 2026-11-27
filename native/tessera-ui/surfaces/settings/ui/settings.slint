@@ -577,7 +577,7 @@ component GroupView inherits VerticalLayout {
         WrapText {
             avail: SBus.page-width - (Theme.material ? 32px : 8px);
             text: b.footer;
-            color: Theme.material ? Theme.m3-on-surface-variant : Theme.tertiary;
+            color: Theme.material ? Theme.m3-on-surface-variant : Theme.secondary; // (11 px notes: the readable grey, #254)
             font-size: Theme.material ? 12px : Theme.caption;
             letter-spacing: Theme.material ? 0.4px : 0;
         }
@@ -1424,7 +1424,7 @@ export component SettingsWindow inherits Window {
                         property <bool> usable: d < 0 ? can-back : can-forward;
                         width: Theme.material ? 40px : 28px;
                         height: self.width;
-                        opacity: usable ? 1 : (Theme.material ? 0.38 : 0.35);
+                        opacity: usable ? 1 : (Theme.material ? 0.38 : Theme.disabled-alpha);
                         border-radius: Theme.material ? self.height / 2 : Theme.radius-control - 2px;
                         background: Theme.material ? Theme.m3-on-surface-variant.with-alpha(ata.pressed ? 0.1 : ata.has-hover ? 0.08 : 0) : ata.pressed ? Theme.fill-pressed : ata.has-hover ? Theme.fill : transparent;
                         accessible-role: AccessibleRole.button;
