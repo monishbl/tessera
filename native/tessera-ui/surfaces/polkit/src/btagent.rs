@@ -145,9 +145,65 @@ pub fn authorize_service(paired: bool, trusted: bool, blocked: bool) -> bool {
     paired && trusted && !blocked
 }
 
-/// What the dialog calls the device: its alias, else its name, else its address
+/// What the dialog calls the device: its alias, else its name, else its
+/// address; on one line and at most 40 characters (the name is whatever
+/// the device sends)
 pub fn name_of(alias: &str, name: &str, address: &str) -> String {
-    [alias, name, address].into_iter().map(str::trim).find(|s| !s.is_empty()).unwrap_or("A Bluetooth device").to_string()
+    let n = [alias, name, address].into_iter().map(str::trim).find(|s| !s.is_empty()).unwrap_or("A Bluetooth device");
+    let n: String = n.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    if n.chars().count() > 40 {
+        return n.chars().take(39).collect::<String>().trim_end().to_string() + "…";
+    }
+    n
+}
+
+/// A request is yours: the device it's about is one this computer is
+/// pairing (you pressed Pair for it); any other's, nobody here started
+pub fn started_here(device_path: &str) -> bool {
+    tessera_core::services::bluez::address_of_path(device_path).is_some_and(|a| tessera_core::services::bluez::pairing_with(&a))
+}
+
+/// A request nobody here started: a notification with Pair and Ignore,
+/// never the dialog that takes the keyboard (audit #774: any nearby device
+/// could pop it while you typed, and Enter paired it). Its title and words
+#[derive(Clone, Debug, PartialEq)]
+pub struct Notice {
+    pub title: String,
+    pub body: String,
+}
+
+/// The words, markup-safe (the device's name is the device's own)
+pub fn notice(kind: &Kind, name: &str) -> Notice {
+    let n = name.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let body = match kind {
+        Kind::Confirm(code) => format!("{n} wants to pair with this computer. Pair only if it shows {}.", passkey_text(*code)),
+        Kind::PinCode | Kind::Passkey => format!("{n} wants to pair with this computer. Pair asks for its code."),
+        Kind::DisplayPinCode(_) | Kind::DisplayPasskey(..) => format!("{n} wants to pair with this computer. Pair shows the code to type on it."),
+        Kind::Authorize => format!("{n} wants to pair with this computer."),
+    };
+    Notice { title: "Bluetooth pairing request".into(), body }
+}
+
+/// What the notification's answer does
+#[derive(Clone, Debug, PartialEq)]
+pub enum NoticeDo {
+    /// answer BlueZ (Pair on a code to check or a plain request; Ignore)
+    Answer(Answer),
+    /// the dialog, now that you asked for it (a code to type here, or to show)
+    Dialog,
+    /// stop the pairing (Ignore on a code that's only shown)
+    StopPairing,
+}
+
+/// `choice`: the action notify-send printed ("pair", "ignore"; "" when it
+/// was closed or ran out: Ignore)
+pub fn notice_do(kind: &Kind, choice: &str) -> NoticeDo {
+    match (choice.trim() == "pair", kind) {
+        (true, Kind::Confirm(_) | Kind::Authorize) => NoticeDo::Answer(Answer::Yes),
+        (true, _) => NoticeDo::Dialog,
+        (false, k) if k.display() => NoticeDo::StopPairing,
+        (false, _) => NoticeDo::Answer(Answer::No),
+    }
 }
 
 /// A code shown on the screen can go: the pairing is done, the pairing
@@ -273,8 +329,9 @@ fn oneshot() -> (BtReply, Wait) {
 #[derive(Debug)]
 pub enum BtRequest {
     /// show this (`reply`: None for a code that's only shown). The same `id`
-    /// again: the same request, changed (a keyboard's typed digits)
-    Ask { id: u64, path: String, name: String, kind: Kind, reply: Option<BtReply> },
+    /// again: the same request, changed (a keyboard's typed digits).
+    /// `ours`: a device this computer is pairing (else a notification first)
+    Ask { id: u64, path: String, name: String, kind: Kind, reply: Option<BtReply>, ours: bool },
     /// this request is over (answered elsewhere, timed out, paired)
     Gone { id: u64 },
     /// BlueZ cancelled whatever it asked, or let the agent go
@@ -323,6 +380,7 @@ impl Agent {
 
     /// Ask the part, and wait for its answer (or TIMEOUT: Cancelled)
     async fn ask(&self, conn: &zbus::Connection, device: &OwnedObjectPath, kind: Kind) -> Answer {
+        let ours = started_here(device.as_str());
         // (a device answering a pairing: no discovery meanwhile)
         let _busy = tessera_core::services::bluez::busy_guard();
         let name = Self::name(conn, device.as_str()).await;
@@ -331,7 +389,7 @@ impl Agent {
         if let Ok(mut p) = self.pending.lock() {
             p.push((id, reply.clone()));
         }
-        tell(&self.to, BtRequest::Ask { id, path: device.to_string(), name, kind, reply: Some(reply.clone()) });
+        tell(&self.to, BtRequest::Ask { id, path: device.to_string(), name, kind, reply: Some(reply.clone()), ours });
         {
             let (reply, to) = (reply.clone(), self.to.clone());
             std::thread::spawn(move || {
@@ -353,10 +411,11 @@ impl Agent {
     /// is over (its Paired, or the shell's own pairing ended) or BlueZ cancels
     async fn show(&self, conn: &zbus::Connection, device: &OwnedObjectPath, kind: Kind) {
         let path = device.to_string();
+        let ours = started_here(&path);
         let name = Self::name(conn, &path).await;
         let again = self.shown.lock().ok().and_then(|s| s.get(&path).copied());
         let id = again.unwrap_or_else(|| NEXT.fetch_add(1, Ordering::SeqCst));
-        tell(&self.to, BtRequest::Ask { id, path: path.clone(), name, kind, reply: None });
+        tell(&self.to, BtRequest::Ask { id, path: path.clone(), name, kind, reply: None, ours });
         if again.is_some() {
             return;
         }
@@ -607,6 +666,41 @@ mod tests {
         assert!(bluez_came_back("org.bluez", ":1.42"));
         assert!(!bluez_came_back("org.bluez", ""));
         assert!(!bluez_came_back("org.bluez.obex", ":1.43"));
+    }
+
+    #[test]
+    fn requests_nobody_here_started_are_a_notification() {
+        // Pair answers a code to check or a plain request at once; a code to
+        // type, or one to show, opens the dialog (you asked for it now)
+        assert_eq!(notice_do(&Kind::Confirm(7), "pair"), NoticeDo::Answer(Answer::Yes));
+        assert_eq!(notice_do(&Kind::Authorize, "pair\n"), NoticeDo::Answer(Answer::Yes));
+        assert_eq!(notice_do(&Kind::PinCode, "pair"), NoticeDo::Dialog);
+        assert_eq!(notice_do(&Kind::Passkey, "pair"), NoticeDo::Dialog);
+        assert_eq!(notice_do(&Kind::DisplayPasskey(1, 0), "pair"), NoticeDo::Dialog);
+        // Ignore, closed or run out: turned down (a shown code's pairing stopped)
+        for choice in ["ignore", "", "something"] {
+            assert_eq!(notice_do(&Kind::Confirm(7), choice), NoticeDo::Answer(Answer::No));
+            assert_eq!(notice_do(&Kind::Authorize, choice), NoticeDo::Answer(Answer::No));
+            assert_eq!(notice_do(&Kind::DisplayPinCode("1".into()), choice), NoticeDo::StopPairing);
+        }
+        // the words: the code to check is in them; the device's name can't be markup
+        let n = notice(&Kind::Confirm(12345), "Phone <b>x</b> & co");
+        assert!(n.body.contains("012 345") && n.body.contains("&lt;b&gt;") && n.body.contains("&amp; co") && !n.body.contains("<b>"));
+        assert!(notice(&Kind::Authorize, "Speaker").body.starts_with("Speaker wants to pair"));
+        // (one of a device this computer isn't pairing: not ours)
+        assert!(!started_here("/org/bluez/hci0/dev_00_11_22_33_44_55"));
+        let _p = tessera_core::services::bluez::Pairing::with("00:11:22:33:44:55");
+        assert!(started_here("/org/bluez/hci0/dev_00_11_22_33_44_55"));
+        assert!(!started_here("not a path"));
+    }
+
+    #[test]
+    fn device_names_are_one_short_line() {
+        assert_eq!(name_of("Desk\nkeyboard\u{7}", "", ""), "Desk keyboard ");
+        let long = "x".repeat(100);
+        let n = name_of(&long, "", "");
+        assert_eq!(n.chars().count(), 40);
+        assert!(n.ends_with('…'));
     }
 
     #[test]

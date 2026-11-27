@@ -433,6 +433,9 @@ pub fn act(verb: &str, addr: &str) -> Result<(), String> {
 /// read back from BlueZ, not taken from "Pairing successful"
 pub fn pair(addr: &str) -> Result<(), String> {
     let _busy = busy_guard();
+    // (the pairing agent asks you only about a device you're pairing: any
+    // other's request becomes a notification; surfaces/polkit/btagent.rs)
+    let _pairing = Pairing::with(addr);
     let was = pairable_in(&ctl(&["show"], 5));
     if !was {
         ctl(&["pairable", "on"], 5);
@@ -454,6 +457,47 @@ pub fn pair(addr: &str) -> Result<(), String> {
         ctl(&["pairable", "off"], 5);
     }
     result
+}
+
+// ── Pairings started here ───────────────────────────────────────────────────
+
+/// The devices this computer is pairing now (`pair`), by address: the
+/// pairing agent tells a request from one of them (you started it) from one
+/// nobody here started, which must never take your typing (audit #774)
+static PAIRING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Held while `pair` pairs a device
+pub struct Pairing(String);
+
+impl Pairing {
+    pub fn with(addr: &str) -> Pairing {
+        let a = addr.trim().to_ascii_uppercase();
+        PAIRING.lock().unwrap_or_else(|e| e.into_inner()).push(a.clone());
+        Pairing(a)
+    }
+}
+
+impl Drop for Pairing {
+    fn drop(&mut self) {
+        let mut p = PAIRING.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = p.iter().position(|a| *a == self.0) {
+            p.remove(i);
+        }
+    }
+}
+
+/// This computer is pairing the device at `addr` now
+pub fn pairing_with(addr: &str) -> bool {
+    let a = addr.trim().to_ascii_uppercase();
+    !a.is_empty() && PAIRING.lock().unwrap_or_else(|e| e.into_inner()).contains(&a)
+}
+
+/// A device's address from its BlueZ object path
+/// (/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF → AA:BB:CC:DD:EE:FF)
+pub fn address_of_path(path: &str) -> Option<String> {
+    let last = path.rsplit('/').next()?.strip_prefix("dev_")?;
+    let parts: Vec<&str> = last.split('_').collect();
+    (parts.len() == 6 && parts.iter().all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()))).then(|| parts.join(":").to_ascii_uppercase())
 }
 
 // ── Busy: no discovery while a device pairs or connects ─────────────────────
@@ -639,6 +683,22 @@ mod pair_tests {
         assert!(busy());
         drop(b);
         assert_eq!(busy(), before);
+    }
+
+    #[test]
+    fn pairings_started_here_are_known_by_address() {
+        assert_eq!(address_of_path("/org/bluez/hci0/dev_AA_BB_CC_DD_EE_0f"), Some("AA:BB:CC:DD:EE:0F".into()));
+        assert_eq!(address_of_path("/org/bluez/hci0"), None);
+        assert_eq!(address_of_path("/org/bluez/hci0/dev_AA_BB"), None);
+        assert_eq!(address_of_path("/org/bluez/hci0/dev_AA_BB_CC_DD_EE_GG"), None);
+        // (an address no other test uses: the list is the process's)
+        let addr = "12:34:56:78:9A:BC";
+        assert!(!pairing_with(addr));
+        let p = Pairing::with("12:34:56:78:9a:bc");
+        assert!(pairing_with(addr) && pairing_with(" 12:34:56:78:9a:bc"));
+        assert!(!pairing_with("12:34:56:78:9A:BD") && !pairing_with(""));
+        drop(p);
+        assert!(!pairing_with(addr));
     }
 
     #[test]

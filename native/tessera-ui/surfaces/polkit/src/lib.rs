@@ -29,6 +29,9 @@
 //!   (keyboards: shown until it's paired, Cancel stops the pairing), a PIN or
 //!   passkey to type here (the field), or a device asking to pair. While one
 //!   shows, it comes before a password request (BlueZ gives it 60 s).
+//!   Only for a device you're pairing (services::bluez::pairing_with): any
+//!   other's request is a notification with Pair and Ignore, and never
+//!   takes the keyboard by itself (#774).
 //!
 //! Not like the QML: Material's hero shape changes without morphing; Glass's
 //! fingerprint turns red on a miss but doesn't pulse or shake (FingerGlyph);
@@ -77,6 +80,9 @@ enum M {
     Gone,
     /// the wait after a conversation that failed before asking is over (its conversation)
     Retry(u64),
+    /// a pairing request's notification was answered (its id; "pair",
+    /// "ignore", or "" closed / ran out)
+    BtNotice(u64, String),
 }
 
 /// After a conversation that ended in failure with nothing typed
@@ -266,6 +272,9 @@ pub struct Polkit {
     retry: slint::Timer,
     /// the Bluetooth agent's requests (the first one shows, before `queue`'s)
     bt: Vec<BtReq>,
+    /// requests nobody here started, waiting on their notification's
+    /// Pair / Ignore (they never open the dialog by themselves; #774)
+    bt_notices: Vec<BtReq>,
     bt_error: String,
     /// the request the field's text was typed for (0: a password's)
     bt_front: u64,
@@ -299,6 +308,7 @@ impl Default for Polkit {
             quick_fails: 0,
             retry: slint::Timer::default(),
             bt: Vec::new(),
+            bt_notices: Vec::new(),
             bt_error: String::new(),
             bt_front: 0,
             details_for: String::new(),
@@ -504,17 +514,28 @@ impl Polkit {
 
     fn bt_request(&mut self, st: &mut State, r: BtRequest) {
         match r {
-            BtRequest::Ask { id, path, name, kind, reply } => {
+            BtRequest::Ask { id, path, name, kind, reply, ours } => {
                 // (the same request again: a keyboard's digits typed so far)
-                if let Some(b) = self.bt.iter_mut().find(|b| b.id == id) {
+                if let Some(b) = self.bt.iter_mut().chain(self.bt_notices.iter_mut()).find(|b| b.id == id) {
                     b.kind = kind;
                     b.name = name;
-                } else {
+                } else if ours {
                     self.bt.push(BtReq { id, path, name, kind, reply });
+                } else {
+                    // (nobody here started it: a notification, never the
+                    // dialog that takes the keyboard; #774)
+                    self.bt_notice(st, id, &kind, &name);
+                    self.bt_notices.push(BtReq { id, path, name, kind, reply });
+                    return;
                 }
                 self.push(st);
             }
             BtRequest::Gone { id } => {
+                if let Some(i) = self.bt_notices.iter().position(|b| b.id == id) {
+                    if let Some(r) = self.bt_notices.remove(i).reply {
+                        r.send(Answer::Cancelled);
+                    }
+                }
                 if let Some(i) = self.bt.iter().position(|b| b.id == id) {
                     let b = self.bt.remove(i);
                     if let Some(r) = b.reply {
@@ -527,6 +548,11 @@ impl Polkit {
                 }
             }
             BtRequest::CancelAll => {
+                for b in self.bt_notices.drain(..) {
+                    if let Some(r) = b.reply {
+                        r.send(Answer::Cancelled);
+                    }
+                }
                 if !self.bt.is_empty() {
                     for b in self.bt.drain(..) {
                         if let Some(r) = b.reply {
@@ -539,6 +565,49 @@ impl Polkit {
             }
             BtRequest::Registered(Ok(())) => eprintln!("tessera-ui: bluetooth agent registered (the default, {})", btagent::CAPABILITY),
             BtRequest::Registered(Err(e)) => eprintln!("tessera-ui: bluetooth agent not registered yet ({e}): again when bluetoothd starts"),
+        }
+    }
+
+    /// A pairing request nobody here started, as a notification with Pair
+    /// and Ignore (notify-send waits for the answer, on a thread; it runs out
+    /// with BlueZ's own wait). Without notify-send it's turned down
+    fn bt_notice(&self, st: &State, id: u64, kind: &btagent::Kind, name: &str) {
+        let n = btagent::notice(kind, name);
+        let to = Self::send(st);
+        let secs = btagent::TIMEOUT.as_secs().to_string();
+        std::thread::spawn(move || {
+            let out = std::process::Command::new("timeout")
+                .args([secs.as_str(), "notify-send", "-a", "Bluetooth", "-i", "bluetooth", "-A", "pair=Pair", "-A", "ignore=Ignore", "--", n.title.as_str(), n.body.as_str()])
+                .stdin(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output();
+            let choice = out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+            to(Box::new(M::BtNotice(id, choice)));
+        });
+    }
+
+    /// The notification's answer: Pair answers it (or opens the dialog for
+    /// a code), Ignore turns it down
+    fn bt_noticed(&mut self, st: &mut State, id: u64, choice: &str) {
+        let Some(i) = self.bt_notices.iter().position(|b| b.id == id) else { return };
+        let b = self.bt_notices.remove(i);
+        match btagent::notice_do(&b.kind, choice) {
+            btagent::NoticeDo::Answer(a) => {
+                if let Some(r) = b.reply {
+                    r.send(a);
+                }
+            }
+            btagent::NoticeDo::Dialog => {
+                self.bt.push(b);
+                self.push(st);
+            }
+            btagent::NoticeDo::StopPairing => {
+                if let Some(r) = b.reply {
+                    r.send(Answer::No);
+                } else {
+                    btagent::cancel_pairing(b.path);
+                }
+            }
         }
     }
 
@@ -821,6 +890,7 @@ impl Part for Polkit {
                 self.finger_missed = false;
                 self.push(st);
             }
+            M::BtNotice(id, choice) => self.bt_noticed(st, id, &choice),
             M::Retry(conv) => {
                 if conv == self.conv && self.session.is_none() && !self.queue.is_empty() {
                     self.start_session(st);
@@ -891,7 +961,7 @@ impl Part for Polkit {
         for r in self.queue.drain(..) {
             r.answer(false);
         }
-        for b in self.bt.drain(..) {
+        for b in self.bt.drain(..).chain(self.bt_notices.drain(..)) {
             if let Some(r) = b.reply {
                 r.send(Answer::Cancelled);
             }
