@@ -112,6 +112,8 @@ pub struct Today {
     ticked: HashSet<String>,
     account: String,
     weather_settings: (String, bool),
+    /// weather::wanted, as last seen
+    weather_wanted: bool,
     tick: tessera_core::pacing::FrameTimer,
     minute: slint::Timer,
 }
@@ -133,6 +135,7 @@ impl Default for Today {
             ticked: HashSet::new(),
             account: String::new(),
             weather_settings: (String::new(), true),
+            weather_wanted: true,
             tick: tessera_core::pacing::FrameTimer::default(),
             minute: slint::Timer::default(),
         }
@@ -431,6 +434,7 @@ impl Today {
         d.set_todos_empty(model::todos_empty(!all.is_empty()).into());
 
         let wx = st.shell.get::<Weather>().cloned().unwrap_or_default();
+        d.set_weather_shown(weather::today_card(&st.shell.cfg));
         d.set_weather_ready(wx.ready);
         d.set_weather_icon(glyph(if wx.ready { wx.icon } else { "cloud" }, material).into());
         // (°C or °F: nothing else tells 21 °C from 21 °F)
@@ -491,11 +495,14 @@ impl Part for Today {
         st.shell.want("todos");
         st.shell.want("weather");
         self.weather_settings = weather::settings(&st.shell.cfg);
+        self.weather_wanted = weather::wanted(&st.shell.cfg);
     }
 
     fn config_changed(&mut self, st: &mut State, look: bool) {
         let ws = weather::settings(&st.shell.cfg);
-        if ws != self.weather_settings {
+        // (refresh: also when the weather was turned on or off; #320)
+        if ws != self.weather_settings || weather::wanted(&st.shell.cfg) != self.weather_wanted {
+            self.weather_wanted = weather::wanted(&st.shell.cfg);
             self.weather_settings = ws;
             weather::refresh();
         }

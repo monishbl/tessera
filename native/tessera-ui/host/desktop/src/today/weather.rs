@@ -19,13 +19,16 @@ use tessera_core::services::weather::Weather;
 pub struct W {
     /// location and units as last seen
     seen: (String, String),
+    /// whether anything wanted the weather, as last seen (weather::wanted)
+    wanted: Option<bool>,
     /// the sunrise and sunset last said to the shell
     sun: Option<(i32, i32)>,
 }
 
-/// The bar shows the weather (its item: menubar.weather, on by default)
+/// The bar shows the weather (its item: menubar.weather, on by default;
+/// Settings' Weather switch off hides it: #320)
 pub fn shown(cfg: &Value) -> bool {
-    cfg["menubar"]["weather"].as_bool().unwrap_or(true)
+    cfg["menubar"]["weather"].as_bool().unwrap_or(true) && tessera_core::services::weather::enabled(cfg)
 }
 
 /// A reading's sunrise and sunset, when it has real ones
@@ -46,14 +49,19 @@ impl W {
     pub fn start(&mut self, h: &mut Host) {
         h.st.shell.want("weather");
         self.seen = settings(h.cfg());
+        self.wanted = Some(tessera_core::services::weather::wanted(h.cfg()));
     }
 
     /// The settings changed: new place or units fetch again; the bar's
     /// item turned on gets the reading at once
     pub fn config_changed(&mut self, h: &mut Host) {
         let s = settings(h.cfg());
-        if s != self.seen {
+        // (turned on or off, or the last thing showing it gone: the service
+        // looks again, fetching or stopping; #320)
+        let wanted = Some(tessera_core::services::weather::wanted(h.cfg()));
+        if s != self.seen || wanted != self.wanted {
             self.seen = s;
+            self.wanted = wanted;
             tessera_core::services::weather::refresh();
         }
         self.publish(h);
@@ -64,6 +72,9 @@ impl W {
         let Some(w) = h.st.shell.get::<Weather>().cloned() else { return };
         if shown(h.cfg()) {
             h.set_state("weather", state_of(&w));
+        } else if !tessera_core::services::weather::enabled(h.cfg()) {
+            // (off: the bar's item goes, whatever it last said)
+            h.set_state("weather", json!({"ready": false}));
         }
         if let Some(sun) = sun_of(&w) {
             if self.sun != Some(sun) {
@@ -82,6 +93,7 @@ mod tests {
     fn the_bar_item_and_the_sun() {
         assert!(shown(&json!({})) && shown(&json!({"menubar": {"weather": true}})));
         assert!(!shown(&json!({"menubar": {"weather": false}})));
+        assert!(!shown(&json!({"weather": {"enabled": false}})));
         let w = Weather { ready: true, icon: "sun", temp: 21, sunrise: 451, sunset: 1041, ..Default::default() };
         assert_eq!(sun_of(&w), Some((451, 1041)));
         // (no reading yet, or one without times: the defaults stand)

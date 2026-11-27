@@ -82,8 +82,9 @@ impl Sharing {
         crate::have("python3")
     }
     pub fn local_receiving(&self) -> bool {
-        // (one visibility for both: Quick Share's, visibility.rs)
-        self.visible_now()
+        // (one visibility for both: Quick Share's, visibility.rs; not while
+        // the screen is locked)
+        crate::quickshare::broadcasting(self.visible_now(), self.screen_locked)
     }
     pub fn local_alias(&self) -> String {
         self.my_name()

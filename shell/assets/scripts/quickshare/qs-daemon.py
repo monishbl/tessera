@@ -91,7 +91,8 @@ async def main():
     # (to the shell's log: whether phones see the same device as before)
     print(f"quickshare: identity {how}; mDNS {'on' if discovery else 'off'}, Bluetooth LE {'on' if ble else 'off'}",
           file=sys.stderr, flush=True)
-    service = QuickShareService(emit, discovery, ble=ble, helper=WifiHelper(), memory=LinkMemory(), identity=me)
+    service = QuickShareService(emit, discovery, ble=ble, helper=WifiHelper(), memory=LinkMemory(), identity=me,
+                               renew=identity.renew)
     service.emit_bluetooth()
 
     reader = asyncio.StreamReader()

@@ -180,22 +180,63 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
     }
     opts.push(btn("Send report").icon("paper-plane-tilt").primary().on(state == "sending").off(state == "sending" || wait > 0 || gathering));
     acts.push("bug.send");
+    // (a screenshot can't be scrubbed and the report is public: asked at
+    // every Send while one is on; #893)
+    let shot_on = has_shot && inc_shot;
     let act = cx.on(move |cx, a| {
         if let Some(w) = acts.get(a.i as usize) {
+            if *w == "bug.send" && shot_on {
+                cx.local_set("about.bug.askShot", true);
+                return;
+            }
             cx.ask("about", w, Value::Null);
+        }
+    });
+    let asking = shot_on && cx.local_b("about.bug.askShot") && state != "sending";
+    let answer = cx.on(|cx, a| {
+        cx.local_set("about.bug.askShot", false);
+        if let Some(with) = shot_choice(a.i) {
+            if !with {
+                cx.ask("about", "bug.include", json!(["includeShot", false]));
+            }
+            cx.ask("about", "bug.send", Value::Null);
         }
     });
     p.group("")
         .footer("Sent to Tessera's report server, which files it as an issue on github.com/monishbl/tessera. Your IP address is used only to limit how many reports come from one network and isn't stored with the report.")
+        .row(Row::new("The screenshot will be public")
+            .visible(asking)
+            .tone(2)
+            .detail("The report becomes a public issue on GitHub, so anyone can see what was on your screen.")
+            .buttons(vec![btn("Cancel"), btn("Send with it"), btn("Send without it").primary()], answer))
         .row(Row::new(send_label(&state, &s(&r["error"]), wait))
+            .visible(!asking)
             .tone(if state == "error" { 2 } else { 1 })
             .detail(if state == "sent" { url } else { String::new() })
             .buttons(opts, act));
 }
 
+/// The answer to "The screenshot will be public": Some(with the screenshot),
+/// None to go back without sending (buttons Cancel, Send with it, Send
+/// without it)
+pub fn shot_choice(i: i32) -> Option<bool> {
+    match i {
+        1 => Some(true),
+        2 => Some(false),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_screenshot_question() {
+        assert_eq!(shot_choice(0), None);
+        assert_eq!(shot_choice(1), Some(true));
+        assert_eq!(shot_choice(2), Some(false));
+    }
 
     #[test]
     fn the_send_row_says_where_it_is() {

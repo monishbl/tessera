@@ -310,6 +310,25 @@ pub fn check_at_start() -> String {
 pub fn check_config_at(path: &Path) -> String {
     let _g = PROCESS_LOCK.lock();
     let _dir = DirLock::new(path, Kind::Config);
+    let said = check_locked(path);
+    make_private(path);
+    said
+}
+
+/// config.json readable by you alone (0600): it can hold things that are
+/// yours (an old KLIPY key, names, places), and was made 0644 under the
+/// usual umask before #965. Later writes keep the mode (write_atomic).
+fn make_private(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let target = crate::util::link_target(path);
+    if let Ok(m) = std::fs::metadata(&target) {
+        if m.is_file() && m.permissions().mode() & 0o077 != 0 {
+            let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+}
+
+fn check_locked(path: &Path) -> String {
     match read_settled(path) {
         Read::Fine(m) => {
             remember(path, &m);
@@ -654,6 +673,27 @@ mod tests {
         std::fs::write(&p, "").unwrap();
         assert_eq!(check_config_at(&p), "fine");
         assert_eq!(asides(&d.join("tessera"), "broken").len(), 1);
+    }
+
+    #[test]
+    fn the_start_makes_the_file_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tmp("private");
+        let p = d.join("tessera/config.json");
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(check_config_at(&p), "made");
+        assert_eq!(mode(&p), 0o600);
+        // an older file, readable by everyone: made private once
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(check_config_at(&p), "fine");
+        assert_eq!(mode(&p), 0o600);
+        // and a write keeps it so
+        set_config_at_for_test(&p);
+        assert_eq!(mode(&p), 0o600);
+    }
+
+    fn set_config_at_for_test(p: &Path) {
+        edit_config_at(p, |m| put_path(m, "dock.iconSize", json!(40))).unwrap();
     }
 
     #[test]
