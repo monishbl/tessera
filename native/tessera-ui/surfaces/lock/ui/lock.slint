@@ -1844,9 +1844,23 @@ component MaterialLock inherits Rectangle {
     animate open-t { duration: Theme.motion(450ms); easing: spring(0.15); }
     function wake() {
         typing = true;
+        wave-awake = true;
         idle.stop();
         idle.start();
     }
+    // Now Playing's wave moves for 20 s after the lock shows, a new track,
+    // a key or the pointer, then rests flat: it redrew the whole screen
+    // every frame for the length of an album with nobody looking (#765).
+    // Battery saver and Reduce motion: flat throughout
+    property <bool> wave-awake: true;
+    property <string> track: LockData.track;
+    changed track => { wave-awake = true; }
+    Timer {
+        interval: 20s;
+        running: root.wave-awake && LockData.playing;
+        triggered => { root.wave-awake = false; }
+    }
+    property <bool> wave-still: LockData.reduce-motion || Theme.still;
     idle := Timer {
         interval: 10s;
         running: false;
@@ -1997,11 +2011,13 @@ component MaterialLock inherits Rectangle {
                 // The timeline: wavy while it plays, flat when paused
                 if LockData.has-timeline: Rectangle {
                     height: 18px;
-                    if LockData.playing && !LockData.reduce-motion: Wavy {
+                    // (resting: the wave flattens, 300 ms, and draws nothing that moves)
+                    if LockData.playing && !root.wave-still: Wavy {
                         y: 4px;
                         value: LockData.progress;
+                        paused: !root.wave-awake;
                     }
-                    if !LockData.playing || LockData.reduce-motion: Rectangle {
+                    if !LockData.playing || root.wave-still: Rectangle {
                         y: 7px;
                         height: 4px;
                         border-radius: 2px;

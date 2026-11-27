@@ -997,7 +997,10 @@ impl Lock {
             d.set_h24(h24);
             d.set_wake_on_mouse(b(&c, "standbyWakeOnMouse", true));
             d.set_name(name.clone().into());
-            d.set_reduce_motion(b(&st.shell.cfg["appearance"], "reduceMotion", false));
+            // (battery saver: the settings show Reduce motion on already,
+            // saver::overlay; said here too, so the lock's loops and the
+            // wave hold still whatever reads the settings, #765)
+            d.set_reduce_motion(b(&st.shell.cfg["appearance"], "reduceMotion", false) || tessera_core::saver::on());
             if look.material {
                 d.set_m_clock_ink(if dark_ink { r("onPrimaryFixed") } else { r("primaryFixed") });
                 d.set_m_clock_ink2(if dark_ink { r("onPrimaryFixedVariant") } else { r("primaryFixedDim") });
