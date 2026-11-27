@@ -7,7 +7,7 @@
 // LensButton.qml. The numbers are theirs, per look (Theme.material).
 
 import { Theme } from "@tessera/theme.slint";
-import { Busy, Spinner, Switch, Segmented } from "@tessera/widgets.slint";
+import { Busy, Spinner, Switch, Segmented, ScrollIndicator } from "@tessera/widgets.slint";
 
 // ── Icons: Phosphor in Glass, Material Symbols Rounded in Material, as
 // shell/common/Icon.qml (phosphor.js / material-symbols.js codes; "" where
@@ -1242,6 +1242,16 @@ component History inherits Rectangle {
                 }
             }
         }
+        // (the kit's scroll indicator, held still over the list's right
+        // edge while the content moves under it, #358 #1037)
+        ScrollIndicator {
+            x: list.width - self.width;
+            y: -list.content-y;
+            height: list.height;
+            content-y: list.content-y;
+            content-height: list.content-height;
+            view-height: list.height;
+        }
     }
 
     // ── Nothing to show
@@ -1492,7 +1502,7 @@ component Translate inherits Rectangle {
         border-radius: Theme.material ? 24px : 18px;
         background: Theme.platter;
         clip: true;
-        Flickable {
+        sb-list1495 := Flickable {
             x: Theme.material ? 16px : 12px;
             y: self.x;
             width: parent.width - 2 * self.x;
@@ -1517,6 +1527,16 @@ component Translate inherits Rectangle {
                 font-size: Theme.title;
                 accessible-role: none;
             }
+            // (the kit's scroll indicator, held still over the list's right
+            // edge while the content moves under it, #358 #1037)
+            ScrollIndicator {
+                x: sb-list1495.width - self.width;
+                y: -sb-list1495.content-y;
+                height: sb-list1495.height;
+                content-y: sb-list1495.content-y;
+                content-height: sb-list1495.content-height;
+                view-height: sb-list1495.height;
+            }
         }
     }
     // The translation (Material: in a secondary container, Copy a filled button)
@@ -1526,7 +1546,7 @@ component Translate inherits Rectangle {
         border-radius: Theme.material ? 24px : 18px;
         background: Theme.material ? Theme.m3-secondary-container : Theme.platter;
         clip: true;
-        Flickable {
+        sb-list1529 := Flickable {
             x: Theme.material ? 16px : 12px;
             y: self.x;
             width: parent.width - 2 * self.x;
@@ -1542,6 +1562,16 @@ component Translate inherits Rectangle {
                 color: error != "" ? Theme.danger : busy ? Theme.secondary : Theme.material ? Theme.m3-on-secondary-container : Theme.label;
                 font-size: Theme.title;
                 accessible-label: "Translation";
+            }
+            // (the kit's scroll indicator, held still over the list's right
+            // edge while the content moves under it, #358 #1037)
+            ScrollIndicator {
+                x: sb-list1529.width - self.width;
+                y: -sb-list1529.content-y;
+                height: sb-list1529.height;
+                content-y: sb-list1529.content-y;
+                content-height: sb-list1529.content-height;
+                view-height: sb-list1529.height;
             }
         }
         if result != "" && error == "": Rectangle {
@@ -1587,7 +1617,7 @@ component Translate inherits Rectangle {
         y: bar-h + 4px;
         width: fb.width;
         height: min(260px, ll.preferred-height + 10px);
-        Flickable {
+        sb-list1590 := Flickable {
             x: 5px;
             y: 5px;
             width: parent.width - 10px;
@@ -1622,6 +1652,16 @@ component Translate inherits Rectangle {
                         }
                     }
                 }
+            }
+            // (the kit's scroll indicator, held still over the list's right
+            // edge while the content moves under it, #358 #1037)
+            ScrollIndicator {
+                x: sb-list1590.width - self.width;
+                y: -sb-list1590.content-y;
+                height: sb-list1590.height;
+                content-y: sb-list1590.content-y;
+                content-height: sb-list1590.content-height;
+                view-height: sb-list1590.height;
             }
         }
     }
@@ -1798,6 +1838,16 @@ component Booru inherits Rectangle {
                 color: error != "" ? Theme.danger : Theme.secondary;
                 font-size: Theme.small;
             }
+        }
+        // (the kit's scroll indicator, held still over the list's right
+        // edge while the content moves under it, #358 #1037)
+        ScrollIndicator {
+            x: grid.width - self.width;
+            y: -grid.content-y;
+            height: grid.height;
+            content-y: grid.content-y;
+            content-height: grid.content-height;
+            view-height: grid.height;
         }
     }
 }
@@ -2149,6 +2199,16 @@ export component Sidebar inherits Window {
                                 link(u) => { root.open-link(u); }
                                 search-web(p) => { root.search-web(p); }
                             }
+                        }
+                        // (the kit's scroll indicator, held still over the list's right
+                        // edge while the content moves under it, #358 #1037)
+                        ScrollIndicator {
+                            x: chat.width - self.width;
+                            y: -chat.content-y;
+                            height: chat.height;
+                            content-y: chat.content-y;
+                            content-height: chat.content-height;
+                            view-height: chat.height;
                         }
                     }
 
@@ -2564,7 +2624,7 @@ export component Sidebar inherits Window {
                         height: min(340px, mm.preferred-height + 10px);
                         accessible-role: list;
                         accessible-label: "Models";
-                        Flickable {
+                        sb-list2567 := Flickable {
                             x: 5px;
                             y: 5px;
                             width: parent.width - 10px;
@@ -2588,6 +2648,16 @@ export component Sidebar inherits Window {
                                         manage-models();
                                     }
                                 }
+                            }
+                            // (the kit's scroll indicator, held still over the list's right
+                            // edge while the content moves under it, #358 #1037)
+                            ScrollIndicator {
+                                x: sb-list2567.width - self.width;
+                                y: -sb-list2567.content-y;
+                                height: sb-list2567.height;
+                                content-y: sb-list2567.content-y;
+                                content-height: sb-list2567.content-height;
+                                view-height: sb-list2567.height;
                             }
                         }
                     }
