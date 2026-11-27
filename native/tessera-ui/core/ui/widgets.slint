@@ -717,6 +717,9 @@ export component TextField inherits Rectangle {
     public function select-all() {
         input.select-all();
     }
+    public function set-text(t: string) {
+        input.text = t;
+    }
     init => {
         if root.autofocus {
             input.focus();
@@ -724,13 +727,22 @@ export component TextField inherits Rectangle {
     }
     property <bool> m3: Theme.material;
     property <length> inset: m3 ? 16px : 10px;
+    property <bool> over: hover.has-hover && !input.has-focus && enabled && !read-only;
     height: m3 ? 40px : 32px;
     border-radius: m3 ? min(self.height / 2, 28px) : Theme.radius-control - 2px;
-    background: m3 ? Theme.m3-surface-container-highest.with-alpha(Theme.control-alpha) : Theme.fill;
+    // (under the pointer: Material's state layer, Glass's hover fill)
+    background: m3 ? Theme.m3-surface-container-highest.with-alpha(Theme.control-alpha).mix(Theme.m3-on-surface, over ? 0.92 : 1) : over ? Theme.fill-hover : Theme.fill;
+    animate background { duration: Theme.hover; }
     border-width: m3 ? (input.has-focus ? 2px : 0) : 1px;
     border-color: m3 ? Theme.m3-primary : input.has-focus ? Theme.accent : Theme.separator;
     opacity: !enabled ? Theme.disabled-alpha : read-only ? 0.7 : 1;
     clip: true;
+    // (a click anywhere on it, the padding too, puts the caret in)
+    hover := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: MouseCursor.text;
+        clicked => { input.focus(); }
+    }
     input := TextInput {
         x: root.inset;
         width: parent.width - 2 * root.inset;
