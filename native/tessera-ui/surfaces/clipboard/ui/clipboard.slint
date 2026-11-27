@@ -65,7 +65,7 @@ export component ClipboardPanel inherits Window {
     property <length> pad: 16px;
     property <bool> toolbar: Theme.material && count > 0;
 
-    callback key(string, bool, bool, bool) -> bool; // text, shift, alt, control: handled?
+    callback key(string, bool, bool, bool, string, int, int) -> bool; // text, shift, alt, control, the search, its caret and anchor: handled?
     callback edited(string);
     callback hovered(int);
     callback activate(int, bool, bool); // row, plain text, copy only
@@ -146,7 +146,7 @@ export component ClipboardPanel inherits Window {
                 placeholder: "Search clipboard";
                 clearable: false;
                 edited(t) => { root.edited(t); }
-                key(e) => { return root.key(e.text, e.modifiers.shift, e.modifiers.alt, e.modifiers.control); }
+                key(e) => { return root.key(e.text, e.modifiers.shift, e.modifiers.alt, e.modifiers.control, self.text, self.caret, self.anchor); }
             }
 
             // All / Text / Images (Segmented.qml)
