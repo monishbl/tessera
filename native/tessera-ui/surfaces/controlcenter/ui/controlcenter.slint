@@ -2090,15 +2090,17 @@ component PageHeader {
             checked: switch-on;
             label: switch-label;
             toggled => { root.toggled(); }
-            // (the keyboard's, #351)
-            RowRing {
-                x: -3px;
-                y: -3px;
-                width: parent.width + 6px;
-                height: parent.height + 6px;
-                shown: root.switch-focused;
-                radius: parent.height / 2 + 3px;
-            }
+        }
+        // (the keyboard's, #351: over the switch, which takes no children)
+        if has-switch: RowRing {
+            property <length> sw-w: Theme.material ? 52px : 38px;
+            property <length> sw-h: Theme.material ? 32px : 22px;
+            x: parent.width - 38px - 3px;
+            y: (parent.height - sw-h) / 2 - 3px;
+            width: sw-w + 6px;
+            height: sw-h + 6px;
+            shown: root.switch-focused;
+            radius: sw-h / 2 + 3px;
         }
     }
     if m3: Rectangle {
