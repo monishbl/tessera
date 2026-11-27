@@ -76,6 +76,8 @@ enum Msg {
     BarClosed,
     Picked(i32),
     RowLevel(i32, f32),
+    /// (while the pointer holds the HUD: is it still there?)
+    CheckHold,
 }
 
 struct Win<T> {
@@ -107,6 +109,8 @@ pub struct Osd {
     levels_open: bool,
     page: &'static str,
     pointer_on: bool,
+    /// since when the pointer has held the HUD up, or since it was last used
+    held_since: Option<Instant>,
     bar_kind: Kind,
     bar_shown: bool,
     told_shown: bool,
@@ -124,6 +128,7 @@ pub struct Osd {
     hide: slint::Timer,
     bar_hide: slint::Timer,
     switch: slint::Timer,
+    hold_check: slint::Timer,
 }
 
 impl Default for Osd {
@@ -142,6 +147,7 @@ impl Default for Osd {
             levels_open: false,
             page: "list",
             pointer_on: false,
+            held_since: None,
             bar_kind: Kind::Volume,
             bar_shown: false,
             told_shown: false,
@@ -158,6 +164,7 @@ impl Default for Osd {
             hide: slint::Timer::default(),
             bar_hide: slint::Timer::default(),
             switch: slint::Timer::default(),
+            hold_check: slint::Timer::default(),
         }
     }
 }
@@ -231,7 +238,13 @@ impl Osd {
                 self.shown = true;
                 self.hide_after = logic::hide_after(&self.device);
                 self.open_hud(st);
-                if !self.pointer_on {
+                // (a hold only while the pointer really is on it: audit #400)
+                if self.pointer_on {
+                    self.check_hold(st);
+                }
+                if self.pointer_on {
+                    self.held_since = Some(Instant::now());
+                } else {
                     self.after(st, &self.hide, self.hide_after, || Msg::Hide);
                 }
             }
@@ -465,7 +478,61 @@ impl Osd {
         }
     }
 
+    /// Whether the pointer is on the capsule or the panel: Slint's has-hover,
+    /// and the compositor's pointer on that very window (a window hidden or
+    /// covered under the pointer may never hear the leave; the menu bar's
+    /// sweep does the same)
+    fn pointer_really_on(&self, st: &State) -> bool {
+        let on = st.pointer_surface();
+        let here = |s: &Rc<Surface>| on.as_ref().is_some_and(|p| Rc::ptr_eq(p, s));
+        self.capsule.as_ref().is_some_and(|w| w.ui.get_pointer_on() && here(&w.surface)) || self.panel.as_ref().is_some_and(|w| w.ui.get_pointer_on() && here(&w.surface))
+    }
+
+    /// Slint's hover dropped on windows the pointer isn't on
+    fn drop_hover(&self, st: &State, all: bool) {
+        let on = st.pointer_surface();
+        let gone = |s: &Rc<Surface>| all || !on.as_ref().is_some_and(|p| Rc::ptr_eq(p, s));
+        if let Some(w) = &self.capsule {
+            if w.ui.get_pointer_on() && gone(&w.surface) {
+                w.surface.window().dispatch_event(slint::platform::WindowEvent::PointerExited);
+            }
+        }
+        if let Some(w) = &self.panel {
+            if w.ui.get_pointer_on() && gone(&w.surface) {
+                w.surface.window().dispatch_event(slint::platform::WindowEvent::PointerExited);
+            }
+        }
+    }
+
+    /// The pointer's hold looked at again: off the window, or held past
+    /// the cap with nothing done, it ends and the HUD hides on time
+    fn check_hold(&mut self, st: &mut State) {
+        if !self.pointer_on {
+            self.hold_check.stop();
+            return;
+        }
+        let held = self.held_since.map_or(0, |t| t.elapsed().as_millis() as u64);
+        if !logic::hold_ends(self.pointer_really_on(st), held) {
+            return;
+        }
+        if crate::env::is_set("DEBUG") {
+            eprintln!("debug: osd pointer hold ended (held {held} ms)");
+        }
+        self.drop_hover(st, held >= logic::HOLD_CAP_MS);
+        self.pointer_on = false;
+        self.held_since = None;
+        self.hold_check.stop();
+        if self.shown {
+            self.after(st, &self.hide, self.hide_after, || Msg::Hide);
+        }
+    }
+
     fn hide_now(&mut self, st: &mut State) {
+        // (hidden under the pointer, its windows never hear it leave)
+        self.drop_hover(st, true);
+        self.pointer_on = false;
+        self.held_since = None;
+        self.hold_check.stop();
         self.shown = false;
         self.levels_open = false;
         self.page = "list";
@@ -484,6 +551,9 @@ impl Osd {
 
     /// Set the shown kind's level (its own slider: quiet)
     fn set_level(&mut self, st: &mut State, v: f64) {
+        if self.pointer_on {
+            self.held_since = Some(Instant::now());
+        }
         let v = v.clamp(if self.kind == Kind::Brightness { 0.01 } else { 0.0 }, 1.0);
         self.hush(self.kind);
         self.held = Some((self.kind, v, Instant::now()));
@@ -554,6 +624,9 @@ impl Osd {
     }
 
     fn row_level(&mut self, st: &mut State, i: i32, v: f64) {
+        if self.pointer_on {
+            self.held_since = Some(Instant::now());
+        }
         let Some(row) = self.rows.get(i as usize).cloned() else { return };
         let v = v.clamp(0.0, 1.0);
         self.row_held = Some((row.act.clone(), v, Instant::now()));
@@ -738,6 +811,7 @@ impl Part for Osd {
             }
             Msg::Picked(i) => self.picked(st, i),
             Msg::RowLevel(i, v) => self.row_level(st, i, v as f64),
+            Msg::CheckHold => self.check_hold(st),
         }
     }
 
@@ -758,7 +832,10 @@ impl Part for Osd {
             a.update(false, false);
         }
 
-        let pointer = self.capsule.as_ref().is_some_and(|w| w.ui.get_pointer_on()) || self.panel.as_ref().is_some_and(|w| w.ui.get_pointer_on());
+        // (has-hover alone isn't trusted: the compositor's pointer must be on
+        // that window too; audit #400)
+        self.drop_hover(st, false);
+        let pointer = self.pointer_really_on(st);
         if pointer != self.pointer_on {
             if crate::env::is_set("DEBUG") {
                 eprintln!("debug: osd pointer {pointer}");
@@ -766,8 +843,16 @@ impl Part for Osd {
             self.pointer_on = pointer;
             if pointer {
                 self.hide.stop();
-            } else if self.shown {
-                self.after(st, &self.hide, self.hide_after, || Msg::Hide);
+                self.held_since = Some(Instant::now());
+                // (looked at again every second while it holds)
+                let to = st.shell.sender(NAME);
+                self.hold_check.start(slint::TimerMode::Repeated, Duration::from_millis(1000), move || to(Box::new(Msg::CheckHold)));
+            } else {
+                self.held_since = None;
+                self.hold_check.stop();
+                if self.shown {
+                    self.after(st, &self.hide, self.hide_after, || Msg::Hide);
+                }
             }
         }
 

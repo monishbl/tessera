@@ -79,6 +79,17 @@ pub fn label(kind: Kind, device: &str, s: &Sound) -> String {
     .to_string()
 }
 
+/// How long the pointer resting on the HUD may keep it up with nothing
+/// done on it (audit #400: a leave never heard kept it up for good)
+pub const HOLD_CAP_MS: u64 = 30_000;
+
+/// Whether the pointer's hold on the HUD ends: the pointer isn't on one of
+/// its windows after all (only Slint's has-hover said so), or it rested
+/// there `held_ms` with nothing done, past the cap
+pub fn hold_ends(really_on: bool, held_ms: u64) -> bool {
+    !really_on || held_ms >= HOLD_CAP_MS
+}
+
 /// The button under the level: what it opens
 pub fn more_label(kind: Kind) -> &'static str {
     match kind {
@@ -442,5 +453,15 @@ mod tests {
         let r = rows(Kind::Brightness, "list", &s, &b, &mut name);
         assert_eq!((r[0].value, r[1].text.as_str(), r[1].act.clone()), (0.4, "Display settings", Act::Settings("displays")));
         assert_eq!(rows(Kind::Brightness, "list", &s, &Backlight::default(), &mut name).len(), 1);
+    }
+
+    #[test]
+    fn a_hold_ends_off_the_window_or_past_the_cap() {
+        // the pointer really on it: the HUD stays, up to the cap
+        assert!(!hold_ends(true, 0));
+        assert!(!hold_ends(true, HOLD_CAP_MS - 1));
+        assert!(hold_ends(true, HOLD_CAP_MS));
+        // has-hover kept after the pointer left (the leave never heard): it ends at once
+        assert!(hold_ends(false, 0));
     }
 }
