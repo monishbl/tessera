@@ -54,7 +54,10 @@ pub fn mode_name(mode: &str) -> String {
 /// Config.options.power with the QML's defaults filled in
 pub fn cfg_with_defaults(raw: &Value) -> Value {
     let mut c = json!({
-        "mode": "balanced", "batterySaver": true, "batterySaverAuto": false, "batterySaverLevel": 20, "gamePerformance": true, "critical": true,
+        // (batterySaver: the older "Low Power when the battery is low", folded
+        // into Battery saver on 27 Nov, #920: off unless a file still says so;
+        // common.rs upgrades moves it over)
+        "mode": "balanced", "batterySaver": false, "batterySaverAuto": false, "batterySaverLevel": 20, "gamePerformance": true, "critical": true,
         "idleDimAc": 300, "idleLockAc": 600, "idleOffAc": 600, "idleSleepAc": 0,
         "idleDimBattery": 120, "idleLockBattery": 300, "idleOffBattery": 300, "idleSleepBattery": 900,
         "lidAc": "sleep", "lidBattery": "sleep", "lidExternal": "nothing", "lidCaffeine": "lock", "passwordAfterSleep": 0, "appEnergy": true,
@@ -404,7 +407,7 @@ impl Power {
     /// another alert speaks for this moment (the saver's notice), so Low
     /// Power comes on without one of its own and nothing is offered.
     fn offer_saver(&mut self, h: &mut Host, quiet: bool) -> bool {
-        if !self.low() || !self.cfg["batterySaver"].as_bool().unwrap_or(true) || self.saver_dismissed || self.requests.contains_key("battery") || self.mode() == "power-saver" || !self.ppd {
+        if !self.low() || !self.cfg["batterySaver"].as_bool().unwrap_or(false) || self.saver_dismissed || self.requests.contains_key("battery") || self.mode() == "power-saver" || !self.ppd {
             return false;
         }
         let auto = self.cfg["batterySaverAuto"].as_bool().unwrap_or(false);
