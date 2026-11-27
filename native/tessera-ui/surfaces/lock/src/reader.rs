@@ -13,9 +13,12 @@
 //!               confirmed: fprintd's GetDevices and a claim that works) on
 //!               every wake, screen on, lid open, and a key, pointer or touch
 //!               while the lock shows. One scan always runs while the lock
-//!               shows, renewed every 30 s (pam_fprintd's timeout). After a
-//!               wake the reader is waited for (up to 10 s) while USB brings
-//!               it back.
+//!               shows: when pam_fprintd's own 30 s are up, the next starts
+//!               at once (the reader was answering: no probe first); one
+//!               still running 90 s on is stale and is renewed (#752: it was
+//!               stopped and probed every 30 s, and a finger placed in that
+//!               gap was ignored). After a wake the reader is waited for (up
+//!               to 10 s) while USB brings it back.
 //!   Tries       3 real misses: "Not recognised. Place your finger again", a
 //!               2 s pause, then 3 more; after 6, the password only until the
 //!               next wake or unlock. (A "no match" faster than a touch isn't
@@ -57,8 +60,11 @@ pub const MAX_MISSES: u32 = 6;
 pub const PAUSE_MS: u64 = 2000;
 /// No finger, key, pointer or touch this long: no scan
 pub const IDLE_MS: i64 = 120_000;
-/// A scan is renewed this often (pam_fprintd's timeout=30)
+/// pam_fprintd's own timeout (timeout=30 in tessera-fingerprint): the
+/// helper ends by itself after this long
 pub const RENEW_MS: i64 = 30_000;
+/// A helper still running this long after it started has hung: renewed
+pub const STALE_MS: i64 = 90_000;
 /// A key or the pointer leaves a scan younger than this that's listening
 pub const FRESH_MS: i64 = 10_000;
 /// fprintd is restarted at most this often
@@ -255,9 +261,17 @@ pub fn listening(misses: u32, now: i64, activity_at: i64) -> bool {
     misses < MAX_MISSES && now - activity_at < IDLE_MS
 }
 
-/// The running scan is due for its renewal
+/// The running scan is due for its renewal: it outlived pam_fprintd's own
+/// timeout by a long way (the helper hung); a working one ends by itself
 pub fn renew_due(running_since: Option<i64>, now: i64) -> bool {
-    running_since.is_some_and(|t| now - t >= RENEW_MS)
+    running_since.is_some_and(|t| now - t >= STALE_MS)
+}
+
+/// A scan that ended by itself (no match): the next one starts at once,
+/// without asking fprintd first, when it had asked for a finger and ran
+/// its whole time (pam_fprintd's timeout: the reader was answering)
+pub fn renew_at_once(asked: bool, ran_ms: i64) -> bool {
+    asked && ran_ms >= RENEW_MS - 5_000
 }
 
 /// A key, the pointer or a touch: a fresh scan, unless one that's young and
@@ -343,31 +357,55 @@ const FPRINT: &str = "net.reactivated.Fprint";
 
 pub struct SystemFprint;
 
+/// One system-bus connection for the probes, made on first use and kept
+/// (#752: two new connections per probe, every 30 s); a call that fails
+/// on our side (not fprintd's answer) drops it, and the next makes another
+static BUS: std::sync::Mutex<Option<zbus::blocking::Connection>> = std::sync::Mutex::new(None);
+
+fn system_bus() -> Result<zbus::blocking::Connection, String> {
+    let mut b = BUS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(c) = b.as_ref() {
+        return Ok(c.clone());
+    }
+    let c = zbus::blocking::Connection::system().map_err(|e| e.to_string())?;
+    *b = Some(c.clone());
+    Ok(c)
+}
+
+/// The error as text; the kept connection is dropped unless the bus or
+/// fprintd answered (an error reply: the connection itself is fine)
+fn bus_error(e: zbus::Error) -> String {
+    if !matches!(e, zbus::Error::MethodError(..) | zbus::Error::FDO(_)) {
+        *BUS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+    e.to_string()
+}
+
 impl Fprint for SystemFprint {
     fn device(&self) -> Result<Option<String>, String> {
-        let conn = zbus::blocking::Connection::system().map_err(|e| e.to_string())?;
+        let conn = system_bus()?;
         match conn.call_method(Some(FPRINT), "/net/reactivated/Fprint/Manager", Some("net.reactivated.Fprint.Manager"), "GetDevices", &()) {
             Ok(r) => r.body().deserialize::<Vec<zbus::zvariant::OwnedObjectPath>>().map(|v| v.first().map(|p| p.to_string())).map_err(|e| e.to_string()),
             Err(e) if e.to_string().contains("NoSuchDevice") => Ok(None),
-            Err(e) => Err(e.to_string()),
+            Err(e) => Err(bus_error(e)),
         }
     }
 
     fn claim_release(&self, device: &str) -> Result<(), String> {
-        let conn = zbus::blocking::Connection::system().map_err(|e| e.to_string())?;
+        let conn = system_bus()?;
         let dev = "net.reactivated.Fprint.Device";
-        conn.call_method(Some(FPRINT), device, Some(dev), "Claim", &("",)).map_err(|e| e.to_string())?;
-        conn.call_method(Some(FPRINT), device, Some(dev), "Release", &()).map(|_| ()).map_err(|e| e.to_string())
+        conn.call_method(Some(FPRINT), device, Some(dev), "Claim", &("",)).map_err(bus_error)?;
+        conn.call_method(Some(FPRINT), device, Some(dev), "Release", &()).map(|_| ()).map_err(bus_error)
     }
 
     fn restart(&self) -> Result<(), String> {
         // systemd's manager over the system bus, never interactive: allowed
         // by Tessera's polkit rule (fprintd.service, restart, the person at
         // the computer), or refused at once; never a prompt over the lock
-        let conn = zbus::blocking::Connection::system().map_err(|e| e.to_string())?;
+        let conn = system_bus()?;
         conn.call_method(Some("org.freedesktop.systemd1"), "/org/freedesktop/systemd1", Some("org.freedesktop.systemd1.Manager"), "RestartUnit", &("fprintd.service", "replace"))
             .map(|_| ())
-            .map_err(|e| e.to_string())
+            .map_err(bus_error)
     }
 }
 
@@ -585,10 +623,18 @@ mod tests {
     }
 
     #[test]
-    fn one_scan_renewed_every_30_s() {
+    fn a_scan_ends_by_itself_and_only_a_hung_one_is_renewed() {
+        // (#752: no longer stopped at 30 s; pam_fprintd's timeout ends it)
         assert!(!renew_due(None, 100_000));
-        assert!(!renew_due(Some(0), 29_999));
-        assert!(renew_due(Some(0), 30_000));
+        assert!(!renew_due(Some(0), 30_000));
+        assert!(!renew_due(Some(0), 89_999));
+        assert!(renew_due(Some(0), 90_000));
+        // its 30 s up after asking for a finger: the next at once, no probe
+        assert!(renew_at_once(true, 30_000));
+        assert!(renew_at_once(true, 25_000));
+        // over early, or before it asked: the reader is looked at first
+        assert!(!renew_at_once(true, 3_000));
+        assert!(!renew_at_once(false, 30_000));
     }
 
     #[test]

@@ -649,6 +649,10 @@ impl Part for Greeter {
         NAME
     }
 
+    fn keys_changed(&mut self, st: &mut State) {
+        self.aids(st);
+    }
+
     fn start(&mut self, st: &mut State) {
         self.style = Style::pick(&self.opts.style, st.shell.look.material);
         self.h24 = view::h24(crate::env::var("GREETER_CLOCK24").as_deref(), &st.shell.cfg);
@@ -707,6 +711,7 @@ impl Part for Greeter {
         // (a new window's field shows the typed name too)
         self.name_shown = "\u{0}".into();
         self.push(st);
+        self.aids(st);
         if let Some(w) = self.wins.last() {
             self.demo_window(&w.ui);
         }
@@ -809,6 +814,33 @@ impl Part for Greeter {
     }
 }
 
+impl Greeter {
+    /// What sits with the field (#761, #763): Caps Lock and the layout
+    /// (tessera_core::keystate), the on-screen keyboard's button (the
+    /// keyboard.oskButton greeter-start.sh hands over: Settings →
+    /// Accessibility, "touch" without one) and how much of each screen the
+    /// keyboard takes
+    fn aids(&self, st: &State) {
+        let k = tessera_core::keystate::now();
+        let layout = k.layout();
+        let button = tessera_core::settings::OskButton::from_cfg(&st.shell.cfg).shown(tessera_core::touch::has_touch());
+        for w in &self.wins {
+            let g = w.ui.global::<ui::Greet>();
+            g.set_caps(k.caps);
+            g.set_layout(layout.clone().into());
+            g.set_osk_button(button);
+            let screen = crate::surfaces::kit::screen_named(st, &w.output).unwrap_or((1920.0, 1080.0));
+            g.set_osk_covers(crate::surfaces::kit::osk_covers(screen.0));
+            // (the keyboard part of this process: it opens where the field has the keyboard)
+            let tx = st.tx.clone();
+            g.on_osk(move || {
+                let toggle = tessera_core::shell::Command { cmd: "toggle".into(), surface: "osk".into(), screen: None, args: serde_json::Value::Null };
+                let _ = tx.send(Msg::Part("osk", Box::new(toggle)));
+            });
+        }
+    }
+}
+
 /// The greeter's own loop (main.rs's, with this one part and no shell on
 /// stdin): ends when the session starts, a preview is done, or on SIGTERM.
 /// Without a Wayland display it says so and exits 1 (greeter-start.sh then
@@ -854,7 +886,9 @@ pub fn run(args: &[String], started: std::time::Instant) {
     slint::platform::set_platform(Box::new(crate::wayland::Platform { tx: tx.clone() })).expect("platform");
     tessera_core::runloop::register_fonts();
     let glass = crate::services::hypr::Glass::spawn(tx.clone());
-    let parts: Vec<Box<dyn Part>> = vec![Box::new(Greeter::new(opts))];
+    // (the on-screen keyboard: a part of this process, opened by the field's
+    // button; nothing else here has Panels, #763)
+    let parts: Vec<Box<dyn Part>> = vec![Box::new(Greeter::new(opts)), Box::new(tessera_osk::Osk::default())];
     let shell = crate::shell::Shell::new(tx.clone(), glass, crate::surfaces::Surfaces::default());
     let mut state = State::new(&globals, qh, egl, lh.clone(), tx.clone(), shell, parts, started);
     state.each_part(|p, st| p.start(st));

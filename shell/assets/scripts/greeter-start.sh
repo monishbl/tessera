@@ -32,6 +32,9 @@ config = {
     "appearance": {**{k: v for k, v in (("look", look), ("mode", g.get("mode")), ("materialSeed", g.get("seed")), ("materialStyle", g.get("materialStyle"))) if isinstance(v, str)}, **({"clock24": g["clock24"]} if isinstance(g.get("clock24"), bool) else {})},
     "lock": {k: g[k] for k in ("clockFace", "clockWeight", "clockWidth", "clockRound") if k in g},
     "wallpaper": {"path": wall},
+    # (the on-screen keyboard's button beside the field: Settings →
+    # Accessibility; none: the login screen's default, touch screens only)
+    "keyboard": {"oskButton": g["oskButton"]} if g.get("oskButton") in ("always", "touch", "off") else {},
 }
 if os.path.isdir(out):
     os.makedirs(os.path.join(out, "config", "tessera"), exist_ok=True)

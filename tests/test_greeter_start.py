@@ -138,6 +138,17 @@ class GreeterStartRust(GreeterStart):
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertEqual(runs[0][3:], ["", ""])
 
+    def test_the_keyboard_button_choice_reaches_the_login_screen(self):
+        # (#763: keyboard.oskButton in the greeter's own config.json; none or
+        # anything else: none, the login screen's default)
+        _, runs = self.start(dict(self.LOOK, oskButton="always"))
+        self.assertEqual(json.loads(runs[0][2])["keyboard"], {"oskButton": "always"})
+        for v in (None, "sometimes"):
+            self.log.unlink(missing_ok=True)
+            look = dict(self.LOOK) if v is None else dict(self.LOOK, oskButton=v)
+            _, runs = self.start(look)
+            self.assertEqual(json.loads(runs[0][2])["keyboard"], {})
+
     def test_a_rust_one_that_fails_gives_way_to_the_qml_one(self):
         r, runs = self.start(self.LOOK, FAKE_UI_FAIL="1")
         self.assertEqual(r.returncode, 0)

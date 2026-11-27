@@ -40,6 +40,11 @@
 //!   faillock --user (read-only): only when real, after a wrong password.
 //!   Idle inhibitor (zwp_idle_inhibit_v1) on a lock surface while Bedside
 //!     Mode shows: whenever it shows (demo too: the arena's compositor).
+//!   The on-screen keyboard (#763): the field's keyboard button asks Panels
+//!     for it (panels.toggle); it shows over the lock through Hyprland's
+//!     above_lock layer rule for "tessera:keyboard" only (rules.lua) and
+//!     types into the lock as a virtual keyboard; the sign-in lifts above it.
+//!     Under the field: Caps Lock and the layout (core::keystate, #761).
 //!
 //! ── With the shell (Lock.qml, LoginIntro.qml; JSON lines) ─────────────────
 //!   stdin  {"to":"lock","held":…,"leaving":…,"finger":…,"face":…}
@@ -227,10 +232,17 @@ enum M {
     Art(String, Option<(Vec<u8>, Vec<u8>)>),
     /// the player's position (bus, µs), read once a second while its timeline shows
     Position(String, i64),
+    /// the position reader ended (no target for a while, or no session
+    /// bus): another starts when the timeline shows again
+    PositionEnded,
+    /// the screens' power, read on the pool (reader::screens)
+    Screens(Vec<(String, bool)>),
     /// the compositor ended the lock while it's still wanted: take it again
     Retake,
     /// the wallpaper is late: play the entrance without it
     RevealNow,
+    /// the on-screen keyboard's button on this screen (#763)
+    Osk(String),
 }
 
 struct Win {
@@ -412,6 +424,9 @@ pub struct Lock {
     tick_ms: i64,
     minute: (i32, i32),
     sleeping: bool,
+    /// the computer slept (or the clock jumped) during this lock: a regular
+    /// camera's face unlock rests until the password (logic::face_rests)
+    slept: bool,
     sleep_watch: bool,
     /// logind's sleep delay inhibitor while a scan can run (reader.rs), and
     /// whether it's being taken
@@ -441,9 +456,12 @@ pub struct Lock {
     icons_asked: std::collections::HashSet<String>,
     /// the hands' angles, only ever growing (they turn forward past 12)
     angles: (f32, f32),
-    /// the player whose position is read now (the reader thread's target)
-    position_for: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// the player whose position is read now (the reader thread's target):
+    /// the thread waits on it while there is none, and ends after a while
+    position_for: std::sync::Arc<PositionTarget>,
     position_thread: bool,
+    /// the screens' power is being read on the pool
+    screens_asked: bool,
     /// the position (µs) and the track's length (µs) of the shown player
     position: (String, i64),
     /// tries at taking the lock again after the compositor ended it
@@ -493,6 +511,7 @@ impl Default for Lock {
             tick_ms: 0,
             minute: (-1, -1),
             sleeping: false,
+            slept: false,
             sleep_watch: false,
             sleep_fd: None,
             sleep_fd_asked: false,
@@ -518,6 +537,7 @@ impl Default for Lock {
             angles: (-1.0, -1.0),
             position_for: Default::default(),
             position_thread: false,
+            screens_asked: false,
             position: (String::new(), 0),
             retakes: 0,
             t_retake: slint::Timer::default(),
@@ -539,6 +559,39 @@ pub fn forward(prev: f32, a: f32) -> f32 {
         v += 360.0;
     }
     v
+}
+
+/// The player the position thread reads (None: it waits, then ends)
+#[derive(Default)]
+pub struct PositionTarget {
+    bus: std::sync::Mutex<Option<String>>,
+    wake: std::sync::Condvar,
+}
+
+impl PositionTarget {
+    fn set(&self, bus: Option<String>) {
+        *self.bus.lock().unwrap_or_else(|e| e.into_inner()) = bus;
+        self.wake.notify_all();
+    }
+    /// The target now; with none, waits up to `idle` for one (None: still none)
+    fn wait(&self, idle: Duration) -> Option<String> {
+        let g = self.bus.lock().unwrap_or_else(|e| e.into_inner());
+        let (g, _) = self.wake.wait_timeout_while(g, idle, |b| b.is_none()).unwrap_or_else(|e| e.into_inner());
+        g.clone()
+    }
+}
+
+/// How long the position thread waits with nothing to read before it ends
+const POSITION_IDLE: Duration = Duration::from_secs(30);
+
+/// The pause before a logind watch that ended is started again: 2 s,
+/// doubling up to a minute; one that ran a minute or more starts over at 2 s
+pub fn watch_backoff(prev: Duration, ran: Duration) -> Duration {
+    if ran >= Duration::from_secs(60) {
+        Duration::from_secs(2)
+    } else {
+        (prev * 2).clamp(Duration::from_secs(2), Duration::from_secs(60))
+    }
 }
 
 /// The MPRIS player's Position (µs), read off the session bus
@@ -725,6 +778,7 @@ impl Lock {
         let now = crate::util::now_ms();
         self.held_at = now;
         self.last_touch = now;
+        self.slept = false;
         self.face = FaceCam::default();
         // (an unlock, or a new lock: the misses count from zero)
         self.finger.tries = 0;
@@ -860,6 +914,12 @@ impl Lock {
         }
         on!(on_submit, | | M::Submit);
         on!(on_woke, | | M::Woke);
+        d.on_mask(|t| tessera_core::keystate::dots(&t).into());
+        {
+            let to = to.clone();
+            let on = name.to_string();
+            d.on_osk(move || to(Box::new(M::Osk(on.clone()))));
+        }
         on!(on_step, |i| M::Step(i));
         on!(on_player, |a| M::Player(a.to_string()));
         // (the lists, handed over once: every refresh after changes them in place)
@@ -885,6 +945,8 @@ impl Lock {
         self.notes_push(st);
         self.player(st);
         self.field();
+        self.keys();
+        self.osk_state(st);
         self.bedside(st);
         if let Some((round, cookie)) = &self.avatar {
             let d = self.wins[i].ui.global::<ui::LockData>();
@@ -924,22 +986,33 @@ impl Lock {
         let roles: std::collections::HashMap<String, String> = if look.material { crate::theme::look_roles(&look).into_iter().collect() } else { Default::default() };
         let r = |k: &str| roles.get(k).map(|v| hex(v)).unwrap_or(slint::Color::from_rgb_u8(255, 255, 255));
         let name = account_name();
-        let h24 = b(&st.shell.cfg["appearance"], "clock24", false);
+        let h24 = tessera_core::locale::clock24(&st.shell.cfg);
+        // (#763: Settings → Accessibility → On-screen keyboard button)
+        let osk_button = tessera_core::settings::OskButton::from_cfg(&st.shell.cfg).shown(tessera_core::touch::has_touch());
         for w in &self.wins {
             // lock.text "auto": dark ink where the wallpaper is light behind
             // the clock and date (this screen's top 6..44 %, both layouts'
             // clocks), light ink on a dark one; "dark" / "light" as set
             let screen = crate::surfaces::kit::screen_named(st, &w.output).unwrap_or((1920.0, 1080.0));
-            let dark_ink = match text.as_str() {
+            // (#307: each bare text's ink from the wallpaper where it sits:
+            // the clock's, the sign-in block's, the cards' column's)
+            let ink_at = |region: (f32, f32, f32, f32)| match text.as_str() {
                 "dark" => true,
-                "auto" => wall.as_ref().is_some_and(|t| t.dark_ink_under(screen, logic::clock_region(screen)).unwrap_or(false)),
+                "auto" => wall.as_ref().is_some_and(|t| t.dark_ink_under(screen, region).unwrap_or(false)),
                 _ => false,
             };
+            let dark_ink = ink_at(logic::clock_region(screen));
+            let dark_low = ink_at(logic::signin_region(screen));
+            let dark_side = ink_at(logic::side_region(screen));
             st.shell.apply_theme(&w.ui.global::<ui::Theme>());
             let d = w.ui.global::<ui::LockData>();
             d.set_ios(s(&c, "layout", "ios") != "macos");
             d.set_plate(plate.clone().into());
             d.set_dark_ink(dark_ink);
+            d.set_dark_ink_low(dark_low);
+            d.set_dark_ink_side(dark_side);
+            d.set_osk_button(osk_button);
+            d.set_osk_covers(crate::surfaces::kit::osk_covers(screen.0));
             d.set_note_style(s(&c, "notifications", "shelf").into());
             d.set_previews(b(&c, "previews", false));
             d.set_lock_fx(s(&c, "lockTransition", "zoom").into());
@@ -955,13 +1028,18 @@ impl Lock {
             d.set_h24(h24);
             d.set_wake_on_mouse(b(&c, "standbyWakeOnMouse", true));
             d.set_name(name.clone().into());
-            d.set_reduce_motion(b(&st.shell.cfg["appearance"], "reduceMotion", false));
+            // (battery saver: the settings show Reduce motion on already,
+            // saver::overlay; said here too, so the lock's loops and the
+            // wave hold still whatever reads the settings, #765)
+            d.set_reduce_motion(b(&st.shell.cfg["appearance"], "reduceMotion", false) || tessera_core::saver::on());
             if look.material {
                 d.set_m_clock_ink(if dark_ink { r("onPrimaryFixed") } else { r("primaryFixed") });
                 d.set_m_clock_ink2(if dark_ink { r("onPrimaryFixedVariant") } else { r("primaryFixedDim") });
                 d.set_m_clock_ink3(if dark_ink { r("onTertiaryFixed") } else { r("tertiaryFixed") });
                 d.set_m_ink(if dark_ink { r("onSecondaryFixed") } else { r("secondaryFixed") });
                 d.set_m_ink2(if dark_ink { r("onSecondaryFixedVariant") } else { r("secondaryFixedDim") });
+                d.set_m_ink_low(if dark_low { r("onSecondaryFixed") } else { r("secondaryFixed") });
+                d.set_m_ink_side(if dark_side { r("onSecondaryFixed") } else { r("secondaryFixed") });
                 d.set_sb_m_ink(r("primaryFixed"));
                 d.set_sb_m_ink2(r("primaryFixedDim"));
                 d.set_sb_m_ink3(r("secondaryFixedDim"));
@@ -984,7 +1062,7 @@ impl Lock {
             self.wall_path = path.clone();
         }
         self.wall_ink.follow(&path, &st.tx);
-        let h24 = b(&st.shell.cfg["appearance"], "clock24", false);
+        let h24 = tessera_core::locale::clock24(&st.shell.cfg);
         let (h, m) = (t.h as u32, t.mi as u32);
         let date = logic::date_long(t.wday as u32, t.d as u32, t.mo as u32);
         let hh = logic::hour(h, h24);
@@ -1021,9 +1099,11 @@ impl Lock {
         use crate::services::calendar as cal;
         let now = crate::util::now_ms();
         let t = cal::local(now);
-        let h24 = b(&st.shell.cfg["appearance"], "clock24", false);
+        let h24 = tessera_core::locale::clock24(&st.shell.cfg);
+        let start = tessera_core::locale::week_start(&st.shell.cfg);
         let first = cal::local(cal::make(t.y, t.mo, 1, 12, 0, 0));
-        let lead = logic::lead(first.wday);
+        let lead = logic::lead(first.wday, start);
+        let letters: Vec<slint::SharedString> = tessera_core::locale::weekday_letters(start).into_iter().map(Into::into).collect();
         let (from, to) = (cal::make(t.y, t.mo, 1 - lead, 0, 0, 0), cal::make(t.y, t.mo, 1 - lead + 42, 0, 0, 0));
         let c = st.shell.get::<Calendar>();
         let list = c.map(|c| c.between(from, to)).unwrap_or_default();
@@ -1099,9 +1179,10 @@ impl Lock {
         }));
         items.truncate(8);
         let every = daily.values().cloned().collect::<Vec<_>>().join(", ");
-        let month = format!("{} {}", &logic::month_name(t.mo as u32)[..3], t.y);
+        let month = logic::month_short(t.mo as u32, t.y);
         self.each(|d| {
             d.set_month(month.clone().into());
+            d.set_letters(ModelRc::new(VecModel::from(letters.clone())));
             d.set_every_day(every.clone().into());
             d.set_cal_items(ModelRc::new(VecModel::from(items.clone())));
         });
@@ -1112,7 +1193,7 @@ impl Lock {
         let bat = st.shell.get::<Battery>().cloned().unwrap_or_default();
         let wx = st.shell.get::<Weather>().cloned().unwrap_or_default();
         let material = st.shell.look.material;
-        let h24 = b(&st.shell.cfg["appearance"], "clock24", false);
+        let h24 = tessera_core::locale::clock24(&st.shell.cfg);
         let now = crate::util::now_ms();
         let next = st.shell.get::<Calendar>().map(|c| c.between(now, now + 14 * 86_400_000)).unwrap_or_default().into_iter().find(|e| e.all_day || e.end > now);
         let todos = st.shell.get::<Todos>().map(|t| t.list.iter().filter(|t| !t.done).count()).unwrap_or(0);
@@ -1227,23 +1308,30 @@ impl Lock {
         if self.position.0 != bus {
             self.position = (bus.clone(), -1);
         }
-        if let Ok(mut t) = self.position_for.lock() {
-            *t = want.then(|| bus.clone());
-        }
+        self.position_for.set(want.then(|| bus.clone()));
+        // (#751: it waits while there's no timeline instead of polling for
+        // the life of the shell, ends after a while without one, and says
+        // so, so the next timeline starts another; it ended quietly on a
+        // failed connect and the timeline never showed again)
         if want && !self.position_thread {
             self.position_thread = true;
             let (target, to) = (self.position_for.clone(), Self::send(st));
             std::thread::spawn(move || {
-                let Ok(conn) = zbus::blocking::Connection::session() else { return };
-                loop {
-                    let bus = target.lock().ok().and_then(|t| t.clone());
-                    if let Some(bus) = bus {
-                        if let Some(pos) = read_position(&conn, &bus) {
-                            to(Box::new(M::Position(bus, pos)));
+                match zbus::blocking::Connection::session() {
+                    Ok(conn) => {
+                        while let Some(bus) = target.wait(POSITION_IDLE) {
+                            if let Some(pos) = read_position(&conn, &bus) {
+                                to(Box::new(M::Position(bus, pos)));
+                            }
+                            std::thread::sleep(Duration::from_secs(1));
                         }
                     }
-                    std::thread::sleep(Duration::from_secs(1));
+                    Err(e) => {
+                        eprintln!("tessera-ui: lock: no session bus for the player's position ({e})");
+                        std::thread::sleep(Duration::from_secs(5));
+                    }
                 }
+                to(Box::new(M::PositionEnded));
             });
         }
         let known = want && self.position.1 >= 0;
@@ -1286,6 +1374,26 @@ impl Lock {
             let hint = if island.kind == "finger" && island.phase == "miss" && self.finger.text == reader::AGAIN_TEXT { reader::AGAIN_TEXT } else { island.hint };
             d.set_island_hint(hint.into());
         });
+    }
+
+    /// Caps Lock and the layout under the field (#761)
+    fn keys(&self) {
+        let k = tessera_core::keystate::now();
+        let layout = k.layout();
+        self.each(|d| {
+            d.set_caps(k.caps);
+            d.set_layout(layout.clone().into());
+        });
+    }
+
+    /// The on-screen keyboard is up on which screen (Panels, by the shell's
+    /// state): the sign-in lifts above it there (#763)
+    fn osk_state(&self, st: &State) {
+        let (open, screen) = st.shell.get::<crate::services::bridge::ShellState>().map(|s| s.keyboard()).unwrap_or_default();
+        for w in &self.wins {
+            let up = open == "keyboard" && (screen.is_empty() || screen == w.output);
+            w.ui.global::<ui::LockData>().set_osk_up(up);
+        }
     }
 
     /// The camera's phase for the island: a match, a miss showing, looking
@@ -1537,6 +1645,7 @@ impl Lock {
     fn face_wanted(&self, st: &State) -> bool {
         self.real && self.held && !self.leaving && !self.standby(st) && self.face_on && self.face.armed && !self.face.broken && self.face.tries < 3
             && self.face.misses < FACE_MAX_MISSES
+            && !logic::face_rests(auth::face_is_rgb(), self.slept, crate::util::now_ms() - self.held_at)
     }
 
     /// After anything changed: start or stop the reader, the camera, the
@@ -1824,10 +1933,16 @@ impl Lock {
                     self.field();
                     return;
                 }
-                // (its 30 s are up, or PAM ended it: the next scan, renewed)
-                if self.finger_wanted() && !self.t_finger.running() {
-                    self.finger.retry_why = reader::Why::Fresh;
-                    self.finger_retry(st, 400);
+                // (its 30 s are up: the next scan at once, the reader was
+                // answering; PAM ended it some other way: renewed after a
+                // look at the reader)
+                if self.finger_wanted() && !self.t_finger.running() && !self.finger.probing {
+                    if reader::renew_at_once(self.finger.asked, now - self.finger.started_at) {
+                        self.start_scan(st);
+                    } else {
+                        self.finger.retry_why = reader::Why::Fresh;
+                        self.finger_retry(st, 400);
+                    }
                 }
                 self.rules(st);
             }
@@ -1985,8 +2100,20 @@ impl Lock {
     }
 }
 
-/// logind's PrepareForSleep, read-only (Lock.qml's EventWatch "login1")
+/// logind's PrepareForSleep and the lid, read-only (Lock.qml's EventWatch
+/// "login1"). Each watch runs until its connection ends (a bus restart, a
+/// failed connect right after a wake), then is started again after a pause
+/// (watch_backoff); it said so once and was never heard again, and the
+/// reader ran into the next sleep (#751)
 fn watch_sleep(to: impl Fn(Box<dyn Any + Send>) + Send + Clone + 'static) {
+    fn again(what: &str, prev: &mut Duration, started: std::time::Instant, e: Option<zbus::Error>) {
+        match e {
+            Some(e) => eprintln!("tessera-ui: lock: no logind {what} signal ({e}); again shortly"),
+            None => eprintln!("tessera-ui: lock: the logind {what} watch ended; again shortly"),
+        }
+        *prev = watch_backoff(*prev, started.elapsed());
+        std::thread::sleep(*prev);
+    }
     // the lid (logind's LidClosed): as it is now, then each change
     let lid = to.clone();
     std::thread::spawn(move || {
@@ -2012,8 +2139,10 @@ fn watch_sleep(to: impl Fn(Box<dyn Any + Send>) + Send + Clone + 'static) {
             }
             Ok(())
         };
-        if let Err(e) = run() {
-            eprintln!("tessera-ui: lock: no logind lid signal ({e})");
+        let mut pause = Duration::ZERO;
+        loop {
+            let started = std::time::Instant::now();
+            again("lid", &mut pause, started, run().err());
         }
     });
     std::thread::spawn(move || {
@@ -2033,8 +2162,10 @@ fn watch_sleep(to: impl Fn(Box<dyn Any + Send>) + Send + Clone + 'static) {
             }
             Ok(())
         };
-        if let Err(e) = run() {
-            eprintln!("tessera-ui: lock: no logind sleep signal ({e})");
+        let mut pause = Duration::ZERO;
+        loop {
+            let started = std::time::Instant::now();
+            again("sleep", &mut pause, started, run().err());
         }
     });
 }
@@ -2131,7 +2262,13 @@ impl Part for Lock {
             self.player(st);
         } else if what == TypeId::of::<crate::services::wallpaper::WallTop>() {
             self.settings(st);
+        } else if what == TypeId::of::<crate::services::bridge::ShellState>() {
+            self.osk_state(st);
         }
+    }
+
+    fn keys_changed(&mut self, _st: &mut State) {
+        self.keys();
     }
 
     fn message(&mut self, st: &mut State, msg: Box<dyn Any + Send>) {
@@ -2239,6 +2376,14 @@ impl Part for Lock {
             }
             M::Second => {
                 let now = crate::util::now_ms();
+                // (a jump in the clock while locked: a sleep the signal missed)
+                if self.held && now - self.tick_ms > 10_000 {
+                    self.slept = true;
+                }
+                // (a regular camera's 30 minutes are up while it looks: it stops)
+                if self.face.conv.is_some() && !self.face_wanted(st) {
+                    self.rules(st);
+                }
                 // a jump in the clock while locked (a sleep missed): a fresh reader
                 if now - self.tick_ms > 10_000 && self.finger_on && self.real {
                     self.finger.tries = 0;
@@ -2249,18 +2394,20 @@ impl Part for Lock {
                 }
                 self.tick_ms = now;
                 if self.finger_on && self.real && self.held {
-                    // a screen came on (DPMS): a fresh scan at once
-                    let screens = reader::screens();
-                    let on = reader::screen_came_on(&self.finger.screens, &screens);
-                    self.finger.screens = screens;
-                    if on {
-                        self.reader_activity(st, true);
+                    // a screen came on (DPMS): a fresh scan at once (read on
+                    // the pool: a stat of every connector each second held
+                    // up the UI thread, #752)
+                    if !self.screens_asked {
+                        self.screens_asked = true;
+                        let to = Self::send(st);
+                        crate::work::spawn(move || to(Box::new(M::Screens(reader::screens()))));
                     }
                     // the 2 idle minutes began (or ended): the scan stops (or starts)
                     if self.finger_wanted() != self.finger.wanted {
                         self.rules(st);
                     }
-                    // one scan, renewed every 30 s
+                    // one scan: a helper that hung past pam_fprintd's own
+                    // timeout is renewed (a working one ends by itself)
                     let since = self.finger.conv.as_ref().map(|_| self.finger.started_at);
                     if reader::renew_due(since, now) && !self.finger.probing {
                         self.fresh(st, reader::Why::Fresh);
@@ -2425,6 +2572,9 @@ impl Part for Lock {
                 self.finger.probing = false;
                 if going {
                     self.sleeping = true;
+                    if self.held {
+                        self.slept = true;
+                    }
                     // (nothing typed before a sleep is waiting in the field after it)
                     if self.held {
                         self.drop_typed();
@@ -2542,7 +2692,31 @@ impl Part for Lock {
                     self.player(st);
                 }
             }
+            M::PositionEnded => {
+                self.position_thread = false;
+                // (a timeline wanted meanwhile: another reader)
+                self.player(st);
+            }
+            M::Screens(screens) => {
+                self.screens_asked = false;
+                if !(self.finger_on && self.real && self.held) {
+                    self.finger.screens.clear();
+                    return;
+                }
+                let on = reader::screen_came_on(&self.finger.screens, &screens);
+                self.finger.screens = screens;
+                if on {
+                    self.reader_activity(st, true);
+                }
+            }
             M::RevealNow => self.wins.iter_mut().for_each(reveal),
+            // (Panels brings it up or puts it away; over the lock it shows
+            // through Hyprland's above_lock layer rule, hypr/tessera/rules.lua)
+            M::Osk(on) => {
+                if self.held && !self.leaving {
+                    crate::shell::ask("panels.toggle", serde_json::json!(["keyboard", on]));
+                }
+            }
             M::Retake => {
                 if self.held && self.lock.is_none() && !self.demo {
                     eprintln!("tessera-ui: lock: taking the session lock again (try {})", self.retakes);
@@ -2737,6 +2911,36 @@ mod tests {
         std::fs::write(dir.join("bad.png"), b"x").unwrap();
         assert!(super::note_icon_pixels(&dir.join("bad.png"), 16).is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_watch_that_ended_waits_longer_each_time_up_to_a_minute() {
+        use super::watch_backoff;
+        use std::time::Duration;
+        let s = Duration::from_secs;
+        assert_eq!(watch_backoff(Duration::ZERO, s(0)), s(2));
+        assert_eq!(watch_backoff(s(2), s(1)), s(4));
+        assert_eq!(watch_backoff(s(32), s(1)), s(60));
+        assert_eq!(watch_backoff(s(60), s(1)), s(60));
+        // one that ran a while (a bus restart much later): quick again
+        assert_eq!(watch_backoff(s(60), s(600)), s(2));
+    }
+
+    #[test]
+    fn the_position_reader_waits_for_a_player_and_gives_up() {
+        use super::PositionTarget;
+        use std::time::Duration;
+        let t = std::sync::Arc::new(PositionTarget::default());
+        assert_eq!(t.wait(Duration::from_millis(20)), None);
+        t.set(Some(":1.42".into()));
+        assert_eq!(t.wait(Duration::from_secs(5)).as_deref(), Some(":1.42"));
+        // (a player chosen while it waits wakes it)
+        t.set(None);
+        let t2 = t.clone();
+        let h = std::thread::spawn(move || t2.wait(Duration::from_secs(5)));
+        std::thread::sleep(Duration::from_millis(50));
+        t.set(Some(":1.7".into()));
+        assert_eq!(h.join().unwrap().as_deref(), Some(":1.7"));
     }
 
     #[test]

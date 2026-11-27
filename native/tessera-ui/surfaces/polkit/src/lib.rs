@@ -358,6 +358,13 @@ impl Polkit {
             ui.on_submit(move |t| to(Box::new(M::Submit(t.to_string()))));
         }
         ui.on_cancel(move || to(Box::new(M::Cancel)));
+        // (#760 #761 #763: the field's width, Caps Lock, the keyboard's button)
+        ui.on_mask(|t| tessera_core::keystate::dots(&t).into());
+        {
+            let screen = name.clone();
+            ui.on_osk(move || crate::shell::ask("panels.toggle", serde_json::json!(["keyboard", screen])));
+        }
+        Self::aids(st, &ui, &name);
         ui.show().expect("show polkit");
         let a11y = crate::a11y::A11y::new(&surface, st.tx.clone());
         self.win = Some(Win { output: name, surface, ui, a11y, glass_sent: String::new() });
@@ -917,6 +924,17 @@ impl Part for Polkit {
         }
     }
 
+    fn keys_changed(&mut self, st: &mut State) {
+        self.aids_now(st);
+    }
+
+    fn data(&mut self, st: &mut State, what: std::any::TypeId) {
+        // (the on-screen keyboard came up or went: Panels' state)
+        if what == std::any::TypeId::of::<crate::services::bridge::ShellState>() {
+            self.aids_now(st);
+        }
+    }
+
     fn output_removed(&mut self, st: &mut State, name: &str) {
         if self.win.as_ref().is_some_and(|w| w.output == name) {
             let w = self.win.take().unwrap();
@@ -968,6 +986,29 @@ impl Part for Polkit {
         }
         if let Some(w) = &self.win {
             Glass::clear_now(&w.output, NS);
+        }
+    }
+}
+
+impl Polkit {
+    /// What sits with the field (#761, #763): Caps Lock and the layout
+    /// (tessera_core::keystate), the on-screen keyboard's button
+    /// (Settings → Accessibility), whether the keyboard is up on this screen
+    /// (Panels, by the shell's state) and how much of it the keyboard takes
+    fn aids(st: &State, ui: &ui::PolkitDialog, output: &str) {
+        let k = tessera_core::keystate::now();
+        ui.set_caps(k.caps);
+        ui.set_layout(k.layout().into());
+        ui.set_osk_button(tessera_core::settings::OskButton::from_cfg(&st.shell.cfg).shown(tessera_core::touch::has_touch()));
+        let (open, screen) = st.shell.get::<crate::services::bridge::ShellState>().map(|s| s.keyboard()).unwrap_or_default();
+        ui.set_osk_up(open == "keyboard" && (screen.is_empty() || screen == output));
+        let size = crate::surfaces::kit::screen_named(st, output).unwrap_or((1920.0, 1080.0));
+        ui.set_osk_covers(crate::surfaces::kit::osk_covers(size.0));
+    }
+
+    fn aids_now(&self, st: &State) {
+        if let Some(w) = &self.win {
+            Self::aids(st, &w.ui, &w.output);
         }
     }
 }

@@ -4,6 +4,8 @@
 //! against burn-in and its night, the clock's and the date's text, the
 //! notification shelf, the morph's ramps. The part (mod.rs) keeps the state.
 
+use tessera_core::locale;
+
 /// pam_faillock's settings (faillock.conf), its defaults when unread
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Faillock {
@@ -275,21 +277,22 @@ pub fn hm(h: u32, m: u32, h24: bool) -> String {
     }
 }
 
-const DAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+// (names in the system's language: tessera_core::locale, LC_TIME; English
+// without one)
 
 /// Qt's "dddd d MMMM": "Thursday 5 November" (`wday` 0 = Sunday)
 pub fn date_long(wday: u32, day: u32, month0: u32) -> String {
-    format!("{} {day} {}", DAYS[(wday % 7) as usize], MONTHS[(month0 % 12) as usize])
+    format!("{} {day} {}", locale::day_name(wday % 7, false), locale::month_name(month0 % 12 + 1, false))
 }
 
 /// Qt's "d MMM": "5 Nov" (the dynamic clock with 24-hour time)
 pub fn date_short(day: u32, month0: u32) -> String {
-    format!("{day} {}", &MONTHS[(month0 % 12) as usize][..3])
+    format!("{day} {}", locale::month_name(month0 % 12 + 1, true))
 }
 
-pub fn month_name(month0: u32) -> &'static str {
-    MONTHS[(month0 % 12) as usize]
+/// Bedside Mode's calendar's header: "Nov 2026"
+pub fn month_short(month0: u32, year: i32) -> String {
+    format!("{} {year}", locale::month_name(month0 % 12 + 1, true))
 }
 
 /// Notifications.timeLabel: "now", "5m ago", else the time it came
@@ -363,15 +366,42 @@ pub fn standby_weight(setting: &str, material: bool) -> i32 {
 }
 
 /// Bedside Mode's calendar: how many days of the month before fill its
-/// first week (Monday first) when the 1st is on `first_wday` (0 = Sunday)
-pub fn lead(first_wday: i32) -> i32 {
-    (first_wday + 6).rem_euclid(7)
+/// first week, the week starting on `start` (0 Sunday … 6 Saturday:
+/// appearance.weekStart or the system's language), when the 1st is on
+/// `first_wday` (0 = Sunday)
+pub fn lead(first_wday: i32, start: u32) -> i32 {
+    locale::column(first_wday.rem_euclid(7) as u32, start) as i32
+}
+
+/// How long a lock with a regular camera lets your face unlock it (#785)
+pub const FACE_RGB_MAX_MS: i64 = 30 * 60_000;
+
+/// Face unlock rests until the password (#785): with a regular (colour)
+/// camera a video of you blinking can fool it, so it isn't offered after
+/// the computer slept during this lock, or once the lock has been up 30
+/// minutes (the worst case: a computer left locked, someone with a video).
+/// An infrared camera isn't fooled by a picture: it always may
+pub fn face_rests(rgb: bool, slept: bool, locked_ms: i64) -> bool {
+    rgb && (slept || locked_ms >= FACE_RGB_MAX_MS)
 }
 
 /// Whether to treat the face camera's or the reader's tries as given back
 /// (Lock.qml's woke): someone came back after 30 s away or from Bedside Mode
 pub fn came_back(idle: bool, now_ms: i64, last_touch_ms: i64) -> bool {
     idle || now_ms - last_touch_ms > 30_000
+}
+
+/// Where the sign-in block sits (#307): your name, the field, the island,
+/// the error and the hints, the bottom middle of the screen; its ink is
+/// measured there, not under the clock (a light sky over dark land wrote
+/// dark text on the land)
+pub fn signin_region(screen: (f32, f32)) -> (f32, f32, f32, f32) {
+    (screen.0 * 0.3, screen.1 * 0.62, screen.0 * 0.4, screen.1 * 0.34)
+}
+
+/// The cards' column beside the clock on a wide screen ("N more"), #307
+pub fn side_region(screen: (f32, f32)) -> (f32, f32, f32, f32) {
+    (screen.0 * 0.55, screen.1 * 0.1, screen.0 * 0.4, screen.1 * 0.7)
 }
 
 /// Where the clock and date sit on a screen of `screen` px, as (x, y, w,
@@ -455,6 +485,19 @@ mod tests {
         let strip = WallTop::from_grid("/c.jpg", 16.0 / 9.0, strip);
         assert!(strip.light);
         assert_eq!(strip.dark_ink_under(screen, clock_region(screen)), Some(false));
+        // (#307) a light sky over dark land: dark ink on the clock, light
+        // ink on the sign-in at the bottom
+        let mut sky = vec![0.1f32; GRID * GRID];
+        for v in sky.iter_mut().take(GRID * GRID / 2) {
+            *v = 0.9;
+        }
+        let sky = WallTop::from_grid("/s.jpg", 16.0 / 9.0, sky);
+        assert_eq!(sky.dark_ink_under(screen, clock_region(screen)), Some(true));
+        assert_eq!(sky.dark_ink_under(screen, signin_region(screen)), Some(false));
+        let (x, y, w, h) = signin_region(screen);
+        assert!(x > 0.0 && y > screen.1 * 0.5 && x + w < screen.0 && y + h < screen.1);
+        let (x, y, w, h) = side_region(screen);
+        assert!(x >= screen.0 * 0.5 && x + w <= screen.0 && y + h <= screen.1);
     }
 
     #[test]
@@ -608,9 +651,19 @@ mod tests {
     #[test]
     fn months() {
         // November 2026 starts on a Sunday: six days of October first
-        assert_eq!(lead(0), 6);
-        assert_eq!(lead(1), 0);
-        assert_eq!(lead(6), 5);
+        assert_eq!(lead(0, 1), 6);
+        assert_eq!(lead(1, 1), 0);
+        assert_eq!(lead(6, 1), 5);
+        // a regular camera: not after a sleep, nor past 30 minutes; infrared always
+        assert!(!face_rests(true, false, 29 * 60_000));
+        assert!(face_rests(true, false, 30 * 60_000));
+        assert!(face_rests(true, true, 0));
+        assert!(!face_rests(false, true, 5 * 3_600_000));
+        // weeks from Sunday: none; from Saturday: one
+        assert_eq!(lead(0, 0), 0);
+        assert_eq!(lead(0, 6), 1);
+        assert_eq!(lead(6, 6), 0);
+        assert_eq!(month_short(10, 2026), "Nov 2026");
         assert!(came_back(true, 0, 0));
         assert!(came_back(false, 40_000, 0));
         assert!(!came_back(false, 20_000, 0));

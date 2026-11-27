@@ -159,6 +159,12 @@ fn face_camera() -> (String, String) {
     FACE.lock().map(|f| f.clone()).unwrap_or_default()
 }
 
+/// The face camera is a regular (colour) one: a video of you blinking can
+/// fool it (logic::face_rests)
+pub fn face_is_rgb() -> bool {
+    face_camera().0 == "rgb"
+}
+
 /// The service and folder a conversation of this kind uses (None: the
 /// mock answers)
 pub fn service(b: &Backend, kind: Kind) -> Option<(String, Option<String>)> {

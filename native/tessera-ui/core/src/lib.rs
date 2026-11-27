@@ -27,6 +27,7 @@ pub mod gpu;
 pub mod inhibit;
 pub mod locale; // (the system's language for dates and times: names, 12/24-hour, the week's first day)
 pub mod keynames; // (media, symbol and keypad keys by plain name: shortcuts sheet, Settings, probes)
+pub mod keystate; // (Caps Lock and the keyboard layout now: the password fields' hint, #761)
 pub mod outside; // (popovers close on a press on any screen: outside.rs)
 pub mod memory; // (malloc's arenas and threshold, freed memory given back when quiet: memory.rs)
 pub mod env;

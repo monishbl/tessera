@@ -111,6 +111,23 @@ pub fn look_json_with(cfg: &Value, dark: bool, look_seed: &str, clock24: bool) -
     .to_string()
 }
 
+/// The look with the on-screen keyboard button's choice (Settings →
+/// Accessibility, keyboard.oskButton; #763) for the login screen's field,
+/// only when it isn't the default ("touch", the login screen's own without
+/// one: a root helper from before it takes the look as it was). Keys stay
+/// sorted, as greeter.json is written
+pub fn with_osk(look: &str, cfg: &Value) -> String {
+    let choice = cfg["keyboard"]["oskButton"].as_str().unwrap_or("touch");
+    if !["always", "off"].contains(&choice) {
+        return look.to_string();
+    }
+    let Ok(Value::Object(m)) = serde_json::from_str::<Value>(look) else { return look.to_string() };
+    let mut kv: Vec<(String, Value)> = m.into_iter().filter(|(k, _)| k != "oskButton").collect();
+    kv.push(("oskButton".into(), json!(choice)));
+    kv.sort_by(|a, b| a.0.cmp(&b.0));
+    Value::Object(kv.into_iter().collect()).to_string()
+}
+
 /// The look with another style (one the helper takes; else as it was)
 pub fn with_style(look: &str, style: &str) -> String {
     let mut v: Value = serde_json::from_str(look).unwrap_or(Value::Null);
@@ -231,7 +248,7 @@ impl LoginScreen {
     }
     fn recompute(&mut self, h: &Host) {
         let l = &h.st.shell.look;
-        let now = look_json(h.cfg(), l.dark, &l.seed);
+        let now = with_osk(&look_json(h.cfg(), l.dark, &l.seed), h.cfg());
         if now != self.look {
             self.look = now;
             if self.tx.is_some() {
@@ -296,7 +313,7 @@ impl Service for LoginScreen {
         let tx = Tx::new(h.sender("LoginScreen"));
         self.tx = Some(tx.clone());
         let l = &h.st.shell.look;
-        self.look = look_json(h.cfg(), l.dark, &l.seed);
+        self.look = with_osk(&look_json(h.cfg(), l.dark, &l.seed), h.cfg());
         self.probe();
         std::thread::spawn(move || {
             let (_, out, _) = run_full(&strs(&["sh", "-c", &format!("[ -d /usr/share/tessera ] || [ ! -d {} ] || echo old", tessera_core::old_names::LOGIN_SHARE)]), None);
@@ -315,7 +332,7 @@ impl Service for LoginScreen {
             "loginscreen.switch" => {
                 let style = args.get(0).and_then(Value::as_str).unwrap_or("");
                 let l = &h.st.shell.look;
-                let look = with_style(&look_json(h.cfg(), l.dark, &l.seed), style);
+                let look = with_style(&with_osk(&look_json(h.cfg(), l.dark, &l.seed), h.cfg()), style);
                 let shell = crate::util::root().join("shell").to_string_lossy().into_owned();
                 self.run_helper(h, "switch", vec!["login-switch".into(), "on".into(), shell, look]);
             }
@@ -437,6 +454,25 @@ mod tests {
         assert!(look_json(&json!({"appearance": {"clockHours": "24"}}), true, "#112233").contains("\"clock24\":true"));
         assert!(look_json(&json!({"appearance": {"clockHours": "12", "clock24": true}}), true, "#112233").contains("\"clock24\":false"));
         assert!(look_json_with(&json!({}), true, "#112233", true).contains("\"clock24\":true"));
+    }
+
+    #[test]
+    fn the_keyboard_button_goes_to_the_login_screen_only_when_chosen() {
+        let s = look_json(&json!({}), true, "#112233");
+        // (the default: the look as it was, for a helper from before it)
+        assert_eq!(with_osk(&s, &json!({})), s);
+        assert_eq!(with_osk(&s, &json!({"keyboard": {"oskButton": "touch"}})), s);
+        assert_eq!(with_osk(&s, &json!({"keyboard": {"oskButton": "bogus"}})), s);
+        let a = with_osk(&s, &json!({"keyboard": {"oskButton": "always"}}));
+        assert!(a.contains(r#""mode":"dark","oskButton":"always","seed""#), "{a}");
+        // (sorted as greeter.json is written: the same text compares equal)
+        let v: Value = serde_json::from_str(&a).unwrap();
+        let keys: Vec<&String> = v.as_object().unwrap().keys().collect();
+        let mut sorted = keys.clone();
+        sorted.sort();
+        assert_eq!(keys, sorted);
+        assert!(with_osk(&a, &json!({"keyboard": {"oskButton": "off"}})).contains(r#""oskButton":"off""#));
+        assert!(with_style(&a, "plain").contains(r#""oskButton":"always""#));
     }
 
     #[test]

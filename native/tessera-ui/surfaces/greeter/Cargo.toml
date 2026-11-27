@@ -11,6 +11,8 @@ doctest = false # (comments' code blocks are prose, not examples)
 
 [dependencies]
 tessera-core.workspace = true
+# (the on-screen keyboard, a part of its own in the login screen's process: #763)
+tessera-osk.workspace = true
 slint.workspace = true
 smithay-client-toolkit.workspace = true
 serde.workspace = true
