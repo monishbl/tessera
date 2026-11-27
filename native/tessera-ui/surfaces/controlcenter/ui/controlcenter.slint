@@ -2483,7 +2483,7 @@ export component ControlCenter inherits Window {
                         color: Theme.secondary;
                         font-size: Theme.caption;
                     }
-                    Flickable {
+                    sb-list2486 := Flickable {
                         height: min(gl.preferred-height, 440px);
                         content-height: gl.preferred-height;
                         gl := VerticalLayout {
@@ -2548,6 +2548,16 @@ export component ControlCenter inherits Window {
                                     clicked => { add(it.id); }
                                 }
                             }
+                        }
+                        // (the kit's scroll indicator, held still over the list's right
+                        // edge while the content moves under it, #358 #1037)
+                        ScrollIndicator {
+                            x: sb-list2486.width - self.width;
+                            y: -sb-list2486.content-y;
+                            height: sb-list2486.height;
+                            content-y: sb-list2486.content-y;
+                            content-height: sb-list2486.content-height;
+                            view-height: sb-list2486.height;
                         }
                     }
                     // (a real button, one name with Material's)
@@ -2907,7 +2917,7 @@ export component ControlCenter inherits Window {
                             font-size: 14px;
                             font-weight: 500;
                         }
-                        Flickable {
+                        sb-list2910 := Flickable {
                             height: min(mgl.preferred-height, max(176px, max-h - edit-head.preferred-height - grid-height - 36px - 40px));
                             content-height: mgl.preferred-height;
                             mgl := VerticalLayout {
@@ -2928,6 +2938,16 @@ export component ControlCenter inherits Window {
                                     focused: kbd == modules.length + 1 + k;
                                     do(w, t) => { add(it.id); }
                                 }
+                            }
+                            // (the kit's scroll indicator, held still over the list's right
+                            // edge while the content moves under it, #358 #1037)
+                            ScrollIndicator {
+                                x: sb-list2910.width - self.width;
+                                y: -sb-list2910.content-y;
+                                height: sb-list2910.height;
+                                content-y: sb-list2910.content-y;
+                                content-height: sb-list2910.content-height;
+                                view-height: sb-list2910.height;
                             }
                         }
                     }
