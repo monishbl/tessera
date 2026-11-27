@@ -90,6 +90,9 @@ struct Win {
     l_cards: Rows<ui::McCard>,
     l_minis: HashMap<i32, Rows<ui::McMini>>,
     l_tiles: Rows<ui::McTile>,
+    /// the window the keys chose (its address; "" none): ringed as the
+    /// hovered one is
+    kbd: String,
 }
 
 #[derive(Default)]
@@ -150,12 +153,13 @@ impl MissionControl {
         let to = send(st);
         {
             let to = to.clone();
+            // Esc closes; the arrows, Tab and Enter choose a window (#534)
             ui.on_key(move |t| {
-                let esc = t.as_str() == SharedString::from(Key::Escape).as_str();
-                if esc {
+                let ours = [Key::Escape, Key::LeftArrow, Key::RightArrow, Key::UpArrow, Key::DownArrow, Key::Tab, Key::Backtab, Key::Return].iter().any(|k| t.as_str() == SharedString::from(*k).as_str()) || t.as_str() == " ";
+                if ours {
                     to(Box::new(M::Key(t.to_string())));
                 }
-                esc
+                ours
             });
         }
         let o = output.to_string();
@@ -180,7 +184,7 @@ impl MissionControl {
         ui.set_tiles(l_tiles.model());
         ui.show().expect("show mission control");
         let a11y = crate::a11y::A11y::new(&surface, st.tx.clone());
-        self.wins.push(Win { output: output.into(), surface, ui, a11y, glass_sent: String::new(), size: (1920.0, 1080.0), cards: Vec::new(), tiles: Vec::new(), press: Press::None, drag_space: 0, drop_on: 0, l_cards, l_minis: HashMap::new(), l_tiles });
+        self.wins.push(Win { output: output.into(), surface, ui, a11y, glass_sent: String::new(), size: (1920.0, 1080.0), cards: Vec::new(), tiles: Vec::new(), press: Press::None, drag_space: 0, drop_on: 0, l_cards, l_minis: HashMap::new(), l_tiles, kbd: String::new() });
         let i = self.wins.len() - 1;
         self.look(st, i);
         Some(i)
@@ -208,6 +212,7 @@ impl MissionControl {
         w.press = Press::None;
         w.drag_space = 0;
         w.drop_on = 0;
+        w.kbd.clear();
         w.ui.set_shown(true);
         w.surface.layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         st.set_input_region(&w.surface, None);
@@ -409,6 +414,8 @@ impl MissionControl {
             return;
         }
         let hover = Self::tile_at(w, x, y).unwrap_or_default();
+        // (the pointer moved: the keys' choice gives way to it)
+        w.kbd.clear();
         let over_card = Self::card_at(w, x, y, expose).is_some();
         Self::push(w, &hover);
         if over_card {
@@ -465,6 +472,45 @@ impl MissionControl {
                 }
             }
             Press::None => {}
+        }
+    }
+
+    /// The keys (#534): Esc closes; the arrows move to the nearest window
+    /// that way, Tab and Shift+Tab go through them in order (the first key
+    /// chooses the first, or the last), Enter or Space focuses it
+    fn key(&mut self, st: &mut State, t: &str) {
+        let is = |k: Key| t == SharedString::from(k).as_str();
+        if is(Key::Escape) {
+            self.close(st, true);
+            return;
+        }
+        let Some(out) = self.open.clone() else { return };
+        let Some(w) = self.wins.iter_mut().find(|w| w.output == out) else { return };
+        if is(Key::Return) || t == " " {
+            let a = w.kbd.clone();
+            if w.tiles.iter().any(|(t, _)| *t == a) {
+                self.focus_window(st, &a);
+            }
+            return;
+        }
+        let n = w.tiles.len();
+        if n == 0 {
+            return;
+        }
+        let rects: Vec<Rect> = w.tiles.iter().map(|(_, r)| *r).collect();
+        let at = w.tiles.iter().position(|(a, _)| *a == w.kbd);
+        let dir = if is(Key::LeftArrow) { (-1, 0) } else if is(Key::RightArrow) { (1, 0) } else if is(Key::UpArrow) { (0, -1) } else if is(Key::DownArrow) { (0, 1) } else { (0, 0) };
+        let next = match at {
+            None => Some(if is(Key::Backtab) || is(Key::LeftArrow) || is(Key::UpArrow) { n - 1 } else { 0 }),
+            Some(a) if is(Key::Tab) => Some((a + 1) % n),
+            Some(a) if is(Key::Backtab) => Some((a + n - 1) % n),
+            Some(a) if dir != (0, 0) => layout::nearest(&rects, a, dir),
+            Some(_) => None,
+        };
+        if let Some(k) = next {
+            w.kbd = w.tiles[k].0.clone();
+            let kbd = w.kbd.clone();
+            Self::push(w, &kbd);
         }
     }
 
@@ -615,7 +661,7 @@ impl Part for MissionControl {
         };
         let Ok(m) = msg.downcast::<M>() else { return };
         match *m {
-            M::Key(_) => self.close(st, true),
+            M::Key(t) => self.key(st, &t),
             M::Pointer(o, x, y) => self.pointer(&o, x, y),
             M::Press(o, x, y, b) => self.press(&o, x, y, b),
             M::Release(o, x, y, b) => self.release(st, &o, x, y, b),

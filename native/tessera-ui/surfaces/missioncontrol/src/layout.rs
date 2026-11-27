@@ -76,9 +76,46 @@ pub fn tiles(sizes: &[(f32, f32)], stage: Rect) -> Vec<Rect> {
         .collect()
 }
 
+/// The arrow keys (#534): the window nearest `from` in direction `d`
+/// ((1, 0) right, (-1, 0) left, (0, 1) down, (0, -1) up), by their centres:
+/// only those that lie that way, the nearest along it first, a step aside
+/// counting double; None when nothing lies that way
+pub fn nearest(rects: &[Rect], from: usize, d: (i32, i32)) -> Option<usize> {
+    let c = |r: &Rect| (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    let (fx, fy) = c(rects.get(from)?);
+    rects
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != from)
+        .filter_map(|(i, r)| {
+            let (x, y) = c(r);
+            let (along, aside) = if d.0 != 0 { ((x - fx) * d.0 as f32, (y - fy).abs()) } else { ((y - fy) * d.1 as f32, (x - fx).abs()) };
+            (along > 1.0).then_some((i, along + 2.0 * aside))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_arrows_go_to_the_nearest_window_that_way() {
+        let r = |x: f32, y: f32| Rect { x, y, w: 100.0, h: 100.0 };
+        // a b c
+        //  d e
+        let t = [r(0.0, 0.0), r(200.0, 0.0), r(400.0, 0.0), r(100.0, 200.0), r(300.0, 200.0)];
+        assert_eq!(nearest(&t, 0, (1, 0)), Some(1));
+        assert_eq!(nearest(&t, 1, (1, 0)), Some(2));
+        assert_eq!(nearest(&t, 2, (1, 0)), None);
+        assert_eq!(nearest(&t, 0, (0, 1)), Some(3));
+        assert_eq!(nearest(&t, 2, (0, 1)), Some(4));
+        assert_eq!(nearest(&t, 4, (-1, 0)), Some(3));
+        assert_eq!(nearest(&t, 3, (0, -1)), Some(0));
+        assert_eq!(nearest(&t, 0, (0, -1)), None);
+        assert_eq!(nearest(&t, 9, (1, 0)), None);
+    }
 
     #[test]
     fn the_bar() {
