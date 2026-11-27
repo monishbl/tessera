@@ -104,6 +104,77 @@ fn is_pad(name: &str) -> bool {
     n.contains("touchpad") || n.contains("trackpad")
 }
 
+/// What the system says each input device is (udev's ID_INPUT_TOUCHPAD,
+/// as libinput decides it), by the name Hyprland gives the device: a
+/// trackpad whose name doesn't say so (bcm5974 on older MacBooks, some
+/// "…-mouse" or "glidepoint" ones) is still a trackpad (#597)
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Kinds {
+    /// the trackpads
+    pub touchpads: std::collections::HashSet<String>,
+    /// every device udev said something about (a name not in it: the name decides)
+    pub known: std::collections::HashSet<String>,
+}
+
+/// Hyprland's name for a device (deviceNameToInternalString: spaces and
+/// line breaks as '-', lower case)
+pub fn hypr_name(name: &str) -> String {
+    name.trim_end_matches('\n').chars().map(|c| if c == ' ' || c == '\n' { '-' } else { c }).collect::<String>().to_lowercase()
+}
+
+/// One input device's udev record (`/run/udev/data/c<major>:<minor>`):
+/// Some(true) a trackpad, Some(false) another pointer or key device, None
+/// when it says neither
+pub fn udev_kind(record: &str) -> Option<bool> {
+    let has = |k: &str| record.lines().any(|l| l.trim() == format!("E:{k}=1"));
+    if has("ID_INPUT_TOUCHPAD") {
+        Some(true)
+    } else if has("ID_INPUT_MOUSE") || has("ID_INPUT_POINTINGSTICK") || has("ID_INPUT_TABLET") || has("ID_INPUT_KEYBOARD") || has("ID_INPUT_KEY") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// Every event device's kind, from /sys/class/input and udev's database
+/// (read, nothing run); None when there's no database to read (a container)
+pub fn read_kinds(sys_input: &std::path::Path, udev_data: &std::path::Path) -> Option<Kinds> {
+    if !udev_data.is_dir() {
+        return None;
+    }
+    let mut k = Kinds::default();
+    for e in std::fs::read_dir(sys_input).ok()?.flatten() {
+        let n = e.file_name().to_string_lossy().into_owned();
+        if !n.starts_with("event") {
+            continue;
+        }
+        let dir = e.path();
+        let (Ok(name), Ok(dev)) = (std::fs::read_to_string(dir.join("device/name")), std::fs::read_to_string(dir.join("dev"))) else { continue };
+        let Ok(record) = std::fs::read_to_string(udev_data.join(format!("c{}", dev.trim()))) else { continue };
+        let Some(pad) = udev_kind(&record) else { continue };
+        let name = hypr_name(name.trim_end());
+        if pad {
+            k.touchpads.insert(name.clone());
+        }
+        k.known.insert(name);
+    }
+    Some(k)
+}
+
+/// A trackpad: as the system says, else by its name
+pub fn pad_by(name: &str, kinds: Option<&Kinds>) -> bool {
+    match kinds {
+        Some(k) if k.touchpads.contains(name) => true,
+        Some(k) if k.known.contains(name) => false,
+        _ => is_pad(name),
+    }
+}
+
+/// A mouse: a pointer that isn't a trackpad (nor a pen or a virtual device)
+pub fn mouse_by(name: &str, kinds: Option<&Kinds>) -> bool {
+    !pad_by(name, kinds) && is_mouse(name)
+}
+
 fn num(v: &Value, k: &str, d: f64) -> f64 {
     v[k].as_f64().unwrap_or(d)
 }
@@ -173,7 +244,8 @@ fn signature(cfg: &Value) -> String {
 
 enum M {
     Raw(Raw),
-    Devices(Value),
+    /// hyprctl's devices, and what udev says each one is
+    Devices(Value, Option<Kinds>),
     /// the plugin's name, version, and whether its pointer hook is in place
     /// (a "nohook:<why>" in the ping: boundaries can't work, the rest can)
     Plugin(String, i64, bool),
@@ -307,7 +379,10 @@ impl Mouse {
 
     fn look(&mut self, h: &mut Host) {
         let send = h.sender("Mouse");
-        std::thread::spawn(move || send(Box::new(M::Devices(hyprctl_json(&["devices"])))));
+        std::thread::spawn(move || {
+            let kinds = read_kinds(std::path::Path::new("/sys/class/input"), std::path::Path::new("/run/udev/data"));
+            send(Box::new(M::Devices(hyprctl_json(&["devices"]), kinds)))
+        });
     }
 
     fn bring_forward(&self, h: &Host, address: &str) {
@@ -493,10 +568,10 @@ impl Service for Mouse {
         let Ok(m) = msg.downcast::<M>() else { return };
         match *m {
             M::Raw(_) => {}
-            M::Devices(d) => {
+            M::Devices(d, kinds) => {
                 let mice = d["mice"].as_array().cloned().unwrap_or_default();
-                let names: Vec<String> = mice.iter().filter_map(|m| m["name"].as_str()).filter(|n| is_mouse(n)).map(String::from).collect();
-                let pads: Vec<String> = mice.iter().filter_map(|m| m["name"].as_str()).filter(|n| is_pad(n)).map(String::from).collect();
+                let names: Vec<String> = mice.iter().filter_map(|m| m["name"].as_str()).filter(|n| mouse_by(n, kinds.as_ref())).map(String::from).collect();
+                let pads: Vec<String> = mice.iter().filter_map(|m| m["name"].as_str()).filter(|n| pad_by(n, kinds.as_ref())).map(String::from).collect();
                 if d.is_object() && (names != self.mice || pads != self.touchpads) {
                     self.mice = names;
                     self.touchpads = pads;
@@ -612,6 +687,34 @@ mod tests {
         assert_eq!(on_urgent(Some(5000), false), "notify");
         assert_eq!(on_urgent(None, false), "notify");
         assert_eq!(on_urgent(Some(1), true), "none");
+    }
+
+    #[test]
+    fn trackpads_by_what_the_system_says() {
+        // (#597) bcm5974: a MacBook's trackpad, its name doesn't say so
+        assert_eq!(hypr_name("bcm5974"), "bcm5974");
+        assert_eq!(hypr_name("SynPS/2 Synaptics TouchPad\n"), "synps/2-synaptics-touchpad");
+        assert_eq!(udev_kind("E:ID_INPUT=1\nE:ID_INPUT_TOUCHPAD=1\nE:ID_INPUT_WIDTH_MM=105\n"), Some(true));
+        assert_eq!(udev_kind("E:ID_INPUT=1\nE:ID_INPUT_MOUSE=1\n"), Some(false));
+        assert_eq!(udev_kind("E:ID_INPUT=1\n"), None);
+        let d = std::env::temp_dir().join(format!("tessera-mouse-kinds-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let (sys, udev) = (d.join("sys"), d.join("udev"));
+        for (ev, name, dev, rec) in [("event5", "bcm5974", "13:69", "E:ID_INPUT_TOUCHPAD=1\n"), ("event6", "Logitech MX Master 3", "13:70", "E:ID_INPUT_MOUSE=1\n")] {
+            std::fs::create_dir_all(sys.join(ev).join("device")).unwrap();
+            std::fs::write(sys.join(ev).join("device/name"), format!("{name}\n")).unwrap();
+            std::fs::write(sys.join(ev).join("dev"), format!("{dev}\n")).unwrap();
+            std::fs::create_dir_all(&udev).unwrap();
+            std::fs::write(udev.join(format!("c{dev}")), rec).unwrap();
+        }
+        let k = read_kinds(&sys, &udev).unwrap();
+        assert!(pad_by("bcm5974", Some(&k)) && !mouse_by("bcm5974", Some(&k)));
+        assert!(mouse_by("logitech-mx-master-3", Some(&k)) && !pad_by("logitech-mx-master-3", Some(&k)));
+        // (a device udev didn't describe, or no database at all: by its name)
+        assert!(pad_by("synaptics-touchpad", Some(&k)) && pad_by("synaptics-touchpad", None));
+        assert!(!pad_by("bcm5974", None) && mouse_by("bcm5974", None));
+        assert!(read_kinds(&sys, &d.join("none")).is_none());
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

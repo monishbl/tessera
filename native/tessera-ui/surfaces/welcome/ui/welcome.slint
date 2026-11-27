@@ -668,7 +668,7 @@ export component Welcome inherits Window {
                 spacing: 32px;
 
                 // Where you are, the title and one line of help
-                VerticalLayout {
+                head := VerticalLayout {
                     spacing: 8px;
                     Text {
                         text: "Step " + (step + 1) + " of 4";
@@ -696,6 +696,13 @@ export component Welcome inherits Window {
                 // The step's choices
                 stage := Rectangle {
                     property <length> pw: self.width;
+                    // (the most the step's pictures may take: the screen's
+                    // height less a margin, the card's padding, the title
+                    // and the buttons, so the card fits a short screen,
+                    // 1366x768 at 1.5x or 1080p at 2x, with nothing cut off;
+                    // the pictures are sized from it as well as from the
+                    // width, #952)
+                    property <length> ph: max(96px, root.height - 48px - 64px - head.preferred-height - 2 * 32px - 44px);
                     height: max(1px, pages.preferred-height);
                     Rectangle {
                         x: slide;
@@ -709,7 +716,7 @@ export component Welcome inherits Window {
                                 alignment: center;
                                 spacing: 24px;
                                 for l in (material-available ? ["glass", "material"] : ["glass"]): VerticalLayout {
-                                    property <length> mw: min(320px, (stage.pw - 24px) / 2);
+                                    property <length> mw: max(80px, min(min(320px, (stage.pw - 24px) / 2), (stage.ph - 64px) / 0.625));
                                     spacing: 8px;
                                     padding-top: 8px;
                                     LookMini {
@@ -746,7 +753,7 @@ export component Welcome inherits Window {
                                 alignment: center;
                                 spacing: 16px;
                                 for md in [{ id: "light", name: "Light" }, { id: "dark", name: "Dark" }, { id: "auto", name: "Auto" }]: Choice {
-                                    property <length> tw: min(200px, (stage.pw - 32px) / 3);
+                                    property <length> tw: max(60px, min(min(200px, (stage.pw - 32px) / 3), (stage.ph - 32px) / 0.6));
                                     property <bool> is-dark: md.id == "dark";
                                     width: tw;
                                     frame-h: round(tw * 0.6 / 1px) * 1px;
@@ -793,9 +800,10 @@ export component Welcome inherits Window {
 
                             // 3 · a wallpaper
                             if step == 2: Rectangle {
-                                property <length> tw: floor((stage.pw - 32px) / 3 / 1px) * 1px;
-                                property <length> th: round(tw * 0.56 / 1px) * 1px + 8px + 24px;
                                 property <int> count: walls.length + 1;
+                                property <int> lines: ceil(count / 3);
+                                property <length> tw: floor(max(60px, min((stage.pw - 32px) / 3, ((stage.ph - (lines - 1) * 16px) / max(1, lines) - 32px) / 0.56)) / 1px) * 1px;
+                                property <length> th: round(tw * 0.56 / 1px) * 1px + 8px + 24px;
                                 height: ceil(count / 3) * th + (ceil(count / 3) - 1) * 16px;
                                 for w[i] in walls: Choice {
                                     x: (parent.width - 3 * tw - 32px) / 2 + mod(i, 3) * (tw + 16px);
@@ -846,7 +854,7 @@ export component Welcome inherits Window {
 
                             // 4 · done: the look you picked, on your wallpaper
                             if step == 3: Rectangle {
-                                property <length> mw: min(360px, stage.pw);
+                                property <length> mw: max(80px, min(min(360px, stage.pw), (stage.ph - 8px) / 0.625));
                                 height: round(mw * 0.625 / 1px) * 1px + 8px;
                                 LookMini {
                                     x: (parent.width - self.width) / 2;

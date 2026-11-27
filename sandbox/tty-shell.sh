@@ -219,7 +219,8 @@ case "${1:-start}" in
                 notify-send -a Tessera "Restarting the shell" "It stopped responding." 2>/dev/null
                 # (Settings → Health: the next start reads why; tessera-ui's core/src/health.rs)
                 h="${XDG_STATE_HOME:-$HOME/.local/state}/tessera/health.jsonl"
-                [[ -d "${h%/*}" ]] && printf '{"t":%s,"ev":"watchdog","why":"not responding"}\n' "$(date +%s)" >>"$h"
+                # (under the record's lock, as the shell takes it while it cuts the file; audit #824)
+                [[ -d "${h%/*}" ]] && { flock -w 2 9; printf '{"t":%s,"ev":"watchdog","why":"not responding"}\n' "$(date +%s)" >>"$h"; } 9>>"${h%/*}/.health.jsonl.lock"
                 stop; start
                 misses=0
                 sleep 10

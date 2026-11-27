@@ -52,6 +52,18 @@ LOCAL_KEYS = (("sharing", "name"), ("ai", "extraModels"))
 WALLPAPER_KEYS = ("path", "lightPath", "darkPath")
 PICTURE_EXT = (".jpg", ".jpeg", ".png", ".webp", ".jxl", ".avif", ".bmp", ".gif")
 
+KEEP_UNDO = 3  # restores' undo copies kept (the newest; audit #702)
+
+
+def settings_file():
+    """settings_file.py beside this: the shell's own settings lock and write"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("settings_file", os.path.join(os.path.dirname(os.path.realpath(__file__)), "settings_file.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _old_names():
     """Tessera's old name (migrate-names.py: the one place that knows it)."""
     import importlib.util
@@ -421,6 +433,7 @@ def restore(path, config_dir, shell=None, pictures_dir=None, undo=True):
         backups = os.path.join(config_dir, "backups")
         os.makedirs(backups, mode=0o700, exist_ok=True)
         undo_file = export(backups, config_dir, "before-restore-%s.tessera" % time.strftime("%Y%m%d-%H%M%S"), carry=False)
+        settings_file().keep_newest(backups, "before-restore-", KEEP_UNDO)
 
     config = merge_local(rehome(scrub_config(parsed["config"]), old_home, home), current)
     focus = rehome(parsed["focus"], old_home, home) if parsed["focus"] is not None else None
@@ -489,7 +502,9 @@ def restore(path, config_dir, shell=None, pictures_dir=None, undo=True):
     if placed:
         written.append("wallpaper")
     # (the settings last: the shell reloads them as they change)
-    write_whole(config_path, json.dumps(config, indent=4).encode(), mode_of(config_path))
+    # (under the shell's settings lock: a change it made since `current` was
+    # read is kept, only what the restore changes is laid over it)
+    settings_file().replace(current if isinstance(current, dict) else {}, config, config_path)
     ap = config.get("appearance") if isinstance(config.get("appearance"), dict) else {}
     return {"restored": written, "skipped": skipped, "undo": undo_file, "look": ap.get("look", "glass")}
 

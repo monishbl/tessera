@@ -306,7 +306,10 @@ fn take_answers(cx: &mut Ctx) {
     }
     if let Some(back) = cx.local.remove("about.bk.undone") {
         let ok = back["ok"] == true;
-        cx.local_set("about.bk.rstatus", if ok { String::new() } else { s(&back["error"]) });
+        // (files changed since the restore: listed, and asked again; audit #702)
+        let changed = super::strings(&back["changed"]);
+        cx.local_set("about.bk.uconfirm", if ok || changed.is_empty() { Value::Null } else { json!(changed) });
+        cx.local_set("about.bk.rstatus", if ok || !changed.is_empty() { String::new() } else { s(&back["error"]) });
         if ok {
             cx.local_set("about.bk.undo", "");
             cx.local.remove("about.bk.plan");
@@ -481,7 +484,24 @@ fn restore(cx: &mut Ctx, p: &mut Page) {
             let f = f.clone();
             cx.spawn("about.bk.undone", move || run(vec!["undo".into(), f]));
         });
-        g.row(Row::new("Undo the restore").detail(format!("What was there before is kept in {}", tilde(&undo_file))).buttons(vec![btn("Undo").icon("arrow-counter-clockwise").off(restoring)], undo));
+        let changed = super::strings(cx.local.get("about.bk.uconfirm").unwrap_or(&Value::Null));
+        g.row(Row::new("Undo the restore").detail(format!("What was there before is kept in {}", tilde(&undo_file))).buttons(vec![btn("Undo").icon("arrow-counter-clockwise").off(restoring || !changed.is_empty())], undo));
+        if !changed.is_empty() {
+            let f = undo_file.clone();
+            let decide = cx.on(move |cx, a| {
+                cx.local_set("about.bk.uconfirm", Value::Null);
+                if a.i == 1 {
+                    let f = f.clone();
+                    cx.spawn("about.bk.undone", move || run(vec!["undo".into(), f, "--confirm-changed".into()]));
+                }
+            });
+            let g = p.group("Changed since the restore");
+            g.footer("Undo puts back what was there before the restore, so the changes made to these since would be lost.");
+            for path in &changed {
+                g.row(Row::new(path.clone()).icon("warning-circle"));
+            }
+            g.row(Row::new("Undo anyway?").buttons(vec![btn("Cancel"), btn("Undo anyway").primary().off(restoring)], decide));
+        }
     }
     // (an older settings file: as About restored one)
     let pending = cx.local.get("about.backup.pending").cloned().unwrap_or(Value::Null);

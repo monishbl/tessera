@@ -27,13 +27,10 @@ Update; with nothing left to do it does nothing.
 prints what it removed or changed (one line each); never fails the caller.
 """
 import argparse
-import fcntl
 import hashlib
 import json
 import os
-import shutil
 import sys
-import time
 
 FOLDER = os.path.join("Pictures", "Wallpapers", "macOS")  # (under your home)
 TIME_SET = "Tahoe Beach"
@@ -157,54 +154,33 @@ def fixed_settings(c, gone):
     return changed
 
 
-class SettingsLock:
-    """The settings folder's flock, as the shell's own writes take it
-    (cfgfile.rs: never forever, two seconds at most)."""
-
-    def __init__(self, path):
-        self.fd = None
-        try:
-            self.fd = os.open(os.path.dirname(path), os.O_RDONLY)
-        except OSError:
-            return
-        for _ in range(200):
-            try:
-                fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return
-            except OSError:
-                time.sleep(0.01)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_):
-        if self.fd is not None:
-            try:
-                fcntl.flock(self.fd, fcntl.LOCK_UN)
-            finally:
-                os.close(self.fd)
+def settings_file():
+    """settings_file.py beside this: the shell's own settings lock and write"""
+    import importlib.util
+    here = os.path.dirname(os.path.realpath(__file__))
+    spec = importlib.util.spec_from_file_location("settings_file", os.path.join(here, "settings_file.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def fix_settings(gone, dry):
     path = config_path()
     if not os.path.isfile(path):
         return []
-    with SettingsLock(path):
+    SF = settings_file()
+    with SF.Lock(path):
         try:
             with open(path, encoding="utf-8") as f:
                 c = json.load(f)
         except (OSError, ValueError):
             return []  # (a broken file is the shell's to deal with)
+        if not isinstance(c, dict):
+            return []
         changed = fixed_settings(c, gone)
         if changed and not dry:
             # (whole, through a temporary file; the shell watches it)
-            real = os.path.realpath(path)
-            tmp = real + ".apple-wallpapers-tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(c, f, indent=4, ensure_ascii=False)
-                f.write("\n")
-            shutil.copymode(real, tmp)
-            os.replace(tmp, real)
+            SF.write_whole(path, SF.text(c))
     return changed
 
 

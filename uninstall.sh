@@ -150,18 +150,26 @@ if [[ -f "$PK_UNIT" || -L "$PK_UNIT" ]]; then
     quiet systemctl --user reset-failed tessera-passkeys.service
 fi
 # Tessera's desktop look: your app fonts, Qt style, prompt and terminal as they were
-# (desktop-look.py off; its state goes too, so an install sets it up again)
+# (desktop-look.py off --forget; its state and the choice in the settings go
+# too, so an install sets it up again)
 LOOK_PY="$HERE/shell/assets/scripts/desktop-look.py"
 if [[ $DRY == 1 ]]; then
     echo "  would put your apps' fonts and terminal back as they were (desktop-look.py off)"
 elif [[ -f "$LOOK_PY" ]] && command -v python3 >/dev/null; then
-    python3 -I "$LOOK_PY" off >/dev/null 2>&1 && rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/tessera/desktop-look.json" || true
+    python3 -I "$LOOK_PY" off --forget >/dev/null 2>&1 && rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/tessera/desktop-look.json" || true
 fi
 # GTK's colours and theme Tessera set (Match apps, light/dark): back to GTK's own
 if [[ $DRY == 1 ]]; then
     echo "  would take Tessera's GTK colours and theme out (desktop-theme.py undo-gtk)"
 elif [[ -f "$HERE/shell/assets/scripts/desktop-theme.py" ]] && command -v python3 >/dev/null; then
     python3 -I "$HERE/shell/assets/scripts/desktop-theme.py" undo-gtk >/dev/null 2>&1 || true
+fi
+# Qt and KDE apps' colours Tessera set (kdeglobals, Dolphin, qt6ct): back to
+# what they held before it (desktop-theme.py recorded them; audit #962)
+if [[ $DRY == 1 ]]; then
+    echo "  would put Qt and KDE apps' colours back as they were (desktop-theme.py undo-kde)"
+elif [[ -f "$HERE/shell/assets/scripts/desktop-theme.py" ]] && command -v python3 >/dev/null; then
+    python3 -I "$HERE/shell/assets/scripts/desktop-theme.py" undo-kde >/dev/null 2>&1 || true
 fi
 # The file picker's portal preference Tessera wrote (yours is never touched)
 if [[ $DRY == 1 ]]; then

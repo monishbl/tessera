@@ -328,12 +328,55 @@ component RowView {
     // (set, not bound: what's stacked changes the row's own size, which a
     // binding on its width would loop through)
     property <bool> stacked;
+    // One rule for every page (#253 #282 #889): the control goes under the
+    // text when, beside it, the label or the description would wrap past
+    // two lines (or the text would get less than 200 px). Hidden copies
+    // measure the text at the width it would have beside the control
+    // (they depend on the row's width and the control's, never on where
+    // the control sits: no loop)
+    property <length> beside-w: max(1px, root.width - 2 * pad - icon-w - gap - ctl-w);
+    property <length> label-h: label-beside.preferred-height;
+    property <length> detail-h: r.detail == "" ? 0px : detail-beside.preferred-height;
+    property <length> label-line: label-one.preferred-height;
+    property <length> detail-line: detail-one.preferred-height;
     function restack() {
-        root.stacked = has-ctl && root.width > 0 && root.width - 2 * pad - icon-w - gap - ctl-w < 200px;
+        root.stacked = has-ctl && root.width > 0 && (root.beside-w < 200px
+            || root.label-h > root.label-line * 2.5
+            || root.detail-h > root.detail-line * 2.5);
     }
     changed width => { root.restack(); }
     changed has-ctl => { root.restack(); }
+    changed label-h => { root.restack(); }
+    changed detail-h => { root.restack(); }
     init => { root.restack(); }
+    label-beside := Text {
+        visible: false;
+        width: root.beside-w;
+        text: r.label;
+        wrap: word-wrap;
+        font-size: Theme.material ? 16px : Theme.body;
+        accessible-role: none;
+    }
+    detail-beside := Text {
+        visible: false;
+        width: root.beside-w;
+        text: r.detail;
+        wrap: word-wrap;
+        font-size: Theme.material ? 14px : Theme.caption;
+        accessible-role: none;
+    }
+    label-one := Text {
+        visible: false;
+        text: "Xg";
+        font-size: Theme.material ? 16px : Theme.body;
+        accessible-role: none;
+    }
+    detail-one := Text {
+        visible: false;
+        text: "Xg";
+        font-size: Theme.material ? 14px : Theme.caption;
+        accessible-role: none;
+    }
     min-height: max(r.kind == "custom" ? 0 : Theme.material ? 56px : 44px, body.preferred-height);
     // Material: the row's tile, the group's outer corners round
     if Theme.material && r.kind != "custom": Rectangle {
@@ -642,7 +685,12 @@ component BlockView inherits VerticalLayout {
     in property <SBlock> b;
     in property <string> menu-open;
     padding-top: b.above;
-    if b.kind == "group": GroupView { b: b; menu-open: root.menu-open; }
+    // (a section opened by a link or a search: the whole group marked a
+    // moment, its title just below the header, #293)
+    if b.kind == "group": Rectangle {
+        GroupView { b: b; menu-open: root.menu-open; }
+        Flash { on: b.flash; margin: 12px; }
+    }
     // A part's heading (PagePart.qml)
     if b.kind == "heading": Rectangle {
         HorizontalLayout {
@@ -766,6 +814,13 @@ export component SettingsWindow inherits Window {
     in property <[SSection]> sections;
     in property <[SResult]> results;
     in property <bool> searching; // a query is typed: results in place of the sections
+    // Material on a narrow window (under 900 px): the sidebar is a rail of
+    // its pages' icons, so the page keeps room for its labels (#889); it
+    // opens full while you search (rail-open: the magnifier was clicked)
+    in-out property <bool> rail-open;
+    property <bool> rail: Theme.material && root.width < 900px && !rail-open && !searching && !search-input.has-focus;
+    property <bool> search-focused: search-input.has-focus;
+    changed search-focused => { if !search-focused && search-input.text == "" { root.rail-open = false; } }
     in property <[SPage]> pages; // the pages made so far, one shown
     in property <string> page-title; // the page's (a subpage's pageTitle, else its section's name)
     in property <string> crumb; // the section's name, on a subpage
@@ -840,6 +895,23 @@ export component SettingsWindow inherits Window {
     default-font-size: Theme.body;
     title: "Tessera Settings";
 
+    // The page's visible area in the window, for the tooltips (#935)
+    property <length> edge-l: page-scroll.absolute-position.x;
+    property <length> edge-t: page-scroll.absolute-position.y;
+    property <length> edge-r: page-scroll.absolute-position.x + page-scroll.width;
+    property <length> edge-b: page-scroll.absolute-position.y + page-scroll.height;
+    function tell-edges() {
+        SBus.view-left = root.edge-l;
+        SBus.view-top = root.edge-t;
+        SBus.view-right = root.edge-r;
+        SBus.view-bottom = root.edge-b;
+    }
+    init => { root.tell-edges(); }
+    changed edge-l => { root.tell-edges(); }
+    changed edge-t => { root.tell-edges(); }
+    changed edge-r => { root.tell-edges(); }
+    changed edge-b => { root.tell-edges(); }
+
     // A search landed on a row: scroll it into view, 80 px from the top
     property <int> reveal-seq: SBus.reveal-seq;
     changed reveal-seq => {
@@ -911,7 +983,8 @@ export component SettingsWindow inherits Window {
             // and the pane, drawn after it, then covered the whole sidebar)
             x: 0;
             y: 0;
-            width: Theme.material ? 300px : 230px;
+            width: Theme.material ? (root.rail ? 80px : 300px) : 230px;
+            animate width { duration: Theme.motion(Theme.material ? 200ms : 0ms); easing: ease-out; }
             height: parent.height;
             property <color> bg: Theme.material ? Theme.m3-surface-container : Theme.sidebar-bg;
             background: self.bg;
@@ -926,7 +999,11 @@ export component SettingsWindow inherits Window {
                 height: Theme.material ? 52px : 28px;
                 fold-hover := TouchArea {
                     mouse-cursor: MouseCursor.text;
-                    clicked => { search-input.focus(); }
+                    clicked => {
+                        // (the rail: opened full first, then the search)
+                        root.rail-open = true;
+                        search-input.focus();
+                    }
                 }
                 field := Rectangle {
                     width: side.folded ? 28px : parent.width;
@@ -946,7 +1023,9 @@ export component SettingsWindow inherits Window {
                     }
                     Rectangle {
                         x: Theme.material ? 50px : 10px;
-                        width: parent.width - self.x - (clear.visible ? (Theme.material ? 48px : 28px) : Theme.material ? 20px : 10px);
+                        width: max(0px, parent.width - self.x - (clear.visible ? (Theme.material ? 48px : 28px) : Theme.material ? 20px : 10px));
+                        // (the rail: the magnifier alone)
+                        opacity: root.rail ? 0 : 1;
                         clip: true;
                         search-input := TextInput {
                             width: 100%;
@@ -1089,7 +1168,9 @@ export component SettingsWindow inherits Window {
                         VerticalLayout {
                             spacing: 2px;
                             for s[i] in sections: VerticalLayout {
-                                if s.group != "": HorizontalLayout {
+                                // (the rail: no headings, a little space between groups)
+                                if s.group != "" && root.rail && i > 0: Rectangle { height: 12px; }
+                                if s.group != "" && !root.rail: HorizontalLayout {
                                     padding-left: Theme.material ? 16px : 8px;
                                     padding-top: i == 0 ? (Theme.material ? 4px : 0) : (Theme.material ? 18px : 12px);
                                     padding-bottom: Theme.material ? 8px : 4px;
@@ -1150,9 +1231,10 @@ export component SettingsWindow inherits Window {
                                         SIcon { g: { p: s.icon.p, m: "" }; fill: true; size: 13px; color: white; }
                                     }
                                     // Material: a tonal circle; the open page's a
-                                    // primary cookie, turning slowly
+                                    // primary cookie, turning slowly (the rail:
+                                    // centred, the name only for screen readers)
                                     if Theme.material: Rectangle {
-                                        x: 8px;
+                                        x: root.rail ? (parent.width - 34px) / 2 : 8px;
                                         y: (parent.height - 34px) / 2;
                                         width: 34px;
                                         height: 34px;
@@ -1176,7 +1258,7 @@ export component SettingsWindow inherits Window {
                                             color: s.current ? Theme.m3-on-primary : Theme.m3-on-secondary-container;
                                         }
                                     }
-                                    Text {
+                                    if !root.rail: Text {
                                         x: Theme.material ? 8px + 34px + 14px : 6px + 22px + 10px;
                                         width: parent.width - self.x - 16px;
                                         height: parent.height;

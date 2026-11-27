@@ -350,3 +350,12 @@ Removed: the passkeys daemon, its Settings group, its polkit-dialog requests and
 | Menu bar on narrow screens: each side keeps clear of the island or spaces; the app name shortens with "…", then the tray folds behind its arrow, then Now Playing, extra buttons, resources, weather and the keyboard layout go in that order (#383) | 27 Nov | done, unchecked | (this commit) |
 | Control Center, Glass: sliders show a level mark at the fill's end, so a full one reads as a level (#230); Material: small tiles have their name under the icon (#262) | 27 Nov | done, unchecked | (this commit) |
 | Control Center and status menus pages: notes and notices (Wi-Fi errors, speed-test verdicts) get their height from Slint measuring the wrapped text, not a characters-per-line guess (#349) | 27 Nov | done, unchecked | (this commit) |
+| Backup restore Undo: only the newest 3 undo files kept; Undo lists files changed since the restore and asks "Undo anyway?" (#702) | 27 Nov | done, unchecked | 2d32ff85 |
+| Battery & Power: the older "Low Power when the battery is low" folded into Battery saver (row gone; Automatic moves to Battery saver when low + Also use Low Power at the next start) (#920) | 27 Nov | done, unchecked | be2af4d5 |
+| Desktop & Widgets: the Files app row warns that a change restarts the file picker at once, ending screen shares (#331) | 27 Nov | done, unchecked | 42d94074 |
+| Trackpads known by udev's ID_INPUT_TOUCHPAD, not their name (bcm5974 and others get the trackpad settings) (#597) | 27 Nov | done, unchecked | aad144e0 |
+| Settings: a section opened by a link lands just below the header, the whole group highlighted a moment (#293) | 27 Nov | done, unchecked | d31bf332 |
+| Settings: tooltips kept inside the page (moved in from an edge, below at the top) (#935) | 27 Nov | done, unchecked | 515b7326 |
+| Welcome: pictures sized from the screen height too, the card fits short screens (#952) | 27 Nov | done, unchecked | 041d73c0 |
+| Settings narrow windows: a row's control under its text past two lines; Material sidebar a rail of icons under 900 px; fingerprint sheet and gesture rows fit (#253 #282 #308 #889) | 27 Nov | done, unchecked | c41db832 |
+| Settings search built from the real pages as they show now (no QML page files read) (#887) | 27 Nov | done, unchecked | ad4fad20 |

@@ -6,8 +6,8 @@
 //!
 //! The pieces: config.rs (config.json with Config.qml's keys and defaults,
 //! written back atomically), map.rs (SettingsMap.js: sections, parts,
-//! aliases), index.rs (what search finds, read from the QML page files as
-//! Settings.qml does), model.rs (a page as blocks of rows and what each
+//! aliases), index.rs (what search finds: the rows of the real pages, each
+//! built for it), model.rs (a page as blocks of rows and what each
 //! control does), pages/ (one module per page group), ui/settings.slint (the
 //! window) with ui/settings-kit.slint (the controls) and each page group's
 //! own views (ui/settings-<group>.slint).
@@ -113,7 +113,6 @@ pub enum M {
     KeyNav(i32),
     /// a background job's result for page-local state
     Local(String, Value),
-    Index(Vec<index::Entry>, bool),
     /// show the search target, once the page is drawn
     Reveal,
     RevealAgain,
@@ -615,9 +614,9 @@ impl Settings {
         let reopened = !self.open;
         self.open = true;
         self.cfg.reload(tessera_core::saver::raw(&st.shell.cfg));
-        if self.index.is_empty() || self.index_material != Some(st.shell.look.material) {
-            self.read_index(st);
-        }
+        // (each opening: the search list made afresh at the first search,
+        // from the pages as they are then)
+        self.read_index(st);
         if !page.is_empty() || self.page.is_empty() {
             self.go(st, page, target, false);
         } else {
@@ -674,15 +673,56 @@ impl Settings {
         }
     }
 
+    /// The search list is made again at the next search (from the real
+    /// pages, in this look: `live_index`)
     fn read_index(&mut self, st: &State) {
+        self.index_material = Some(st.shell.look.material);
+        self.index.clear();
+    }
+
+    /// The search list from the pages themselves (#887): each built as it
+    /// would show now, with a copy of the settings and the page state, and
+    /// nothing it asks for run (model::while_indexing), then its rows read
+    fn live_index(&self, st: &State) -> Vec<index::Entry> {
+        let t = std::time::Instant::now();
         let material = st.shell.look.material;
-        self.index_material = Some(material);
-        let tx = st.tx.clone();
-        std::thread::spawn(move || {
-            let files = index::read_pages();
-            let idx = index::build(&files, material);
-            let _ = tx.send(crate::Msg::Part(NAME, Box::new(M::Index(idx, material))));
+        let screens: Vec<String> = st.outputs_now().into_iter().map(|o| o.1).collect();
+        let built: Vec<(String, Page)> = model::while_indexing(|| {
+            index::PAGE_IDS
+                .iter()
+                .filter_map(|id| {
+                    let mut cfg = Cfg::default();
+                    cfg.file = self.cfg.file.clone();
+                    let mut local = self.local.clone();
+                    let mut out = Out::default();
+                    let mut page = Page::default();
+                    // (a page that can't be built as things are now is left
+                    // out of the list, never the end of Settings)
+                    let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let mut cx = Ctx {
+                            shell: &st.shell,
+                            cfg: &mut cfg,
+                            feed: &self.feed,
+                            local: &mut local,
+                            page: id,
+                            material,
+                            dark: st.shell.look.dark,
+                            out: &mut out,
+                            tx: st.tx.clone(),
+                            screens: screens.clone(),
+                            pictures: &self.pictures,
+                        };
+                        pages::build(&mut cx, &mut page);
+                    }));
+                    built.is_ok().then(|| (id.to_string(), page))
+                })
+                .collect()
         });
+        let idx = index::from_pages(&built);
+        if crate::env::is_set("DEBUG") {
+            eprintln!("debug: settings: search list from {} pages, {} rows, in {:.1} ms", built.len(), idx.len(), t.elapsed().as_secs_f64() * 1000.0);
+        }
+        idx
     }
 
     // ── Paging ──────────────────────────────────────────────────────────
@@ -960,6 +1000,11 @@ impl Settings {
 
     fn search(&mut self, st: &State, q: &str) {
         self.query = q.to_string();
+        // (made at the first search, from the pages as they are now)
+        if self.index.is_empty() && !q.trim().is_empty() {
+            self.index = self.live_index(st);
+            self.index_material = Some(st.shell.look.material);
+        }
         self.results = index::search(&self.index, q);
         self.sync_chrome(st);
     }
@@ -1152,15 +1197,6 @@ impl Part for Settings {
                 self.local.remove(&format!("{k}.busy"));
                 self.local.insert(k, v);
                 self.rebuild(st);
-            }
-            M::Index(idx, material) => {
-                if Some(material) == self.index_material {
-                    self.index = idx;
-                    if !self.query.is_empty() {
-                        let q = self.query.clone();
-                        self.search(st, &q);
-                    }
-                }
             }
             M::Reveal => {
                 if self.target.is_empty() {

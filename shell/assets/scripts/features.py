@@ -29,7 +29,6 @@ set up. Hardware that isn't here hides its feature.
 Only reads, except apply-user and record. TESSERA_SYSTEM_ROOT moves /sys,
 /etc, /usr and pacman's database somewhere else (tests).
 """
-import contextlib
 import glob
 import importlib.util
 import json
@@ -38,7 +37,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.environ.get("TESSERA_SYSTEM_ROOT", "/")
@@ -404,32 +402,21 @@ def login_look(c=None):
 
 # ── Writing your settings ───────────────────────────────────────────────
 def edit_config(change):
-    """config.json changed by change(dict) and written whole (a temporary
-    file, then a rename); left alone when it isn't Tessera's settings."""
-    p = config_path()
-    try:
-        with open(p) as f:
-            c = json.load(f)
-    except FileNotFoundError:
-        c = {"welcome": {"done": False}}
-    except (OSError, ValueError):
-        return False
-    if not isinstance(c, dict):
-        return False
-    change(c)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    # (a name of its own: two runs at once never write into one temporary file)
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p), prefix=".config.json.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(c, f, indent=4)
-        os.chmod(tmp, os.stat(p).st_mode & 0o777 if os.path.exists(p) else 0o644)
-        os.replace(tmp, p)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
-    return True
+    """config.json changed by change(dict) under the shell's own settings
+    lock (settings_file.py: re-read, changed, written whole to a name of its
+    own), so a Settings change made at the same moment is never lost; left
+    alone when it isn't Tessera's settings."""
+    return settings_file().edit(change, path=config_path())
+
+
+_SF = []
+
+
+def settings_file():
+    """settings_file.py beside this (one lock helper for every script)"""
+    if not _SF:
+        _SF.append(load("settings_file"))
+    return _SF[0]
 
 
 def part(c, k):

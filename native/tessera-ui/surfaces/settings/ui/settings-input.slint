@@ -234,6 +234,9 @@ component BindRow inherits Tile {
 component GestureRow inherits Tile {
     in property <SetRow> r;
     place: r.num;
+    // (a narrow page: the action on a line of its own under the fingers and
+    // the direction, not cut off at the card's edge, #308)
+    property <bool> two-lines: SBus.page-width < (Theme.material ? 620px : 580px);
     HorizontalLayout {
         padding-left: Theme.material ? 20px : 14px;
         padding-right: Theme.material ? 12px : 8px;
@@ -262,6 +265,22 @@ component GestureRow inherits Tile {
                     current: 0;
                     label: "Direction";
                 }
+                if !two-lines: VerticalLayout {
+                    alignment: center;
+                    SIcon { g: IG.arrow-right; size: 14px; color: Theme.tertiary; }
+                }
+                if r.data.length >= 3 && !two-lines: SChoice {
+                    width: 200px;
+                    cid: r.data[2].id;
+                    opts: [r.data[2]];
+                    current: 0;
+                    label: "Action";
+                }
+            }
+            if two-lines: HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                opacity: r.enabled ? 1 : 0.5;
                 VerticalLayout {
                     alignment: center;
                     SIcon { g: IG.arrow-right; size: 14px; color: Theme.tertiary; }
