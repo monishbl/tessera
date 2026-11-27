@@ -474,7 +474,7 @@ impl Panels {
         let kb = (self.m.keyboard && drawing(h, "osk")).then(|| self.m.keyboard_screen.clone());
         if kb != self.sent_keyboard {
             match &kb {
-                Some(s) => h.command("open", "osk", Some(s), json!({"panel": KEYBOARD})),
+                Some(s) => h.command("open", "osk", Some(s.as_str()), json!({"panel": KEYBOARD})),
                 None => h.command("close", "osk", None, json!({})),
             }
             self.sent_keyboard = kb;
