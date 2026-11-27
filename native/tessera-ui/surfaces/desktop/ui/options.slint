@@ -7,6 +7,8 @@
 //   stocks      the symbols
 //   stack       Smart Rotate (every Widget Stack)
 //   system      how resource graphs are drawn
+//   webClip     its page, the part shown (the top, a part chosen on a first
+//               render, or a CSS selector) and how often it's refreshed
 
 import { Theme } from "@tessera/theme.slint";
 import { IconButton, TextField, Switch, Segmented, PillButton } from "@tessera/widgets.slint";
@@ -25,7 +27,7 @@ component Hint inherits Text {
 }
 
 export component WidgetOptions inherits Window {
-    in property <string> kind; // photos | worldClock | stocks | stack | system
+    in property <string> kind; // photos | worldClock | stocks | stack | system | webClip
     in property <string> heading;
     in property <string> field-label;
     in property <string> field-hint;
@@ -46,6 +48,24 @@ export component WidgetOptions inherits Window {
     callback choose(); // the photos folder: the file chooser
     callback rotate(bool);
     callback graph-picked(int);
+    // A web clip (clip.rs)
+    in-out property <string> clip-url;
+    in-out property <string> clip-selector;
+    in property <int> clip-region; // 0 the top of the page, 1 a part of it, 2 a CSS selector
+    in property <int> clip-every; // 0 5 minutes, 1 15 minutes, 2 an hour, 3 by hand
+    in property <image> clip-preview; // the first full render (a part of it: chosen on it)
+    in property <bool> clip-has-preview;
+    in property <string> clip-note; // under the preview: loading, failed, how to choose
+    in property <float> clip-ratio: 0.75; // the preview's height over its width
+    in property <float> crop-x; // the part chosen, fractions of the preview (crop-w 0: none)
+    in property <float> crop-y;
+    in property <float> crop-w;
+    in property <float> crop-h;
+    callback clip-url-commit(string);
+    callback clip-selector-commit(string);
+    callback clip-region-picked(int);
+    callback clip-every-picked(int);
+    callback clip-cropped(float, float, float, float); // x, y, w, h: fractions (w, h may be negative)
     callback dismissed(); // Escape, or a click outside, or Done
     callback closed(); // the fade is over
     // (a field takes the focus itself when it is made)
@@ -55,6 +75,12 @@ export component WidgetOptions inherits Window {
         }
     }
     property <bool> has-field: kind == "photos" || kind == "worldClock" || kind == "stocks";
+    // (the preview's drag: where it began and where the pointer is, fractions)
+    property <bool> cropping;
+    property <float> drag-x0;
+    property <float> drag-y0;
+    property <float> drag-x1;
+    property <float> drag-y1;
     property <length> m: 24px;
     property <length> pad: Theme.material ? 24px : 20px;
     property <float> progress: shown ? 1 : 0;
@@ -70,6 +96,12 @@ export component WidgetOptions inherits Window {
     function finish() {
         if has-field {
             root.commit(field-edit);
+        }
+        if kind == "webClip" {
+            root.clip-url-commit(clip-url);
+            if clip-region == 2 {
+                root.clip-selector-commit(clip-selector);
+            }
         }
         root.dismissed();
     }
@@ -156,6 +188,123 @@ export component WidgetOptions inherits Window {
                         }
                     }
                     Hint { text: field-hint; }
+                }
+                // A web clip: the page, the part, how often
+                if kind == "webClip": VerticalLayout {
+                    spacing: 12px;
+                    VerticalLayout {
+                        spacing: 8px;
+                        Lbl { text: "Page"; }
+                        TextField {
+                            height: 36px;
+                            text <=> root.clip-url;
+                            autofocus: true;
+                            placeholder: "https://example.com/scores";
+                            label: "Page";
+                            left(t) => { root.clip-url-commit(t); }
+                            accepted(t) => { root.clip-url-commit(t); }
+                        }
+                    }
+                    VerticalLayout {
+                        spacing: 8px;
+                        Lbl { text: "Show"; }
+                        HorizontalLayout {
+                            Segmented {
+                                width: min(parent.width, 360px);
+                                options: ["Top of the page", "A part", "CSS selector"];
+                                current: clip-region;
+                                label: "Show";
+                                selected(i) => { root.clip-region-picked(i); }
+                            }
+                        }
+                        if clip-region == 1: Rectangle {
+                            // the part chosen (or being chosen), the rest dimmed
+                            property <bool> has-crop: root.cropping || root.crop-w > 0;
+                            property <float> sx: root.cropping ? min(root.drag-x0, root.drag-x1) : root.crop-x;
+                            property <float> sy: root.cropping ? min(root.drag-y0, root.drag-y1) : root.crop-y;
+                            property <float> sw: root.cropping ? abs(root.drag-x1 - root.drag-x0) : root.crop-w;
+                            property <float> sh: root.cropping ? abs(root.drag-y1 - root.drag-y0) : root.crop-h;
+                            height: 420px * min(1.2, clip-ratio);
+                            border-radius: 12px;
+                            clip: true;
+                            background: Theme.material ? Theme.m3-surface-container-highest : Theme.fill;
+                            if clip-has-preview: Image {
+                                width: 100%;
+                                height: 100%;
+                                source: clip-preview;
+                                image-fit: cover;
+                                horizontal-alignment: left;
+                                vertical-alignment: top;
+                                accessible-role: none;
+                            }
+                            if clip-has-preview && has-crop: Rectangle {
+                                x: parent.width * sx;
+                                y: parent.height * sy;
+                                width: parent.width * sw;
+                                height: parent.height * sh;
+                                border-width: 2px;
+                                border-color: Theme.material ? Theme.m3-primary : Theme.accent;
+                                background: (Theme.material ? Theme.m3-primary : Theme.accent).with-alpha(0.12);
+                                border-radius: 4px;
+                            }
+                            if !clip-has-preview: Hint {
+                                width: parent.width - 32px;
+                                height: parent.height;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                text: clip-note;
+                            }
+                            if clip-has-preview: TouchArea {
+                                mouse-cursor: crosshair;
+                                pointer-event(e) => {
+                                    if e.button == PointerEventButton.left && e.kind == PointerEventKind.down {
+                                        root.cropping = true;
+                                        root.drag-x0 = clamp(self.mouse-x / self.width, 0, 1);
+                                        root.drag-y0 = clamp(self.mouse-y / self.height, 0, 1);
+                                        root.drag-x1 = root.drag-x0;
+                                        root.drag-y1 = root.drag-y0;
+                                    }
+                                    if e.button == PointerEventButton.left && e.kind == PointerEventKind.up && root.cropping {
+                                        root.cropping = false;
+                                        root.clip-cropped(root.drag-x0, root.drag-y0, root.drag-x1 - root.drag-x0, root.drag-y1 - root.drag-y0);
+                                    }
+                                    if e.kind == PointerEventKind.cancel {
+                                        root.cropping = false;
+                                    }
+                                }
+                                moved => {
+                                    if root.cropping {
+                                        root.drag-x1 = clamp(self.mouse-x / self.width, 0, 1);
+                                        root.drag-y1 = clamp(self.mouse-y / self.height, 0, 1);
+                                    }
+                                }
+                            }
+                        }
+                        if clip-region == 1 && clip-has-preview: Hint { text: clip-note; }
+                        if clip-region == 2: TextField {
+                            height: 36px;
+                            text <=> root.clip-selector;
+                            placeholder: "#scoreboard, .price, main table";
+                            label: "CSS selector";
+                            left(t) => { root.clip-selector-commit(t); }
+                            accepted(t) => { root.clip-selector-commit(t); }
+                        }
+                        if clip-region == 2: Hint { text: "The first element on the page this finds is shown."; }
+                    }
+                    VerticalLayout {
+                        spacing: 8px;
+                        Lbl { text: "Refresh"; }
+                        HorizontalLayout {
+                            Segmented {
+                                width: min(parent.width, 360px);
+                                options: ["5 min", "15 min", "1 hour", "By hand"];
+                                current: clip-every;
+                                label: "Refresh";
+                                selected(i) => { root.clip-every-picked(i); }
+                            }
+                        }
+                        Hint { text: "Clicking the clip opens the page. It pauses while battery saver is on."; }
+                    }
                 }
                 // Smart Stacks
                 if kind == "stack": HorizontalLayout {

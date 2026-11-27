@@ -998,6 +998,7 @@ impl Overview {
             Run::File(p) => crate::shell::ask("files.open", json!([p])),
             Run::Action(t) => crate::shell::ask("search.action", json!([t])),
             Run::SetupAi => crate::shell::ask("panels.openSettings", json!(["ai"])),
+            Run::Read(u) => tessera_core::weblink::reader(u),
         }
     }
 

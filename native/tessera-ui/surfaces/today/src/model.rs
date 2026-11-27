@@ -191,6 +191,9 @@ pub struct EventRow {
     /// "" for the accent / primary
     pub color: String,
     pub past: bool,
+    /// its video meeting's link ("" none: no Join) and whose ("Google Meet")
+    pub link: String,
+    pub service: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -203,7 +206,29 @@ pub struct TodoRow {
 
 /// Today's events (past ones dimmed), as rows
 pub fn event_rows(events: &[Event], now: i64, h24: bool) -> Vec<EventRow> {
-    events.iter().map(|e| EventRow { time: time_text(e, h24), title: e.title.clone(), color: e.color.clone(), past: !e.all_day && e.end < now }).collect()
+    events
+        .iter()
+        .map(|e| {
+            // (a meeting in its location or notes: Join, through tessera_core::weblink)
+            let m = tessera_core::weblink::meeting_link(&e.location, &e.notes);
+            EventRow { time: time_text(e, h24), title: e.title.clone(), color: e.color.clone(), past: !e.all_day && e.end < now, link: m.as_ref().map(|m| m.url.clone()).unwrap_or_default(), service: m.map(|m| m.service.to_string()).unwrap_or_default() }
+        })
+        .collect()
+}
+
+/// The reading list's unread links (the share sheet's Read later), newest
+/// first, five at most: (url, title, "site · when")
+pub fn reading_rows(items: &[tessera_core::readlist::Item], now: i64) -> Vec<(String, String, String)> {
+    items
+        .iter()
+        .filter(|i| !i.read)
+        .take(5)
+        .map(|i| {
+            let when = tessera_core::readlist::added_words(i.added, now);
+            let site = i.site();
+            (i.url.clone(), i.shown_title(), if when.is_empty() { site } else { format!("{site} · {when}") })
+        })
+        .collect()
 }
 
 /// The open to-dos, soonest first, five at most
@@ -337,6 +362,13 @@ mod tests {
         let acct = [ev("Holiday", a, b, true), ev("Review", make(2026, 10, 5, 15, 0, 0), make(2026, 10, 5, 16, 0, 0), false), ev("Tomorrow", b + 3_600_000, b + 7_200_000, false)];
         let all = merge(mine, &acct, a, b);
         let rows = event_rows(&all, now, false);
+        assert!(rows.iter().all(|r| r.link.is_empty()));
+        let call = Event { title: "Standup".into(), notes: "Join: https://meet.google.com/abc-defg-hij".into(), start: now, end: now + 1, ..Default::default() };
+        let r = &event_rows(&[call], now, false)[0];
+        assert_eq!((r.link.as_str(), r.service.as_str()), ("https://meet.google.com/abc-defg-hij", "Google Meet"));
+        let item = |u: &str, read: bool| tessera_core::readlist::Item { url: u.into(), title: String::new(), added: now, read };
+        let rl = reading_rows(&[item("https://a.b/good-read", false), item("https://a.b/old", true)], now);
+        assert_eq!(rl, vec![("https://a.b/good-read".to_string(), "Good read".to_string(), "a.b · Today".to_string())]);
         assert_eq!(rows.iter().map(|r| r.title.as_str()).collect::<Vec<_>>(), vec!["Holiday", "Lunch", "Review"]);
         assert_eq!((rows[0].time.as_str(), rows[0].past), ("All day", false));
         assert_eq!((rows[1].time.as_str(), rows[1].past), ("12:00 PM – 12:30 PM", true));

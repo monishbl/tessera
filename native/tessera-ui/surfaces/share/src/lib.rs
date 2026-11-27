@@ -269,13 +269,24 @@ pub fn sheet_kind(paths: &[String], note: &str) -> &'static str {
     }
 }
 
-/// The other ways: (label, Phosphor name, what the shell does)
+/// The other ways: (label, Phosphor name, what the shell does; "readLater"
+/// is done here: a link onto the reading list, tessera_core::readlist)
 pub fn ways(note: &str) -> Vec<(&'static str, &'static str, &'static str)> {
     if !note.is_empty() {
-        vec![("Copy", "copy", "copy")]
+        let mut v = vec![("Copy", "copy", "copy")];
+        if read_later_link(note).is_some() {
+            v.push(("Read later", "book-open", "readLater"));
+        }
+        v
     } else {
         vec![("Copy", "copy", "copy"), ("Show in Files", "folder-open", "reveal"), ("Share with a QR code", "qr-code", "qr")]
     }
+}
+
+/// A shared text that is one web link (and nothing else): Read later takes it
+pub fn read_later_link(note: &str) -> Option<String> {
+    let t = note.trim();
+    (!t.contains(char::is_whitespace) && tessera_core::weblink::is_web(t)).then(|| t.to_string())
 }
 
 /// How far a send or a transfer is, 0..1
@@ -910,6 +921,19 @@ impl Share {
     fn way(&mut self, _st: &State, i: i32) {
         let list = ways(&self.feed.sheet.note);
         let Some((_, _, what)) = usize::try_from(i).ok().and_then(|i| list.get(i)) else { return };
+        if *what == "readLater" {
+            if let Some(url) = read_later_link(&self.feed.sheet.note) {
+                // (written off the UI thread; the island says it's there)
+                std::thread::spawn(move || {
+                    if tessera_core::readlist::add(&url, "") {
+                        let site = tessera_core::readlist::host(&url);
+                        crate::shell::ask("island.post", json!([{"kind": "custom", "icon": "book-open", "title": "Added to your reading list", "subtitle": format!("{site} · open it from Search or Today")}]));
+                    }
+                });
+            }
+            self.close_sheet(true);
+            return;
+        }
         crate::shell::ask("share", json!([what]));
         self.close_sheet(true);
     }
@@ -1502,6 +1526,10 @@ mod tests {
         assert_eq!(sheet_kind(&p(&["/run/t.txt"]), "hello"), "Text · sent as a text file");
         assert_eq!(ways("").len(), 3);
         assert_eq!(ways("hello"), vec![("Copy", "copy", "copy")]);
+        // (a link alone: Read later too)
+        assert_eq!(ways(" https://example.com/story ").last(), Some(&("Read later", "book-open", "readLater")));
+        assert_eq!(read_later_link("see https://example.com"), None);
+        assert_eq!(read_later_link("mailto:a@b.c"), None);
     }
 
     #[test]

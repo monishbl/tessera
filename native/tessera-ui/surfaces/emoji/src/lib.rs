@@ -1014,7 +1014,8 @@ impl Emoji {
     fn state_act(&mut self, st: &State, secondary: bool) {
         let kind = self.win.as_ref().map(|w| w.ui.get_state_kind().to_string()).unwrap_or_default();
         if secondary {
-            crate::shell::ask("launch.open", serde_json::json!(["https://partner.klipy.com/api-keys"]));
+            // (a help link: where Settings says links open, tessera_core::weblink)
+            crate::shell::ask("launch.openLink", serde_json::json!(["https://partner.klipy.com/api-keys"]));
             self.close(true);
             return;
         }

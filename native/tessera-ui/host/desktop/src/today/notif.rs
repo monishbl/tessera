@@ -480,7 +480,10 @@ pub fn calendar_payload(c: &Calendar, todo_list: &[todos::Item], raw: &[Value], 
         } else {
             format!("{}\nFrom {}, a subscribed calendar (read-only).", calq::time_text(e), if name.is_empty() { "a calendar" } else { &name })
         };
+        // (a video meeting's link in it: its Join button, tessera_core::weblink)
+        let meeting = tessera_core::weblink::meeting_link(&e.location, r.and_then(|r| r["notes"].as_str()).unwrap_or(&e.notes));
         json!({"kind": "event", "title": e.title, "sub": format!("{}{}", calq::time_text(e), if name.is_empty() { String::new() } else { format!(" · {name}") }),
+               "link": meeting.as_ref().map_or("", |m| m.url.as_str()), "service": meeting.as_ref().map_or("", |m| m.service),
                "color": if e.color.is_empty() { accent.to_string() } else { e.color.clone() }, "key": e.key,
                "day": key_of(e.start), "allDay": e.all_day, "start": hm(e.start), "end": hm(e.end),
                "alert": r.and_then(|r| r["alert"].as_i64()).or(e.alert).unwrap_or(default_alert),

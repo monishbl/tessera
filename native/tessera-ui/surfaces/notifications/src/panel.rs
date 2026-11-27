@@ -1097,6 +1097,8 @@ fn item(v: &Value) -> ui::NcItem {
         account: b("account"),
         info: s(&v["info"]).into(),
         cal_line: s(&v["calLine"]).into(),
+        link: s(&v["link"]).into(),
+        service: s(&v["service"]).into(),
     }
 }
 

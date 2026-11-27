@@ -939,6 +939,58 @@ component PhotosW inherits Rectangle {
     }
 }
 
+// A web clip (Rust only, clip.rs): img the page's part, made the widget's
+// size; has-img once there is one; on: it has a page; flag: its render
+// failed; g1 a globe; t1 the site; t2 what's going on without a picture.
+// A click says where (fractions of the widget): the link there, else the page
+component WebClipW inherits Rectangle {
+    in property <DeskWidget> w;
+    callback act(string, string);
+    callback drag-by(length, length, bool);
+    callback menu-at(length, length);
+    Rectangle {
+        clip: true;
+        border-radius: Theme.material ? 16px : Desk.tile;
+        background: Theme.material ? Theme.m3-surface-container-high : Theme.fill;
+        if w.has-img: Image {
+            width: 100%;
+            height: 100%;
+            source: w.img;
+            image-fit: fill;
+            accessible-role: none;
+        }
+    }
+    if !w.has-img || w.flag: Rectangle {
+        // (failed with an older picture: a small badge, else the words)
+        if !w.has-img: VerticalLayout {
+            x: 16px;
+            width: root.width - 32px;
+            alignment: center;
+            spacing: 6px;
+            SymIcon { text: w.g1; font-size: 28px; color: Theme.material ? Theme.m3-primary : Theme.tertiary; }
+            if w.t1 != "": T { text: w.t1; horizontal-alignment: center; overflow: elide; font-weight: 600; }
+            T { text: w.t2; horizontal-alignment: center; wrap: word-wrap; color: Theme.secondary; }
+        }
+        if w.has-img && w.flag: Rectangle {
+            x: root.width - self.width - 8px;
+            y: 8px;
+            width: 22px;
+            height: 22px;
+            border-radius: 11px;
+            background: Theme.material ? Theme.m3-error-container : Desk.red;
+            SymIcon { text: w.g2; font-size: 13px; color: Theme.material ? Theme.m3-on-error-container : white; }
+        }
+    }
+    DragTap {
+        accessible-role: AccessibleRole.button;
+        accessible-label: w.t1 != "" ? "Open " + w.t1 : "Web clip";
+        accessible-action-default => { root.act("clip", "0,0"); }
+        tapped => { root.act("clip", (self.mouse-x / max(1px, self.width)) + "," + (self.mouse-y / max(1px, self.height))); }
+        drag-by(x, y, on) => { root.drag-by(x, y, on); }
+        menu-at(x, y) => { root.menu-at(x, y); }
+    }
+}
+
 // A note: its text (note), saved as you write
 component NotesW inherits Rectangle {
     in property <DeskWidget> w;
@@ -1227,6 +1279,7 @@ component Content inherits Rectangle {
     if w.kind == "screenTime": ScreenTimeW { w: w; }
     if w.kind == "batteryHistory": BatteryHistoryW { w: w; }
     if w.kind == "stocks": StocksW { w: w; }
+    if w.kind == "webClip": WebClipW { w: w; act(a, b) => { root.act(a, b); } drag-by(x, y, on) => { root.drag-by(x, y, on); } menu-at(x, y) => { root.menu-at(x, y); } }
     if w.kind == "": T { width: root.width; height: root.height; vertical-alignment: center; horizontal-alignment: center; text: w.t1; color: Theme.secondary; }
 }
 

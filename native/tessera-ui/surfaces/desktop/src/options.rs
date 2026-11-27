@@ -10,6 +10,10 @@
 //!   stack       Smart Rotate (every Widget Stack)
 //!   system      how resource graphs are drawn (Area, Bars, Line; also the
 //!               island, the menu bar's popovers and Quick Settings)
+//!   webClip     (Rust only; `webClip:<id>`, one clip's) its page, the part
+//!               shown (the top; a part chosen by dragging on a first full
+//!               render, `tessera-web --render`; a CSS selector), and how
+//!               often it's refreshed (clip.rs)
 //! Enter, Done, Escape or a click outside closes it (a field keeps what's
 //! typed: it's saved as it loses focus, or on closing). Settings are written
 //! to config.json at once, as the QML's property writes were.
@@ -31,6 +35,13 @@ enum Msg {
     Graph(i32),
     Dismissed,
     Closed,
+    ClipUrl(String),
+    ClipSelector(String),
+    ClipRegion(i32),
+    ClipEvery(i32),
+    ClipCropped(f32, f32, f32, f32),
+    /// the first full render for choosing a part (which one, the picture and its size)
+    Preview(u64, Option<(String, (u32, u32))>),
 }
 
 struct OptWin {
@@ -47,6 +58,68 @@ struct OptWin {
 #[derive(Default)]
 pub struct WidgetOptions {
     win: Option<OptWin>,
+    /// a web clip's preview: the address it's of, its picture's size, which render
+    preview_for: String,
+    preview_size: (u32, u32),
+    preview_gen: u64,
+}
+
+/// "webClip:<id>" → ("webClip", id); any other kind as it is
+pub fn split_kind(kind: &str) -> (&str, &str) {
+    match kind.split_once(':') {
+        Some((k, id)) if k == "webClip" => (k, id),
+        _ => (kind, ""),
+    }
+}
+
+/// A clip's options changed in config.json: `patch`'s fields set on its
+/// entry (read and written under the settings' lock, so quick changes
+/// don't overwrite each other)
+fn write_clip(id: &str, patch: Value) {
+    let id = id.to_string();
+    tessera_core::cfgfile::edit_config_later(move |m| {
+        let cfg = Value::Object(m.clone());
+        let p = patch.clone();
+        let list = crate::clip::with_changed(&cfg, &id, move |v| {
+            if let (Some(o), Some(add)) = (v.as_object_mut(), p.as_object()) {
+                for (k, x) in add {
+                    o.insert(k.clone(), x.clone());
+                }
+            }
+        });
+        let sec = m.entry("desktop".to_string()).or_insert_with(|| json!({}));
+        if !sec.is_object() {
+            *sec = json!({});
+        }
+        sec["webClips"] = json!(list);
+        true
+    });
+}
+
+/// The region's choice for the Segmented (page, crop, selector)
+fn region_index(v: &Value) -> i32 {
+    match v["region"].as_str() {
+        Some("crop") => 1,
+        Some("selector") => 2,
+        _ => 0,
+    }
+}
+
+fn every_index(v: &Value) -> i32 {
+    let e = v["every"].as_u64().map(|e| e as u32).unwrap_or(900);
+    crate::clip::EVERY.iter().position(|x| *x == e).unwrap_or(1) as i32
+}
+
+/// A saved crop as fractions of a preview `size` (x, y, w, h; w 0: none)
+pub fn crop_fracs(crop: &str, size: (u32, u32), shown_ratio: f32) -> (f32, f32, f32, f32) {
+    let Some((x, y, w, h)) = crate::clip::parse_rect(crop) else { return (0.0, 0.0, 0.0, 0.0) };
+    if size.0 == 0 || size.1 == 0 {
+        return (0.0, 0.0, 0.0, 0.0);
+    }
+    let cw = crate::clip::CROP_WIDTH as f32;
+    // (the box shows the preview's top, cw × cw·shown_ratio page px)
+    let bh = cw * shown_ratio;
+    (x as f32 / cw, y as f32 / bh, w as f32 / cw, h as f32 / bh)
 }
 
 /// The dialog's heading
@@ -57,6 +130,7 @@ pub fn title(kind: &str) -> &'static str {
         "stocks" => "Stocks",
         "stack" => "Widget Stack",
         "system" => "System",
+        "webClip" => "Web clip",
         _ => "Widget",
     }
 }
@@ -102,9 +176,11 @@ impl WidgetOptions {
     fn fill(&mut self, st: &State) {
         let cfg = Desktop::cfg(st);
         let Some(w) = self.win.as_mut() else { return };
-        let kind = kind_now(st);
-        let new_kind = w.kind != kind;
-        w.kind = kind.clone();
+        let full = kind_now(st);
+        let new_kind = w.kind != full;
+        w.kind = full.clone();
+        let (kind, clip_id) = split_kind(&full);
+        let (kind, clip_id) = (kind.to_string(), clip_id.to_string());
         let ui = &w.ui;
         ui.set_kind(kind.as_str().into());
         ui.set_heading(format!("{} options", title(&kind)).into());
@@ -129,6 +205,66 @@ impl WidgetOptions {
         ui.set_smart_rotate(cfg.smart_rotate);
         ui.set_graph(GRAPHS.iter().position(|g| *g == cfg.graph).unwrap_or(0) as i32);
         ui.set_on_glass(st.shell.plugin && !st.shell.look.material);
+        if kind == "webClip" {
+            let v = crate::clip::cfg_value(&st.shell.cfg, &clip_id);
+            if new_kind {
+                ui.set_clip_url(v["url"].as_str().unwrap_or("").into());
+                ui.set_clip_selector(v["selector"].as_str().unwrap_or("").into());
+                ui.set_clip_has_preview(false);
+                self.preview_for.clear();
+            }
+            self.clip_fill(st, &clip_id);
+        }
+    }
+
+    /// A web clip's choices as the settings have them, and its preview
+    fn clip_fill(&mut self, st: &State, id: &str) {
+        let v = crate::clip::cfg_value(&st.shell.cfg, id);
+        let Some(w) = self.win.as_ref() else { return };
+        let ui = &w.ui;
+        let region = region_index(&v);
+        ui.set_clip_region(region);
+        ui.set_clip_every(every_index(&v));
+        let url = v["url"].as_str().unwrap_or("").trim().to_string();
+        let ratio = if self.preview_size.0 > 0 { self.preview_size.1 as f32 / self.preview_size.0 as f32 } else { 0.75 };
+        let shown = ratio.min(1.2);
+        ui.set_clip_ratio(ratio);
+        let (x, y, cw, ch) = if region == 1 { crop_fracs(v["crop"].as_str().unwrap_or(""), self.preview_size, shown) } else { (0.0, 0.0, 0.0, 0.0) };
+        ui.set_crop_x(x);
+        ui.set_crop_y(y);
+        ui.set_crop_w(cw);
+        ui.set_crop_h(ch);
+        if region != 1 {
+            return;
+        }
+        if !tessera_core::weblink::is_web(&url) {
+            ui.set_clip_has_preview(false);
+            ui.set_clip_note("Type the page's address first.".into());
+            return;
+        }
+        if self.preview_for == url {
+            return;
+        }
+        // (a first full render, to drag the part on)
+        self.preview_for = url.clone();
+        self.preview_gen += 1;
+        let gen = self.preview_gen;
+        ui.set_clip_has_preview(false);
+        if tessera_core::weblink::bin().is_none() {
+            ui.set_clip_note("Tessera's web browser isn't installed, so the page can't be shown.".into());
+            return;
+        }
+        ui.set_clip_note("Loading the page…".into());
+        let to = st.shell.sender(OPT_NAME);
+        let out = crate::clip::dir(id).join("preview");
+        crate::clip::render_once(crate::clip::preview_args(&url, &out), move |got| to(Box::new(Msg::Preview(gen, got))));
+    }
+
+    /// The clip these options are for (its id)
+    fn clip_id(&self) -> Option<String> {
+        let w = self.win.as_ref()?;
+        let (k, id) = split_kind(&w.kind);
+        (k == "webClip" && !id.is_empty()).then(|| id.to_string())
     }
 
     fn open(&mut self, st: &mut State, screen: Option<String>) {
@@ -165,6 +301,16 @@ impl WidgetOptions {
             ui.on_rotate(move |on| t(Box::new(Msg::Rotate(on))));
             let t = to.clone();
             ui.on_graph_picked(move |i| t(Box::new(Msg::Graph(i))));
+            let t = to.clone();
+            ui.on_clip_url_commit(move |s| t(Box::new(Msg::ClipUrl(s.to_string()))));
+            let t = to.clone();
+            ui.on_clip_selector_commit(move |s| t(Box::new(Msg::ClipSelector(s.to_string()))));
+            let t = to.clone();
+            ui.on_clip_region_picked(move |i| t(Box::new(Msg::ClipRegion(i))));
+            let t = to.clone();
+            ui.on_clip_every_picked(move |i| t(Box::new(Msg::ClipEvery(i))));
+            let t = to.clone();
+            ui.on_clip_cropped(move |x, y, w, h| t(Box::new(Msg::ClipCropped(x, y, w, h))));
             let t = to.clone();
             ui.on_dismissed(move || t(Box::new(Msg::Dismissed)));
             ui.on_closed(move || to(Box::new(Msg::Closed)));
@@ -281,6 +427,90 @@ impl Part for WidgetOptions {
                     w.ui.set_graph(i);
                 }
             }
+            Msg::ClipUrl(u) => {
+                let Some(id) = self.clip_id() else { return };
+                let t = u.trim();
+                // (an address typed without https://: as the browser takes it)
+                let url = if t.is_empty() || tessera_core::weblink::is_web(t) { t.to_string() } else { format!("https://{t}") };
+                let now = crate::clip::cfg_value(&st.shell.cfg, &id);
+                if now["url"].as_str().unwrap_or("") != url {
+                    write_clip(&id, json!({"url": url}));
+                    if let Some(w) = &self.win {
+                        w.ui.set_clip_url(url.as_str().into());
+                    }
+                }
+            }
+            Msg::ClipSelector(sel) => {
+                let Some(id) = self.clip_id() else { return };
+                let sel = sel.trim().to_string();
+                if crate::clip::cfg_value(&st.shell.cfg, &id)["selector"].as_str().unwrap_or("") != sel {
+                    write_clip(&id, json!({"selector": sel, "region": "selector"}));
+                }
+            }
+            Msg::ClipRegion(i) => {
+                let Some(id) = self.clip_id() else { return };
+                let region = ["page", "crop", "selector"][(i.max(0) as usize).min(2)];
+                write_clip(&id, json!({"region": region}));
+                if let Some(w) = &self.win {
+                    w.ui.set_clip_region(i);
+                }
+                // (the URL typed but not yet saved: the preview is of it)
+                let typed = self.win.as_ref().map(|w| w.ui.get_clip_url().to_string()).unwrap_or_default();
+                if i == 1 && tessera_core::weblink::is_web(typed.trim()) {
+                    write_clip(&id, json!({"url": typed.trim()}));
+                }
+            }
+            Msg::ClipEvery(i) => {
+                let Some(id) = self.clip_id() else { return };
+                let every = crate::clip::EVERY[(i.max(0) as usize).min(3)];
+                write_clip(&id, json!({"every": every}));
+                if let Some(w) = &self.win {
+                    w.ui.set_clip_every(i);
+                }
+            }
+            Msg::ClipCropped(x, y, w, h) => {
+                let Some(id) = self.clip_id() else { return };
+                let ratio = if self.preview_size.0 > 0 { self.preview_size.1 as f32 / self.preview_size.0 as f32 } else { 0.75 };
+                // (the box shows the preview's top: its fractions of the whole picture)
+                let k = ratio.min(1.2) / ratio.max(1e-3);
+                match crate::clip::crop_from(x, y * k, w, h * k, self.preview_size.0, self.preview_size.1) {
+                    Some((cx, cy, cw, ch)) => {
+                        write_clip(&id, json!({"region": "crop", "crop": format!("{cx},{cy},{cw},{ch}")}));
+                        if let Some(win) = &self.win {
+                            win.ui.set_clip_note("Drag again to choose another part.".into());
+                        }
+                    }
+                    None => {
+                        if let Some(win) = &self.win {
+                            win.ui.set_clip_note("Drag over a larger part of the page.".into());
+                        }
+                    }
+                }
+            }
+            Msg::Preview(gen, got) => {
+                if gen != self.preview_gen {
+                    return;
+                }
+                let Some(w) = &self.win else { return };
+                match got.and_then(|(png, size)| slint::Image::load_from_path(std::path::Path::new(&png)).ok().map(|i| (i, size))) {
+                    Some((img, size)) => {
+                        self.preview_size = size;
+                        w.ui.set_clip_preview(img);
+                        w.ui.set_clip_has_preview(true);
+                        w.ui.set_clip_note("Drag over the part of the page to show.".into());
+                        if let Some(id) = self.clip_id() {
+                            self.clip_fill(st, &id);
+                        }
+                    }
+                    None => {
+                        w.ui.set_clip_has_preview(false);
+                        w.ui.set_clip_note("Couldn't load the page. Check the address.".into());
+                        // (asked again when the address changes, or the options open again)
+                        self.preview_for.clear();
+                        self.preview_for.push('\u{0}');
+                    }
+                }
+            }
             Msg::Dismissed => self.close(st, true),
             Msg::Closed => {
                 if self.win.as_ref().is_some_and(|w| !w.shown) {
@@ -299,6 +529,10 @@ impl Part for WidgetOptions {
                 st.shell.apply_theme(&w.ui.global::<ui::Theme>());
                 w.glass_sent.clear();
             }
+        }
+        // (a web clip's choices follow the settings: its writes land there)
+        if let Some(id) = self.clip_id() {
+            self.clip_fill(st, &id);
         }
         // (the switch and the graphs follow the settings; a field keeps what is typed)
         let cfg = Desktop::cfg(st);
@@ -362,6 +596,22 @@ mod tests {
         assert_eq!(parse_field("stocks", "aapl, ^gspc ,btc-usd", ""), Some(json!(["AAPL", "^GSPC", "BTC-USD"])));
         assert_eq!(parse_field("system", "x", ""), None);
         assert_eq!(parse_field("stocks", "", ""), Some(json!([])));
+    }
+
+    #[test]
+    fn a_web_clips_options() {
+        assert_eq!(split_kind("webClip:ab12"), ("webClip", "ab12"));
+        assert_eq!(split_kind("photos"), ("photos", ""));
+        assert_eq!(split_kind("stocks:x"), ("stocks:x", ""));
+        assert_eq!(region_index(&json!({"region": "crop"})), 1);
+        assert_eq!(region_index(&json!({})), 0);
+        assert_eq!(every_index(&json!({"every": 0})), 3);
+        assert_eq!(every_index(&json!({})), 1);
+        // (a crop of the page's top half, on a 4:3 preview)
+        let (x, y, w, h) = crop_fracs("0,0,640,480", (2560, 1920), 0.75);
+        assert!((x, w) == (0.0, 0.5) && y == 0.0 && (h - 0.5).abs() < 1e-6);
+        assert_eq!(crop_fracs("bad", (1280, 960), 0.75), (0.0, 0.0, 0.0, 0.0));
+        assert_eq!(title("webClip"), "Web clip");
     }
 
     #[test]

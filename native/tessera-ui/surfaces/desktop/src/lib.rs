@@ -46,6 +46,7 @@ tessera_core::theme_global!(ui);
 #[allow(unused_imports)]
 use tessera_core::*;
 
+pub mod clip;
 pub mod feed;
 pub mod files;
 mod gallery;
@@ -109,6 +110,8 @@ enum M {
     GalAdd(i32),
     GalDone,
     GalClosed,
+    /// a web clip's renderer (clip.rs): its id, which start, what it said
+    Clip(String, u64, clip::Event),
 }
 
 #[derive(Clone, Debug)]
@@ -132,6 +135,10 @@ enum Act {
     CopyPath(String),
     Trash(String),
     OpenStack(String),
+    /// a web clip: render it again now (its id)
+    ClipRefresh(String),
+    /// a web clip: its page in the quick-look browser
+    ClipOpen(String),
 }
 
 struct Row {
@@ -272,6 +279,8 @@ pub struct Desktop {
     /// Edit Widgets' gallery (standalone only), and the kind it shows
     gal: Option<gallery::Gal>,
     gal_picked: usize,
+    /// web clips' renderers and their pictures (clip.rs)
+    clips: clip::Clips,
 }
 
 /// How long a picture that wouldn't decode is left before it's tried again
@@ -504,6 +513,7 @@ impl Desktop {
     }
 
     fn unmake(&mut self, st: &mut State) {
+        self.clips.stop_all();
         if let Some(w) = self.win.take() {
             st.shell.glass.set(&w.output, NS, &[]);
             st.drop_surface(&w.surface);
@@ -612,6 +622,7 @@ impl Desktop {
             win.kbd = Some(want_keys);
         }
         self.stack_files(st);
+        self.clips_sync(st);
         // (only the pictures shown lately stay decoded)
         prune_images(&mut self.images, &mut self.used, crate::util::now_ms());
         self.failed.retain(|k, _| self.used.contains_key(k));
@@ -1093,6 +1104,38 @@ impl Desktop {
             "notes" => {
                 r.note = s(f.notes.get(id).map(String::as_str).unwrap_or(""));
             }
+            "webClip" => {
+                let cfg = clip::ClipCfg::read(&clip::cfg_value(&st.shell.cfg, id));
+                r.g1 = crate::icons::glyph("globe").into();
+                r.g2 = crate::icons::glyph("warning-circle").into();
+                r.on = cfg.is_some();
+                r.t1 = cfg.as_ref().map(|c| tessera_core::readlist::host(&c.url)).unwrap_or_default().into();
+                let failed = self.clips.failed.get(id) == Some(&true);
+                r.flag = failed;
+                let shot = self.clips.shots.get(id).cloned().filter(|_| cfg.is_some());
+                if let Some(shot) = shot {
+                    let (w, h) = ((cw * self.scale()).round().max(1.0) as u32, (ch * self.scale()).round().max(1.0) as u32);
+                    let p = shot.png.clone();
+                    let keep = format!("clip:{id}");
+                    let img = match self.image(st, format!("clip:{id}#{}@{w}x{h}", shot.seq), move || clip::picture(&p, w, h)) {
+                        Some(i) => {
+                            self.last_icon.insert(keep, i.clone());
+                            Some(i)
+                        }
+                        // (the last picture while the new one decodes)
+                        None => self.last_icon.get(&keep).cloned(),
+                    };
+                    r.has_img = img.is_some();
+                    r.img = img.unwrap_or_default();
+                }
+                r.t2 = if cfg.is_none() {
+                    "Right-click and choose Web clip options to pick a page".into()
+                } else if failed {
+                    "Couldn't show this page. Click to open it.".into()
+                } else {
+                    "Loading…".into()
+                };
+            }
             "shortcuts" => {
                 let slots = if size == "s" { 4 } else { 8 };
                 let chosen: Vec<String> = f.shortcut_buttons.get(id).cloned().unwrap_or_else(|| feed::SHORTCUT_DEFAULTS.iter().map(|s| s.to_string()).collect());
@@ -1390,6 +1433,11 @@ impl Desktop {
                 ask("shortcut", vec![json!(arg)]);
             }
             "photo" => self.next_photo(&key),
+            "clip" => {
+                let id = self.clip_id(&w, &key);
+                self.clip_tap(st, &id, &w.size, arg);
+                return;
+            }
             "note" => {
                 let id = w.id.clone();
                 self.feed.notes.insert(id.clone(), arg.to_string());
@@ -1409,6 +1457,66 @@ impl Desktop {
             _ => {}
         }
         self.after_layout(st);
+    }
+
+    // ── Web clips (clip.rs) ──────────────────────────────────────────────
+
+    /// The id a web clip's options and pictures go by: its own, or in a
+    /// stack the stack's with "-webClip"
+    fn clip_id(&self, w: &W, _key: &str) -> String {
+        if w.kind == "stack" { format!("{}-webClip", w.id) } else { w.id.clone() }
+    }
+
+    /// The clips showing now: each one's renderer running, the rest
+    /// stopped (none while battery saver is on or the desktop isn't up)
+    fn clips_sync(&mut self, st: &State) {
+        let mut want: HashMap<String, Vec<String>> = HashMap::new();
+        let up = self.win.as_ref().is_some_and(|w| w.surface.mapped.get());
+        let keys = self.keys();
+        let mut on_desktop: Vec<String> = Vec::new();
+        for (i, w) in self.placed.clone().iter().enumerate() {
+            let shows = if w.kind == "webClip" {
+                true
+            } else if w.kind == "stack" {
+                let kinds = self.stack_kinds(w);
+                let at = keys.get(i).and_then(|k| self.stack_at.get(k)).copied().unwrap_or(0).min(kinds.len().saturating_sub(1));
+                kinds.get(at).is_some_and(|k| k == "webClip")
+            } else {
+                false
+            };
+            if !shows {
+                continue;
+            }
+            let id = self.clip_id(w, "");
+            on_desktop.push(id.clone());
+            let Some(c) = clip::ClipCfg::read(&clip::cfg_value(&st.shell.cfg, &id)) else { continue };
+            let (pw, ph) = grid::pixel_size(&w.size);
+            want.insert(id.clone(), clip::render_args(&c, &clip::dir(&id), pw, ph));
+        }
+        if !up || tessera_core::saver::on() {
+            want.clear();
+        }
+        let to = st.shell.sender(NAME);
+        let send = move |id: String, gen: u64, ev: clip::Event| to(Box::new(M::Clip(id, gen, ev)));
+        self.clips.sync(&want, &send);
+        self.clips.keep_only(&on_desktop);
+    }
+
+    /// A click on a clip at "fx,fy" (fractions of the widget): the link
+    /// under it, else the page (and with no page yet, its options)
+    fn clip_tap(&mut self, _st: &State, id: &str, size: &str, at: &str) {
+        let Some(c) = clip::ClipCfg::read(&clip::cfg_value(&_st.shell.cfg, id)) else {
+            ask("options", vec![json!(format!("webClip:{id}"))]);
+            return;
+        };
+        let mut f = at.split(',').map(|v| v.trim().parse::<f32>().unwrap_or(0.0));
+        let (fx, fy) = (f.next().unwrap_or(0.0), f.next().unwrap_or(0.0));
+        let (bw, bh) = grid::pixel_size(size);
+        let target = self.clips.shots.get(id).filter(|_| self.clips.failed.get(id) != Some(&true)).and_then(|s| {
+            let (x, y) = clip::tap_on_picture(fx, fy, bw, bh, s.size.0, s.size.1);
+            clip::link_at(&s.links, x, y).map(|l| l.href.clone())
+        });
+        tessera_core::weblink::open(&target.unwrap_or(c.url));
     }
 
     fn after_layout(&mut self, st: &mut State) {
@@ -1565,6 +1673,14 @@ impl Desktop {
             rows.push(sep());
             rows.push(row(check(c.smart_rotate, "Smart rotate"), Act::SmartRotate));
         }
+        if inner == "webClip" {
+            rows.push(sep());
+            rows.push(row("Web clip options…", Act::WidgetOptions(format!("webClip:{id}"))));
+            if clip::ClipCfg::read(&clip::cfg_value(&st.shell.cfg, &id)).is_some() {
+                rows.push(row("Refresh now", Act::ClipRefresh(id.clone())));
+                rows.push(row("Open page", Act::ClipOpen(id.clone())));
+            }
+        }
         if ["photos", "worldClock", "stocks", "stack", "system"].contains(&w.kind.as_str()) {
             rows.push(sep());
             rows.push(row("Widget options…", Act::WidgetOptions(w.kind.clone())));
@@ -1701,6 +1817,12 @@ impl Desktop {
                 ask("sound", vec![json!("trash")]);
             }
             Act::OpenStack(k) => self.open_stack = k,
+            Act::ClipRefresh(id) => self.clips.refresh(&id),
+            Act::ClipOpen(id) => {
+                if let Some(c) = clip::ClipCfg::read(&clip::cfg_value(&st.shell.cfg, &id)) {
+                    tessera_core::weblink::open(&c.url);
+                }
+            }
         }
         self.after_layout(st);
     }
@@ -2231,6 +2353,11 @@ impl Part for Desktop {
             M::GalAdd(i) => self.gallery_add(st, i),
             M::GalDone => self.gallery_done(st),
             M::GalClosed => self.gallery_closed(st),
+            M::Clip(id, gen, ev) => {
+                if self.clips.event(&id, gen, ev) && self.win.is_some() {
+                    self.update(st);
+                }
+            }
             M::MenuDismissed => {
                 self.close_menu(st);
                 self.update(st);
@@ -2376,6 +2503,7 @@ impl Part for Desktop {
 
     fn quit(&mut self, _: &mut State) {
         self.flush_notes();
+        self.clips.stop_all();
         if let Some(g) = &self.gal {
             crate::services::hypr::Glass::clear_now(&g.output, gallery::NS);
         }
