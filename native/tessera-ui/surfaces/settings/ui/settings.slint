@@ -1334,6 +1334,22 @@ export component SettingsWindow inherits Window {
                 flicked => { page-bar.poke(); SBus.reveal-hold = false; }
                 y: pane.bar-h;
                 height: parent.height - pane.bar-h;
+                // (its edges in the window, for the tooltips: #935)
+                property <length> edge-l: self.absolute-position.x;
+                property <length> edge-t: self.absolute-position.y;
+                property <length> edge-r: self.absolute-position.x + self.width;
+                property <length> edge-b: self.absolute-position.y + self.height;
+                function tell-edges() {
+                    SBus.view-left = self.edge-l;
+                    SBus.view-top = self.edge-t;
+                    SBus.view-right = self.edge-r;
+                    SBus.view-bottom = self.edge-b;
+                }
+                init => { self.tell-edges(); }
+                changed edge-l => { self.tell-edges(); }
+                changed edge-t => { self.tell-edges(); }
+                changed edge-r => { self.tell-edges(); }
+                changed edge-b => { self.tell-edges(); }
                 content-height: page.preferred-height + 64px;
                 page := VerticalLayout {
                     x: Theme.material ? max(32px, (pane.width - self.width) / 2) : 28px;

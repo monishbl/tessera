@@ -146,6 +146,12 @@ export global SBus {
     in-out property <int> refocus-seq;
     // the window's width for the page (custom views size from it)
     in-out property <length> page-width: 600px;
+    // the page's visible area in the window (the scroller's edges): a
+    // tooltip keeps its bubble inside it (#935)
+    in-out property <length> view-left: 0px;
+    in-out property <length> view-top: 0px;
+    in-out property <length> view-right: 100000px;
+    in-out property <length> view-bottom: 100000px;
     // the shown page's height (the kept pages sit on top of each other;
     // only the shown one sizes the scroller)
     in-out property <length> page-h;
@@ -790,6 +796,13 @@ export component STip inherits Rectangle {
     in property <string> text;
     in property <bool> hovered;
     property <bool> up;
+    // (where it is in the window: the bubble stays inside the page's visible
+    // area, moved in from an edge, and below what it names when there's no
+    // room above; #935)
+    property <length> at-x: self.absolute-position.x;
+    property <length> at-y: self.absolute-position.y;
+    // (only for what's on the page: a tip outside it, the sidebar's, as before)
+    property <bool> on-page: at-x >= SBus.view-left && at-x < SBus.view-right && at-y >= SBus.view-top && at-y < SBus.view-bottom;
     Timer {
         interval: 600ms;
         running: root.hovered && !root.up && root.text != "";
@@ -799,8 +812,8 @@ export component STip inherits Rectangle {
     if up: Rectangle {
         width: tl.preferred-width + 16px;
         height: tl.preferred-height + 8px;
-        x: (parent.width - self.width) / 2;
-        y: -self.height - 6px;
+        x: !root.on-page ? (root.width - self.width) / 2 : max(SBus.view-left + 4px - root.at-x, min(SBus.view-right - 4px - self.width - root.at-x, (root.width - self.width) / 2));
+        y: !root.on-page || root.at-y - self.height - 6px >= SBus.view-top ? -self.height - 6px : root.height + 6px;
         border-radius: 6px;
         background: Theme.dark ? #2c2c31 : #18181b;
         border-width: Theme.dark ? 1px : 0;
