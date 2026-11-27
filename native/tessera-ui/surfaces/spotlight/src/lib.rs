@@ -414,6 +414,8 @@ pub struct Spotlight {
     plocate: bool,
     rg: bool,
     home: String,
+    /// the reading list's unread links, read as it opens (reading.rs)
+    reading: Vec<tessera_core::readlist::Item>,
     timers: [slint::Timer; 9],
     // pictures
     icons: HashMap<IconKey, slint::Image>,
