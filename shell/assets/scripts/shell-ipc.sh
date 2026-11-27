@@ -3,6 +3,8 @@
 # from this shell folder, Material from its root of links, launch-shell.sh):
 #   shell-ipc.sh <ipc arguments>      e.g. shell-ipc.sh call lock lock
 # QS=<quickshell binary> picks the binary (start-idle.sh passes the shell's).
+# Exits 0 when the shell took it, 1 when no shell is running, 3 when the
+# (Rust) shell has no such target or function (and says so in a notification).
 set -uo pipefail
 SHELL_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd -P)"
 # Standalone (rust.standalone, on unless set to false): no Quickshell runs;
@@ -22,6 +24,14 @@ if [[ "${1:-}" == call ]]; then
                 if [[ -n "$ui" && -x "$ui" ]]; then
                     "$ui" ipc "$@"
                     rc=$?
+                    # (3: the shell answered, but has no such target or
+                    # function, a typo or a renamed verb: said where you'll
+                    # see it, not only on stderr nobody reads; audit #563)
+                    if [[ $rc -eq 3 ]]; then
+                        notify-send -a Tessera -i dialog-warning "A command the shell doesn't know" \
+                            "Something asked Tessera for “${*:2}”, which isn't one of its commands, so nothing happened. Check the key binding or script that runs it." \
+                            >/dev/null 2>&1 || true
+                    fi
                     [[ $rc -ne 1 ]] && exit "$rc"
                     break
                 fi

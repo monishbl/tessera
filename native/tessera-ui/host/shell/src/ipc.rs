@@ -9,7 +9,9 @@
 //! tessera_core::host::route_ipc(args, Some(reply)) to the service that owns
 //! the target, and what that service answers is written back (then the
 //! connection closes). The client prints the answer (like `qs ipc call`
-//! prints a function's return value) and exits 0; 1 when no shell answers.
+//! prints a function's return value) and exits 0; 1 when no shell answers;
+//! 3 (UNKNOWN_EXIT, with the error) when the shell has no such target or
+//! function (audit #563).
 
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -176,11 +178,7 @@ pub fn client(args: &[String]) -> i32 {
     }
     let path = socket_path();
     match ask(&path, &args) {
-        Ok(out) => {
-            print!("{out}");
-            let _ = std::io::stdout().flush();
-            0
-        }
+        Ok(out) => answered(&out),
         Err(e) => {
             // (a socket nothing listens on is left by a tessera-ui that
             // crashed: removed, so shell-ipc.sh's next call goes straight to
@@ -192,6 +190,23 @@ pub fn client(args: &[String]) -> i32 {
             1
         }
     }
+}
+
+/// The exit code when the shell answered that nothing has that target or
+/// function (a typo, a renamed verb). Not 1: shell-ipc.sh takes 1 as "no
+/// shell here" and tries the QML one (audit #563)
+pub const UNKNOWN_EXIT: i32 = 3;
+
+/// What the client does with the shell's answer: prints it and exits 0, or
+/// says that nothing answers that call and exits UNKNOWN_EXIT
+fn answered(out: &str) -> i32 {
+    if let Some(call) = tessera_core::host::unknown_in(out) {
+        eprintln!("tessera-ui ipc: the shell has no such command: {call} (tessera-ui ipc show lists its targets)");
+        return UNKNOWN_EXIT;
+    }
+    print!("{out}");
+    let _ = std::io::stdout().flush();
+    0
 }
 
 /// A connect error that means the socket file is there but nothing listens
@@ -263,6 +278,17 @@ mod tests {
         let e = ask(&path, &["call".into(), "lock".into(), "lock".into()]).unwrap_err();
         assert!(stale(&e), "{e}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_call_the_shell_doesnt_know_exits_3() {
+        assert_eq!(answered(&tessera_core::host::unknown_answer("lokc", "lock")), UNKNOWN_EXIT);
+        assert_eq!(answered("yes\n"), 0);
+        assert_eq!(answered(""), 0);
+        // (not 1, which shell-ipc.sh takes as "no shell" and goes on to the QML one)
+        assert_ne!(UNKNOWN_EXIT, 1);
+        let sh = include_str!("../../../../../shell/assets/scripts/shell-ipc.sh");
+        assert!(sh.contains("[[ $rc -ne 1 ]] && exit \"$rc\""), "shell-ipc.sh passes 3 on");
     }
 
     #[test]

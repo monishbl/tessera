@@ -40,18 +40,27 @@ on_ac() {
 # the mark a shell started again while locked finds is set first (so
 # keep-shell starts one at once, and it starts locked), the shell is asked
 # again for up to 8 s, then hyprlock locks if it's installed.
+# Exit 3 from the lock command: the shell answered but has no such command
+# (a typo or a renamed verb in it; shell-ipc.sh has said so in a
+# notification). Asking again can't help, and the shell isn't restarting:
+# no mark, no retries, straight to hyprlock (audit #563: it used to look
+# like success, and the screen never locked).
 lock() {
     [[ -n $dir && -r $dir/lock-command ]] || return 0
-    local cmd sig mark i
+    local cmd sig mark i rc
     cmd=$(cat "$dir/lock-command")
     sh -c "$cmd" 2>/dev/null && return 0
-    sig=${HYPRLAND_INSTANCE_SIGNATURE:-}
-    mark="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/tessera-locked-$sig"
-    [[ -n $sig ]] && : >"$mark" 2>/dev/null
-    for i in $(seq 16); do
-        sleep 0.5
-        sh -c "$cmd" 2>/dev/null && return 0
-    done
+    rc=$?
+    if [[ $rc != 3 ]]; then
+        sig=${HYPRLAND_INSTANCE_SIGNATURE:-}
+        mark="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/tessera-locked-$sig"
+        [[ -n $sig ]] && : >"$mark" 2>/dev/null
+        for i in $(seq 16); do
+            sleep 0.5
+            sh -c "$cmd" 2>/dev/null && return 0
+            [[ $? == 3 ]] && break
+        done
+    fi
     if command -v hyprlock >/dev/null && ! pgrep -x hyprlock >/dev/null; then
         hyprlock --immediate >/dev/null 2>&1 &
         sleep 1

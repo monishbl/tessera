@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+import socket
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -171,6 +172,55 @@ class IdleConfig(unittest.TestCase):
         subprocess.run(["bash", str(SCRIPTS / "idle-action.sh"), "any", "lock"], env=env, timeout=30)
         self.assertTrue((d / "tessera-locked-sig1").exists(), "the mark a restarted shell locks with")
         self.assertIn("hyprlock --immediate", (d / "ran").read_text())
+
+    def test_a_lock_command_the_shell_doesnt_know_still_locks_at_once(self):
+        # (audit #563: exit 3, the shell answered but has no such command; it
+        # used to look like success. No retries, no restart mark: hyprlock)
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
+        (d / "bin").mkdir()
+        (d / "bin/hyprlock").write_text("#!/bin/sh\necho hyprlock \"$@\" >> %s/ran\n" % d)
+        (d / "bin/hyprlock").chmod(0o755)
+        (d / "bin/sleep").write_text("#!/bin/sh\necho sleep >> %s/ran\n" % d)
+        (d / "bin/sleep").chmod(0o755)
+        idle = d / "idle"
+        idle.mkdir()
+        (idle / "lock-command").write_text("echo asked >> %s/ran; exit 3\n" % d)
+        env = dict(os.environ, PATH=f"{d}/bin:{os.environ['PATH']}", TESSERA_IDLE_DIR=str(idle),
+                   XDG_RUNTIME_DIR=str(d), HYPRLAND_INSTANCE_SIGNATURE="sig1")
+        subprocess.run(["bash", str(SCRIPTS / "idle-action.sh"), "any", "lock"], env=env, timeout=30)
+        ran = (d / "ran").read_text().split("\n")
+        self.assertEqual(ran.count("asked"), 1)
+        self.assertIn("hyprlock --immediate", ran)
+        self.assertFalse((d / "tessera-locked-sig1").exists())
+
+    def test_shell_ipc_passes_on_and_says_an_unknown_command(self):
+        # (tessera-ui ipc call exits 3 for a target or function the shell
+        # doesn't have: shell-ipc.sh exits 3 too, never tries the QML shell
+        # as it does for 1, and says so in a notification)
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
+        run = d / "run"
+        (run / "tessera").mkdir(parents=True)
+        sock = socket.socket(socket.AF_UNIX)
+        sock.bind(str(run / "tessera/ipc.sock"))
+        self.addCleanup(sock.close)
+        ui = d / "tessera-ui"
+        ui.write_text("#!/bin/sh\necho \"tessera-ui ipc: the shell has no such command: $3 $4\" >&2\nexit 3\n")
+        ui.chmod(0o755)
+        (d / "bin").mkdir()
+        (d / "bin/notify-send").write_text("#!/bin/sh\nprintf '%%s\\n' \"$@\" >> %s/notified\n" % d)
+        (d / "bin/notify-send").chmod(0o755)
+        (d / "bin/qs").write_text("#!/bin/sh\necho qs >> %s/qs\n" % d)
+        (d / "bin/qs").chmod(0o755)
+        env = dict(os.environ, PATH=f"{d}/bin:{os.environ['PATH']}", XDG_RUNTIME_DIR=str(run), TESSERA_UI=str(ui),
+                   TESSERA_STANDALONE="1", QS="qs")
+        r = subprocess.run(["bash", str(SCRIPTS / "shell-ipc.sh"), "call", "lokc", "lock"], env=env, timeout=20,
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertIn("no such command: lokc lock", r.stderr)
+        self.assertIn("lokc lock", (d / "notified").read_text())
+        self.assertFalse((d / "qs").exists())
 
     def test_a_grace_no_longer_skips_the_lock_before_sleep(self):
         # (audit #97: an older shell's grace line; the lock still comes first)

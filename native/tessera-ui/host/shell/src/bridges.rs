@@ -1108,7 +1108,11 @@ impl Service for Bridges {
             ("polkit", "preview") => h.tell("polkit", json!({"preview": true, "finger": false})),
             ("polkit", "previewFinger") => h.tell("polkit", json!({"preview": true, "finger": true})),
             ("welcome", "open") => self.welcome_open(h),
-            (t, f) => eprintln!("tessera-ui: host: no ipc {t} {f}"),
+            // (the caller is told: `tessera-ui ipc call lock lokc` exits 3, audit #563)
+            (t, f) => {
+                eprintln!("tessera-ui: host: no ipc {t} {f}");
+                tessera_core::host::ipc_unknown();
+            }
         }
         None
     }

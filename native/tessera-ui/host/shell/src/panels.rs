@@ -759,7 +759,12 @@ impl Service for Panels {
             // shell: ready → "yes" once the desktop has drawn (its first
             // frame is on screen), "no" before (update-run.sh and
             // switch-look.sh close their screen on "yes": not onto black)
-            "shell" => (func == "ready").then(|| ready_answer(h.st.first_frame_logged, h.st.started.elapsed()).to_string()),
+            "shell" => {
+                if func != "ready" {
+                    tessera_core::host::ipc_unknown();  // (the caller is told: audit #563)
+                }
+                (func == "ready").then(|| ready_answer(h.st.first_frame_logged, h.st.started.elapsed()).to_string())
+            }
             // EmojiPicker.qml's target: toggle / open / close, on the focused screen
             "emoji" => {
                 let s = focused(h);
@@ -767,13 +772,16 @@ impl Service for Panels {
                     "toggle" => self.act(h, "toggle", &json!(["emoji", s])),
                     "open" => self.act(h, "show", &json!(["emoji", s])),
                     "close" if self.m.open == "emoji" => self.act(h, "close", &json!([])),
-                    _ => {}
+                    "close" => {}
+                    _ => tessera_core::host::ipc_unknown(),
                 }
                 None
             }
             "rustui" => {
                 if func == "act" {
                     self.rustui_act(h, args.first().map_or("", String::as_str), args.get(1).map_or("", String::as_str));
+                } else {
+                    tessera_core::host::ipc_unknown();
                 }
                 None
             }

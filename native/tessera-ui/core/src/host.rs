@@ -85,6 +85,34 @@ pub fn route_ipc(args: &[String], reply: Option<std::sync::mpsc::Sender<String>>
     standalone() && send(Msg::Part(NAME, Box::new(Ipc { args: args.to_vec(), reply })))
 }
 
+// An IPC call nothing answers: a target no service has, or a function its
+// service doesn't know (it calls ipc_unknown()). The caller is told so, in
+// an answer no real one can start with, and `tessera-ui ipc call` exits 3
+// with the error (audit #563: a typo in a keybind or in the idle lock's
+// command, `lokc lock`, was quietly taken and the client said nothing and
+// exited 0, so a script couldn't tell the lock was never asked).
+thread_local! {
+    static IPC_UNKNOWN: std::cell::Cell<bool> = std::cell::Cell::new(false);
+}
+
+/// From a service's ipc(): the function asked for isn't one this target has
+pub fn ipc_unknown() {
+    IPC_UNKNOWN.with(|u| u.set(true));
+}
+
+/// What an IPC answer starts with when nothing answered the call
+pub const IPC_UNKNOWN_MARK: &str = "\u{0}tessera-ui-ipc-unknown\u{0}";
+
+/// The answer for a call nothing answered: the mark, then "target function"
+pub fn unknown_answer(target: &str, func: &str) -> String {
+    format!("{IPC_UNKNOWN_MARK}{target} {func}\n")
+}
+
+/// The call an answer says nothing answered ("lokc lock"), if it says so
+pub fn unknown_in(answer: &str) -> Option<&str> {
+    answer.strip_prefix(IPC_UNKNOWN_MARK).map(str::trim_end)
+}
+
 pub const NAME: &str = "host";
 
 /// What a service may do while it runs (borrowed for one call)
@@ -382,12 +410,14 @@ impl crate::shell::Part for HostPart {
                     }
                     return self.settle(st);
                 }
+                IPC_UNKNOWN.with(|u| u.set(false));
                 let found = self.one(st, |s| s.ipc_targets().contains(&target.as_str()), |s, h| out = s.ipc(h, &target, &func, &rest));
                 if !found {
                     eprintln!("tessera-ui: host: no ipc target {target} ({func})");
                 }
+                let unknown = IPC_UNKNOWN.with(|u| u.replace(false)) || !found;
                 if let Some(r) = i.reply {
-                    let _ = r.send(out.unwrap_or_default());
+                    let _ = r.send(if unknown { unknown_answer(&target, &func) } else { out.unwrap_or_default() });
                 }
                 return self.settle(st);
             }
@@ -413,6 +443,20 @@ impl crate::shell::Part for HostPart {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_call_nothing_answers_is_said_as_such() {
+        let a = unknown_answer("lokc", "lock");
+        assert_eq!(unknown_in(&a), Some("lokc lock"));
+        // (real answers, empty or not, are never taken for it)
+        for real in ["", "yes\n", "locked\n", "unknown lokc lock\n"] {
+            assert_eq!(unknown_in(real), None, "{real:?}");
+        }
+        // (a service's flag is this thread's, read once)
+        ipc_unknown();
+        assert!(IPC_UNKNOWN.with(|u| u.replace(false)));
+        assert!(!IPC_UNKNOWN.with(|u| u.get()));
+    }
 
     #[test]
     fn the_second_lands_just_after_the_clocks() {
