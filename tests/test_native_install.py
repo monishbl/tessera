@@ -635,9 +635,66 @@ class PasskeysRetired(unittest.TestCase):
             self.assertEqual(ni.retire_passkeys(str(dest), str(units), run=lambda cmd, **k: calls.append(cmd)), [])
             self.assertEqual(calls, [])
 
-    def test_no_optional_programs_left(self):
-        self.assertEqual(ni.OPTIONAL, ())
+    def test_the_one_optional_program_is_the_quick_look_browser(self):
+        self.assertEqual(ni.OPTIONAL, ("tessera-web",))
         self.assertNotIn("tessera-passkeys", ni.part_keys("HEAD", str(ROOT)))
+
+
+@unittest.skipUnless(HAS_CRYPTO, "python-cryptography isn't installed")
+class QuickLookBrowser(Fixture):
+    """tessera-web (native/tessera-ui/web): with tessera-ui when it comes,
+    never a failure when it doesn't (no WebKitGTK, a release without it)"""
+
+    def builder(self, with_web):
+        def build(stage, tuned, ui, say):
+            files = {}
+            names = (ni.PROGRAMS if ui else ("tessera-events",)) + (("tessera-web",) if with_web and ui else ())
+            for name in names:
+                fake_program(Path(stage) / name, f"{name} 0.1.0")
+                files[name] = str(Path(stage) / name)
+            return files
+        return build
+
+    def test_its_own_source_key_from_tessera_uis_workspace(self):
+        keys = ni.part_keys("HEAD", str(self.repo))
+        self.assertTrue(keys["tessera-web"])
+        self.assertNotEqual(keys["tessera-web"], keys["tessera-ui"])
+        self.commit_change("fn main() { web() }\n")
+        self.assertNotEqual(ni.part_keys("HEAD", str(self.repo))["tessera-web"], keys["tessera-web"])
+
+    def test_built_with_tessera_ui_then_kept(self):
+        r, _ = self.install("build", builder=self.builder(True), ui=True)
+        self.assertTrue(r["ok"], r)
+        self.assertTrue((self.dest / "tessera-web").exists())
+        self.assertEqual(ni.read_info(str(self.dest), "tessera-web")["part"], ni.part_keys("HEAD", str(self.repo))["tessera-web"])
+        calls = []
+        r, _ = self.install("build", builder=lambda *a: calls.append(a) or {}, ui=True)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(calls, [])
+
+    def test_without_webkit_it_is_noted_and_not_tried_again(self):
+        r, _ = self.install("build", builder=self.builder(False), ui=True)
+        self.assertTrue(r["ok"], r)
+        self.assertFalse((self.dest / "tessera-web").exists())
+        key = ni.part_keys("HEAD", str(self.repo))["tessera-web"]
+        self.assertEqual((self.dest / "tessera-web.unavailable").read_text().strip(), key)
+        calls = []
+        r, _ = self.install("build", builder=lambda *a: calls.append(a) or {}, ui=True)
+        self.assertEqual(calls, [])
+        self.assertFalse(r["changed"])
+
+    def test_not_wanted_without_tessera_ui(self):
+        # (an install without tessera-ui doesn't look for tessera-web, built from its workspace)
+        keys = ni.part_keys("HEAD", str(self.repo))
+        self.assertEqual(ni.optional_todo("build", self.tree, keys, False, str(self.dest), with_ui=False), [])
+        self.assertEqual(ni.optional_todo("build", self.tree, keys, False, str(self.dest)), ["tessera-web"])
+
+    def test_a_release_without_it_still_installs(self):
+        self.publish()
+        r, calls = self.install()
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(calls, [("fetch", "x86-64-v3")])
+        self.assertFalse((self.dest / "tessera-web").exists())
 
 
 class KeptForTheLoginScreen(Fixture):

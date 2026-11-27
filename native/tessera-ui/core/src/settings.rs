@@ -56,10 +56,22 @@ pub fn emoji_font(cfg: &Value, installed: &[String]) -> String {
     }
 }
 
+/// tessera-web's folders: its site data and history
+/// ($XDG_DATA_HOME/tessera/web), its cache and compiled ad blocker
+/// ($XDG_CACHE_HOME/tessera/web). "Clear history and website data" removes both.
+pub fn web_dirs() -> [std::path::PathBuf; 2] {
+    [crate::util::xdg("XDG_DATA_HOME", ".local/share").join("tessera/web"), crate::util::xdg("XDG_CACHE_HOME", ".cache").join("tessera/web")]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn tessera_webs_folders() {
+        assert!(web_dirs().iter().all(|d| d.ends_with("tessera/web")));
+    }
 
     #[test]
     fn the_keyboard_button_defaults_to_touch_screens() {

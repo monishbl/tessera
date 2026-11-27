@@ -20,9 +20,12 @@ An OPTIONAL program comes along when it can: in a ready-made build that has
 it, or built here with the others; a build or release without it never
 fails an install, and an install that can't get it notes that
 (<name>.unavailable) so it isn't looked for again until its sources change.
-There are none now: the passkeys daemon (tessera-passkeys) was removed, and
-an install takes an older one out (retire_passkeys: its user service
-stopped and removed, its program gone; the saved passkeys stay).
+The one now: tessera-web, Tessera's quick-look browser (native/tessera-ui/web,
+in tessera-ui's workspace; built here with tessera-ui, when WebKitGTK 6 is
+installed). Without it the shell opens links in your browser. (The passkeys
+daemon, tessera-passkeys, was removed: an install takes an older one out,
+retire_passkeys: its user service stopped and removed, its program gone;
+the saved passkeys stay.)
 
 Each program has its own source key (part_keys): tessera-events its folder's
 git tree, tessera-ui its folder's tree and the few files outside it that it
@@ -91,7 +94,10 @@ import time
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROGRAMS = ("tessera-ui", "tessera-events")
 # (with them when there's one: never a reason for an install to fail)
-OPTIONAL = ()
+OPTIONAL = ("tessera-web",)
+# (optional programs that come only with tessera-ui: built from its
+# workspace, so not built here when tessera-ui isn't)
+WITH_UI = ("tessera-web",)
 # (Passkeys, removed: what an older install left, taken out by retire_passkeys)
 PASSKEYS_UNIT = "tessera-passkeys.service"
 PASSKEYS_FILES = ("tessera-passkeys", "tessera-passkeys.new", "tessera-passkeys.prev", "tessera-passkeys.json",
@@ -242,7 +248,8 @@ def native_tree(ref="HEAD", repo=None):
 def part_keys(ref="HEAD", repo=None):
     """{program: its source key at REF}, None for one that isn't there (or
     outside a checkout). tessera-events: the git tree of native/tessera-events;
-    tessera-ui: a hash of native/tessera-ui's tree and UI_EXTRA's blobs."""
+    tessera-ui: a hash of native/tessera-ui's tree and UI_EXTRA's blobs;
+    tessera-web (in tessera-ui's workspace): the same, under its own name."""
     out = {n: None for n in PROGRAMS + OPTIONAL}
     commit = git("rev-parse", "--verify", "--quiet", ref + "^{commit}", repo=repo)
     if not commit:
@@ -253,6 +260,7 @@ def part_keys(ref="HEAD", repo=None):
     if ui:
         extra = git("ls-tree", commit, "--", *UI_EXTRA, repo=repo) or ""
         out["tessera-ui"] = hashlib.sha1(("tessera-ui " + ui + "\n" + extra).encode()).hexdigest()
+        out["tessera-web"] = hashlib.sha1(("tessera-web " + ui + "\n" + extra).encode()).hexdigest()
     return out
 
 
@@ -1352,12 +1360,15 @@ def _todo(mode, names, tree, keys, edited, dest):
     return [n for n in names if not is_current(mode, read_info(dest, n), os.path.join(dest, n), tree, keys.get(n), edited)]
 
 
-def optional_todo(mode, tree, keys, edited, dest):
+def optional_todo(mode, tree, keys, edited, dest, with_ui=True):
     """The optional programs that need another build: their sources are in
     this checkout, the installed one isn't for them, and the last install
-    didn't find that it can't get one for exactly these sources"""
+    didn't find that it can't get one for exactly these sources. with_ui:
+    tessera-ui is part of this install (WITH_UI's only come with it)"""
     out = []
     for n in OPTIONAL:
+        if n in WITH_UI and not with_ui:
+            continue
         key = keys.get(n)
         if not key or is_current(mode, read_info(dest, n), os.path.join(dest, n), tree, key, edited):
             continue
@@ -1470,7 +1481,7 @@ def _produce(mode, tree, commit, edited, build_ui, todo, offline, dest, repo, sa
 def _install(out, mode, tree, commit, edited, build_ui, names, offline, only_prev, dest, repo, say, builder, fetcher):
     keys = part_keys("HEAD", repo) if tree and not edited else {n: None for n in PROGRAMS + OPTIONAL}
     todo = _todo(mode, names, tree, keys, edited, dest)
-    extra = optional_todo(mode, tree, keys, edited, dest) if tree and not edited else []
+    extra = optional_todo(mode, tree, keys, edited, dest, "tessera-ui" in names) if tree and not edited else []
     if tree and not edited and not todo and not extra:
         keep_as_is(dest, names, tree, commit)
         info = read_info(dest, names[0])
@@ -1554,7 +1565,7 @@ def stage(ref, mode=None, ui=False, source=None, dest=None, repo=None, say=None,
             sweep(dest)
             sdir = staged_dir(dest)
             shutil.rmtree(sdir, ignore_errors=True)
-            extra = optional_todo(mode, tree, keys, False, dest)
+            extra = optional_todo(mode, tree, keys, False, dest, "tessera-ui" in names)
             todo = _todo(mode, names, tree, keys, False, dest) + extra
             record = {"extra": extra, "format": 1, "tree": tree, "commit": commit, "keys": keys, "names": names, "mode": mode,
                       "files": {}, "keep": [n for n in names if n not in todo], "at": int(time.time())}

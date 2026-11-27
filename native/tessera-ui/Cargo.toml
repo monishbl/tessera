@@ -2,9 +2,10 @@
 # surfaces there are), tessera-core (core/: the platform, the shell's shared
 # state, the theme, the services) and one crate per surface (surfaces/<name>/).
 # A change to one surface recompiles that crate and the binary, nothing else
-# (docs/rust-ui-surfaces.md, "The workspace").
+# (docs/rust-ui-surfaces.md, "The workspace"). web/: tessera-web, the
+# quick-look browser, a program of its own on WebKitGTK (not a surface).
 [workspace]
-members = ["core", "surfaces/*", "host/*"]
+members = ["core", "surfaces/*", "host/*", "web"]
 exclude = ["host/tools"]
 resolver = "2"
 

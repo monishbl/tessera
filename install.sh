@@ -1845,6 +1845,13 @@ verify() {
     missing=()
     for c in qalc rg plocate pdftoppm swappy matugen tesseract wf-recorder magick; do command -v "$c" >/dev/null || missing+=("$c"); done
     [[ ${#missing[@]} == 0 ]] && ok "Feature tools (conversions, search, Quick Preview, markup, app colours)" || meh "Some features are off; missing: ${missing[*]}"
+    # Tessera's quick-look browser (tessera-web, WebKitGTK 6): optional. Without
+    # it links, Search the web and Wi-Fi sign-in pages open in your browser
+    if [[ -x "$DATA/tessera/bin/tessera-web" ]] && { pkg-config --exists webkitgtk-6.0 2>/dev/null || compgen -G "/usr/lib*/libwebkitgtk-6.0.so*" >/dev/null; }; then
+        ok "Quick-look browser (tessera-web)"
+    else
+        note "Links open in your browser (Tessera's quick-look browser needs webkitgtk-6.0: run the installer again, or tessera update)"
+    fi
     # Shell files, shaders
     if [[ -f "$CONFIG/quickshell/tessera/shell.qml" ]]; then
         local frag qsb
