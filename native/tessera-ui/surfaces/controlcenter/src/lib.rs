@@ -1723,13 +1723,6 @@ impl Part for ControlCenter {
         let (px, py, pw, ph) = (ui.get_panel_x(), ui.get_panel_y(), ui.get_panel_w(), ui.get_panel_h());
         let mut shapes = Vec::new();
         if o > 0.002 {
-            // the screen behind, blurred while it's open (the menu bar's
-            // strip left clear): nothing sharp between the tiles
-            // (the solid tier: no blur, the dim alone; its shape would be
-            // a solid sheet over the screen)
-            if look.glass.tier() != "solid" {
-                shapes.push(backdrop_shape(look, size.0 as f32, size.1 as f32, o));
-            }
             if !bare {
                 shapes.push(theme::glass_shape(look, px, py, pw, ph, 36.0 + PAD, o, 1.0));
             } else {
@@ -1800,19 +1793,6 @@ impl Part for ControlCenter {
     }
 }
 
-/// Glass: the menu bar's strip the dim and blur behind Quick Settings
-/// leave clear (the menu bar's BAR_H; the input region's 30 above)
-pub const BACKDROP_TOP: f32 = 30.0;
-
-/// Glass: the whole screen under the bar, blurred behind Quick Settings
-/// (Mission Control's backdrop: borderless, no lens, no rim, no shadow),
-/// fading with the panel; controlcenter.slint dims the same area
-pub fn backdrop_shape(look: &theme::Look, w: f32, h: f32, opacity: f32) -> theme::GlassShape {
-    let mut back = theme::shadow_margin(theme::glass_shape(look, 0.0, BACKDROP_TOP, w, (h - BACKDROP_TOP).max(0.0), 0.0, opacity, 0.0), 0.0);
-    back[11] = 0.0;
-    back
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1831,17 +1811,6 @@ mod tests {
         for n in ["battery-charging", "plug", "battery-low", "battery-high"] {
             assert!(!tessera_core::icons::glyph(n).is_empty(), "{n}");
         }
-    }
-
-    #[test]
-    fn the_screen_behind_blurs_under_the_bar() {
-        let look = theme::look_from(&json!({"appearance": {"look": "glass"}}), None, |_| None);
-        let b = backdrop_shape(&look, 1920.0, 1080.0, 0.5);
-        assert_eq!(&b[..5], &[0.0, 30.0, 1920.0, 1050.0, 0.0]);
-        // no lens, no rim, no shadow; the panel's fade
-        assert_eq!((b[6], b[7], b[11]), (0.0, 0.0, 0.0));
-        assert_eq!((b[17], b[19], b[20]), (0.5, 0.0, 0.0));
-        assert_eq!(backdrop_shape(&look, 100.0, 10.0, 1.0)[3], 0.0);
     }
 
     #[test]
