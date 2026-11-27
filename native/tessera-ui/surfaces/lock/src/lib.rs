@@ -939,10 +939,10 @@ impl Lock {
             d.on_osk(move || to(Box::new(M::Osk(on.clone()))));
         }
         {
-            let (to, on) = (to.clone(), name.to_string());
-            d.on_osk_key(move |r, c| to(Box::new(M::OskKey(on.clone(), r, c, false))));
-            let (to, on) = (to.clone(), name.to_string());
-            d.on_osk_repeat(move |r, c| to(Box::new(M::OskKey(on.clone(), r, c, true))));
+            let (tk, on) = (to.clone(), name.to_string());
+            d.on_osk_key(move |r, c| tk(Box::new(M::OskKey(on.clone(), r, c, false))));
+            let (tr, on) = (to.clone(), name.to_string());
+            d.on_osk_repeat(move |r, c| tr(Box::new(M::OskKey(on.clone(), r, c, true))));
         }
         d.set_osk_rows(ModelRc::new(VecModel::from(self.osk_rows.iter().map(|r| ui::OskRow { keys: r.model() }).collect::<Vec<_>>())));
         on!(on_step, |i| M::Step(i));
