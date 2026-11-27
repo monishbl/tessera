@@ -213,6 +213,8 @@ impl Overlay {
             });
             let ui = ui::OverlayUi::new().expect("OverlayUi");
             st.shell.apply_theme(&ui.global::<ui::Theme>());
+            // (Material: the kit's switch draws its tick as a Material Symbol)
+            ui.global::<ui::Symbols>().on_of(|g| tessera_core::icons::symbol(&g).into());
             self.wire(st, &ui);
             ui.set_icons(ModelRc::new(VecModel::from(model::WIDGETS.iter().map(|w| gl(w.2)).collect::<Vec<_>>())));
             ui.global::<ui::OvG>().set_bar_icons(ModelRc::new(VecModel::from(["cursor-click", "push-pin", "x", "arrows-out-simple"].iter().map(|n| gl(n)).collect::<Vec<_>>())));

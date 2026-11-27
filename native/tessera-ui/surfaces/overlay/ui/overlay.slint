@@ -9,6 +9,7 @@
 
 import { Theme } from "@tessera/theme.slint";
 import { Gl, GIcon } from "@tessera/small-icons.slint";
+import { Switch } from "@tessera/widgets.slint";
 
 export struct OvWidget {
     shown: bool,
@@ -407,40 +408,6 @@ component Thin inherits Rectangle {
         moved => {
             if self.pressed { root.moved(at(self.mouse-x)); }
         }
-    }
-}
-
-// A switch (Switch.qml): Glass's pill, or Material 3's outlined track
-component Toggle inherits Rectangle {
-    in property <bool> checked;
-    in property <string> label;
-    callback toggled();
-    width: Theme.material ? 52px : 38px;
-    height: Theme.material ? 32px : 22px;
-    border-radius: self.height / 2;
-    background: Theme.material ? (checked ? Theme.m3-primary : Theme.m3-surface-container-highest) : checked ? Theme.accent : Theme.toggle-off;
-    border-width: Theme.material && !checked ? 2px : 0;
-    border-color: Theme.m3-outline;
-    animate background { duration: Theme.hover; }
-    accessible-role: switch;
-    accessible-label: label;
-    accessible-checkable: true;
-    accessible-checked: checked;
-    accessible-action-default => { toggled(); }
-    Rectangle {
-        property <length> d: Theme.material ? (t.pressed ? 28px : checked ? 24px : 16px) : 18px;
-        width: d;
-        height: d;
-        x: checked ? parent.width - (Theme.material ? 4px : 2px) - d : (Theme.material ? 8px - (d - 16px) / 2 : 2px);
-        y: (parent.height - d) / 2;
-        border-radius: d / 2;
-        background: Theme.material ? (checked ? Theme.m3-on-primary : Theme.m3-outline) : #ffffff;
-        // (Material: springFast; Glass: popover on the emphasized curve, as Switch.qml)
-        animate x { duration: Theme.motion(Theme.material ? 222ms : Theme.popover); easing: Theme.material ? spring(0.4) : cubic-bezier(0.2, 0.9, 0.1, 1.0); }
-        animate width, height { duration: Theme.move-spatial; easing: spring(0.4); }
-    }
-    t := TouchArea {
-        clicked => { root.toggled(); }
     }
 }
 
@@ -843,7 +810,7 @@ export component OverlayUi inherits Window {
             Rectangle {
                 height: 24px;
                 Text { x: 0; height: parent.height; vertical-alignment: center; text: "Show crosshair"; color: Theme.label; font-size: Theme.small; }
-                Toggle {
+                Switch {
                     x: parent.width - self.width;
                     y: (parent.height - self.height) / 2;
                     checked: cross.enabled;
