@@ -7,47 +7,7 @@
 // keys; this draws it.
 
 import { Theme, Icon } from "@tessera/theme.slint";
-import { SearchField, IconButton, KeyHint, Busy, StateShape, ScrollIndicator } from "@tessera/widgets.slint";
-
-// PickerButton.qml: the states' text buttons, primary (accent) or secondary
-// (fill), 36 px. Glass: squishes to 97 % on a press (Theme.motion.press, 100
-// ms). Material: a 40 px pill, filled or tonal with state layers; while held
-// it swells (ElasticControl: min(6 %, 10 px), on springPress 7.5 / 0.3: ω
-// 21.7, ζ 0.43 → 290 ms spring(0.57)) and its corners tighten to 12 px on
-// springFast (12.8 / 0.54: ω 28.3, ζ 0.60 → 222 ms spring(0.4))
-component PickerButton inherits Rectangle {
-    in property <string> text;
-    in property <bool> primary;
-    callback clicked();
-    property <color> ink: Theme.material ? (primary ? Theme.m3-on-primary : Theme.m3-on-secondary-container) : primary ? Theme.on-accent : Theme.label;
-    width: label.preferred-width + (Theme.material ? 40px : 32px);
-    height: Theme.material ? 40px : 36px;
-    border-radius: Theme.material ? (touch.pressed ? 12px : self.height / 2) : Theme.radius-control;
-    animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); }
-    background: Theme.material ? (primary ? Theme.m3-primary : Theme.m3-secondary-container).mix(ink, touch.pressed ? 0.9 : touch.has-hover ? 0.92 : 1)
-        : primary ? (touch.pressed ? Theme.accent.darker(0.2) : touch.has-hover ? Theme.accent.darker(0.1) : Theme.accent) : touch.pressed ? Theme.fill-pressed : touch.has-hover ? Theme.fill-hover : Theme.fill;
-    animate background { duration: Theme.hover; }
-    property <float> swell: Theme.material && touch.pressed ? 1 + min(0.06, 10px / max(self.width, self.height)) : 1;
-    animate swell { duration: Theme.motion(290ms); easing: spring(0.57); }
-    property <float> squish: !Theme.material && touch.pressed ? 0.97 : 1;
-    animate squish { duration: Theme.motion(100ms); }
-    transform-scale: swell * squish;
-    transform-origin: { x: self.width / 2, y: self.height / 2 };
-    accessible-role: button;
-    accessible-label: text;
-    accessible-action-default => { clicked(); }
-    label := Text {
-        text: root.text;
-        color: ink;
-        font-size: Theme.body;
-        font-weight: 500;
-        accessible-role: none;
-    }
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-}
+import { SearchField, IconButton, KeyHint, Busy, StateShape, ScrollIndicator, TextButton } from "@tessera/widgets.slint";
 
 export struct ECell {
     text: string,
@@ -488,12 +448,12 @@ export component EmojiPicker inherits Window {
                     alignment: center;
                     padding-top: 8px;
                     spacing: 8px;
-                    PickerButton {
+                    TextButton {
                         text: state-action;
                         primary: true;
                         clicked => { state-act(false); }
                     }
-                    if state-secondary != "": PickerButton {
+                    if state-secondary != "": TextButton {
                         text: state-secondary;
                         clicked => { state-act(true); }
                     }
