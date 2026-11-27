@@ -1463,7 +1463,8 @@ impl Menubar {
                     .collect();
                 menus::space(*id, &here, &displays)
             }
-            MenuKind::Tray(..) => Vec::new(), // (rows come with the item's answer)
+            // (rows come with the item's answer: "Loading…" until then)
+            MenuKind::Tray(..) => menus::tray_waiting(false),
         }
     }
 
@@ -1572,6 +1573,8 @@ impl Menubar {
                 m.trail.clear();
             }
             tray::menu(key, path, st.shell.sender(NAME));
+            // (and kept up to date while it's open)
+            tray::follow(key, path, 0, st.shell.sender(NAME));
         }
         let m = self.menu.as_mut().unwrap();
         m.region_sent.clear();
@@ -1639,6 +1642,9 @@ impl Menubar {
                 m.region_sent = "closed".into();
             }
         }
+        if !self.tray_menu.is_empty() {
+            tray::unfollow();
+        }
         // (a tray menu closed: the tucked-away tray's 12 s start again)
         if !self.tray_menu.is_empty() && self.tray_open {
             let tx = st.tx.clone();
@@ -1677,6 +1683,7 @@ impl Menubar {
                         m.trail.push((id, label));
                     }
                     tray::submenu(&key, &path, id, st.shell.sender(NAME));
+                    tray::follow(&key, &path, id, st.shell.sender(NAME));
                 }
             }
             Action::TrayBack => {
@@ -1689,6 +1696,7 @@ impl Menubar {
                         Some(id) => tray::submenu(&key, &path, id, st.shell.sender(NAME)),
                         None => tray::menu(&key, &path, st.shell.sender(NAME)),
                     }
+                    tray::follow(&key, &path, up.unwrap_or(0), st.shell.sender(NAME));
                 }
             }
         }
@@ -3219,9 +3227,18 @@ impl Part for Menubar {
                 if let Some(m) = self.menu.as_mut().filter(|m| m.open && matches!(&m.kind, MenuKind::Tray(k, _) if *k == t.key)) {
                     // (in a submenu: "‹ <the level above>" first)
                     let back_to = (!m.trail.is_empty()).then(|| if m.trail.len() >= 2 { m.trail[m.trail.len() - 2].1.clone() } else { String::new() });
-                    let rows = menus::tray_in(&t.root, back_to.as_deref());
+                    let rows = menus::tray_answer(&t.root, back_to.as_deref(), t.failed);
                     m.ui.set_can_back(back_to.is_some());
-                    Self::show_rows(m, rows, material);
+                    if t.live {
+                        // (the app changed it while open: in place, the highlight kept)
+                        if m.rows != rows {
+                            let current = m.ui.get_current();
+                            Self::show_rows(m, rows, material);
+                            m.ui.set_current(current);
+                        }
+                    } else {
+                        Self::show_rows(m, rows, material);
+                    }
                 }
                 return;
             }
