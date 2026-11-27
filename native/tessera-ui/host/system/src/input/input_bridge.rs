@@ -282,7 +282,7 @@ impl Input {
             "mice": mouse["mice"], "touchpads": mouse["touchpads"], "boundaryAvailable": mouse["boundaryAvailable"].as_bool().unwrap_or(false),
             "keymap": {
                 "ready": self.km.ready(), "defaultsError": self.km.defaults_error, "userError": self.km.user_error, "saveError": self.km.save_error,
-                "modKey": self.km.mod_key, "hyprDir": self.hypr_dir, "threeFingerDrag": self.km.three_finger_drag(),
+                "modKey": self.km.mod_key, "hyprDir": self.hypr_dir, "threeFingerDrag": self.km.three_finger_drag(), "failed": failed_binds(),
                 "binds": self.binds_cache.0, "gestures": self.binds_cache.1, "gestureDefaults": gdefs
             },
             "dictation": {

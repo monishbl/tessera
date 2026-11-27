@@ -207,6 +207,9 @@ end
 -- Keys already taken: a second bind on the same keys is skipped (it happens
 -- when MOD is ALT in the sandbox, or a custom shortcut reuses a default's keys)
 local taken = {}
+-- The binds Hyprland refused (a key name it doesn't know, a typo): written
+-- for Settings, which says so on their rows (audit #904)
+local failed = {}
 local function bindOne(e, user)
     if type(e.keys) ~= "string" then
         log("skipped " .. tostring(e.id) .. ": keys is not text")
@@ -274,6 +277,7 @@ local function bindOne(e, user)
         end
     else
         log("couldn't bind " .. tostring(e.id) .. " (" .. keys .. "): " .. tostring(berr))
+        failed[#failed + 1] = tostring(e.id)
     end
 end
 -- (each entry on its own: a wrong-typed one in keybinds.json is logged and
@@ -312,6 +316,22 @@ for _, e in ipairs(shortcuts) do
     if type(e) == "table" and e.keys and not e.disabled then bind(e, true) end
 end
 for _, e in ipairs(later) do bind(e, false) end
+
+-- Which ones Hyprland refused, for Settings → Keyboard: {"failed": [ids]} in
+-- $XDG_RUNTIME_DIR/tessera-keybinds-failed.json (TESSERA_RUNTIME_DIR: tests), written on every load (an
+-- empty list once they bind again; host/system/src/input/keymap.rs failed_binds)
+do
+    local run = TESSERA_RUNTIME_DIR or os.getenv("XDG_RUNTIME_DIR")
+    if run and run ~= "" then
+        local quoted = {}
+        for i, id in ipairs(failed) do quoted[i] = '"' .. id:gsub('[%c"\\]', "") .. '"' end
+        local f = io.open(run .. "/tessera-keybinds-failed.json", "w")
+        if f then
+            f:write('{"failed": [' .. table.concat(quoted, ", ") .. ']}\n')
+            f:close()
+        end
+    end
+end
 
 -- The left button going down and up, for the drop shelf (a shake or an
 -- edge while dragging: services/Shelf.qml). Non-consuming: apps still get

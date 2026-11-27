@@ -15,11 +15,15 @@ local root, userDir = arg[1], arg[2]
 TESSERA_MOD = 'SUPER'
 TESSERA_HYPR_DIR = root .. '/hypr/tessera'
 TESSERA_USER_DIR = userDir
+TESSERA_RUNTIME_DIR = userDir -- (the failed-binds file lands here, not in the session's)
 BINDS, GESTURES = {}, {}
 local any = setmetatable({}, { __index = function(t, k) return function(...) return { kind = k, args = { ... } } end end })
 hl = setmetatable({
     dsp = setmetatable({ window = any }, getmetatable(any)),
-    bind = function(keys, action, opts) table.insert(BINDS, keys) end,
+    bind = function(keys, action, opts)
+        if keys:find('Nosuchkey') then error('invalid key') end
+        table.insert(BINDS, keys)
+    end,
     gesture = function(g) table.insert(GESTURES, g.direction) end,
 }, { __index = function() return function() end end })
 '''
@@ -56,6 +60,21 @@ assert(#GESTURES >= 5, 'default gestures missing: ' .. #GESTURES)
             "not json",
         ):
             self.run_lua(user, tail)
+
+    def test_refused_binds_are_written_for_settings(self):
+        # (audit #904: a key Hyprland can't bind is named in the runtime
+        # file Settings reads; the file is written again, empty, once fixed)
+        tail = r'''
+dofile(root .. '/hypr/tessera/keybinds.lua')
+local f = assert(io.open(userDir .. '/tessera-keybinds-failed.json'))
+local t = f:read('*a')
+f:close()
+assert(t == EXPECT, t)
+'''
+        self.run_lua({"shortcuts": [{"id": "typo", "keys": "$MOD + Nosuchkey", "action": {"exec": "true"}},
+                                    {"id": "fine", "keys": "$MOD + F9", "action": {"exec": "true"}}]},
+                     'EXPECT = \'{"failed": ["typo"]}\\n\'\n' + tail)
+        self.run_lua({}, 'EXPECT = \'{"failed": []}\\n\'\n' + tail)
 
     def test_hyprland_lua_loads_keybinds_then_starts_the_shell(self):
         # (the real hyprland.lua with dofile recorded: keybinds and gestures

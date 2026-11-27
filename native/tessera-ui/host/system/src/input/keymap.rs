@@ -844,9 +844,39 @@ fn js_str(v: &Value) -> String {
     v.as_str().map(String::from).unwrap_or_else(|| v.to_string())
 }
 
+/// Where keybinds.lua says which binds Hyprland refused at its last load
+pub const FAILED_FILE: &str = "tessera-keybinds-failed.json";
+
+/// The ids of the binds Hyprland couldn't bind at its last config load
+/// (keybinds.lua writes {"failed": [ids]} to $XDG_RUNTIME_DIR each load;
+/// Settings marks those rows: audit #904). Read again only when it changed.
+pub fn failed_binds() -> Vec<String> {
+    static LAST: std::sync::Mutex<(Option<std::time::SystemTime>, Vec<String>)> = std::sync::Mutex::new((None, Vec::new()));
+    let path = crate::util::runtime_dir().join(FAILED_FILE);
+    let Some(modified) = std::fs::metadata(&path).and_then(|m| m.modified()).ok() else { return Vec::new() };
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if last.0 != Some(modified) {
+        *last = (Some(modified), parse_failed(&std::fs::read_to_string(&path).unwrap_or_default()));
+    }
+    last.1.clone()
+}
+
+/// {"failed": ["id", …]} → the ids (anything else: none)
+pub fn parse_failed(text: &str) -> Vec<String> {
+    serde_json::from_str::<Value>(text).ok().and_then(|v| v["failed"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_binds_file() {
+        assert_eq!(parse_failed(r#"{"failed": ["custom-a1", "screenshot"]}"#), vec!["custom-a1", "screenshot"]);
+        assert_eq!(parse_failed(r#"{"failed": []}"#), Vec::<String>::new());
+        assert_eq!(parse_failed("not json"), Vec::<String>::new());
+        assert_eq!(parse_failed(r#"{"failed": [1, "x"]}"#), vec!["x"]);
+    }
 
     #[test]
     fn app_shortcuts_quote_the_desktop_id() {
