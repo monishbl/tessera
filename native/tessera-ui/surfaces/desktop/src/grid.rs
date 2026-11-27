@@ -68,6 +68,8 @@ pub const KINDS: &[KindDef] = &[
     k("screenTime", "Screen Time", "hourglass-medium", &["s", "m"], false, false),
     k("batteryHistory", "Battery history", "battery-charging", &["s", "m"], false, false),
     k("stocks", "Stocks", "chart-line-up", &["s", "m", "l"], false, false),
+    // (Rust only: part of a web page, live; clip.rs. Each has its own page)
+    k("webClip", "Web clip", "globe", &["s", "m", "l"], true, true),
 ];
 
 pub fn kind(id: &str) -> Option<&'static KindDef> {

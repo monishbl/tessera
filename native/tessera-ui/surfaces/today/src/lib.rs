@@ -77,6 +77,12 @@ enum M {
     Entrance(i32),
     Name(String),
     Chime(bool),
+    /// an event's Join (its meeting link)
+    Join(String),
+    /// the reading list: open in reading mode, mark as read, remove
+    ReadOpen(String),
+    ReadDone(String),
+    ReadRemove(String),
     Backdrop(String, Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>>),
 }
 
@@ -93,6 +99,7 @@ struct Win {
     events_five: Rows<ui::TEvent>,
     todos: Rows<ui::TTodo>,
     hours: Rows<ui::THour>,
+    reading: Rows<ui::TRead>,
 }
 
 pub struct Today {
@@ -242,15 +249,20 @@ impl Today {
         on!(on_set_entrance, |i| M::Entrance(i));
         on!(on_set_name, |t| M::Name(t.to_string()));
         on!(on_set_chime, |b| M::Chime(b));
+        on!(on_join, |u| M::Join(u.to_string()));
+        on!(on_read_open, |u| M::ReadOpen(u.to_string()));
+        on!(on_read_done, |u| M::ReadDone(u.to_string()));
+        on!(on_read_remove, |u| M::ReadRemove(u.to_string()));
         d.set_cookie_shape(shape("cookie12").into());
-        let (events, events_five, todos, hours) = (Rows::new(), Rows::new(), Rows::new(), Rows::new());
+        let (events, events_five, todos, hours, reading) = (Rows::new(), Rows::new(), Rows::new(), Rows::new(), Rows::new());
+        d.set_reading(reading.model());
         d.set_events(events.model());
         d.set_events_five(events_five.model());
         d.set_todos(todos.model());
         d.set_hours(hours.model());
         ui.show().expect("show Today");
         let a11y = crate::a11y::A11y::new(&surface, st.tx.clone());
-        self.win = Some(Win { output: output.into(), surface, ui, a11y, glass_sent: String::new(), events, events_five, todos, hours });
+        self.win = Some(Win { output: output.into(), surface, ui, a11y, glass_sent: String::new(), events, events_five, todos, hours, reading });
         true
     }
 
@@ -427,13 +439,19 @@ impl Today {
         d.set_summary(model::summary(events.len(), open.len()).into());
         let rows: Vec<ui::TEvent> = model::event_rows(&events, now, s.clock24)
             .into_iter()
-            .map(|r| ui::TEvent { time: r.time.into(), title: r.title.into(), color: color(&r.color), past: r.past })
+            .map(|r| ui::TEvent { time: r.time.into(), title: r.title.into(), color: color(&r.color), past: r.past, link: r.link.into(), service: r.service.into() })
             .collect();
         w.events_five.set(rows.iter().take(5).cloned().collect());
         w.events.set(rows);
         // (by key: a to-do ticked off leaves; the rest keep their rows)
         w.todos.set_keyed(model::todo_rows(&open, now, s.clock24).into_iter().map(|r| ui::TTodo { key: r.key.into(), text: r.text.into(), due: r.due.into(), overdue: r.overdue }).collect(), |t| t.key.clone());
         d.set_todos_empty(model::todos_empty(!all.is_empty()).into());
+        let g = |n: &str| if material { tessera_core::icons::symbol(tessera_core::icons::glyph(n)) } else { tessera_core::icons::glyph(n) };
+        d.set_check_glyph(g("check").into());
+        d.set_x_glyph(g("x").into());
+        // (the reading list: read again each time, it's a small file the share sheet writes)
+        let reading = model::reading_rows(&tessera_core::readlist::load(), now);
+        w.reading.set_keyed(reading.into_iter().map(|(url, title, sub)| ui::TRead { url: url.into(), title: title.into(), sub: sub.into() }).collect(), |r| r.url.clone());
 
         let wx = st.shell.get::<Weather>().cloned().unwrap_or_default();
         d.set_weather_shown(weather::today_card(&st.shell.cfg));
@@ -565,6 +583,23 @@ impl Part for Today {
             M::Tick => self.tick(st),
             M::Minute => self.refresh(st),
             M::Close => self.close(st, true),
+            M::Join(url) => {
+                // (the meeting over Today: Today goes)
+                tessera_core::weblink::open(&url);
+                self.close(st, true);
+            }
+            M::ReadOpen(url) => {
+                tessera_core::weblink::reader(&url);
+                self.close(st, true);
+            }
+            M::ReadDone(url) => {
+                tessera_core::readlist::mark_read(&url);
+                self.refresh(st);
+            }
+            M::ReadRemove(url) => {
+                tessera_core::readlist::remove(&url);
+                self.refresh(st);
+            }
             M::Pin => {
                 crate::shell::ask("today.pin", serde_json::json!([]));
                 self.close(st, false);

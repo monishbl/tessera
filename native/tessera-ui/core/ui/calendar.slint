@@ -34,6 +34,8 @@
 //   remove(key, every) Delete in the editor (the host offers Undo for 8 s)
 //   move(key, day, every) an item dropped on another date ("y-mm-dd")
 //   restore()          Undo
+//   join(url)          an event's Join (its meeting link: Meet, Teams, Zoom…);
+//                      the host opens it (tessera_core::weblink)
 // functions (the host may call them back):
 //   create(key, short) the editor for a new event or to-do on that day
 //   edit(item)         the editor on that item (read-only when not editable)
@@ -76,6 +78,8 @@ export struct NcItem {
     account: bool, // an account's calendar (keeps a location)
     info: string, // the read-only view's text (when, where, from which calendar)
     cal-line: string, // an account event's "Calendar · account"
+    link: string, // its video meeting's link ("" none): a Join button
+    service: string, // whose meeting ("Google Meet", "Teams", "Zoom")
 }
 
 export struct NcDay {
@@ -267,6 +271,7 @@ export component CalendarTab {
     callback remove(string, int);
     callback move(string, string, int);
     callback restore();
+    callback join(string);
 
     // The wheel (CalendarWidget 273-283): it adds up, one step per notch
     // (a notch is 15 px here, Qt's 120), months or weeks; a touchpad's
@@ -913,7 +918,7 @@ export component CalendarTab {
                 }
                 VerticalLayout {
                     x: Theme.material ? (it.event ? 22px : 38px) : it.event ? 16px : 28px;
-                    width: parent.width - self.x - 8px;
+                    width: parent.width - self.x - 8px - (it.link != "" ? join-b.width + 8px : 0);
                     alignment: center;
                     it-title := Text {
                         text: it.title;
@@ -936,6 +941,17 @@ export component CalendarTab {
                         font-size: Theme.caption;
                         overflow: elide;
                     }
+                }
+                // (a meeting: Join, at the row's end)
+                join-b := PillButton {
+                    visible: it.link != "";
+                    x: parent.width - self.width - (Theme.material ? 6px : 4px);
+                    y: (parent.height - self.height) / 2;
+                    height: Theme.material ? 32px : 26px;
+                    kind: 1;
+                    text: "Join";
+                    label: "Join " + (it.service != "" ? it.service : "the meeting") + ": " + it.title;
+                    clicked => { root.join(it.link); }
                 }
             }
         }
@@ -1217,6 +1233,11 @@ export component CalendarTab {
                         }
                         Rectangle {
                             horizontal-stretch: 1;
+                        }
+                        if ed-key != "" && ed-item.link != "": PillButton {
+                            kind: ed-readonly ? 1 : 0;
+                            text: ed-item.service != "" ? "Join " + ed-item.service : "Join";
+                            clicked => { root.join(ed-item.link); }
                         }
                         PillButton {
                             kind: Theme.material ? 3 : 0;

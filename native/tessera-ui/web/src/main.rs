@@ -21,6 +21,7 @@ mod args;
 mod history;
 mod lens;
 mod nav;
+mod perms;
 mod place;
 mod theme;
 
@@ -767,6 +768,8 @@ fn build(args: Args, main_loop: glib::MainLoop) -> Rc<App> {
     let window = gtk::Window::builder().title(args.title.clone().unwrap_or_else(|| "Tessera Web".into())).default_width(w).default_height(h).decorated(false).build();
     window.add_css_class("tessera-web");
     window.set_child(Some(&root));
+    // (site permissions: the camera, the microphone, the screen, notifications)
+    perms::attach(&view, &overlay, &window, &menu, &palette, &data);
 
     let history_path = data.join("history.json");
     let history = if matches!(args.mode, Mode::Browse | Mode::Lens(_)) { history::History::load(&history_path) } else { history::History::default() };
@@ -803,8 +806,23 @@ fn build(args: Args, main_loop: glib::MainLoop) -> Rc<App> {
         main_loop,
     });
     wire(&app, &pill, &browser);
+    reader_at_start(&app);
     app.refresh();
     app
+}
+
+/// --reader (a reading-list link): reading mode once the first page is in
+fn reader_at_start(app: &Rc<App>) {
+    if !app.args.reader {
+        return;
+    }
+    let once = Rc::new(Cell::new(false));
+    let a = app.clone();
+    app.view.connect_load_changed(move |_, ev| {
+        if ev == webkit6::LoadEvent::Finished && !once.replace(true) && !a.reader.is_active() {
+            a.reader.set_active(true);
+        }
+    });
 }
 
 /// Every signal: the page's, the bar's, the keys

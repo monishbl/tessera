@@ -450,6 +450,7 @@ Singleton {
                 property list<string> iconPositions: [] // "path\tcol\trow" in icon spots (half a widget cell)
                 property bool smartRotate: true // Smart Stacks bring forward what matters now
                 property list<string> stocks: ["AAPL", "MSFT", "^GSPC", "BTC-USD", "NVDA", "GOOGL"] // Yahoo Finance symbols for the Stocks widget
+                property list<string> webClips: [] // (Rust shell) Web clip widgets: one JSON object a clip, {id, url, region, crop, selector, every}
             }
 
             // The welcome screen (modules/welcome: the look, light or dark, a

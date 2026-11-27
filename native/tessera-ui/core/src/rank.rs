@@ -35,6 +35,8 @@ pub enum Run {
     Ask(String),
     /// AI isn't set up: its settings
     SetupAi,
+    /// a reading-list link, in reading mode (Search's "Reading list" section)
+    Read(String),
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

@@ -304,6 +304,90 @@ pub fn quicklook(target: &str) -> bool {
     }
 }
 
+/// A reading-list link in reading mode (tessera-web --reader); where Settings
+/// says otherwise (your browser), or without tessera-web, the default browser
+pub fn reader(url: &str) {
+    let url = url.trim().to_string();
+    if !is_web(&url) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let cfg = crate::cfgfile::config_value();
+        match route(&url, links_in_tessera(&cfg), bin().is_some()) {
+            Route::Web => {
+                let u = url.clone();
+                start_or(vec!["--reader".into(), url], move || xdg_open(&u));
+            }
+            Route::Default => xdg_open(&url),
+        }
+    });
+}
+
+/// A video meeting's link in an event (its location or notes): Google Meet,
+/// Microsoft Teams, Zoom (its web client), Webex, Jitsi, Whereby
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Meeting {
+    pub url: String,
+    /// "Google Meet", "Teams", "Zoom"…
+    pub service: &'static str,
+}
+
+/// The service a link is a meeting on (None: not one)
+pub fn meeting_service(url: &str) -> Option<&'static str> {
+    let u = url.trim().to_ascii_lowercase();
+    let rest = u.strip_prefix("https://").or_else(|| u.strip_prefix("http://"))?;
+    let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
+    let host = host.split(':').next().unwrap_or("");
+    let on = |d: &str| host == d || host.ends_with(&format!(".{d}"));
+    if host == "meet.google.com" && !path.is_empty() {
+        Some("Google Meet")
+    } else if (on("teams.microsoft.com") || on("teams.live.com")) && (path.contains("meet") || path.starts_with("l/")) {
+        Some("Teams")
+    } else if on("zoom.us") && (path.starts_with("j/") || path.starts_with("my/") || path.starts_with("w/") || path.starts_with("wc/")) {
+        Some("Zoom")
+    } else if on("webex.com") && path.contains("meet") {
+        Some("Webex")
+    } else if host == "meet.jit.si" && !path.is_empty() {
+        Some("Jitsi")
+    } else if on("whereby.com") && !path.is_empty() {
+        Some("Whereby")
+    } else {
+        None
+    }
+}
+
+/// A Zoom meeting's link for its web client (zoom.us/j/ID → zoom.us/wc/join/ID),
+/// so it opens in the browser rather than asking for the app; others as they are
+pub fn meeting_web(url: &str, service: &str) -> String {
+    if service != "Zoom" {
+        return url.to_string();
+    }
+    let Some(at) = url.find("/j/") else { return url.to_string() };
+    let (head, tail) = url.split_at(at);
+    let tail = &tail[3..];
+    let (id, query) = tail.split_once('?').map_or((tail, ""), |(i, q)| (i, q));
+    // (the passcode rides along: pwd=)
+    let pwd = query.split('&').find(|kv| kv.starts_with("pwd="));
+    format!("{head}/wc/join/{id}{}", pwd.map(|p| format!("?{p}")).unwrap_or_default())
+}
+
+/// The first meeting link in an event's location, then its notes
+pub fn meeting_link(location: &str, notes: &str) -> Option<Meeting> {
+    for text in [location, notes] {
+        for word in text.split(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '"' | '\'' | '(' | ')' | '[' | ']' | '|')) {
+            let w = word.trim_end_matches(['.', ',', ';', ':', '!']);
+            if !is_web(w) {
+                continue;
+            }
+            if let Some(service) = meeting_service(w) {
+                return Some(Meeting { url: meeting_web(w, service), service });
+            }
+        }
+    }
+    None
+}
+
 /// Whether a Hyprland event line says a window of `class` opened
 /// (`openwindow>>ADDRESS,WORKSPACE,CLASS,TITLE`)
 pub fn opened(line: &str, class: &str) -> bool {
@@ -459,6 +543,23 @@ mod tests {
     fn the_bars_thumbnail() {
         assert_eq!((bar::THUMB_X, bar::THUMB_Y, bar::THUMB, bar::THUMB_RADIUS), (130, 14, 22, 6));
         assert_eq!(bar::H, 50);
+    }
+
+    #[test]
+    fn meeting_links_in_events() {
+        let m = meeting_link("", "Join with Google Meet: https://meet.google.com/abc-defg-hij.\nOr dial in").unwrap();
+        assert_eq!((m.url.as_str(), m.service), ("https://meet.google.com/abc-defg-hij", "Google Meet"));
+        let t = meeting_link("Microsoft Teams Meeting", "Join: <https://teams.microsoft.com/l/meetup-join/19%3ameeting_x/0?context=y>").unwrap();
+        assert_eq!(t.service, "Teams");
+        assert!(t.url.starts_with("https://teams.microsoft.com/l/meetup-join/"));
+        let z = meeting_link("https://us02web.zoom.us/j/8123456789?pwd=abc123&from=addon", "").unwrap();
+        assert_eq!((z.url.as_str(), z.service), ("https://us02web.zoom.us/wc/join/8123456789?pwd=abc123", "Zoom"));
+        // (the location first; plain sites and other links aren't meetings)
+        assert_eq!(meeting_link("https://meet.jit.si/Standup", "https://meet.google.com/x").unwrap().service, "Jitsi");
+        assert_eq!(meeting_link("Main St", "See https://example.com/agenda and https://meet.google.com/"), None);
+        assert_eq!(meeting_service("https://evil.com/meet.google.com/x"), None);
+        assert_eq!(meeting_service("https://zoom.us/pricing"), None);
+        assert_eq!(meeting_service("ftp://meet.google.com/x"), None);
     }
 
     #[test]

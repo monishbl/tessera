@@ -1112,6 +1112,8 @@ export component Center inherits Window {
                             set-week(w) => { cal-week-set(w); }
                             pick(k) => { cal-pick(k); }
                             todo-toggle(k) => { root.todo-toggle(k); }
+                            // (a meeting's Join: the quick-look browser, as a notification's links)
+                            join(u) => { root.link(u); }
                         }
                         todo := TodoTab {
                             y: cal.y;

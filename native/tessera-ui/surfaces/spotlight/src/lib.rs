@@ -48,6 +48,7 @@ use tessera_core::*;
 
 pub mod layout;
 pub mod providers;
+pub mod reading;
 // (Search's ranking lives in tessera-core: the Overview ranks with it too)
 pub use tessera_core::rank;
 
@@ -130,6 +131,8 @@ struct Inputs {
     contents: Vec<String>,
     home: String,
     material: bool,
+    /// the reading list (reading.rs)
+    reading: Vec<tessera_core::readlist::Item>,
 }
 
 /// The rows for one ranking, laid out
@@ -160,7 +163,8 @@ impl Inputs {
             contents: &self.contents,
             home: &self.home,
         };
-        let (rows, wants) = rank::query(&self.text, &k);
+        let (mut rows, wants) = rank::query(&self.text, &k);
+        reading::merge(&self.text, &self.reading, &mut rows, tessera_core::util::now_ms());
         let (entries, content_h) = if self.material { layout::material(&rows) } else { layout::glass(&rows) };
         Ranked { rows, wants, have_extras: self.extras.is_some(), entries, content_h, material: self.material }
     }
@@ -185,6 +189,8 @@ struct KeyCtx {
     material: bool,
     has_path: bool,
     focus: i32,
+    /// the selected row is a reading-list link (Ctrl+D, Ctrl+Delete)
+    reading: bool,
 }
 
 /// The keys the panel takes from the field (the field gets the rest)
@@ -197,6 +203,9 @@ fn handles(c: KeyCtx, text: &str, shift: bool, ctrl: bool) -> bool {
         return true;
     }
     if c.focus != 0 && text == " " {
+        return true;
+    }
+    if c.reading && ctrl && (text.eq_ignore_ascii_case("d") || is(Key::Delete)) {
         return true;
     }
     c.has_path && ((text == " " && shift) || (ctrl && text.eq_ignore_ascii_case("y")))
@@ -363,6 +372,8 @@ pub struct Spotlight {
     plocate: bool,
     rg: bool,
     home: String,
+    /// the reading list's unread links, read as it opens (reading.rs)
+    reading: Vec<tessera_core::readlist::Item>,
     timers: [slint::Timer; 8],
     // pictures
     icons: HashMap<IconKey, slint::Image>,
@@ -415,6 +426,7 @@ impl Default for Spotlight {
             plocate: false,
             rg: false,
             home: std::env::var("HOME").unwrap_or_default(),
+            reading: Vec::new(),
             timers: Default::default(),
             icons: HashMap::new(),
             row_keys: Vec::new(),
@@ -585,6 +597,11 @@ impl Spotlight {
         self.rank_latest.store(self.rank_gen, Ordering::SeqCst);
         self.rank_applied = self.rank_gen;
         self.rank_typed = false;
+        // (the reading list, read now: an empty field shows it)
+        self.reading = tessera_core::readlist::unread();
+        if !self.reading.is_empty() {
+            self.refresh(st, false);
+        }
         crate::shell::ask("clipboard.refresh", serde_json::json!([]));
         // (the AI's name and the Chromecasts, before anything's typed)
         self.ask_extras(String::new(), false);
@@ -671,6 +688,7 @@ impl Spotlight {
             contents: self.contents.clone(),
             home: self.home.clone(),
             material: Self::material(st),
+            reading: self.reading.clone(),
         }
     }
 
@@ -973,7 +991,8 @@ impl Spotlight {
         let short = rank::ai_row("", Some(&self.ai)).title;
         ui.set_ask_label(if self.ai.configured { short.into() } else { "Set up AI".into() });
         let has_path = self.rows.get(self.sel).is_some_and(|r| !r.path.is_empty());
-        self.key_ctx.set(KeyCtx { material: m, has_path, focus: if m { 0 } else { self.focus } });
+        let reading = self.rows.get(self.sel).is_some_and(|r| reading::url_of(r).is_some());
+        self.key_ctx.set(KeyCtx { material: m, has_path, focus: if m { 0 } else { self.focus }, reading });
     }
 
     fn reveal(&mut self, st: &State) {
@@ -1031,6 +1050,7 @@ impl Spotlight {
             Run::Action(t) => crate::shell::ask("search.action", json!([t])),
             Run::Shell(k) => crate::shell::ask("search.run", json!([k])),
             Run::SetupAi => crate::shell::ask("panels.openSettings", json!(["ai"])),
+            Run::Read(u) => tessera_core::weblink::reader(u),
         }
     }
 
@@ -1114,6 +1134,17 @@ impl Spotlight {
                 self.select(st, i);
             } else {
                 self.push(st);
+            }
+        } else if ctrl && (text.eq_ignore_ascii_case("d") || is(Key::Delete)) {
+            // (a reading-list link: marked read, or taken off; reading.rs)
+            if let Some(u) = self.rows.get(self.sel).and_then(reading::url_of).map(String::from) {
+                if is(Key::Delete) {
+                    tessera_core::readlist::remove(&u);
+                } else {
+                    tessera_core::readlist::mark_read(&u);
+                }
+                self.reading.retain(|i| i.url != u);
+                self.refresh(st, false);
             }
         } else if (text == " " && shift) || (ctrl && text.eq_ignore_ascii_case("y")) {
             if let Some(p) = self.rows.get(self.sel).map(|r| r.path.clone()).filter(|p| !p.is_empty()) {
@@ -1521,6 +1552,7 @@ mod tests {
             contents: Vec::new(),
             home: "/home/x".into(),
             material: false,
+            reading: Vec::new(),
         };
         let r = std::thread::spawn(move || inputs.rank()).join().unwrap();
         let k = Known { apps: &apps, actions: &actions, ai: Some(&AiMeta::default()), home: "/home/x", ..Default::default() };

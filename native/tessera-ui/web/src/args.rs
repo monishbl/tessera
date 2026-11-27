@@ -9,6 +9,7 @@
 //!     --signin URL --done PREFIX   sign-in mode: prints the final URL when navigation reaches PREFIX
 //!     --quicklook            Quick Look mode: read-only preview, Space/Esc closes
 //!     --title TEXT           a title for the bar when there's no page title yet
+//!     --reader               start in reading mode (the reading list's links)
 
 use std::path::{Path, PathBuf};
 
@@ -58,6 +59,8 @@ pub struct Args {
     pub title: Option<String>,
     /// URL|FILE as given (None: a blank page, the address field ready)
     pub target: Option<String>,
+    /// --reader: reading mode once the page has loaded (Browse and Quick Look)
+    pub reader: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -80,6 +83,7 @@ usage: tessera-web [OPTIONS] [URL|FILE]
                          print {\"event\":\"done\",\"url\":…} and close
   --quicklook            read-only preview: Space or Esc closes
   --title TEXT           a title for the bar until the page has one
+  --reader               start in reading mode (a link from the reading list)
   --version              which build this is
 
 Esc closes the window. --signin and --portal print one JSON line on stdout:
@@ -117,6 +121,7 @@ pub fn parse(argv: &[String]) -> Result<Parsed, String> {
     let mut quicklook = false;
     let mut title: Option<String> = None;
     let mut target: Option<String> = None;
+    let mut reader = false;
     let mut i = 0;
     let mut only_positional = false;
     while i < argv.len() {
@@ -165,9 +170,10 @@ pub fn parse(argv: &[String]) -> Result<Parsed, String> {
             "--done" => done = Some(value("a URL prefix")?),
             "--quicklook" => quicklook = true,
             "--title" => title = Some(value("a title")?),
+            "--reader" => reader = true,
             _ => return Err(format!("unknown option {name}")),
         }
-        if inline.is_some() && matches!(name, "--portal" | "--quicklook") {
+        if inline.is_some() && matches!(name, "--portal" | "--quicklook" | "--reader") {
             return Err(format!("{name} takes no value"));
         }
     }
@@ -201,8 +207,14 @@ pub fn parse(argv: &[String]) -> Result<Parsed, String> {
     } else {
         Mode::Browse
     };
+    if reader && !matches!(mode, Mode::Browse | Mode::QuickLook) {
+        return Err("--reader is for a page: not with --lens, --portal or --signin".into());
+    }
+    if reader && target.is_none() {
+        return Err("--reader needs a URL or a file".into());
+    }
     let title = title.filter(|t| !t.trim().is_empty());
-    Ok(Parsed::Run(Args { mode, place, title, target }))
+    Ok(Parsed::Run(Args { mode, place, title, target, reader }))
 }
 
 /// What the window loads first for a URL|FILE argument: a file that's there
@@ -294,6 +306,17 @@ mod tests {
         assert_eq!(p(&["--version"]), Ok(Parsed::Version));
         // (after --, a name starting with -- is a file)
         assert_eq!(run(&["--", "--odd.html"]).target.as_deref(), Some("--odd.html"));
+    }
+
+    #[test]
+    fn reading_mode_from_the_start() {
+        let a = run(&["--reader", "https://example.com/story"]);
+        assert!(a.reader && a.mode == Mode::Browse);
+        assert!(!run(&["https://example.com"]).reader);
+        assert!(run(&["--quicklook", "--reader", "a.html"]).reader);
+        assert!(p(&["--reader"]).is_err());
+        assert!(p(&["--reader=yes", "https://a"]).is_err());
+        assert!(p(&["--reader", "--portal", "https://a"]).is_err());
     }
 
     #[test]

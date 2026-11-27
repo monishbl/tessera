@@ -261,7 +261,8 @@ impl AccountsBridge {
                 }
             }
             "microsoftSignIn" => h.ask("cloudaccounts.connectMicrosoft", json!([])),
-            "appleAccount" => h.ask("launch.open", json!(["https://account.apple.com/account/manage"])),
+            // (where Settings says links open: the quick-look browser, tessera_core::weblink)
+            "appleAccount" => h.ask("launch.openLink", json!(["https://account.apple.com/account/manage"])),
             "needsInstall" => {
                 if let Some(l) = arg(0).as_array() {
                     let l: Vec<String> = l.iter().map(|x| x.as_str().map(String::from).unwrap_or_else(|| x.to_string())).collect();

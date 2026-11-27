@@ -50,6 +50,7 @@ pub fn desc(id: &str) -> &'static str {
         "screenTime" => "How long you've used the computer today, and on which apps.",
         "batteryHistory" => "Your battery over the last 24 hours.",
         "stocks" => "Today's prices for your symbols (right-click it: Widget options).",
+        "webClip" => "Part of a web page, kept up to date: a score, a chart, a status. Right-click it to choose the page.",
         _ => "",
     }
 }
