@@ -239,6 +239,17 @@ component CapsuleSlider {
             height: vertical ? self.len : root.height;
             border-radius: thick / 2;
             background: Theme.dark ? #ffffffeb : #ffffff;
+            // the level's mark: a short grey bar inset at the fill's end, so a
+            // full slider still reads as a level, not a blank white pill (#230)
+            if v > 0.02: Rectangle {
+                property <length> mark-l: max(8px, round(thick * 0.36 / 1px) * 1px);
+                x: vertical ? (parent.width - self.width) / 2 : parent.width - 9px - self.width;
+                y: vertical ? 9px : (parent.height - self.height) / 2;
+                width: vertical ? mark-l : 3px;
+                height: vertical ? 3px : mark-l;
+                border-radius: 1.5px;
+                background: #000000.with-alpha(Theme.dark ? 0.3 : 0.2);
+            }
         }
     }
     Ic {
@@ -988,9 +999,10 @@ component QsTile {
         }
     }
 
-    // Small: the icon (the battery's reading under it)
+    // Small: the icon, its name under it (Android's labelled small tiles:
+    // four icons alone didn't say what they were, #262), or the battery's reading
     if !large: Ic {
-        y: (root.height - 22px) / 2 - (info && m.id == "battery" ? 9px : 0);
+        y: (root.height - 22px) / 2 - 9px;
         height: 22px;
         icon: m.icon;
         fill: on;
@@ -1005,6 +1017,18 @@ component QsTile {
         color: sub-ink;
         font-size: 12px;
         font-weight: 500;
+    }
+    if !large && !(info && m.id == "battery"): Text {
+        x: 6px;
+        y: root.height / 2 + 14px - self.preferred-height / 2;
+        width: root.width - 12px;
+        horizontal-alignment: center;
+        text: m.label;
+        color: ink.with-alpha(0.85);
+        font-size: 11px;
+        font-weight: 500;
+        overflow: elide;
+        accessible-role: none;
     }
 
     // Large: the icon button, the name and state, a chevron
@@ -1553,6 +1577,15 @@ export component Block inherits VerticalLayout {
             height: parent.height;
             border-radius: 13px;
             background: Theme.dark ? #ffffffeb : #ffffff;
+            // (the level's mark at the fill's end: full still reads as a level, #230)
+            if b.value > 0.02: Rectangle {
+                x: parent.width - 8px - self.width;
+                y: (parent.height - self.height) / 2;
+                width: 3px;
+                height: 10px;
+                border-radius: 1.5px;
+                background: #000000.with-alpha(Theme.dark ? 0.3 : 0.2);
+            }
         }
         Ic {
             x: 8px;
