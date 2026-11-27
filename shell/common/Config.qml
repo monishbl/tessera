@@ -113,6 +113,9 @@ Singleton {
                 property string mode: "dark" // dark | light | auto (light from sunrise to sunset)
                 property string gaps: "compact" // round windows: none | compact (3 between, 4 at the edges) | comfortable (5, 10)
                 property bool clock24: false // 24-hour time everywhere (TimeFormat)
+                // (the Rust shell's: declared so the fallback keeps them)
+                property string clockHours: "auto" // auto (the system's language) | 12 | 24
+                property string weekStart: "auto" // auto (the system's language) | monday | sunday | saturday
                 // The look: glass (this shell) | material (experimental: Material 3
                 // Expressive, the material/ folder; switching restarts the shell,
                 // assets/scripts/switch-look.sh)

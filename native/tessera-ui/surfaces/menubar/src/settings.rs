@@ -35,7 +35,7 @@ pub fn menu_icon(cfg: &Value) -> &'static str {
 /// 7:26 PM" (12-hour) or "Wed 4 Nov 19:26", with seconds or without the date
 /// as the settings say
 pub fn clock_formats(cfg: &Value) -> (String, String) {
-    let h24 = cfg["appearance"]["clock24"].as_bool().unwrap_or(false);
+    let h24 = tessera_core::locale::clock24(&cfg);
     let date = cfg["menubar"]["showDate"].as_bool().unwrap_or(true);
     let secs = cfg["menubar"]["showSeconds"].as_bool().unwrap_or(false);
     let time = match (h24, secs) {

@@ -420,6 +420,7 @@ export component CalendarTab {
     in property <string> outline; // Material: today, when chosen too, is a cookie
     in property <string> title;
     in property <bool> week;
+    in property <[string]> letters: ["M", "T", "W", "T", "F", "S", "S"]; // the month's header, from the week's first day
     in property <[NcDay]> days;
     in property <string> day-title;
     in property <string> day-key;
@@ -670,7 +671,7 @@ export component CalendarTab {
                     accept
                 }
             }
-            for l[i] in ["M", "T", "W", "T", "F", "S", "S"]: Text {
+            for l[i] in root.letters: Text {
                 x: i * cell;
                 y: 0;
                 width: cell;

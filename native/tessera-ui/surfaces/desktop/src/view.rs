@@ -89,7 +89,7 @@ pub fn when(start: i64, all_day: bool, today: (i64, i64, i64), small: bool, h24:
     }
 }
 
-/// One day of the medium calendar's month: its grid column (Monday first)
+/// One day of the medium calendar's month: its grid column (from the week's first day)
 /// and row (from the first week)
 #[derive(Clone, Debug, PartialEq)]
 pub struct MonthDay {
@@ -101,10 +101,12 @@ pub struct MonthDay {
     pub busy: bool,
 }
 
-/// The month of `today`, its busy days ("y-m-d", month from 0) dotted
-pub fn month(today: (i64, i64, i64), selected: (i64, i64, i64), busy: &HashSet<String>) -> (Vec<MonthDay>, i64) {
+/// The month of `today`, its busy days ("y-m-d", month from 0) dotted; weeks
+/// from `start` (0 Sunday … 6 Saturday)
+pub fn month(today: (i64, i64, i64), selected: (i64, i64, i64), busy: &HashSet<String>, start: u32) -> (Vec<MonthDay>, i64) {
     let (y, m, _) = today;
-    let lead = weekday_mon(y, m, 1);
+    // (Monday 0 → Sunday 0, then from the first day)
+    let lead = tessera_core::locale::column(((weekday_mon(y, m, 1) + 1) % 7) as u32, start) as i64;
     let days = days_in_month(y, m);
     let weeks = (lead + days + 6) / 7;
     let out = (1..=days)
@@ -294,12 +296,19 @@ mod tests {
         assert_eq!(weekday_mon(2026, 11, 5), 3);
         assert_eq!(weekday_mon(2026, 11, 1), 6);
         let busy: HashSet<String> = ["2026-10-12".to_string()].into_iter().collect();
-        let (days, weeks) = month((2026, 11, 5), (2026, 11, 12), &busy);
+        let (days, weeks) = month((2026, 11, 5), (2026, 11, 12), &busy, 1);
         assert_eq!((days.len(), weeks), (30, 6));
         assert_eq!((days[0].col, days[0].row), (6, 0));
         assert_eq!((days[1].col, days[1].row), (0, 1));
         assert!(days[4].today && !days[4].selected);
         assert!(days[11].selected && days[11].busy);
+        // Sunday first: 1 November 2026 opens the first row, five weeks
+        let (days, weeks) = month((2026, 11, 5), (2026, 11, 12), &busy, 0);
+        assert_eq!((days[0].col, days[0].row, weeks), (0, 0, 5));
+        assert_eq!((days[6].col, days[7].col, days[7].row), (6, 0, 1));
+        // Saturday first: the 1st is the second column
+        let (days, _) = month((2026, 11, 5), (2026, 11, 12), &busy, 6);
+        assert_eq!(days[0].col, 1);
     }
 
     #[test]

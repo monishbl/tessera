@@ -356,6 +356,8 @@ struct Cfg {
     stocks: Vec<String>,
     graph: String,
     h24: bool,
+    /// the week's first day, 0 Sunday … 6 Saturday (appearance.weekStart or the language)
+    week_start: u32,
     /// desktop.screen: "primary" or a connector name (#501)
     screen: String,
 }
@@ -375,7 +377,8 @@ impl Cfg {
             cities: list("worldClocks", default_cities),
             stocks: list("stocks", default_stocks),
             graph: cfg["resources"]["graphStyle"].as_str().unwrap_or("area").to_string(),
-            h24: cfg["appearance"]["clock24"].as_bool().unwrap_or(false),
+            h24: tessera_core::locale::clock24(&cfg),
+            week_start: tessera_core::locale::week_start(&cfg),
             screen: d["screen"].as_str().unwrap_or("primary").to_string(),
         }
     }
@@ -922,10 +925,12 @@ impl Desktop {
                 r.lines = keep!(lines, lines);
                 r.t3 = if small || on_today { "No more events today" } else { "No events" }.into();
                 let busy: HashSet<String> = f.busy.iter().cloned().collect();
-                let (days, weeks) = view::month(today, sel, &busy);
+                let (days, weeks) = view::month(today, sel, &busy, c.week_start);
                 let days: Vec<ui::DDay> = days.iter().map(|d| ui::DDay { label: d.day.to_string().into(), col: d.col as i32, row: d.row as i32, today: d.today, selected: d.selected, busy: d.busy }).collect();
                 r.days = keep!(days, days);
                 r.n1 = weeks as f32;
+                // (the header's letters, from the week's first day: chars, the clock's slots elsewhere)
+                r.chars = keep!(chars, tessera_core::locale::weekday_letters(c.week_start).into_iter().map(SharedString::from).collect::<Vec<_>>());
                 r.t4 = view::fmt("%B", now).to_uppercase().into();
             }
             "reminders" => {

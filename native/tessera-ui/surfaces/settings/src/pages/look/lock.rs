@@ -51,7 +51,7 @@ pub fn boot_footer(b: &Value) -> String {
 
 pub fn lock(cx: &mut Ctx, p: &mut Page) {
     let material = cx.material;
-    let h24 = cx.b("appearance.clock24");
+    let h24 = cx.clock24();
 
     // Material: the clock, Android 17's styles from a carousel, its size and thickness
     if material {

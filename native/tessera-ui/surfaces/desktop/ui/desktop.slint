@@ -540,7 +540,7 @@ component CalendarW inherits Rectangle {
         property <length> cw: self.width / 7;
         property <length> ch: self.height / (2 + w.n1);
         T { x: 0; y: 0; text: w.t4; color: Desk.accent-ink; font-size: Theme.caption; font-weight: 700; }
-        for l[i] in ["M", "T", "W", "T", "F", "S", "S"]: T {
+        for l[i] in w.chars: T {
             x: i * cw;
             y: ch;
             width: cw;

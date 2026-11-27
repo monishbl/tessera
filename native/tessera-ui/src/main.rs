@@ -244,6 +244,10 @@ fn main() {
     if args.get(1).map(String::as_str) == Some("ipc") {
         std::process::exit(tessera_host_shell::ipc::client(&args[2..]));
     }
+    // The system's language for dates and times (day and month names, the
+    // 12/24-hour default, the week's first day), before any thread starts:
+    // tessera_core::locale
+    tessera_core::locale::init();
     // --standalone: no QML shell; every surface, and the host in its place
     let standalone = args.iter().any(|a| a == "--standalone");
     let args: Vec<String> = args.into_iter().filter(|a| a != "--standalone").collect();

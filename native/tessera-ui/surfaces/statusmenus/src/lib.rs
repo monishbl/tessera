@@ -603,7 +603,7 @@ impl StatusMenus {
     fn push_weather(&self, st: &State) {
         let Some(w) = &self.win else { return };
         let wx = st.shell.get::<Weather>().cloned().unwrap_or_default();
-        let h24 = st.shell.cfg["appearance"]["clock24"].as_bool().unwrap_or(false);
+        let h24 = tessera_core::locale::clock24(&st.shell.cfg);
         w.ui.set_wx_note(model::weather_note(wx.ready, &wx.error).into());
         w.ui.set_wx_place(if wx.place.is_empty() { "Weather".into() } else { wx.place.as_str().into() });
         w.ui.set_wx_icon(tessera_core::icons::glyph(if wx.icon.is_empty() { "cloud" } else { wx.icon }).into());

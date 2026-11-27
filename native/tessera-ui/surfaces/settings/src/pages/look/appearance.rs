@@ -97,7 +97,7 @@ fn read_os_release() -> (String, String) {
 pub fn appearance(cx: &mut Ctx, p: &mut Page) {
     // "Glass effect is off", first, while the plugin isn't working
     super::glassplugin::top(cx, p);
-    let h24 = cx.b("appearance.clock24");
+    let h24 = cx.clock24();
     let wall = wallpaper_path(cx);
     let wall_img = if wall.is_empty() { None } else { cx.picture(&wall, 640, 400) };
     let look = cx.s("appearance.look");
@@ -146,8 +146,35 @@ pub fn appearance(cx: &mut Ctx, p: &mut Page) {
     let mp = cx.pick("appearance.mode", &modes);
     rows.push(Row::new("Appearance").detail(detail).segmented(&["Light", "Dark", "Auto"], idx(&modes, &mode), mp).width(260.0));
 
-    let t24 = cx.toggle("appearance.clock24");
-    rows.push(Row::new("24-hour time").detail(format!("Clocks, events and alarms show {}", if h24 { "17:30" } else { "5:30 PM" })).switch(h24, t24));
+    // Time format: the system language's (audit #372), or 12/24-hour. A
+    // choice goes to clock24 too, for what reads only that (the lock, the
+    // login screen, the QML fallback); Auto clears it (an older clock24 true
+    // reads as 24-hour: tessera_core::locale::clock24)
+    let hours = ["auto", "12", "24"];
+    let chosen = match cx.s("appearance.clockHours").as_str() {
+        "12" => "12",
+        "24" => "24",
+        _ if cx.b("appearance.clock24") => "24",
+        _ => "auto",
+    };
+    let hp = cx.on(move |cx, a| {
+        let v = hours.get(a.i.max(0) as usize).copied().unwrap_or("auto");
+        cx.set("appearance.clockHours", v);
+        cx.set("appearance.clock24", v == "24");
+    });
+    let auto = if tessera_core::locale::system_clock24() { "24-hour" } else { "12-hour" };
+    rows.push(
+        Row::new("Time format")
+            .detail(format!("Clocks, events and alarms show {}{}", if h24 { "17:30" } else { "5:30 PM" }, if idx(&hours, &chosen) == 0 { format!(" (Auto: {auto}, from your system's language)") } else { String::new() }))
+            .segmented(&["Auto", "12-hour", "24-hour"], idx(&hours, &chosen), hp)
+            .width(300.0),
+    );
+    // The calendars' first weekday (audit #372 #512 #875)
+    let starts = ["auto", "monday", "sunday", "saturday"];
+    let ws = cx.s("appearance.weekStart");
+    let wp = cx.pick("appearance.weekStart", &starts);
+    let wdetail = if idx(&starts, &ws) == 0 { format!("Auto: {}, from your system's language", tessera_core::locale::day_name(tessera_core::locale::system_week_start(), false)) } else { "Calendars start their weeks on this day".to_string() };
+    rows.push(Row::new("Week starts on").detail(wdetail).segmented(&["Auto", "Monday", "Sunday", "Saturday"], idx(&starts, &ws), wp).width(360.0));
 
     let style = cx.s("appearance.iconStyle");
     let (values, options, w): (Vec<&str>, Vec<&str>, f32) = if cx.material {

@@ -1312,7 +1312,7 @@ impl Menubar {
         // the Recent list (the host's history, newest first; eight lines)
         let list = shell.get("island.list").as_array().cloned().unwrap_or_default();
         let now_s = ms_now();
-        let h24 = st.shell.cfg["appearance"]["clock24"].as_bool().unwrap_or(false);
+        let h24 = tessera_core::locale::clock24(&st.shell.cfg);
         let rows: Vec<ui::RecentRow> = list
             .iter()
             .take(8)

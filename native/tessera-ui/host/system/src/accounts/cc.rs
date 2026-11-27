@@ -841,7 +841,7 @@ impl ControlCenter {
             let status = if is_active {
                 ss(&focus, "statusText").to_string()
             } else if bs(sched, "enabled") {
-                let c24 = h.cfg()["appearance"]["clock24"].as_bool().unwrap_or(false);
+                let c24 = tessera_core::locale::clock24(&h.cfg());
                 format!("Scheduled {}–{}", fmt_hm(ss(sched, "from"), c24), fmt_hm(ss(sched, "to"), c24))
             } else {
                 String::new()

@@ -261,6 +261,7 @@ export component Center inherits Window {
     // the calendar
     in property <string> cal-title;
     in property <bool> cal-week;
+    in property <[string]> cal-letters: ["M", "T", "W", "T", "F", "S", "S"]; // the month's header, from the week's first day (tessera_core::locale)
     in property <[NcDay]> days;
     in property <string> day-title;
     in property <[NcItem]> day-items;
@@ -927,6 +928,7 @@ export component Center inherits Window {
                         visible: tab == 0;
                         title: cal-title;
                         week: cal-week;
+                        letters: cal-letters;
                         days: days;
                         day-title: day-title;
                         items: day-items;
