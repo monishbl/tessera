@@ -115,6 +115,13 @@ export global Theme {
 
     // (Theme.qml's controlAlpha: Material's container roles, see-through as far as Transparency says)
     in property <float> control-alpha: 1;
+    // A window's own colour, a sidebar over it, a grouped card on it (see-
+    // through) and an opaque card (Settings, Welcome): at the contrast
+    // Settings asks (Increase contrast: more opaque, the cards stand out more)
+    in property <color> window-bg: #1e1e21;
+    in property <color> sidebar-bg: #1f1f24c7;
+    in property <color> card-bg: #ffffff0d;
+    in property <color> card-solid: #232327;
     // Type: sizes (Theme.font)
     in property <length> caption: 11px;
     in property <length> small: 12px;
@@ -147,6 +154,11 @@ export global Theme {
     // moves (position, size, scale, a spring) jumps; colour and opacity
     // changes stay, as short crossfades.
     out property <bool> reduce-motion: still;
+
+    // A control that is off (greyed): its opacity, both looks. 0.5 keeps an
+    // off switch, segmented control or button at about 3:1 on its panel
+    // (it was 0.38-0.4: nearly invisible on the dark sheet).
+    out property <float> disabled-alpha: 0.5;
 
     // Radii (Glass / Material)
     // rows, bar items, key caps: 6 / 8

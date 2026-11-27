@@ -2,7 +2,16 @@
 // shell/common: KeyCombo.qml, IconButton.qml, Spinner.qml, MaterialShape.qml,
 // and the search fields of the emoji picker and clipboard panel).
 
-import { Theme, Ease, Icon } from "theme.slint";
+import { Theme, Ease } from "theme.slint";
+import { SymIcon } from "symbols.slint";
+
+// The kit: one shared set of controls (a surface uses these, not a copy of
+// its own): IconButton, PillButton and TextButton, Switch, Segmented,
+// TextField and SearchField, MenuRow, Spinner and Busy, ScrollIndicator,
+// FocusRing, Keycap and KeyHint, StateShape. Their icons are SymIcon's: a
+// Phosphor glyph, or in Material the Material Symbol for it (on a surface
+// whose main.slint exports Symbols and fills Symbols.of; without it the
+// Phosphor glyph stays).
 
 // A ghost icon button (IconButton.qml): transparent, a fill on hover, darker
 // pressed. Material: round, a state layer in the icon's colour, squaring off
@@ -19,7 +28,7 @@ export component IconButton inherits Rectangle {
     callback clicked();
     width: 28px;
     height: 28px;
-    opacity: enabled ? 1 : Theme.material ? 0.38 : 0.4;
+    opacity: enabled ? 1 : Theme.disabled-alpha;
     border-radius: Theme.material ? (touch.pressed ? min(8px, self.height / 2) : self.height / 2) : Theme.radius-control - 2px;
     background: Theme.material ? (touch.pressed ? Theme.m3-on-surface-variant.with-alpha(0.1) : touch.has-hover ? Theme.m3-on-surface-variant.with-alpha(0.08) : transparent)
         : touch.pressed ? Theme.fill-pressed : touch.has-hover ? Theme.fill : transparent;
@@ -29,7 +38,7 @@ export component IconButton inherits Rectangle {
     accessible-label: label;
     accessible-enabled: enabled;
     accessible-action-default => { if enabled { clicked(); } }
-    Icon {
+    SymIcon {
         text: icon;
         fill: root.fill;
         color: icon-color;
@@ -69,9 +78,9 @@ export component SearchField inherits Rectangle {
     border-width: Theme.material ? (input.has-focus ? 2px : 0) : 1px;
     border-color: input.has-focus ? (Theme.material ? Theme.m3-primary : Theme.accent) : transparent;
 
-    Icon {
-        x: Theme.material ? 14px : 10px;
-        width: 16px;
+    SymIcon {
+        x: Theme.material ? 12px : 10px;
+        width: Theme.material ? 20px : 16px;
         text: "\u{e30c}";
         font-size: 16px;
         color: Theme.tertiary;
@@ -211,7 +220,7 @@ export component StateShape inherits Rectangle {
         commands: outline;
         fill: shape-color;
     }
-    Icon {
+    SymIcon {
         text: icon;
         font-size: icon-size;
         color: icon-color;
@@ -230,7 +239,7 @@ export component TextButton inherits Rectangle {
     // (off: greyed, no hover or press look, not pressable)
     in property <bool> enabled: true;
     callback clicked();
-    opacity: enabled ? 1 : Theme.material ? 0.38 : 0.4;
+    opacity: enabled ? 1 : Theme.disabled-alpha;
     property <color> ink: Theme.material ? (primary ? Theme.m3-on-primary : Theme.m3-on-secondary-container) : primary ? Theme.on-accent : Theme.label;
     property <length> pad: Theme.material ? 40px : 32px;
     width: min(limit, label.preferred-width + pad);
@@ -270,14 +279,24 @@ export component TextButton inherits Rectangle {
 // right edge while it scrolls, gone 0.9 s after it stops. Lay it over the
 // Flickable (same y and height, at its right edge) and hand it the
 // Flickable's numbers; it shows only when there is more than fits.
+// `draggable` (a list with a gutter on its right, so the 12 px track takes
+// no row's clicks): it also shows while the pointer is on it, the thumb
+// drags and a click on the track jumps; `scroll-to(y)` hands back the
+// Flickable's new content-y (set `list.content-y = y`).
 export component ScrollIndicator inherits Rectangle {
     in property <length> content-y;
     in property <length> content-height;
     in property <length> view-height;
+    in property <bool> draggable;
+    callback scroll-to(length);
     width: 12px;
     visible: content-height > view-height + 1px;
     property <bool> moving;
     property <bool> moved;
+    property <length> span: max(1px, content-height - view-height);
+    property <length> th: max(28px, view-height * view-height / max(1px, content-height));
+    property <length> ty: (view-height - th) * max(0, min(1, -content-y / span));
+    property <bool> held: draggable && (track.has-hover || thumb.pressed);
     changed content-y => {
         moving = true;
         moved = true;
@@ -291,12 +310,484 @@ export component ScrollIndicator inherits Rectangle {
     }
     Rectangle {
         x: (parent.width - self.width) / 2;
-        width: 6px;
+        width: root.held ? 8px : 6px;
+        animate width { duration: Theme.move-fast; }
         border-radius: self.width / 2;
-        height: max(28px, root.view-height * root.view-height / max(1px, root.content-height));
-        y: (root.view-height - self.height) * max(0, min(1, -root.content-y / max(1px, root.content-height - root.view-height)));
-        background: Theme.dark ? #ffffff52 : #00000052;
-        opacity: root.moving ? 1 : 0;
-        animate opacity { duration: root.moving ? Theme.hover : 400ms; easing: ease-out; }
+        height: root.th;
+        y: root.ty;
+        background: (Theme.dark ? #ffffff : #000000).with-alpha(thumb.pressed ? 0.5 : 0.32);
+        opacity: root.moving || root.held ? 1 : 0;
+        animate opacity { duration: root.moving || root.held ? Theme.hover : 400ms; easing: ease-out; }
+    }
+    track := TouchArea {
+        enabled: root.draggable;
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && (self.mouse-y < root.ty || self.mouse-y > root.ty + root.th) {
+                root.scroll-to(-max(0px, min(root.span, (self.mouse-y - root.th / 2) / max(1px, self.height - root.th) * root.span)));
+            }
+        }
+        thumb := TouchArea {
+            y: root.ty;
+            height: root.th;
+            enabled: root.draggable;
+            property <length> grab;
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down {
+                    self.grab = self.mouse-y;
+                }
+            }
+            moved => {
+                if self.pressed {
+                    root.scroll-to(-max(0px, min(root.span, (root.ty + self.mouse-y - self.grab) / max(1px, root.height - root.th) * root.span)));
+                }
+            }
+        }
+    }
+}
+
+// The keyboard focus ring (FocusRing.qml): 2 px accent (Material 3 px
+// secondary) just outside a control. Hand it the control's size and corner;
+// show it only for focus that came from the keyboard (the kit's controls take
+// no focus on click: focus-on-click false).
+export component FocusRing inherits Rectangle {
+    in property <length> pw;
+    in property <length> ph;
+    in property <length> radius: 8px;
+    property <length> out: Theme.material ? 5px : 4px;
+    x: -out;
+    y: -out;
+    width: pw + 2 * out;
+    height: ph + 2 * out;
+    border-radius: radius + out;
+    border-width: Theme.material ? 3px : 2px;
+    border-color: Theme.material ? Theme.m3-secondary : Theme.accent;
+    background: transparent;
+    accessible-role: none;
+}
+
+// A spinner (Spinner.qml) at any size: Glass the circle-notch turning,
+// Material its loading arc that grows and shrinks as it turns
+export component Spinner inherits Rectangle {
+    in property <length> size: 16px;
+    in property <color> ink: Theme.material ? Theme.m3-primary : Theme.secondary;
+    in property <string> label: "Loading";
+    width: size;
+    height: size;
+    accessible-role: progress-indicator;
+    accessible-label: label;
+    property <duration> t: animation-tick();
+    if !Theme.material: Text {
+        width: 100%;
+        height: 100%;
+        text: "\u{eb44}";
+        font-family: "Phosphor-Bold";
+        font-size: root.size;
+        color: root.ink;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        transform-rotation: mod(root.t / 800ms, 1) * 360deg;
+        accessible-role: none;
+    }
+    if Theme.material: Path {
+        width: root.size;
+        height: root.size;
+        viewbox-width: 40;
+        viewbox-height: 40;
+        stroke: root.ink;
+        stroke-width: max(2px, root.size / 10);
+        property <float> a: mod(root.t / 1333ms, 1) * 360;
+        property <float> sweep: 40 + 220 * abs(sin(mod(root.t / 2666ms, 1) * 180deg));
+        transform-rotation: a * 1deg;
+        MoveTo { x: 20 + 16 * cos(0deg); y: 20 + 16 * sin(0deg); }
+        ArcTo { x: 20 + 16 * cos(sweep * 1deg); y: 20 + 16 * sin(sweep * 1deg); radius-x: 16; radius-y: 16; large-arc: sweep > 180; sweep: true; }
+    }
+}
+
+// A pill button (SettingsButton.qml, Dialog.qml's buttons) with every
+// state: hover, pressed, keyboard focus, off. kind: 0 tonal (Glass the fill;
+// Material secondary container), 1 filled (the accent; Material primary),
+// 2 danger (red text, a red tint under the pointer), 3 text (no fill at
+// rest; Material primary text). An optional icon before the text. Glass
+// presses in to 97%; Material's corners tighten while pressed and it swells
+// (press bounce).
+export component PillButton inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <int> kind;
+    in property <bool> enabled: true;
+    in property <string> label; // what a screen reader says ("": the text)
+    // the widest it grows (a long or translated label is elided)
+    in property <length> limit: 320px;
+    out property <bool> hovered: touch.has-hover;
+    callback clicked();
+    property <bool> m3: Theme.material;
+    property <bool> down: touch.pressed;
+    property <bool> over: touch.has-hover;
+    property <color> ink: kind == 1 ? (m3 ? Theme.m3-on-primary : Theme.on-accent)
+        : kind == 2 ? (m3 ? Theme.m3-error : Theme.danger)
+        : kind == 3 ? (m3 ? Theme.m3-primary : Theme.accent-ink)
+        : m3 ? Theme.m3-on-secondary-container : Theme.label;
+    property <length> pad: m3 ? (kind >= 2 ? 24px : 48px) : 24px;
+    width: min(limit, row.preferred-width + pad);
+    height: m3 ? 40px : 32px;
+    opacity: enabled ? 1 : Theme.disabled-alpha;
+    border-radius: m3 ? (down ? 12px : self.height / 2) : Theme.radius-control;
+    animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); }
+    transform-scale: down ? (m3 ? (Theme.press-bounce ? 1 + min(0.06, 10px / max(1px, self.width)) : 1) : 0.97) : 1;
+    animate transform-scale { duration: Theme.motion(m3 ? 290ms : 100ms); easing: m3 ? spring(0.57) : ease-out; }
+    background: kind == 1 ? (m3 ? Theme.m3-primary.mix(ink, down ? 0.9 : over ? 0.92 : 1) : down ? Theme.accent.darker(0.2) : over ? Theme.accent.darker(0.1) : Theme.accent)
+        : kind == 0 ? (m3 ? Theme.m3-secondary-container.mix(ink, down ? 0.9 : over ? 0.92 : 1) : down ? Theme.fill-pressed : over ? Theme.fill-hover : Theme.fill)
+        : kind == 2 && !m3 ? Theme.danger.with-alpha(down ? 0.22 : over ? 0.15 : 0)
+        : m3 ? ink.with-alpha(down ? 0.1 : over ? 0.08 : 0)
+        : down ? Theme.fill-pressed : over ? Theme.fill : transparent;
+    animate background { duration: Theme.hover; }
+    accessible-role: button;
+    accessible-label: label != "" ? label : text;
+    accessible-enabled: enabled;
+    accessible-action-default => { if enabled { clicked(); } }
+    forward-focus: keys;
+    keys := FocusScope {
+        focus-on-click: false;
+        enabled: root.enabled;
+        key-pressed(e) => {
+            if !e.repeat && (e.text == " " || e.text == Key.Return) {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
+    if keys.has-focus: FocusRing { pw: root.width; ph: root.height; radius: root.border-radius; }
+    row := HorizontalLayout {
+        alignment: center;
+        spacing: 6px;
+        if root.icon != "": SymIcon {
+            text: root.icon;
+            font-size: 16px;
+            color: root.ink;
+        }
+        Text {
+            text: root.text;
+            color: root.ink;
+            font-size: m3 ? 14px : Theme.body;
+            font-weight: kind == 1 && !m3 ? 600 : 500;
+            vertical-alignment: center;
+            overflow: elide;
+            accessible-role: none;
+        }
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// A switch (Switch.qml): Glass the accent when on, a white knob (hover and
+// press darken the track); Material primary with the thumb that grows on
+// and while pressed, a state layer round it, a tick on it when on. Space or
+// Enter toggles it from the keyboard.
+export component Switch inherits Rectangle {
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    in property <string> label;
+    callback toggled();
+    property <bool> m3: Theme.material;
+    width: m3 ? 52px : 38px;
+    height: m3 ? 32px : 22px;
+    opacity: enabled ? 1 : Theme.disabled-alpha;
+    border-radius: self.height / 2;
+    background: m3 ? (checked ? Theme.m3-primary : Theme.m3-surface-container-highest.with-alpha(Theme.control-alpha))
+        : checked ? (t.pressed ? Theme.accent.darker(0.15) : t.has-hover ? Theme.accent.darker(0.07) : Theme.accent)
+        : t.pressed ? Theme.fill-pressed : t.has-hover ? Theme.fill-hover : Theme.toggle-off;
+    animate background { duration: Theme.hover; }
+    border-width: m3 && !checked ? 2px : 0;
+    border-color: Theme.m3-outline;
+    accessible-role: switch;
+    accessible-checkable: true;
+    accessible-checked: checked;
+    accessible-label: label;
+    accessible-enabled: enabled;
+    accessible-action-default => { if enabled { toggled(); } }
+    forward-focus: keys;
+    keys := FocusScope {
+        focus-on-click: false;
+        enabled: root.enabled;
+        key-pressed(e) => {
+            if !e.repeat && (e.text == " " || e.text == Key.Return) {
+                root.toggled();
+                return accept;
+            }
+            reject
+        }
+    }
+    if keys.has-focus: FocusRing { pw: root.width; ph: root.height; radius: root.height / 2; }
+    // Glass: the knob (a little wider while pressed)
+    if !m3: Rectangle {
+        width: parent.height - 4px + (t.pressed ? 4px : 0);
+        height: parent.height - 4px;
+        y: 2px;
+        x: checked ? parent.width - self.width - 2px : 2px;
+        border-radius: self.height / 2;
+        background: #ffffff;
+        drop-shadow-blur: 2px;
+        drop-shadow-offset-y: 1px;
+        drop-shadow-color: #00000033;
+        animate x, width { duration: Theme.move-standard; easing: Ease.standard; }
+    }
+    // Material: the state layer and the thumb
+    property <length> size: t.pressed ? 28px : checked ? 24px : 16px;
+    property <length> cx: checked ? self.width - 16px : 16px;
+    animate size, cx { duration: Theme.motion(300ms); easing: spring(0.54); }
+    if m3 && (t.has-hover || t.pressed): Rectangle {
+        x: root.cx - 20px;
+        y: (parent.height - 40px) / 2;
+        width: 40px;
+        height: 40px;
+        border-radius: 20px;
+        background: (checked ? Theme.m3-primary : Theme.m3-on-surface).with-alpha(t.pressed ? 0.1 : 0.08);
+    }
+    if m3: Rectangle {
+        x: root.cx - root.size / 2;
+        y: (parent.height - root.size) / 2;
+        width: root.size;
+        height: root.size;
+        border-radius: root.size / 2;
+        background: checked ? Theme.m3-on-primary : t.has-hover || t.pressed ? Theme.m3-on-surface-variant : Theme.m3-outline;
+        animate background { duration: Theme.hover; }
+        if checked: SymIcon {
+            text: "\u{e182}"; // check
+            bold: true;
+            font-size: 12px;
+            color: Theme.m3-on-primary-container;
+        }
+    }
+    t := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.toggled(); }
+    }
+}
+
+// Segmented.qml: Glass, a track with the chosen one on a light pill (the
+// others lighten under the pointer); Material, a connected button group
+// (2 px apart, round ends, 8 px inside; the chosen one fills and turns
+// round). Each segment fits its label plus 24 px; the room to spare is
+// shared equally (too little shrinks them alike). Left and Right step it.
+export component Segmented inherits Rectangle {
+    in property <[string]> options;
+    in property <int> current;
+    in property <string> label;
+    in property <bool> enabled: true;
+    callback selected(int);
+    property <bool> m3: Theme.material;
+    property <length> gap: m3 ? 2px : 0;
+    height: m3 ? 36px : 30px;
+    border-radius: self.height / 2;
+    background: m3 ? transparent : Theme.toggle-off;
+    opacity: enabled ? 1 : Theme.disabled-alpha;
+    accessible-role: tab-list;
+    accessible-label: label;
+    accessible-enabled: enabled;
+    forward-focus: keys;
+    keys := FocusScope {
+        // (a click goes to what's under it: keys only)
+        focus-on-click: false;
+        enabled: root.enabled;
+        key-pressed(e) => {
+            if e.text == Key.LeftArrow && current > 0 { selected(current - 1); return accept; }
+            if e.text == Key.RightArrow && current < options.length - 1 { selected(current + 1); return accept; }
+            reject
+        }
+    }
+    if keys.has-focus: FocusRing { pw: root.width; ph: root.height; radius: root.height / 2; }
+    HorizontalLayout {
+        padding-left: 2px;
+        padding-right: 2px;
+        spacing: gap;
+        for o[i] in options: Rectangle {
+            property <bool> chosen: i == current;
+            property <length> full: self.height / 2;
+            property <length> inner: chosen ? full : touch.pressed ? 4px : 8px;
+            min-width: 0;
+            preferred-width: measure.preferred-width + 24px;
+            horizontal-stretch: 1;
+            height: parent.height;
+            measure := Text {
+                visible: false;
+                text: o;
+                font-size: m3 ? Theme.body : Theme.small;
+                font-weight: m3 ? 500 : 600;
+            }
+            // Glass: the selection pill on the chosen one, a light one under the pointer
+            if !m3: Rectangle {
+                y: 2px;
+                height: parent.height - 4px;
+                border-radius: self.height / 2;
+                background: chosen ? (Theme.dark ? #ffffff33 : #ffffff) : touch.pressed ? Theme.fill-pressed : touch.has-hover ? Theme.fill : transparent;
+                animate background { duration: Theme.hover; }
+                drop-shadow-blur: chosen && !Theme.dark ? 2px : 0;
+                drop-shadow-offset-y: 1px;
+                drop-shadow-color: #0000001f;
+            }
+            border-top-left-radius: !m3 ? 0 : i == 0 ? full : inner;
+            border-bottom-left-radius: self.border-top-left-radius;
+            border-top-right-radius: !m3 ? 0 : i == options.length - 1 ? full : inner;
+            border-bottom-right-radius: self.border-top-right-radius;
+            animate border-top-left-radius, border-top-right-radius { duration: Theme.motion(200ms); easing: spring(0.6); }
+            background: !m3 ? transparent : chosen ? Theme.m3-primary.mix(Theme.m3-on-primary, touch.pressed ? 0.9 : touch.has-hover ? 0.92 : 1)
+                : Theme.m3-surface-container-highest.with-alpha(Theme.control-alpha).mix(Theme.m3-on-surface-variant, touch.pressed ? 0.9 : touch.has-hover ? 0.92 : 1);
+            animate background { duration: Theme.hover; }
+            accessible-role: tab;
+            accessible-label: o;
+            accessible-checked: chosen;
+            accessible-action-default => { if root.enabled { selected(i); } }
+            Text {
+                text: o;
+                color: m3 ? (chosen ? Theme.m3-on-primary : Theme.m3-on-surface-variant) : chosen ? Theme.label : Theme.secondary;
+                font-size: m3 ? Theme.body : Theme.small;
+                font-weight: m3 ? 500 : 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+                accessible-role: none;
+            }
+            touch := TouchArea {
+                enabled: root.enabled;
+                mouse-cursor: pointer;
+                clicked => { root.selected(i); }
+            }
+        }
+    }
+}
+
+// A text field (TextField.qml): Glass a fill outlined in the separator, in
+// the accent while typing; Material FilledField's pill, outlined in primary
+// while typing. `accepted` on Enter, `edited` as it changes, `left` as the
+// focus goes elsewhere (keep what was typed).
+export component TextField inherits Rectangle {
+    in-out property <string> text <=> input.text;
+    in property <string> placeholder;
+    in property <string> label; // what a screen reader says ("": the placeholder)
+    in property <bool> read-only;
+    in property <bool> enabled: true;
+    in property <bool> autofocus;
+    in property <InputType> input-type: InputType.text;
+    out property <bool> focused: input.has-focus;
+    callback accepted(string);
+    callback edited(string);
+    callback left(string);
+    public function focus-input() {
+        input.focus();
+    }
+    public function select-all() {
+        input.select-all();
+    }
+    init => {
+        if root.autofocus {
+            input.focus();
+        }
+    }
+    property <bool> m3: Theme.material;
+    property <length> inset: m3 ? 16px : 10px;
+    height: m3 ? 40px : 32px;
+    border-radius: m3 ? min(self.height / 2, 28px) : Theme.radius-control - 2px;
+    background: m3 ? Theme.m3-surface-container-highest.with-alpha(Theme.control-alpha) : Theme.fill;
+    border-width: m3 ? (input.has-focus ? 2px : 0) : 1px;
+    border-color: m3 ? Theme.m3-primary : input.has-focus ? Theme.accent : Theme.separator;
+    opacity: !enabled ? Theme.disabled-alpha : read-only ? 0.7 : 1;
+    clip: true;
+    input := TextInput {
+        x: root.inset;
+        width: parent.width - 2 * root.inset;
+        height: parent.height;
+        color: Theme.label;
+        font-size: Theme.body;
+        vertical-alignment: center;
+        single-line: true;
+        enabled: root.enabled;
+        read-only: root.read-only;
+        input-type: root.input-type;
+        selection-background-color: m3 ? Theme.m3-primary.with-alpha(0.3) : Theme.accent.with-alpha(0.4);
+        accessible-label: root.label != "" ? root.label : root.placeholder;
+        accessible-placeholder-text: root.placeholder;
+        accepted => { root.accepted(self.text); }
+        edited => { root.edited(self.text); }
+        changed has-focus => {
+            if !self.has-focus {
+                root.left(self.text);
+            }
+        }
+    }
+    if input.text == "": Text {
+        x: input.x + 2px;
+        width: input.width - 2px;
+        height: parent.height;
+        text: root.placeholder;
+        color: Theme.tertiary;
+        font-size: Theme.body;
+        vertical-alignment: center;
+        overflow: elide;
+        accessible-role: none;
+    }
+}
+
+// A context or dropdown menu's row (ContextMenu.qml): a heading, a
+// separator, or an item that lights in the highlight while `hot` (under the
+// pointer or the arrows; `hovered` says the pointer came onto it); danger
+// items read red (Glass: a red highlight). The menu around it is its own.
+export component MenuRow inherits Rectangle {
+    in property <string> text;
+    in property <bool> header;
+    in property <bool> separator;
+    in property <bool> enabled: true;
+    in property <bool> danger;
+    in property <bool> hot;
+    callback activate();
+    callback hovered();
+    property <bool> item: !header && !separator;
+    property <bool> lit: hot && enabled && item;
+    height: separator ? 11px : header ? 26px : 28px;
+    accessible-role: list-item;
+    accessible-label: text;
+    accessible-enabled: enabled;
+    accessible-action-default => { if enabled && item { activate(); } }
+    if separator: Rectangle {
+        x: 9px;
+        width: parent.width - 18px;
+        height: 1px;
+        background: Theme.separator;
+    }
+    if header: Text {
+        x: 12px;
+        y: parent.height - self.height - 4px;
+        text: root.text;
+        color: Theme.material ? Theme.m3-primary : Theme.secondary;
+        font-size: Theme.small;
+        font-weight: 500;
+        accessible-role: none;
+    }
+    if item: Rectangle {
+        border-radius: Theme.radius-menu-row;
+        background: lit ? (danger && !Theme.material ? Theme.danger : Theme.highlight) : rt.pressed ? Theme.fill-pressed : transparent;
+        Text {
+            x: 12px;
+            width: parent.width - 24px;
+            height: parent.height;
+            text: root.text;
+            font-size: Theme.body;
+            vertical-alignment: center;
+            overflow: elide;
+            // (on-highlight: dark text on a light accent, both looks)
+            color: lit && !(Theme.material && danger) ? (danger ? #ffffff : Theme.on-highlight) : !enabled ? Theme.tertiary : danger ? Theme.danger : Theme.label;
+            accessible-role: none;
+        }
+    }
+    rt := TouchArea {
+        enabled: root.enabled && root.item;
+        changed has-hover => {
+            if self.has-hover { root.hovered(); }
+        }
+        clicked => { root.activate(); }
     }
 }
