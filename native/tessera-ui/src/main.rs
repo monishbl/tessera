@@ -35,9 +35,10 @@ use std::time::{Duration, Instant};
 use wayland::State;
 
 /// A line from the shell on stdin (RustUi.tell): `{"to": "<surface>", …}`
-/// reaches that part's `message` as the serde_json::Value
+/// reaches that part's `message` as the serde_json::Value (Search's lines
+/// reach the part whose Search asked: tessera_core::search_route)
 fn shell_said(state: &mut State, v: serde_json::Value) {
-    let Some(to) = v["to"].as_str().and_then(|t| surfaces::KNOWN.iter().find(|k| **k == t)) else { return };
+    let Some(to) = v["to"].as_str().and_then(|t| tessera_core::search_route::route(t).or_else(|| surfaces::KNOWN.iter().find(|k| **k == t).copied())) else { return };
     let mut v = Some(v);
     state.part(to, |p, st| p.message(st, Box::new(v.take().unwrap())));
 }

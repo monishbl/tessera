@@ -2,13 +2,15 @@
 // styles, compare shell/modules/overview/Overview.qml and WindowPreview.qml:
 // the spaces as miniatures of the screen (grid: a row per display with
 // several) or a strip of them on a bar at the top (macos), each window a
-// picture at its place, a search field that hands over to Search, the edge
-// zones of the other displays. Rust (src/surfaces/overview) lays it out and
-// decides every hover, click and drag from the pointer (one tracker over the
-// spaces); this draws it.
+// picture at its place, Search's own field and results (search.slint, from
+// surfaces/spotlight: typing searches here), the edge zones of the other
+// displays. Rust (src/surfaces/overview) lays it out and decides every
+// hover, click and drag from the pointer (one tracker over the spaces);
+// this draws it.
 
 import { Theme } from "@tessera/theme.slint";
 import { WGlyph, WIcon, WPreview, WMenu, WMenuRow } from "@tessera/wm.slint";
+import { SearchView } from "@spotlight/search.slint";
 
 export struct OvWin {
     address: string,
@@ -109,14 +111,12 @@ export component OverviewPanel inherits Window {
     in property <[OvPlus]> pluses;
     in property <[OvZone]> zones;
     in property <length> bar-h;
-    in property <string> placeholder: mac ? "Search" : "Search, or pick a space";
-    // Typing hands over to Search: the spaces fade and shrink away, and the
-    // field glides to where Search's field opens (tessera_core::handoff)
-    in property <bool> handing;
-    in property <WGlyph> g-search;
+    // Typing searches here (Search's own, tessera_spotlight::search): the
+    // spaces fade, slide down and step back, the field rises to Search's
+    // place and the results grow in under it; emptied, it all comes back
+    in property <bool> searching;
     in property <WGlyph> g-plus;
     in property <WGlyph> g-monitor;
-    in property <string> emoji-font: "Noto Color Emoji";
     in property <color> glass-fill: Theme.panel;
     in property <color> scrim: black;
     // What the pointer is doing (Rust decides from where it is)
@@ -167,31 +167,55 @@ export component OverviewPanel inherits Window {
     in-out property <int> menu-current: -1;
 
     out property <float> openness: shown ? 1 : 0;
-    out property <length> sx: round((root.width - 600px) / 2 / 1px) * 1px;
-    // (the macOS style's field sits at 36 % of the height)
+    // (the macOS style's field sits at 36 % of the height; layout.rs's search_y)
     out property <length> sy: (mac ? round(root.height * 0.36 / 1px) * 1px : 64px);
-    // (handing over, the spaces shrink further as they fade: toward Search)
-    out property <float> content-scale: handing ? 0.9 + 0.1 * openness : 0.97 + 0.03 * openness;
-    // The field's glide to Search's (spotlight.slint: Glass 680 × 56 px,
-    // Material min(720, width − 64) px, both at 20 % of the height): 0 here,
-    // 1 there. Reduce motion: there at once.
-    property <float> morph: handing ? 1 : 0;
-    animate morph {
-        duration: handing ? Theme.motion(Theme.material ? 300ms : 260ms) : 0ms;
-        easing: Theme.material ? cubic-bezier(0.2, 0, 0, 1) : cubic-bezier(0.25, 0.1, 0.25, 1);
+    out property <float> content-scale: 0.97 + 0.03 * openness;
+    // Search mode: 0 the spaces, 1 searching. Search's own spring
+    // (springDefault: ω 19.5, ζ 0.80), both ways; Reduce motion: at once;
+    // while closed (shown off) it's put back at once.
+    out property <float> search-t: searching ? 1 : 0;
+    animate search-t {
+        duration: Theme.motion(shown ? 322ms : 0ms);
+        easing: spring(0.2);
     }
-    property <length> to-w: Theme.material ? min(720px, root.width - 64px) : 680px;
-    // The field where it is now (the glass shape follows it; Rust reads these)
-    out property <length> fx: sx + 20px + (round((root.width - to-w) / 2 / 1px) * 1px - sx - 20px) * morph;
-    out property <length> fy: sy + 20px + (round(root.height * 0.2 / 1px) * 1px - sy - 20px) * morph;
-    out property <length> fw: 560px + (to-w - 560px) * morph;
-    out property <length> fh: 52px + 4px * morph;
-    // (it fades over the glide's last third, as Search's field comes in under it)
-    out property <float> fo: handing ? max(0, min(1, (1 - morph) * 3)) : min(1, openness);
-    out property <float> fk: handing ? 1 : content-scale;
+    // (the spaces fade as the field rises; the results grow in once it's
+    // under way, and shrink away first on the way back)
+    property <float> rise: max(0, min(1, search-t));
+    property <float> reveal: max(0, min(1, (search-t - 0.3) / 0.7));
+    // The spaces as they are drawn: faded, slid down 56 px and stepped back
+    // (Rust reads these for the zones' glass)
+    out property <float> content-o: min(1, openness) * (1 - rise);
+    out property <length> content-dy: 56px * search-t;
+    out property <float> content-k: content-scale * (1 - 0.08 * search-t);
 
-    callback key(string, bool, bool) -> bool; // text, shift, control: handled?
-    callback edited(string);
+    // Search's view as Rust reaches it (the same names as Search's window:
+    // tessera_spotlight::search_view!)
+    in-out property <length> search-list-y <=> sv.list-y;
+    out property <length> search-list-max: sv.list-max;
+    out property <float> search-g-alpha: sv.g-alpha;
+    out property <float> search-g-body-alpha: sv.g-body-alpha;
+    out property <length> search-g-x: sv.g-x;
+    out property <length> search-g-top: sv.g-top;
+    out property <length> search-g-w: sv.g-w;
+    out property <length> search-g-body-h: sv.g-body-h;
+    out property <length> search-g-web-y: sv.g-web-y;
+    out property <length> search-g-web-h: sv.g-web-h;
+    public function search-open() {
+        sv.open();
+    }
+    public function search-set-text(t: string) {
+        sv.set-text(t);
+    }
+    public function search-set-text-end(t: string) {
+        sv.set-text-end(t);
+    }
+    public function search-focus() {
+        sv.focus-field();
+    }
+    public function search-start-intro() {
+        sv.start-intro();
+    }
+
     callback pointer(length, length, bool);
     callback press(length, length, int);
     callback release(length, length, int);
@@ -204,17 +228,9 @@ export component OverviewPanel inherits Window {
     callback menu-dismissed();
     callback closed();
 
-    public function open() {
-        field.text = "";
-        field.focus();
-    }
-    public function focus-field() {
-        field.focus();
-    }
     // (out and in again: the caret starts blinking now the window is active)
     public function refocus() {
-        field.clear-focus();
-        field.focus();
+        sv.refocus();
     }
 
     background: transparent;
@@ -232,11 +248,7 @@ export component OverviewPanel inherits Window {
         easing: shown ? (Theme.material ? spring(0.11) : spring(0.37)) : cubic-bezier(0.3333, 0, 0.6667, 0);
     }
     changed openness => {
-        if !shown && !handing && openness <= 0.001 { closed(); }
-    }
-    // (handing over: closed once the field has reached Search's)
-    changed morph => {
-        if handing && !shown && morph >= 0.999 { closed(); }
+        if !shown && openness <= 0.001 { closed(); }
     }
     // A window's miniature glides to a new place (a re-tile while open) only
     // once it's in place: 400 ms after opening (the QML's `settled`)
@@ -263,8 +275,10 @@ export component OverviewPanel inherits Window {
     }
 
     content := Rectangle {
-        opacity: min(1, openness);
-        transform-scale: content-scale;
+        y: content-dy;
+        visible: content-o > 0.001;
+        opacity: content-o;
+        transform-scale: content-k;
         transform-origin: { x: self.width / 2, y: self.height / 2 };
 
         // macOS style: the bar at the top (the compositor blurs behind it)
@@ -721,57 +735,18 @@ export component OverviewPanel inherits Window {
         }
     }
 
-    // The search (Glass: its glass is the plugin's; Material: a pill)
-    Rectangle {
-        x: fx;
-        y: fy;
-        width: fw;
-        height: fh;
-        opacity: fo;
-        transform-scale: fk;
-        transform-origin: { x: root.width / 2 - self.x, y: root.height / 2 - self.y };
-        border-radius: self.height / 2;
-        background: Theme.material ? Theme.m3-surface-container-high : glass-fill;
-        WIcon {
-            x: 18px + (Theme.material ? 0px : 2px) * morph;
-            width: 22px;
-            glyph: g-search;
-            size: 20px + 2px * morph;
-            tint: Theme.secondary;
-        }
-        Rectangle {
-            x: 50px + 6px * morph;
-            width: parent.width - self.x - 20px;
-            clip: true;
-            field := TextInput {
-                width: 100%;
-                height: 100%;
-                color: Theme.label;
-                selection-background-color: Theme.accent.with-alpha(0.5);
-                font-size: 20px + ((Theme.material ? 18px : 22px) - 20px) * morph;
-                vertical-alignment: center;
-                single-line: true;
-                input-type: search;
-                accessible-label: "Search";
-                accessible-placeholder-text: placeholder;
-                edited => { root.edited(self.text); }
-                key-pressed(e) => {
-                    if root.key(e.text, e.modifiers.shift, e.modifiers.control) { return accept; }
-                    reject
-                }
-            }
-            if field.text == "": Text {
-                // (2px in: the caret at x 0 stays off the first letter)
-                x: 2px;
-                width: parent.width - 2px;
-                height: 100%;
-                text: placeholder;
-                color: Theme.tertiary;
-                font-size: 20px;
-                vertical-alignment: center;
-                accessible-role: none;
-            }
-        }
+    // Search: its field where the Overview's sits (centred, 560 px wide),
+    // rising to Search's own place as you type, the results under it
+    // (only the focused display's types; the others show the field)
+    sv := SearchView {
+        width: 100%;
+        height: 100%;
+        openness: root.openness;
+        dock: search-t;
+        rest-x: round((root.width - 560px) / 2 / 1px) * 1px;
+        rest-y: sy + 18px;
+        rest-w: 560px;
+        reveal: root.reveal;
     }
 
     // A right-click menu: a window or a space to another display

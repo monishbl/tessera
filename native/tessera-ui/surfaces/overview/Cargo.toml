@@ -11,6 +11,8 @@ doctest = false # (comments' code blocks are prose, not examples)
 
 [dependencies]
 tessera-core.workspace = true
+# (Search, hosted as you type: its view and controller)
+tessera-spotlight = { path = "../spotlight" }
 slint.workspace = true
 smithay-client-toolkit.workspace = true
 serde_json.workspace = true

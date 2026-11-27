@@ -1,6 +1,8 @@
 //! Search (rust.surfaces: spotlight): apps, actions, files, sums and answers,
 //! conversions, definitions, emoji, commands, the clipboard, and the "Just
-//! ask" hand-off to the AI, as you type. Glass: a floating glass field, the
+//! ask" hand-off to the AI, as you type. Search itself (the view and its
+//! controller) is search.rs and ui/search.slint, shared with the Overview,
+//! which hosts the same Search as you type in it; this is its own window. Glass: a floating glass field, the
 //! results in a second glass panel below; Material: the docked search view,
 //! segmented lists under a hero card. Compare shell/modules/spotlight/
 //! (SpotlightGlass.qml, SearchView.qml, SearchModel.qml and their rows) and
@@ -50,467 +52,61 @@ pub mod layout;
 pub mod providers;
 pub mod web;
 pub mod reading;
+pub mod search;
 // (Search's ranking lives in tessera-core: the Overview ranks with it too)
 pub use tessera_core::rank;
+pub use search::{glass_fill, parse_extras, sub_line};
 
-use tessera_core::appicon::{self, Style};
-use tessera_core::handoff::{self, Typed};
-use tessera_core::services::apps::Apps;
+// (for search_view!, expanded in other crates)
+#[doc(hidden)]
+pub use slint as __slint;
+#[doc(hidden)]
+pub use tessera_core as __core;
+
+crate::search_view!(ui, SpotlightPanel);
+
+use search::{Search, View};
 use tessera_core::services::hypr::Glass;
-use tessera_core::services::icons::Icons;
 use tessera_core::shell::{Command, Part};
-use tessera_core::surfaces::shapes;
-use tessera_core::theme;
 use tessera_core::wayland::{Spec, State, Surface};
-use layout::Entry;
-use rank::{AiMeta, Answer, Definition, Extras, Known, Row, Run};
-use slint::platform::Key;
-use slint::{ComponentHandle, Model, SharedPixelBuffer, SharedString};
-use tessera_core::rows::Rows;
+use slint::ComponentHandle;
 use smithay_client_toolkit::shell::wlr_layer::{Anchor, KeyboardInteractivity, Layer};
 use smithay_client_toolkit::shell::WaylandSurface;
 use std::any::Any;
-use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const NAME: &str = "spotlight";
 pub const NS: &str = "tessera:spotlight";
 
-type Px = SharedPixelBuffer<slint::Rgba8Pixel>;
-
-/// Its own messages (Msg::Part("spotlight", …))
-enum M {
-    Key(String, bool, bool),
-    Edited(String),
-    Activate(i32),
-    Look(i32),
-    Cleared,
-    Ask,
-    Back,
-    Continue,
-    CopyAnswer,
-    Link(String),
+/// The window's own messages (Search's are search::Msg)
+enum W {
     Dismissed,
     Closed,
-    AskAnswer,
-    Answered(u64, Answer),
-    Converted(String, String),
-    Defined(String, Definition),
-    FindFiles,
-    Files(String, Vec<(bool, String)>),
-    Contents(String, Vec<String>),
-    Hold,
-    IntroEnd,
-    Idle,
-    Icons(Vec<(IconKey, Option<Px>)>),
-    Picture(String, Option<Px>),
-    Fetched(String, Option<PathBuf>),
     /// make the window ahead, so the first open draws at once
     Prepare,
-    /// a ranking from the rank lane (Spotlight::refresh), by its number
-    Ranked(u64, Box<Ranked>),
-    /// the web results: typing paused (their number), a picture came (or
-    /// None: it couldn't be drawn), the render ended
-    WebGo(u64),
-    WebShot(u64, Option<Px>, Vec<web::Link>),
-    WebEnded(u64),
-    /// Google's robot check instead of results (no picture of it)
-    WebBlocked(u64),
-    /// a click on the picture (fractions of it), its buttons, the note's "Turn off"
-    WebClick(f32, f32),
-    WebExpand,
-    WebBrowser,
-    WebNoticeOff,
-}
-
-/// Search's live web results now (src/web.rs)
-#[derive(Default)]
-struct Web {
-    /// the setting on and tessera-web there (read at each opening)
-    on: bool,
-    engine: &'static str,
-    /// the words they're for, and their results page
-    query: String,
-    url: String,
-    /// this query's number: anything for an older one is dropped
-    gen: u64,
-    /// being drawn (the shimmer)
-    loading: bool,
-    /// the picture (its pixels' width and height) and its links
-    shot: Option<(slint::Image, u32, u32)>,
-    links: Vec<web::Link>,
-    /// the links the arrow keys go through, and the one they're on
-    results: Vec<usize>,
-    sel: Option<usize>,
-    /// the one-time note: still to be seen, and shown at this opening
-    notice: bool,
-    noticed: bool,
-    renderer: web::Renderer,
-    /// Google's robot check came instead (the row with Check in browser)
-    blocked: bool,
-    /// no picture while backing off from Google (the plain row)
-    plain: bool,
-    /// when the robot check last came (unix seconds): web::backed_off
-    blocked_at: Option<u64>,
-}
-
-/// The state key of the one-time note under the web results
-const WEB_NOTICE_KEY: &str = "searchWebNotice";
-
-/// What ranking reads, owned: a keystroke's rows are worked out on the rank
-/// lane (tessera_core::work), not the UI thread, which only applies them
-struct Inputs {
-    text: String,
-    apps: Arc<Vec<rank::App>>,
-    /// Search.qml's actions, then the Chromecasts'
-    actions: Arc<Vec<rank::Action>>,
-    answer: Option<Answer>,
-    qalc: bool,
-    conversion: Option<String>,
-    definition: Option<Definition>,
-    extras: Option<Extras>,
-    ai: AiMeta,
-    files: Vec<(bool, String)>,
-    contents: Vec<String>,
-    home: String,
-    material: bool,
-    /// the web search engine (the web row's address)
-    engine: &'static str,
-    /// the reading list (reading.rs)
-    reading: Vec<tessera_core::readlist::Item>,
-}
-
-/// The rows for one ranking, laid out
-pub struct Ranked {
-    rows: Vec<Row>,
-    wants: rank::Wants,
-    have_extras: bool,
-    entries: Vec<Entry>,
-    content_h: f32,
-    material: bool,
-}
-
-impl Inputs {
-    /// rank::query and the layout (pure: any thread)
-    fn rank(&self) -> Ranked {
-        let raw = self.text.trim();
-        let k = Known {
-            apps: &self.apps,
-            actions: &self.actions,
-            answer: self.answer.as_ref(),
-            qalc: self.qalc,
-            conversion: self.conversion.as_deref(),
-            definition: self.definition.as_ref(),
-            extras: self.extras.as_ref(),
-            ai: Some(&self.ai),
-            emoji: if raw.starts_with(':') { providers::emoji() } else { &[] },
-            files: &self.files,
-            contents: &self.contents,
-            home: &self.home,
-            engine: self.engine,
-        };
-        let (mut rows, wants) = rank::query(&self.text, &k);
-        reading::merge(&self.text, &self.reading, &mut rows, tessera_core::util::now_ms());
-        let (entries, content_h) = if self.material { layout::material(&rows) } else { layout::glass(&rows) };
-        Ranked { rows, wants, have_extras: self.extras.is_some(), entries, content_h, material: self.material }
-    }
-}
-
-/// The lane keystrokes are ranked on: one thread, in order, so a ranking
-/// is never overtaken by an older one; a ranking a newer keystroke has
-/// replaced is skipped before it starts (and dropped if it finishes late)
-static RANK: tessera_core::work::Lane = tessera_core::work::Lane::new("rank");
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct IconKey {
-    path: PathBuf,
-    px: u32,
-    style: Style,
-}
-
-/// What the field's key callback has to know at once (Slint wants the answer
-/// synchronously)
-#[derive(Clone, Copy, Default)]
-struct KeyCtx {
-    material: bool,
-    has_path: bool,
-    focus: i32,
-    /// the selected row is a reading-list link (Ctrl+D, Ctrl+Delete)
-    reading: bool,
-}
-
-/// The keys the panel takes from the field (the field gets the rest)
-fn handles(c: KeyCtx, text: &str, shift: bool, ctrl: bool) -> bool {
-    let is = |k: Key| text == SharedString::from(k).as_str();
-    if is(Key::Escape) || is(Key::Return) || is(Key::UpArrow) || is(Key::DownArrow) || is(Key::Tab) {
-        return true;
-    }
-    if is(Key::Backtab) {
-        return true;
-    }
-    if c.focus != 0 && text == " " {
-        return true;
-    }
-    if c.reading && ctrl && (text.eq_ignore_ascii_case("d") || is(Key::Delete)) {
-        return true;
-    }
-    c.has_path && ((text == " " && shift) || (ctrl && text.eq_ignore_ascii_case("y")))
-}
-
-/// Glass's Tab and Shift+Tab: the field (0) → through the results, or to
-/// Clear (1) and Ask (2), and back (SpotlightGlass.qml's KeyNavigation)
-fn glass_tab(focus: i32, back: bool, rows: usize, has_text: bool) -> (i32, bool) {
-    match (focus, back) {
-        (_, true) if focus == 0 => (2, false),
-        (2, true) => (if has_text { 1 } else { 0 }, false),
-        (1, true) => (0, false),
-        (0, false) if rows > 1 => (0, true), // (next result)
-        (0, false) => (if has_text { 1 } else { 2 }, false),
-        (1, false) => (2, false),
-        _ => (0, false),
-    }
-}
-
-/// Glass's answer card colour (AnswerCard.qml's tone)
-fn tone(r: &Row, dark: bool, accent: slint::Color) -> slint::Color {
-    let a = |light: &str, dk: &str| hexc(if dark { dk } else { light });
-    if r.section == "Do" {
-        return accent;
-    }
-    match r.kind.as_str() {
-        "math" => return a("#FF9500", "#FF9F0A"),
-        "date" => return a("#FF3B30", "#FF453A"),
-        "time" => return a("#007AFF", "#0A84FF"),
-        "unit" | "currency" => return a("#34C759", "#30D158"),
-        _ => {}
-    }
-    match r.section.as_str() {
-        "Calculator" => a("#FF9500", "#FF9F0A"),
-        "Conversion" => a("#34C759", "#30D158"),
-        "Dictionary" => a("#AF52DE", "#BF5AF2"),
-        _ => accent,
-    }
-}
-
-fn hexc(s: &str) -> slint::Color {
-    let v = u32::from_str_radix(s.trim_start_matches('#'), 16).unwrap_or(0);
-    slint::Color::from_rgb_u8((v >> 16) as u8, (v >> 8) as u8, v as u8)
-}
-
-/// What Enter does with a card (AnswerCard.qml, SearchHero.qml)
-fn card_hint(r: &Row) -> &'static str {
-    match r.section.as_str() {
-        "Top Hit" => "",
-        "Do" => "Enter to do it",
-        "Dictionary" => "Enter opens it",
-        _ => "Enter copies it",
-    }
-}
-
-/// The line under (or beside) a row's title, as each look writes it
-pub fn sub_line(r: &Row, material: bool, card: bool) -> String {
-    let store_row = if card { r.section == "Top Hit" && r.subtitle.starts_with("Get · ") } else { r.section == "Software" && !r.loading };
-    let body = if material && store_row { r.subtitle.trim_start_matches("Get · ").to_string() } else { r.subtitle.clone() };
-    if !card {
-        return body;
-    }
-    [body.as_str(), card_hint(r)].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join(" · ")
-}
-
-/// The shell's rows, from its extras line
-fn shell_rows(v: &serde_json::Value) -> Vec<Row> {
-    v.as_array()
-        .map(|a| {
-            a.iter()
-                .map(|r| {
-                    let s = |k: &str| r[k].as_str().unwrap_or("").to_string();
-                    Row {
-                        section: s("section"),
-                        title: s("title"),
-                        subtitle: s("subtitle"),
-                        glyph: s("glyph"),
-                        icon: s("icon"),
-                        icon_fallback: "application-x-executable",
-                        picture: s("picture"),
-                        path: s("path"),
-                        loading: r["loading"].as_bool().unwrap_or(false),
-                        run: Run::Shell(s("key")),
-                        ..Default::default()
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-pub fn parse_extras(v: &serde_json::Value) -> Extras {
-    Extras {
-        q: v["q"].as_str().unwrap_or("").trim().to_string(),
-        intents: shell_rows(&v["intents"]),
-        reminder: shell_rows(&v["reminder"]),
-        store: shell_rows(&v["store"]),
-        calendar: shell_rows(&v["calendar"]),
-        contacts: shell_rows(&v["contacts"]),
-        notes: shell_rows(&v["notes"]),
-        shots: shell_rows(&v["shots"]),
-        clipboard: shell_rows(&v["clipboard"]),
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-struct Quick {
-    busy: bool,
-    answer: String,
-    error: String,
 }
 
 struct Win {
     output: String,
     surface: Rc<Surface>,
     ui: ui::SpotlightPanel,
+    view: Rc<SearchUi>,
     a11y: Option<crate::a11y::A11y>,
     glass_sent: String,
-    /// the rows, handed to the window once (changed in place on every keystroke)
-    rows: Rows<ui::SRow>,
 }
 
 pub struct Spotlight {
     win: Option<Win>,
     open: bool,
-    text: String,
-    rows: Vec<Row>,
-    entries: Vec<Entry>,
-    sel: usize,
-    scroll: f32,
-    focus: i32,
-    key_ctx: Rc<Cell<KeyCtx>>,
-    answering: bool,
-    quick: Quick,
-    ai: AiMeta,
-    cast: Vec<rank::Action>,
-    actions: Vec<rank::Action>,
-    /// actions, then cast (handed to the rank lane as they are)
-    all_actions: Arc<Vec<rank::Action>>,
-    apps: Arc<Vec<rank::App>>,
-    extras: Option<Extras>,
-    /// the newest ranking asked for (the lane skips older ones), the
-    /// newest applied, and whether one asked since was for typing (its
-    /// selection and scroll start over)
-    rank_gen: u64,
-    rank_latest: Arc<AtomicU64>,
-    rank_applied: u64,
-    rank_typed: bool,
-    asked: Option<(String, bool)>,
-    hold_until: Option<Instant>,
-    had_rows: bool,
-    // slow answers
-    answerer: providers::Answerer,
-    ans_query: String,
-    answer: Option<(String, Answer)>,
-    conv_query: String,
-    conv: Option<(String, String)>,
-    def_word: String,
-    def: Option<(String, Definition)>,
-    file_query: String,
-    files: Vec<(bool, String)>,
-    contents: Vec<String>,
-    qalc: bool,
-    plocate: bool,
-    rg: bool,
-    home: String,
-    /// the reading list's unread links, read as it opens (reading.rs)
-    reading: Vec<tessera_core::readlist::Item>,
-    timers: [slint::Timer; 9],
-    // pictures
-    icons: HashMap<IconKey, slint::Image>,
-    /// each row's icon render
-    row_keys: Vec<Option<IconKey>>,
-    pending: HashSet<IconKey>,
-    pictures: HashMap<String, Option<slint::Image>>,
-    /// App Store logos on the web (AppStore.iconFor's URL), fetched once into the cache
-    remote: HashMap<String, Option<PathBuf>>,
-    /// the live web results under the rows
-    web: Web,
-    /// typed in the Overview before this opened (tessera_core::handoff)
-    handoff: handoff::Inbox,
-    /// the Overview's text shown last (handoff::merge)
-    handoff_last: String,
+    search: Search,
+    prep: slint::Timer,
 }
 
 impl Default for Spotlight {
     fn default() -> Self {
-        Self {
-            win: None,
-            open: false,
-            text: String::new(),
-            rows: Vec::new(),
-            entries: Vec::new(),
-            sel: 0,
-            scroll: 0.0,
-            focus: 0,
-            key_ctx: Rc::new(Cell::new(KeyCtx::default())),
-            answering: false,
-            quick: Quick::default(),
-            ai: AiMeta::default(),
-            cast: Vec::new(),
-            actions: rank::actions(),
-            all_actions: Arc::new(rank::actions()),
-            apps: Arc::new(Vec::new()),
-            extras: None,
-            rank_gen: 0,
-            rank_latest: Arc::new(AtomicU64::new(0)),
-            rank_applied: 0,
-            rank_typed: false,
-            asked: None,
-            hold_until: None,
-            had_rows: false,
-            answerer: providers::Answerer::new(),
-            ans_query: String::new(),
-            answer: None,
-            conv_query: String::new(),
-            conv: None,
-            def_word: String::new(),
-            def: None,
-            file_query: String::new(),
-            files: Vec::new(),
-            contents: Vec::new(),
-            qalc: false,
-            plocate: false,
-            rg: false,
-            home: std::env::var("HOME").unwrap_or_default(),
-            reading: Vec::new(),
-            timers: Default::default(),
-            icons: HashMap::new(),
-            row_keys: Vec::new(),
-            pending: HashSet::new(),
-            pictures: HashMap::new(),
-            remote: HashMap::new(),
-            web: Web::default(),
-            handoff: handoff::Inbox::default(),
-            handoff_last: String::new(),
-        }
+        Self { win: None, open: false, search: Search::new(NAME), prep: slint::Timer::default() }
     }
-}
-
-// (the timers, by job)
-const T_ANSWER: usize = 0;
-const T_CONV: usize = 1;
-const T_DEF: usize = 2;
-const T_FILES: usize = 3;
-const T_HOLD: usize = 4;
-const T_INTRO: usize = 5;
-const T_IDLE: usize = 6;
-const T_PREP: usize = 7;
-const T_WEB: usize = 8;
-
-fn glyph(name: &str, material: bool, fill: bool, bold: bool) -> ui::SGlyph {
-    let (text, family, scale) = providers::glyph(name, material, fill, bold);
-    ui::SGlyph { text: text.into(), family: family.into(), scale }
 }
 
 impl Spotlight {
@@ -518,19 +114,11 @@ impl Spotlight {
         st.shell.sender(NAME)
     }
 
-    fn after(&self, st: &State, t: usize, ms: u64, m: impl Fn() -> M + 'static) {
-        let to = Self::send(st);
-        self.timers[t].start(slint::TimerMode::SingleShot, Duration::from_millis(ms), move || to(Box::new(m())));
-    }
-
-    fn material(st: &State) -> bool {
-        st.shell.look.material
-    }
-
     /// The window on this output (made the first time; kept while closed)
     fn window(&mut self, st: &mut State, output: &str) -> bool {
         if self.win.as_ref().is_some_and(|w| w.output != output) {
             let w = self.win.take().unwrap();
+            self.search.attach(st, None);
             Glass::clear_now(&w.output, NS);
             st.drop_surface(&w.surface);
         }
@@ -550,139 +138,37 @@ impl Spotlight {
         });
         let ui = ui::SpotlightPanel::new().expect("SpotlightPanel");
         st.shell.apply_theme(&ui.global::<ui::Theme>());
-        let to = Self::send(st);
+        let view = Rc::new(SearchUi::new(&ui));
         {
-            let (to, ctx) = (to.clone(), self.key_ctx.clone());
-            ui.on_key(move |text, shift, ctrl| {
-                let ok = handles(ctx.get(), &text, shift, ctrl);
-                if ok {
-                    to(Box::new(M::Key(text.to_string(), shift, ctrl)));
-                }
-                ok
-            });
+            let ctx = self.search.key_ctx();
+            view.wire(self.search.sender(st), Rc::new(move |text: &str, shift: bool, ctrl: bool| search::handles(ctx.get(), text, shift, ctrl)));
         }
-        macro_rules! on {
-            ($set:ident, |$($a:ident),*| $m:expr) => {{
-                let to = to.clone();
-                ui.$set(move |$($a),*| to(Box::new($m)));
-            }};
+        {
+            let to = Self::send(st);
+            ui.on_dismissed(move || to(Box::new(W::Dismissed)));
         }
-        on!(on_edited, |t| M::Edited(t.to_string()));
-        on!(on_activate, |i| M::Activate(i));
-        on!(on_quick_look, |i| M::Look(i));
-        on!(on_cleared, | | M::Cleared);
-        on!(on_ask, | | M::Ask);
-        on!(on_back, | | M::Back);
-        on!(on_continue_chat, | | M::Continue);
-        on!(on_copy_answer, | | M::CopyAnswer);
-        on!(on_link, |l| M::Link(l.to_string()));
-        on!(on_dismissed, | | M::Dismissed);
-        on!(on_closed, | | M::Closed);
-        on!(on_web_click, |x, y| M::WebClick(x, y));
-        on!(on_web_expand, | | M::WebExpand);
-        on!(on_web_browser, | | M::WebBrowser);
-        on!(on_web_notice_off, | | M::WebNoticeOff);
-        let rows = Rows::new();
-        ui.set_rows(rows.model());
+        {
+            let to = Self::send(st);
+            ui.on_closed(move || to(Box::new(W::Closed)));
+        }
         ui.show().expect("show spotlight");
         let a11y = crate::a11y::A11y::new(&surface, st.tx.clone());
-        self.win = Some(Win { output: output.into(), surface, ui, a11y, glass_sent: String::new(), rows });
-        self.look(st);
+        self.win = Some(Win { output: output.into(), surface, ui, view: view.clone(), a11y, glass_sent: String::new() });
+        self.search.attach(st, Some(view as Rc<dyn View>));
         true
     }
 
-    /// Everything that follows the look and settings
-    fn look(&mut self, st: &State) {
-        let Some(w) = &self.win else { return };
-        let ui = &w.ui;
-        let m = Self::material(st);
-        let look = &st.shell.look;
-        ui.set_g_search(glyph("magnifying-glass", m, false, true));
-        ui.set_g_clear(glyph(if m { "x" } else { "x-circle" }, m, true, false));
-        ui.set_g_ask(glyph("sparkle", m, false, false));
-        ui.set_g_ask_on(glyph("sparkle", m, true, false));
-        ui.set_g_back(glyph("caret-left", m, false, false));
-        ui.set_g_eye(glyph("eye", m, false, false));
-        ui.set_g_spark(glyph("sparkle", false, true, false));
-        ui.set_g_globe(glyph("globe", m, false, false));
-        ui.set_cookie9(shapes::outline("cookie9").into());
-        ui.set_cookie12(shapes::outline("cookie12").into());
-        ui.set_sunny(shapes::outline("sunny").into());
-        ui.set_emoji_font(tessera_core::settings::emoji_font(&st.shell.cfg, &[]).into());
-        let t = ui.global::<ui::Theme>();
-        let accent = t.get_accent();
-        if m {
-            let roles = theme::look_roles(&look);
-            let r = |k: &str| hexc(roles.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str()).unwrap_or("#ff00ff"));
-            ui.set_surface_bright(r("surfaceBright"));
-            ui.set_on_tertiary(r("onTertiary"));
-            ui.set_accent_tint(r("secondaryContainer"));
-            ui.set_accent_ink(r("primary"));
-        } else {
-            // (Theme.accentTint: the accent faintly in dark mode, a pale shade of it in light)
-            let pale = slint::Color::from_argb_u8(230, mixc(accent.red(), 255, 0.8), mixc(accent.green(), 255, 0.8), mixc(accent.blue(), 255, 0.8));
-            ui.set_accent_tint(if look.dark { accent.with_alpha(0.26) } else { pale });
-            ui.set_accent_ink(accent);
-        }
-        ui.set_scrim(t.get_m3_scrim());
-        ui.set_glass_fill(glass_fill(st.shell.plugin, look.dark));
-        ui.set_placeholder(if m { "Search apps, files and the web" } else { "Search" }.into());
-        self.icons.clear();
-        self.pending.clear();
-    }
-
     fn open(&mut self, st: &mut State, screen: Option<String>) {
-        // (the last session's files go: they belong to its query)
-        self.file_query.clear();
-        self.files.clear();
-        self.contents.clear();
         let output = screen.or_else(|| self.win.as_ref().map(|w| w.output.clone())).or_else(|| st.outputs_now().first().map(|o| o.1.clone()));
         let Some(output) = output else { return };
         if !self.window(st, &output) {
             return;
         }
-        st.shell.want("apps");
-        st.shell.want("icons");
         self.open = true;
-        // SearchModel.reset: no answer, an empty field, no results
-        if self.answering || self.quick.busy {
-            crate::shell::ask("ai.stopQuick", serde_json::json!([]));
-        }
-        self.answering = false;
-        self.quick = Quick::default();
-        self.text.clear();
-        self.handoff_last.clear();
-        self.rows.clear();
-        self.entries.clear();
-        self.sel = 0;
-        self.scroll = 0.0;
-        self.focus = 0;
-        self.had_rows = false;
-        self.asked = None;
-        // (the web results: the setting, the engine, tessera-web there; the note once)
-        self.web_stop();
-        let cfg = &st.shell.cfg;
-        self.web.on = tessera_core::weblink::search::web_results(cfg) && tessera_core::weblink::bin().is_some();
-        self.web.engine = tessera_core::weblink::search::engine(cfg);
-        self.web.notice = !tessera_core::cfgfile::state_get(WEB_NOTICE_KEY).as_bool().unwrap_or(false);
-        self.web.noticed = false;
-        // (a ranking still on its way is for the text before)
-        self.rank_gen += 1;
-        self.rank_latest.store(self.rank_gen, Ordering::SeqCst);
-        self.rank_applied = self.rank_gen;
-        self.rank_typed = false;
-        // (the reading list, read now: an empty field shows it)
-        self.reading = tessera_core::readlist::unread();
-        if !self.reading.is_empty() {
-            self.refresh(st, false);
-        }
-        crate::shell::ask("clipboard.refresh", serde_json::json!([]));
-        // (the AI's name and the Chromecasts, before anything's typed)
-        self.ask_extras(String::new(), false);
-        self.push(st);
+        self.search.activate(st);
         let w = self.win.as_ref().unwrap();
-        w.ui.invoke_open();
-        w.ui.set_list_y(0.0);
+        w.view.open();
+        w.view.set_list_y(0.0);
         w.ui.set_shown(true);
         w.surface.layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         w.surface.show(0, 0);
@@ -694,34 +180,7 @@ impl Spotlight {
             return;
         }
         self.open = false;
-        // (a quick answer still coming stops here, not at the next opening:
-        // its tokens and the network were spent on an answer thrown away;
-        // nor do the lookups for the text typed run after it's gone)
-        if self.answering || self.quick.busy {
-            crate::shell::ask("ai.stopQuick", serde_json::json!([]));
-        }
-        self.answering = false;
-        self.quick = Quick::default();
-        // (the web results' render stops with it; the note, once seen, is done)
-        self.web_stop();
-        if self.web.noticed {
-            self.web.notice = false;
-            self.web.noticed = false;
-            tessera_core::cfgfile::set_state(WEB_NOTICE_KEY, serde_json::json!(true));
-        }
-        // (a lookup stopped before it was asked is forgotten too: else the
-        // same text typed again never asks it, as the query looks seen)
-        for t in [T_ANSWER, T_CONV, T_DEF, T_FILES] {
-            if self.timers[t].running() {
-                match t {
-                    T_ANSWER => self.ans_query.clear(),
-                    T_CONV => self.conv_query.clear(),
-                    T_DEF => self.def_word.clear(),
-                    _ => self.file_query.clear(),
-                }
-            }
-            self.timers[t].stop();
-        }
+        self.search.deactivate();
         if let Some(w) = &self.win {
             w.ui.set_shown(false);
             w.surface.layer.set_keyboard_interactivity(KeyboardInteractivity::None);
@@ -743,758 +202,12 @@ impl Spotlight {
         }
     }
 
-    fn ask_extras(&mut self, q: String, store: bool) {
-        let want = (q, store);
-        if self.asked.as_ref() != Some(&want) {
-            crate::shell::ask("search.query", serde_json::json!([want.0, want.1]));
-            self.asked = Some(want);
-        }
-    }
-
-    /// What ranking reads now, owned
-    fn inputs(&self, st: &State) -> Inputs {
-        let raw = self.text.trim().to_string();
-        let word = rank::word_to_define(&raw);
-        Inputs {
-            text: self.text.clone(),
-            apps: self.apps.clone(),
-            actions: self.all_actions.clone(),
-            answer: self.answer.as_ref().filter(|a| a.0 == raw).map(|a| a.1.clone()),
-            qalc: self.qalc,
-            conversion: self.conv.as_ref().filter(|c| c.0 == raw).map(|c| c.1.clone()),
-            definition: self.def.as_ref().filter(|d| !word.is_empty() && d.0 == word).map(|d| d.1.clone()),
-            extras: self.extras.as_ref().filter(|e| e.q == raw).cloned(),
-            ai: self.ai.clone(),
-            files: self.files.clone(),
-            contents: self.contents.clone(),
-            home: self.home.clone(),
-            material: Self::material(st),
-            engine: tessera_core::weblink::search::engine(&st.shell.cfg),
-            reading: self.reading.clone(),
-        }
-    }
-
-    /// The rows again, for the field's text and what's known: ranked and
-    /// laid out on the rank lane (a keystroke under load cost its ranking
-    /// on the UI thread before its frame, 17 Nov), applied when they come
-    /// back if nothing newer was asked meanwhile
-    fn refresh(&mut self, st: &State, typed: bool) {
-        self.rank_gen += 1;
-        self.rank_typed |= typed;
-        let gen = self.rank_gen;
-        let latest = self.rank_latest.clone();
-        latest.store(gen, Ordering::SeqCst);
-        let inputs = self.inputs(st);
-        let to = Self::send(st);
-        RANK.run(move || {
-            if latest.load(Ordering::SeqCst) != gen {
-                return; // (another keystroke came: this one's rows would never show)
-            }
-            let r = inputs.rank();
-            if latest.load(Ordering::SeqCst) == gen {
-                to(Box::new(M::Ranked(gen, Box::new(r))));
-            }
-        });
-    }
-
-    /// A ranking still on the lane, worked out here and applied now: what
-    /// Enter, the arrows and Tab act on is the rows for what's typed
-    fn rank_now(&mut self, st: &State) {
-        if self.rank_applied >= self.rank_gen {
-            return;
-        }
-        let r = crate::perf::time(|| "spotlight rank now".into(), || self.inputs(st).rank());
-        self.ranked(st, self.rank_gen, r);
-    }
-
-    /// A ranking back from the lane (or rank_now): applied if it's the
-    /// newest asked for and none as new was applied (never out of order)
-    fn ranked(&mut self, st: &State, gen: u64, r: Ranked) {
-        if gen != self.rank_gen || gen <= self.rank_applied {
-            return;
-        }
-        self.rank_applied = gen;
-        let typed = std::mem::take(&mut self.rank_typed);
-        self.apply_ranked(st, typed, r);
-    }
-
-    fn apply_ranked(&mut self, st: &State, typed: bool, r: Ranked) {
-        let raw = self.text.trim().to_string();
-        let Ranked { rows, wants, have_extras, entries, content_h, material } = r;
-        // What's still to ask, as Search.qml's debounces
-        if let Some(q) = wants.answer {
-            if q != self.ans_query {
-                self.ans_query = q;
-                self.answer = None;
-                self.after(st, T_ANSWER, 90, || M::AskAnswer);
-            }
-        }
-        if let Some(q) = wants.conversion {
-            if q != self.conv_query {
-                self.conv_query = q;
-                self.conv = None;
-                let q2 = self.conv_query.clone();
-                let to = Self::send(st);
-                self.timers[T_CONV].start(slint::TimerMode::SingleShot, Duration::from_millis(180), move || {
-                    let (q, to) = (q2.clone(), to.clone());
-                    std::thread::spawn(move || to(Box::new(M::Converted(q.clone(), providers::convert(&q)))));
-                });
-            }
-        }
-        if let Some(wd) = wants.define {
-            if wd != self.def_word {
-                self.def_word = wd;
-                self.def = None;
-                let w2 = self.def_word.clone();
-                let to = Self::send(st);
-                self.timers[T_DEF].start(slint::TimerMode::SingleShot, Duration::from_millis(300), move || {
-                    let (w, to) = (w2.clone(), to.clone());
-                    std::thread::spawn(move || to(Box::new(M::Defined(w.clone(), providers::define(&w)))));
-                });
-            }
-        }
-        if let Some(fq) = wants.files {
-            if fq != self.file_query {
-                self.file_query = fq;
-                // (the last query's files never show under this one while
-                // it's looked for: Enter opened them; audit #143)
-                self.files.clear();
-                self.contents.clear();
-                self.after(st, T_FILES, 200, || M::FindFiles);
-            }
-        }
-        if let Some((q, store)) = wants.extras {
-            self.ask_extras(q, store);
-        }
-        // (while the shell's rows for new text are on their way, what's shown
-        // stays a moment: no flicker of a list without them)
-        if typed {
-            self.hold_until = (!have_extras && self.asked.as_ref().is_some_and(|a| a.0 == raw) && !raw.is_empty()).then(|| Instant::now() + Duration::from_millis(120));
-            if self.hold_until.is_some() {
-                self.after(st, T_HOLD, 130, || M::Hold);
-            }
-        }
-        if !have_extras && self.hold_until.is_some_and(|t| Instant::now() < t) {
-            return;
-        }
-        self.hold_until = None;
-        self.sel = if typed { 0 } else { rank::keep_selection(&self.rows, self.sel, &rows) };
-        self.rows = rows;
-        if typed {
-            self.scroll = 0.0;
-            if let Some(w) = &self.win {
-                w.ui.set_list_y(0.0);
-            }
-        }
-        // Material: a list that just appeared comes in row by row
-        let has = !self.rows.is_empty();
-        if has && !self.had_rows && Self::material(st) {
-            if let Some(w) = &self.win {
-                w.ui.invoke_start_intro();
-                w.ui.set_introducing(true);
-            }
-            self.after(st, T_INTRO, 700, || M::IntroEnd);
-        }
-        self.had_rows = has;
-        // (laid out on the lane, unless the look changed meanwhile)
-        let laid = (material == Self::material(st)).then_some((entries, content_h));
-        self.rebuild_laid(st, laid);
-    }
-
-    /// The rows into the window
-    fn rebuild(&mut self, st: &State) {
-        self.rebuild_laid(st, None);
-    }
-
-    /// The rows into the window, with their layout if it's known
-    fn rebuild_laid(&mut self, st: &State, laid: Option<(Vec<Entry>, f32)>) {
-        let m = Self::material(st);
-        let (entries, h) = laid.unwrap_or_else(|| if m { layout::material(&self.rows) } else { layout::glass(&self.rows) });
-        self.entries = entries;
-        let Some(w) = &self.win else { return };
-        let t = w.ui.global::<ui::Theme>();
-        let accent = t.get_accent();
-        let dark = st.shell.look.dark;
-        let mut want_icons = Vec::new();
-        let mut want_remote: Vec<String> = Vec::new();
-        let mut row_keys = Vec::new();
-        let mut want_pics = Vec::new();
-        let icons = st.shell.get::<Icons>().cloned();
-        let scale = w.ui.window().scale_factor().max(1.0);
-        let style_plain = Style::from_settings(&serde_json::json!({"appearance": {"iconStyle": "plain", "iconShape": "none"}}), m, dark, [0, 0, 0], ([0, 0, 0], [0, 0, 0]));
-        let style_app = {
-            let themed = (rgb(t.get_m3_primary_container()), rgb(t.get_m3_on_primary_container()));
-            Style::from_settings(&st.shell.cfg, m, dark, rgb(accent), themed)
-        };
-        let out: Vec<ui::SRow> = self
-            .rows
-            .iter()
-            .zip(&self.entries)
-            .enumerate()
-            .map(|(i, (r, e))| {
-                // the icon: looked up in the theme, drawn as the look draws it
-                let size = if m && e.card { 40.0 } else { 26.0 };
-                let styled = !m && (r.section == "Applications" || (r.section == "Top Hit" && matches!(r.run, Run::App(_))));
-                let mut icon = None;
-                let mut has_icon = false;
-                let mut row_key = None;
-                let web = r.icon.starts_with("https://") || r.icon.starts_with("http://");
-                if web && !r.loading && !self.remote.contains_key(&r.icon) {
-                    want_remote.push(r.icon.clone());
-                }
-                let local = if web { self.remote.get(&r.icon).cloned().flatten() } else { None };
-                if !r.icon.is_empty() && !r.loading && (!web || local.is_some()) {
-                    let found = match local {
-                        Some(p) => Some(p),
-                        None => icons.as_ref().and_then(|ic| ic.path(&[r.icon.as_str()], &[r.icon_fallback])),
-                    };
-                    if let Some(p) = found {
-                        let key = IconKey { path: p, px: (size * scale).ceil() as u32, style: if styled { style_app.clone() } else { style_plain.clone() } };
-                        has_icon = true;
-                        match self.icons.get(&key) {
-                            Some(img) => icon = Some(img.clone()),
-                            None => want_icons.push(key.clone()),
-                        }
-                        row_key = Some(key);
-                    }
-                }
-                let mut picture = None;
-                if !r.picture.is_empty() {
-                    match self.pictures.get(&r.picture) {
-                        Some(p) => picture = p.clone(),
-                        None => want_pics.push(r.picture.clone()),
-                    }
-                }
-                row_keys.push(row_key);
-                let g = if r.glyph.is_empty() { if e.card { "sparkle" } else { "circle" } } else { r.glyph.as_str() };
-                let (hero_kind, key, key_label) = match r.section.as_str() {
-                    "Top Hit" => (0, "arrow-up-right", "Open"),
-                    "Do" => (1, "arrow-up-right", "Open"),
-                    "Dictionary" => (2, "arrow-square-out", "Open"),
-                    _ => (2, "copy", "Copy"),
-                };
-                ui::SRow {
-                    y: e.y,
-                    h: e.h,
-                    head: e.head.as_str().into(),
-                    head_y: e.head_y,
-                    row_y: e.row_y,
-                    row_h: e.row_h,
-                    card: e.card,
-                    first: e.first,
-                    last: e.last,
-                    index: i as i32,
-                    section: r.section.as_str().into(),
-                    title: r.title.as_str().into(),
-                    sub: sub_line(r, m, e.card).into(),
-                    glyph: glyph(g, m, false, false),
-                    glyph_fill: glyph(g, m, true, false),
-                    icon: icon.unwrap_or_default(),
-                    has_icon,
-                    emoji: r.emoji.as_str().into(),
-                    picture: picture.clone().unwrap_or_default(),
-                    has_picture: picture.is_some(),
-                    has_path: !r.path.is_empty(),
-                    loading: r.loading,
-                    store: if e.card { r.section == "Top Hit" && r.subtitle.starts_with("Get · ") } else { m && r.section == "Software" && !r.loading },
-                    tone: tone(r, dark, accent),
-                    hero_kind,
-                    key: glyph(key, m, false, false),
-                    key_label: key_label.into(),
-                }
-            })
-            .collect();
-        self.row_keys = row_keys;
-        w.rows.set(out);
-        w.ui.set_content_h(h);
-        self.request_icons(st, want_icons);
-        self.request_pictures(st, want_pics);
-        for u in want_remote {
-            self.remote.insert(u.clone(), None);
-            let to = Self::send(st);
-            std::thread::spawn(move || {
-                let p = providers::fetch_icon(&u);
-                to(Box::new(M::Fetched(u, p)));
-            });
-        }
-        self.push(st);
-    }
-
-    fn request_icons(&mut self, st: &State, want: Vec<IconKey>) {
-        let missing: Vec<IconKey> = want.into_iter().filter(|k| !self.pending.contains(k)).collect::<HashSet<_>>().into_iter().collect();
-        if missing.is_empty() {
-            return;
-        }
-        self.pending.extend(missing.iter().cloned());
-        let to = Self::send(st);
-        std::thread::spawn(move || {
-            let out = missing.into_iter().map(|k| {
-                let img = appicon::render(&k.path, k.px, &k.style, None);
-                (k, img)
-            });
-            to(Box::new(M::Icons(out.collect())));
-        });
-    }
-
-    fn request_pictures(&mut self, st: &State, want: Vec<String>) {
-        for p in want {
-            if self.pictures.contains_key(&p) {
-                continue;
-            }
-            self.pictures.insert(p.clone(), None);
-            let to = Self::send(st);
-            std::thread::spawn(move || {
-                let px = image::open(&p).ok().map(|i| {
-                    let t = i.resize_to_fill(96, 96, image::imageops::FilterType::Triangle).to_rgba8();
-                    let mut b = Px::new(t.width(), t.height());
-                    b.make_mut_bytes().copy_from_slice(t.as_raw());
-                    b
-                });
-                to(Box::new(M::Picture(p, px)));
-            });
-        }
-    }
-
-    /// Selection, the answer and the field's state into the window
-    fn push(&mut self, st: &State) {
-        let Some(w) = &self.win else { return };
-        let ui = &w.ui;
-        let m = Self::material(st);
-        // (the arrow keys in the web results: no row looks selected)
-        ui.set_sel(if self.web.sel.is_some() { -1 } else { self.sel as i32 });
-        ui.set_answering(self.answering);
-        ui.set_button_focus(if m { 0 } else { self.focus });
-        ui.set_quick_busy(self.quick.busy);
-        let shown = !self.quick.answer.is_empty() || !self.quick.error.is_empty();
-        ui.set_quick_shown(shown);
-        ui.set_quick_error(self.quick.error.as_str().into());
-        ui.set_quick_answer(slint::StyledText::from_markdown(&self.quick.answer).unwrap_or_else(|_| slint::StyledText::from_plain_text(&self.quick.answer)));
-        ui.set_quick_done(!self.quick.busy && !self.quick.answer.is_empty() && self.quick.error.is_empty());
-        ui.set_model_name(self.ai.name.as_str().into());
-        let short = rank::ai_row("", Some(&self.ai)).title;
-        ui.set_ask_label(if self.ai.configured { short.into() } else { "Set up AI".into() });
-        let has_path = self.web.sel.is_none() && self.rows.get(self.sel).is_some_and(|r| !r.path.is_empty());
-        let reading = self.web.sel.is_none() && self.rows.get(self.sel).is_some_and(|r| reading::url_of(r).is_some());
-        self.key_ctx.set(KeyCtx { material: m, has_path, focus: if m { 0 } else { self.focus }, reading });
-        // The live web results
-        let wv = &self.web;
-        let shown = wv.loading || wv.shot.is_some() || wv.blocked || wv.plain;
-        ui.set_web_shown(shown);
-        ui.set_web_loading(wv.loading);
-        let name = tessera_core::weblink::search::name(wv.engine);
-        ui.set_web_name(name.into());
-        ui.set_web_mode(if wv.blocked { 2 } else if wv.plain { 1 } else { 0 });
-        let title = if wv.blocked { format!("{name} wants to check this is you") } else { format!("Search {name} for “{}”", tessera_core::weblink::search::short(&wv.query, 40)) };
-        ui.set_web_title(title.as_str().into());
-        match &wv.shot {
-            Some((img, w, h)) => {
-                ui.set_web_shot(img.clone());
-                ui.set_web_has_shot(true);
-                ui.set_web_aspect(if *w > 0 { *h as f32 / *w as f32 } else { 0.0 });
-            }
-            None => {
-                ui.set_web_has_shot(false);
-                ui.set_web_shot(slint::Image::default());
-                ui.set_web_aspect(0.0);
-            }
-        }
-        let hl = match (wv.sel.and_then(|i| wv.results.get(i)).and_then(|i| wv.links.get(*i)), &wv.shot) {
-            (Some(l), Some((_, w, h))) if *w > 0 && *h > 0 => Some((l.x / *w as f32, l.y / *h as f32, l.w / *w as f32, l.h / *h as f32)),
-            _ => None,
-        };
-        ui.set_web_hl(hl.is_some());
-        if let Some((x, y, w, h)) = hl {
-            ui.set_web_hl_x(x);
-            ui.set_web_hl_y(y);
-            ui.set_web_hl_w(w);
-            ui.set_web_hl_h(h);
-        }
-        ui.set_web_notice(shown && wv.notice);
-        if shown && wv.notice {
-            self.web.noticed = true;
-        }
-    }
-
-    // ── The live web results (src/web.rs) ──
-
-    /// Stop the render under way (its process killed)
-    fn web_stop(&mut self) {
-        self.timers[T_WEB].stop();
-        self.web.renderer.stop();
-        self.web.gen += 1;
-        self.web.loading = false;
-        self.web_clear();
-        self.web.query.clear();
-        self.web.url.clear();
-    }
-
-    fn web_clear(&mut self) {
-        self.web.blocked = false;
-        self.web.plain = false;
-        self.web.shot = None;
-        self.web.links.clear();
-        self.web.results.clear();
-        self.web.sel = None;
-    }
-
-    /// The text changed: the web results for it once typing pauses (a
-    /// panel already there shimmers meanwhile); none for a path, a command
-    /// or a sum, or with the setting off
-    fn web_typed(&mut self, st: &State) {
-        let q = self.text.trim().to_string();
-        let want = self.web.on && self.open && !self.answering && rank::wants_web(&q);
-        if !want {
-            if self.web.loading || self.web.shot.is_some() || !self.web.query.is_empty() {
-                self.web_stop();
-            }
-            return;
-        }
-        if q == self.web.query {
-            return;
-        }
-        let was_shown = self.web.loading || self.web.shot.is_some();
-        self.timers[T_WEB].stop();
-        self.web.renderer.stop();
-        self.web.gen += 1;
-        self.web.query = q;
-        self.web.url.clear();
-        self.web_clear();
-        self.web.loading = was_shown;
-        let gen = self.web.gen;
-        self.after(st, T_WEB, web::DEBOUNCE_MS, move || M::WebGo(gen));
-    }
-
-    /// Typing paused: draw the results page (one render at a time)
-    fn web_go(&mut self, st: &State, gen: u64) {
-        if gen != self.web.gen || !self.open || self.web.query.is_empty() {
-            return;
-        }
-        let url = tessera_core::weblink::search::url_for(self.web.engine, &self.web.query);
-        let out = web::out_dir();
-        let _ = std::fs::create_dir_all(&out);
-        let scale = self.win.as_ref().map_or(1.0, |w| w.ui.window().scale_factor());
-        let args = web::args(self.web.engine, &url, &out, scale);
-        self.web.url = url;
-        // (after Google's robot check: the plain row a while, no render)
-        if self.web.engine == "google" {
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-            let ok_at = std::fs::read_to_string(web::google_ok_path()).ok().and_then(|t| web::google_ok_at(&t));
-            if web::backed_off(self.web.blocked_at, ok_at, now) {
-                self.web.loading = false;
-                self.web_clear();
-                self.web.plain = true;
-                self.push(st);
-                return;
-            }
-        }
-        let to = Self::send(st);
-        let to2 = to.clone();
-        let started = self.web.renderer.start(
-            args,
-            move |v| {
-                // (read here, off the UI thread: the picture and its links)
-                match v["event"].as_str() {
-                    Some("rendered") => {
-                        let png = v["png"].as_str().unwrap_or("").to_string();
-                        let px = image::open(&png).ok().map(|i| {
-                            let t = i.to_rgba8();
-                            let mut b = Px::new(t.width(), t.height());
-                            b.make_mut_bytes().copy_from_slice(t.as_raw());
-                            b
-                        });
-                        let links = std::fs::read_to_string(v["links"].as_str().unwrap_or("")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).map(|j| web::parse_links(&j)).unwrap_or_default();
-                        to(Box::new(M::WebShot(gen, px, links)));
-                    }
-                    Some("error") => to(Box::new(M::WebShot(gen, None, Vec::new()))),
-                    Some("blocked") => to(Box::new(M::WebBlocked(gen))),
-                    _ => {}
-                }
-            },
-            move || to2(Box::new(M::WebEnded(gen))),
-        );
-        self.web.loading = started;
-        if !started {
-            self.web_clear();
-        }
-        self.push(st);
-    }
-
-    /// Expand: the results page in the quick-look browser
-    fn web_expand(&mut self) {
-        if self.web.url.is_empty() {
-            return;
-        }
-        let u = self.web.url.clone();
-        self.close(true);
-        tessera_core::weblink::open_quick(&u);
-    }
-
-    /// The arrow keys in the web results: Down from the last row goes in,
-    /// Up from their first comes back out. True: it moved there
-    fn web_step(&mut self, st: &State, down: bool) -> bool {
-        let n = self.web.results.len();
-        if n == 0 || self.web.loading {
-            return false;
-        }
-        match (self.web.sel, down) {
-            (None, true) if self.sel + 1 >= self.rows.len() => self.web.sel = Some(0),
-            (Some(i), true) => self.web.sel = Some((i + 1).min(n - 1)),
-            (Some(0), false) => self.web.sel = None,
-            (Some(i), false) => self.web.sel = Some(i - 1),
-            _ => return false,
-        }
-        self.push(st);
-        true
-    }
-
-    fn reveal(&mut self, st: &State) {
-        // (the list's height on this screen: less than its most on a short one, #1078)
-        let most = if Self::material(st) { layout::MATERIAL_MAX } else { layout::GLASS_MAX };
-        let view = self.win.as_ref().map_or(most, |w| layout::view_height(w.ui.get_list_max(), most));
-        let s = layout::reveal(&self.entries, self.sel, self.scroll, view);
-        // (the Flickable may have been scrolled by hand)
-        if let Some(w) = &self.win {
-            let cur = -w.ui.get_list_y();
-            let s2 = layout::reveal(&self.entries, self.sel, cur, view);
-            if s2 != cur {
-                w.ui.set_list_y(-s2);
-            }
-            self.scroll = s2;
-            return;
-        }
-        self.scroll = s;
-    }
-
-    fn select(&mut self, st: &State, i: usize) {
-        self.sel = i;
-        self.reveal(st);
-        self.push(st);
-    }
-
-    /// SearchModel.run: an AI row answers in place; the rest close and run
-    fn run(&mut self, st: &mut State, i: usize) {
-        let Some(r) = self.rows.get(i).cloned() else { return };
-        if r.ai {
-            if let Run::Ask(q) = &r.run {
-                self.ask_ai(q.clone());
-            }
-            self.push(st);
-            return;
-        }
-        self.close(true);
-        self.run_row(st, &r.run);
-    }
-
-    fn run_row(&mut self, st: &State, run: &Run) {
-        use serde_json::json;
-        match run {
-            Run::Nothing | Run::Ask(_) => {}
-            Run::Copy(t) => crate::util::pipe_to(&["wl-copy"], t.clone().into_bytes()),
-            Run::App(id) => {
-                if let Some(e) = st.shell.get::<Apps>().and_then(|a| a.by_id(id)) {
-                    crate::services::apps::launch(e);
-                }
-            }
-            // (a web result: where Settings says, tessera-web or your browser)
-            Run::Url(u) => crate::shell::ask("launch.openLink", json!([u])),
-            Run::Terminal(c) => crate::shell::ask("search.command", json!([c])),
-            Run::File(p) => crate::shell::ask("files.open", json!([p])),
-            Run::Action(t) => crate::shell::ask("search.action", json!([t])),
-            Run::Shell(k) => crate::shell::ask("search.run", json!([k])),
-            Run::SetupAi => crate::shell::ask("panels.openSettings", json!(["ai"])),
-            Run::Read(u) => tessera_core::weblink::reader(u),
-        }
-    }
-
-    fn ask_ai(&mut self, q: String) {
-        self.answering = true;
-        self.quick = Quick { busy: true, ..Default::default() };
-        crate::shell::ask("ai.quickAsk", serde_json::json!([q]));
-    }
-
-    /// The sparkle: ask about what's typed (or open the chat)
-    fn ask_button(&mut self, st: &mut State) {
-        let t = self.text.trim();
-        let q = t.strip_prefix('?').unwrap_or(t).trim().to_string();
-        if q.is_empty() {
-            crate::shell::ask("panels.show", serde_json::json!(["sidebar"]));
-            return;
-        }
-        let r = rank::ai_row(&q, Some(&self.ai));
-        if r.ai {
-            self.ask_ai(q);
-            self.push(st);
-        } else {
+    /// Search closed itself (a row run, Esc, a link opened)
+    fn after_search(&mut self) {
+        if self.search.take_done() {
             self.close(true);
-            self.run_row(st, &r.run);
-        }
-        if let Some(w) = &self.win {
-            w.ui.invoke_focus_field();
         }
     }
-
-    fn back(&mut self, st: &State) {
-        self.answering = false;
-        crate::shell::ask("ai.stopQuick", serde_json::json!([]));
-        self.refresh(st, true);
-        if let Some(w) = &self.win {
-            w.ui.invoke_focus_field();
-        }
-    }
-
-    fn key(&mut self, st: &mut State, text: &str, shift: bool, ctrl: bool) {
-        // (what the key acts on: the rows for what's typed)
-        self.rank_now(st);
-        let is = |k: Key| text == SharedString::from(k).as_str();
-        let m = Self::material(st);
-        let has_text = !self.text.is_empty();
-        if is(Key::Escape) {
-            self.close(true);
-        } else if is(Key::Return) || (self.focus != 0 && text == " ") {
-            match self.focus {
-                1 => {
-                    self.focus = 0;
-                    if let Some(w) = &self.win {
-                        w.ui.invoke_set_text("".into());
-                    }
-                    self.edited(st, String::new());
-                }
-                2 => self.ask_button(st),
-                _ if self.answering => crate::shell::ask("ai.continueQuick", serde_json::json!([])),
-                // (a web result picked with the arrow keys: the quick-look browser there)
-                _ if self.web.sel.is_some() => {
-                    let u = self.web.sel.and_then(|i| self.web.results.get(i)).and_then(|i| self.web.links.get(*i)).map(|l| l.target().to_string());
-                    if let Some(u) = u {
-                        self.close(true);
-                        tessera_core::weblink::open_quick(&u);
-                    }
-                }
-                _ => self.run(st, self.sel),
-            }
-        } else if is(Key::DownArrow) {
-            self.focus = 0;
-            if self.web_step(st, true) {
-                return;
-            }
-            let i = (self.sel + 1).min(self.rows.len().saturating_sub(1));
-            self.select(st, i);
-        } else if is(Key::UpArrow) {
-            self.focus = 0;
-            if self.web_step(st, false) {
-                return;
-            }
-            let i = self.sel.saturating_sub(1);
-            self.select(st, i);
-        } else if is(Key::Tab) || is(Key::Backtab) {
-            let back = is(Key::Backtab) || shift;
-            if m {
-                let n = self.rows.len().max(1);
-                let i = if back { (self.sel + n - 1) % n } else { (self.sel + 1) % n };
-                self.select(st, i);
-                return;
-            }
-            let (f, next) = glass_tab(self.focus, back, self.rows.len(), has_text);
-            self.focus = f;
-            if next {
-                let i = (self.sel + 1) % self.rows.len().max(1);
-                self.select(st, i);
-            } else {
-                self.push(st);
-            }
-        } else if ctrl && (text.eq_ignore_ascii_case("d") || is(Key::Delete)) {
-            // (a reading-list link: marked read, or taken off; reading.rs)
-            if let Some(u) = self.rows.get(self.sel).and_then(reading::url_of).map(String::from) {
-                if is(Key::Delete) {
-                    tessera_core::readlist::remove(&u);
-                } else {
-                    tessera_core::readlist::mark_read(&u);
-                }
-                self.reading.retain(|i| i.url != u);
-                self.refresh(st, false);
-            }
-        } else if (text == " " && shift) || (ctrl && text.eq_ignore_ascii_case("y")) {
-            if let Some(p) = self.rows.get(self.sel).map(|r| r.path.clone()).filter(|p| !p.is_empty()) {
-                crate::shell::ask("panels.quickLook", serde_json::json!([p]));
-            }
-        }
-    }
-
-    /// What the Overview passed on: its text into the field (the caret at
-    /// the end), or a key it doesn't type
-    fn typed(&mut self, st: &mut State, t: Typed) {
-        match t {
-            Typed::Text(t) => {
-                let Some(new) = handoff::merge(&self.text, &self.handoff_last, &t) else { return };
-                self.handoff_last = t;
-                if let Some(w) = &self.win {
-                    w.ui.invoke_set_text_end(new.as_str().into());
-                }
-                self.edited(st, new);
-            }
-            Typed::Key(k) => self.key(st, &k, false, false),
-        }
-    }
-
-    fn edited(&mut self, st: &State, t: String) {
-        self.focus = 0;
-        if self.answering {
-            self.answering = false;
-            crate::shell::ask("ai.stopQuick", serde_json::json!([]));
-        }
-        self.text = t;
-        self.web.sel = None;
-        self.refresh(st, true);
-        self.web_typed(st);
-    }
-
-    fn find_files(&mut self, st: &State) {
-        let fq = self.file_query.clone();
-        self.contents.clear();
-        let (to, plocate) = (Self::send(st), self.plocate);
-        let q = fq.clone();
-        std::thread::spawn(move || {
-            let out = providers::run_lines(&providers::names_command(&q, plocate));
-            to(Box::new(M::Files(q, providers::parse_names(&out))));
-        });
-        if self.rg && rank::js_len(&fq) >= 3 {
-            let to = Self::send(st);
-            std::thread::spawn(move || {
-                let out = providers::run_lines(&providers::contents_command(&fq));
-                to(Box::new(M::Contents(fq, out.lines().filter(|l| !l.trim().is_empty()).map(String::from).collect())));
-            });
-        }
-    }
-
-    fn apps_changed(&mut self, st: &State) {
-        let Some(a) = st.shell.get::<Apps>() else { return };
-        self.apps = a
-            .entries
-            .iter()
-            .filter(|e| !e.no_display)
-            .map(|e| rank::App { id: e.id.clone(), name: e.name.clone(), generic: e.generic_name.clone(), comment: e.comment.clone(), keywords: e.keywords.clone(), icon: e.icon.clone() })
-            .collect::<Vec<_>>()
-            .into();
-    }
-}
-
-/// Glass's panels: over the plugin's glass nothing (the plugin tints it, the
-/// QML item draws only its shadow); without it, the frosted fallback's tint
-/// (Theme.glass.frost) over Hyprland's blur
-pub fn glass_fill(plugin: bool, dark: bool) -> slint::Color {
-    let c = |r: f32, g: f32, b: f32, a: f32| slint::Color::from_argb_f32(a, r, g, b);
-    match (plugin, dark) {
-        (true, _) => c(0.0, 0.0, 0.0, 0.0),
-        (false, true) => c(0.11, 0.11, 0.13, 0.62),
-        (false, false) => c(0.97, 0.97, 0.98, 0.66),
-    }
-}
-
-fn rgb(c: slint::Color) -> [u8; 3] {
-    [c.red(), c.green(), c.blue()]
-}
-
-fn mixc(a: u8, b: u8, t: f32) -> u8 {
-    (a as f32 + (b as f32 - a as f32) * t).round() as u8
 }
 
 impl Part for Spotlight {
@@ -1513,24 +226,22 @@ impl Part for Spotlight {
     }
 
     fn start(&mut self, st: &mut State) {
-        st.shell.want("apps");
-        st.shell.want("icons");
-        self.qalc = crate::util::on_path("qalc");
-        self.plocate = crate::util::on_path("plocate");
-        self.rg = crate::util::on_path("rg");
-        self.after(st, T_PREP, 1500, || M::Prepare);
+        self.search.start(st);
+        let to = Self::send(st);
+        self.prep.start(slint::TimerMode::SingleShot, Duration::from_millis(1500), move || to(Box::new(W::Prepare)));
     }
 
     fn command(&mut self, st: &mut State, cmd: &Command) {
         match cmd.cmd.as_str() {
             "open" => {
                 self.open(st, cmd.screen.clone());
-                // (typed in the Overview: Panels' "query", then what came meanwhile)
+                // (with text typed in: `panels.search`, `tessera-ui ipc call panels search "…"`)
                 if self.open {
-                    let mut typed: Vec<Typed> = cmd.args["query"].as_str().filter(|q| !q.is_empty()).map(|q| Typed::Text(q.to_string())).into_iter().collect();
-                    typed.extend(self.handoff.take(Instant::now()));
-                    for t in typed {
-                        self.typed(st, t);
+                    if let Some(q) = cmd.args["query"].as_str().filter(|q| !q.is_empty()) {
+                        if let Some(w) = &self.win {
+                            w.view.set_text_end(q);
+                        }
+                        self.search.edited(st, q.to_string());
                     }
                 }
             }
@@ -1546,169 +257,43 @@ impl Part for Spotlight {
                 w.glass_sent.clear();
             }
         }
-        self.look(st);
-        if self.open {
-            self.rebuild(st);
-        }
+        self.search.config_changed(st);
     }
 
     fn plugin_changed(&mut self, st: &mut State) {
         if let Some(w) = &mut self.win {
             st.shell.apply_theme(&w.ui.global::<ui::Theme>());
-            w.ui.set_glass_fill(glass_fill(st.shell.plugin, st.shell.look.dark));
             w.glass_sent.clear();
         }
+        self.search.plugin_changed(st);
     }
 
     fn data(&mut self, st: &mut State, what: std::any::TypeId) {
-        if what == std::any::TypeId::of::<Apps>() {
-            self.apps_changed(st);
-            if self.open {
-                self.refresh(st, false);
-            }
-        } else if what == std::any::TypeId::of::<Icons>() && self.open {
-            self.rebuild(st);
-        }
+        self.search.data(st, what);
     }
 
     fn message(&mut self, st: &mut State, msg: Box<dyn Any + Send>) {
-        // Typed in the Overview, handing over (tessera_core::handoff): now
-        // if open, else held for the opening that follows
-        let msg = match msg.downcast::<Typed>() {
-            Ok(t) => {
-                if self.open {
-                    self.typed(st, *t);
-                } else {
-                    self.handoff.push(*t, Instant::now());
-                }
-                return;
-            }
-            Err(m) => m,
-        };
         // A line from the shell: its rows for a query, the AI's progress
         let msg = match msg.downcast::<serde_json::Value>() {
             Ok(v) => {
-                if v["extras"].is_object() {
-                    let x = &v["extras"];
-                    if x["ai"].is_object() {
-                        self.ai = AiMeta { configured: x["ai"]["configured"].as_bool().unwrap_or(false), name: x["ai"]["name"].as_str().unwrap_or("").into() };
-                    }
-                    if let Some(c) = x["cast"].as_array() {
-                        self.cast = c
-                            .iter()
-                            .map(|a| rank::Action { title: a["title"].as_str().unwrap_or("").into(), glyph: a["glyph"].as_str().unwrap_or("").into(), keywords: a["keywords"].as_str().unwrap_or("").into() })
-                            .collect();
-                        self.all_actions = Arc::new(self.actions.iter().chain(&self.cast).cloned().collect());
-                    }
-                    self.extras = Some(parse_extras(x));
-                    if self.open {
-                        self.refresh(st, false);
-                    }
-                }
-                if v["quick"].is_object() {
-                    let q = &v["quick"];
-                    self.quick = Quick { busy: q["busy"].as_bool().unwrap_or(false), answer: q["answer"].as_str().unwrap_or("").into(), error: q["error"].as_str().unwrap_or("").into() };
-                    self.push(st);
-                }
+                self.search.shell_line(st, &v);
                 return;
             }
             Err(m) => m,
         };
-        let Ok(m) = msg.downcast::<M>() else { return };
+        let msg = match msg.downcast::<search::Msg>() {
+            Ok(m) => {
+                self.search.message(st, *m);
+                self.after_search();
+                return;
+            }
+            Err(m) => m,
+        };
+        let Ok(m) = msg.downcast::<W>() else { return };
         match *m {
-            M::Ranked(gen, r) => self.ranked(st, gen, *r),
-            M::Key(t, shift, ctrl) => self.key(st, &t, shift, ctrl),
-            M::Edited(t) => self.edited(st, t),
-            M::Activate(i) => self.run(st, i.max(0) as usize),
-            M::Look(i) => {
-                if let Some(p) = self.rows.get(i.max(0) as usize).map(|r| r.path.clone()) {
-                    crate::shell::ask("panels.quickLook", serde_json::json!([p]));
-                }
-            }
-            M::Cleared => self.edited(st, String::new()),
-            M::Ask => self.ask_button(st),
-            M::Back => self.back(st),
-            M::Continue => crate::shell::ask("ai.continueQuick", serde_json::json!([])),
-            M::CopyAnswer => {
-                crate::util::pipe_to(&["wl-copy"], self.quick.answer.clone().into_bytes());
-                self.close(true);
-            }
-            // (a link in the answer: where Settings says, tessera-web or your browser)
-            M::Link(l) => crate::shell::ask("launch.openLink", serde_json::json!([l])),
-            M::Dismissed => self.close(true),
-            M::Closed => self.closed(st),
-            M::AskAnswer => {
-                let to = Self::send(st);
-                let q = self.ans_query.clone();
-                self.answerer.ask(&q, move |id, a| to(Box::new(M::Answered(id, a))));
-                self.after(st, T_IDLE, 120_000, || M::Idle);
-            }
-            M::Answered(id, a) => {
-                if id == self.answerer.id {
-                    self.answer = Some((self.ans_query.clone(), a));
-                    if self.open && !self.answering {
-                        self.refresh(st, false);
-                    }
-                }
-            }
-            M::Idle => self.answerer.stop(),
-            M::Converted(q, r) => {
-                if q == self.conv_query {
-                    self.conv = Some((q, r));
-                    if self.open && !self.answering {
-                        self.refresh(st, false);
-                    }
-                }
-            }
-            M::Defined(w, d) => {
-                if w == self.def_word {
-                    self.def = Some((w, d));
-                    if self.open && !self.answering {
-                        self.refresh(st, false);
-                    }
-                }
-            }
-            M::FindFiles => self.find_files(st),
-            M::Files(q, f) => {
-                if q == self.file_query {
-                    self.files = f;
-                    if self.open && !self.answering {
-                        self.refresh(st, false);
-                    }
-                }
-            }
-            M::Contents(q, c) => {
-                if q == self.file_query {
-                    self.contents = c;
-                    if self.open && !self.answering {
-                        self.refresh(st, false);
-                    }
-                }
-            }
-            M::Hold => {
-                if self.hold_until.is_some() && self.open {
-                    self.hold_until = Some(Instant::now());
-                    self.refresh(st, false);
-                }
-            }
-            M::IntroEnd => {
-                if let Some(w) = &self.win {
-                    w.ui.set_introducing(false);
-                }
-            }
-            M::Icons(list) => {
-                for (k, px) in list {
-                    self.pending.remove(&k);
-                    if let Some(px) = px {
-                        self.icons.insert(k, slint::Image::from_rgba8(px));
-                    }
-                }
-                if self.icons.len() > 400 {
-                    self.icons.clear();
-                }
-                self.update_images();
-            }
-            M::Prepare => {
+            W::Dismissed => self.close(true),
+            W::Closed => self.closed(st),
+            W::Prepare => {
                 // (made, then hidden at once: left shown, its full-screen
                 // layer took every click on that screen)
                 if self.win.is_none() && !self.open {
@@ -1720,76 +305,6 @@ impl Part for Spotlight {
                         }
                     }
                 }
-            }
-            M::Fetched(u, p) => {
-                let got = p.is_some();
-                self.remote.insert(u, p);
-                if got && self.open {
-                    self.rebuild(st);
-                }
-            }
-            M::WebGo(gen) => self.web_go(st, gen),
-            M::WebShot(gen, px, links) => {
-                if gen == self.web.gen && self.web.loading {
-                    self.web.loading = false;
-                    match px {
-                        Some(px) => {
-                            let (w, h) = (px.width(), px.height());
-                            self.web.shot = Some((slint::Image::from_rgba8(px), w, h));
-                            self.web.results = web::results(&links);
-                            self.web.links = links;
-                            self.web.sel = None;
-                        }
-                        // (it couldn't be drawn: no panel, no noise)
-                        None => self.web_clear(),
-                    }
-                    self.push(st);
-                }
-            }
-            M::WebBlocked(gen) => {
-                if gen == self.web.gen && self.web.loading {
-                    self.web.loading = false;
-                    self.web_clear();
-                    self.web.blocked = true;
-                    self.web.blocked_at = Some(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()));
-                    self.push(st);
-                }
-            }
-            M::WebEnded(gen) => {
-                // (ended without a picture: the shimmer goes)
-                if gen == self.web.gen && self.web.loading {
-                    self.web.loading = false;
-                    if self.web.shot.is_none() {
-                        self.web_clear();
-                    }
-                    self.push(st);
-                }
-            }
-            M::WebClick(fx, fy) => {
-                let link = self.web.shot.as_ref().and_then(|(_, w, h)| web::link_at(&self.web.links, fx * *w as f32, fy * *h as f32)).map(|l| l.target().to_string());
-                if let Some(u) = link {
-                    self.close(true);
-                    tessera_core::weblink::open_quick(&u);
-                }
-            }
-            M::WebExpand => self.web_expand(),
-            M::WebBrowser => {
-                if !self.web.url.is_empty() {
-                    let u = self.web.url.clone();
-                    self.close(true);
-                    tessera_core::weblink::xdg_open(&u);
-                }
-            }
-            M::WebNoticeOff => {
-                self.close(true);
-                crate::shell::ask("panels.openSettings", serde_json::json!(["defaultapps"]));
-            }
-            M::Picture(p, px) => {
-                self.pictures.insert(p, px.map(slint::Image::from_rgba8));
-                if self.pictures.len() > 200 {
-                    self.pictures.clear();
-                }
-                self.update_images();
             }
         }
     }
@@ -1805,6 +320,7 @@ impl Part for Spotlight {
             let was = self.open;
             self.close(was);
             let w = self.win.take().unwrap();
+            self.search.attach(st, None);
             st.drop_surface(&w.surface);
         }
     }
@@ -1828,19 +344,8 @@ impl Part for Spotlight {
         if !w.surface.mapped.get() || !st.shell.plugin || st.shell.look.material {
             return;
         }
-        let ui = &w.ui;
-        let o = ui.get_openness().clamp(0.0, 1.0);
-        let (x, y) = (ui.get_g_x(), ui.get_g_top());
-        let mut shapes = vec![theme::glass_shape(&st.shell.look, x, y, 680.0, 56.0, 28.0, o, 1.0)];
-        let bh = ui.get_g_body_h();
-        if bh > 0.0 {
-            shapes.push(theme::glass_shape(&st.shell.look, x, y + 64.0, 680.0, bh, 24.0, o, 1.0));
-        }
-        // (the live web results' panel, under them)
-        let wh = ui.get_g_web_h();
-        if wh > 0.0 {
-            shapes.push(theme::glass_shape(&st.shell.look, x, y + ui.get_g_web_y(), 680.0, wh, 24.0, o, 1.0));
-        }
+        let o = w.ui.get_openness().clamp(0.0, 1.0);
+        let shapes = search::glass_shapes(&*w.view, &st.shell.look);
         let key = tessera_core::theme::glass_key(&shapes);
         if key != w.glass_sent {
             st.shell.glass.set(&w.output, NS, if o > 0.002 { &shapes } else { &[] });
@@ -1859,154 +364,9 @@ impl Part for Spotlight {
     }
 
     fn quit(&mut self, _: &mut State) {
-        self.answerer.stop();
-        self.web_stop();
+        self.search.quit();
         if let Some(w) = &self.win {
             Glass::clear_now(&w.output, NS);
         }
-    }
-}
-
-impl Spotlight {
-    /// Icons and pictures that arrived: into the rows already shown
-    fn update_images(&mut self) {
-        let Some(w) = &self.win else { return };
-        let model = w.ui.get_rows();
-        for (i, r) in self.rows.iter().enumerate() {
-            let Some(mut row) = model.row_data(i) else { continue };
-            let mut changed = false;
-            if let Some(img) = self.row_keys.get(i).and_then(|k| k.as_ref()).and_then(|k| self.icons.get(k)) {
-                if row.icon.size().width == 0 {
-                    row.icon = img.clone();
-                    changed = true;
-                }
-            }
-            if !r.picture.is_empty() && !row.has_picture {
-                if let Some(Some(p)) = self.pictures.get(&r.picture) {
-                    row.picture = p.clone();
-                    row.has_picture = true;
-                    changed = true;
-                }
-            }
-            if changed {
-                model.set_row_data(i, row);
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn the_lane_ranks_as_the_ui_thread_did() {
-        let apps = vec![
-            rank::App { id: "firefox".into(), name: "Firefox".into(), generic: "Web Browser".into(), ..Default::default() },
-            rank::App { id: "foot".into(), name: "Foot".into(), generic: "Terminal".into(), ..Default::default() },
-        ];
-        let actions = rank::actions();
-        let inputs = Inputs {
-            text: "fir".into(),
-            apps: Arc::new(apps.clone()),
-            actions: Arc::new(actions.clone()),
-            answer: None,
-            qalc: false,
-            conversion: None,
-            definition: None,
-            extras: None,
-            ai: AiMeta::default(),
-            files: Vec::new(),
-            contents: Vec::new(),
-            home: "/home/x".into(),
-            material: false,
-            engine: "",
-            reading: Vec::new(),
-        };
-        let r = std::thread::spawn(move || inputs.rank()).join().unwrap();
-        let k = Known { apps: &apps, actions: &actions, ai: Some(&AiMeta::default()), home: "/home/x", ..Default::default() };
-        let (rows, wants) = rank::query("fir", &k);
-        assert_eq!(r.rows, rows);
-        assert_eq!(r.wants, wants);
-        assert_eq!(r.rows[0].title, "Firefox");
-        assert_eq!((r.entries, r.content_h), layout::glass(&rows));
-    }
-
-    fn k(key: Key) -> String {
-        SharedString::from(key).to_string()
-    }
-
-    #[test]
-    fn keys_it_takes_from_the_field() {
-        let glass = KeyCtx::default();
-        let material = KeyCtx { material: true, ..Default::default() };
-        for key in [Key::Escape, Key::Return, Key::UpArrow, Key::DownArrow, Key::Tab] {
-            assert!(handles(glass, &k(key), false, false) && handles(material, &k(key), false, false));
-        }
-        assert!(handles(glass, &k(Key::Backtab), true, false));
-        // (Material: Shift+Tab steps back through the results)
-        assert!(handles(material, &k(Key::Backtab), true, false));
-        assert!(!handles(glass, "a", false, false) && !handles(glass, &k(Key::Backspace), false, false));
-        // Quick Look only for a file
-        assert!(!handles(glass, " ", true, false));
-        let file = KeyCtx { has_path: true, ..Default::default() };
-        assert!(handles(file, " ", true, false) && handles(file, "y", false, true));
-        assert!(!handles(file, " ", false, false));
-        // a focused button takes Space
-        assert!(handles(KeyCtx { focus: 2, ..Default::default() }, " ", false, false));
-    }
-
-    #[test]
-    fn glass_tab_order() {
-        // Tab moves through the results; with one or none, to the buttons
-        assert_eq!(glass_tab(0, false, 3, true), (0, true));
-        assert_eq!(glass_tab(0, false, 1, true), (1, false));
-        assert_eq!(glass_tab(0, false, 0, false), (2, false));
-        assert_eq!(glass_tab(1, false, 3, true), (2, false));
-        assert_eq!(glass_tab(2, false, 3, true), (0, false));
-        // Shift+Tab: Ask, then Clear (while there's text), then the field
-        assert_eq!(glass_tab(0, true, 3, true), (2, false));
-        assert_eq!(glass_tab(2, true, 3, true), (1, false));
-        assert_eq!(glass_tab(2, true, 3, false), (0, false));
-        assert_eq!(glass_tab(1, true, 3, true), (0, false));
-    }
-
-    #[test]
-    fn lines_under_titles() {
-        let r = |section: &str, sub: &str| Row { section: section.into(), subtitle: sub.into(), ..Default::default() };
-        assert_eq!(sub_line(&r("Calculator", "2+2 ="), false, true), "2+2 = · Enter copies it");
-        assert_eq!(sub_line(&r("Do", ""), true, true), "Enter to do it");
-        assert_eq!(sub_line(&r("Dictionary", "Luck"), true, true), "Luck · Enter opens it");
-        assert_eq!(sub_line(&r("Top Hit", "Get · Flathub"), true, true), "Flathub");
-        assert_eq!(sub_line(&r("Top Hit", "Get · Flathub"), false, false), "Get · Flathub");
-        assert_eq!(sub_line(&r("Software", "Get · AUR · 12 votes"), true, false), "AUR · 12 votes");
-        assert_eq!(sub_line(&r("Software", "Get · AUR"), false, false), "Get · AUR");
-    }
-
-    #[test]
-    fn answer_card_tones() {
-        let a = slint::Color::from_rgb_u8(1, 2, 3);
-        let r = |section: &str, kind: &str| Row { section: section.into(), kind: kind.into(), ..Default::default() };
-        assert_eq!(tone(&r("Answer", "date"), true, a), hexc("#FF453A"));
-        assert_eq!(tone(&r("Calculator", ""), false, a), hexc("#FF9500"));
-        assert_eq!(tone(&r("Dictionary", ""), true, a), hexc("#BF5AF2"));
-        assert_eq!(tone(&r("Do", "math"), true, a), a);
-        assert_eq!(tone(&r("Answer", ""), true, a), a);
-    }
-
-    #[test]
-    fn the_shells_rows() {
-        let x = parse_extras(&json!({"q": " gimp ", "store": [{"key": "r3", "section": "Software", "title": "GIMP", "subtitle": "Get · Flathub", "icon": "/x/gimp.png", "loading": false}], "intents": "nonsense"}));
-        assert_eq!(x.q, "gimp");
-        assert_eq!((x.store[0].title.as_str(), &x.store[0].run, x.store[0].icon.as_str()), ("GIMP", &Run::Shell("r3".into()), "/x/gimp.png"));
-        assert!(x.intents.is_empty() && x.notes.is_empty());
-    }
-
-    #[test]
-    fn glass_is_clear_over_the_plugin() {
-        assert_eq!(glass_fill(true, true).alpha(), 0);
-        assert_eq!(glass_fill(false, true).alpha(), (0.62f32 * 255.0).round() as u8);
-        assert!(glass_fill(false, false).red() > 240);
     }
 }

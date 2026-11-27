@@ -16,10 +16,15 @@
 //! edge) to move it; drag a space (by its empty area or its title) to put it
 //! elsewhere in its row, or onto another display; right-click a window or a
 //! space for its menu. The arrows pick a space, Enter goes there. Typing
-//! hands over to Search (tessera_core::handoff, 27 Nov): the first letter
-//! opens Search with it typed in (its AI, the web, the dictionary, the
-//! reading list, sums…), the spaces fade and shrink away and the field
-//! glides to Search's field as it goes; what's typed meanwhile follows.
+//! searches in place (27 Nov, searching.rs): the field is Search's own, the
+//! same view and controller as Search's window (tessera_spotlight::search:
+//! apps, files, settings, the AI, the dictionary, sums, the reading list,
+//! screenshots, the live web results); the first character turns search
+//! mode on: the spaces fade, slide down and step back, the field rises to
+//! Search's place and the results grow in under it. Emptied, it all comes
+//! back (the window pictures kept meanwhile). Esc with text empties it, a
+//! second Esc closes; Enter runs the selected row as Search does, then the
+//! Overview closes. Only the focused display's Overview searches.
 //!
 //! It opens as the QML one did, through Panels ("overview": Super's tap, the
 //! hot corner, the four-finger swipe's `tessera:overview`, `qs ipc call`):
@@ -38,7 +43,7 @@
 //! that moves glides there (200 ms OutCubic, once settled, as the QML).
 //!
 //! Not like the QML yet:
-//! - search is Search's own (the QML Overview listed results in itself);
+//! - search is Search's own, in place (the QML Overview listed its own results);
 //! - Material's press swell (ElasticControl) is the hover and press scale;
 //! - no elastic pull on the context menu (ElasticGrab).
 
@@ -53,6 +58,9 @@ tessera_core::theme_global!(ui);
 use tessera_core::*;
 
 pub mod layout;
+pub mod searching;
+
+tessera_spotlight::search_view!(ui, OverviewPanel);
 
 use tessera_core::services::apps::Apps;
 use tessera_core::services::capture::Shot;
@@ -60,7 +68,6 @@ use tessera_core::services::clients::{Client, Windows};
 use tessera_core::services::hypr::{Glass, Snapshot};
 use tessera_core::services::icons::Icons;
 use tessera_core::shell::{Command, Part};
-use tessera_core::handoff::{self, Typed};
 use tessera_core::wm::{self, spaces, AppIcons, IconsDone, LiveTick, OverviewCfg, Thumbs, Wall, WallPicture};
 use tessera_core::theme;
 use tessera_core::wayland::{Spec, State, Surface};
@@ -71,11 +78,13 @@ use tessera_core::rows::Rows;
 use smithay_client_toolkit::shell::wlr_layer::{Anchor, KeyboardInteractivity, Layer};
 use smithay_client_toolkit::shell::WaylandSurface;
 use spaces::{Geo, Zone};
+use searching::{Edit, Esc, Keys, Mode};
 use std::any::Any;
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::time::Duration;
+use tessera_spotlight::search::{self, Search, View};
 
 const NAME: &str = "overview";
 
@@ -86,8 +95,6 @@ pub const NS: &str = "tessera:overview";
 const DRAG: f32 = 10.0;
 
 enum M {
-    Key(String, bool, bool),
-    Edited(String),
     Pointer(String, f32, f32, bool),
     Press(String, f32, f32, i32),
     Release(String, f32, f32, i32),
@@ -101,13 +108,12 @@ enum M {
     Expand(String, String),
     Collapse(String, String),
     Ungone,
-    /// handing over to Search: the keyboard goes now at the latest
-    LetGo,
 }
 
 #[derive(Clone, Copy, Default)]
 struct KeyCtx {
-    has_text: bool,
+    /// search mode (searching.rs): the keys are Search's
+    searching: bool,
     menu: bool,
 }
 
@@ -117,7 +123,16 @@ fn handles(c: KeyCtx, text: &str) -> bool {
     if c.menu {
         return is(Key::Escape) || is(Key::Return) || is(Key::UpArrow) || is(Key::DownArrow) || text == " ";
     }
-    is(Key::Escape) || is(Key::Return) || is(Key::UpArrow) || is(Key::DownArrow) || (!c.has_text && (is(Key::LeftArrow) || is(Key::RightArrow)))
+    is(Key::Escape) || is(Key::Return) || is(Key::UpArrow) || is(Key::DownArrow) || (!c.searching && (is(Key::LeftArrow) || is(Key::RightArrow)))
+}
+
+/// The keys the field (Search's) gives away: a menu's, the spaces' (nothing
+/// typed), or while searching Search's own (search::handles, Esc among them)
+fn takes(c: KeyCtx, s: search::KeyCtx, text: &str, shift: bool, ctrl: bool) -> bool {
+    if c.menu || !c.searching {
+        return handles(c, text);
+    }
+    search::handles(s, text, shift, ctrl)
 }
 
 /// A window inside a space, laid out
@@ -199,6 +214,8 @@ struct Win {
     output: String,
     surface: Rc<Surface>,
     ui: ui::OverviewPanel,
+    /// its Search view (the field and the results)
+    view: Rc<SearchUi>,
     a11y: Option<crate::a11y::A11y>,
     glass_sent: String,
     w: f32,
@@ -241,8 +258,6 @@ struct Win {
     l_zones: Rows<ui::OvZone>,
     l_zone_chips: HashMap<String, Rows<ui::OvChip>>,
     l_menu: Rows<ui::WMenuRow>,
-    /// handing over: its close animation ended (it hides once the keyboard goes)
-    faded: bool,
 }
 
 /// One list per key (a space's windows, a zone's chips), kept across refreshes:
@@ -259,6 +274,28 @@ fn keyed_lists<K: std::hash::Hash + Eq + Clone, T: Clone + PartialEq + 'static>(
         .collect()
 }
 
+/// The Overview's Search (its messages to the Overview's part)
+struct OvSearch(Search);
+
+impl Default for OvSearch {
+    fn default() -> Self {
+        Self(Search::new(NAME))
+    }
+}
+
+impl std::ops::Deref for OvSearch {
+    type Target = Search;
+    fn deref(&self) -> &Search {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for OvSearch {
+    fn deref_mut(&mut self) -> &mut Search {
+        &mut self.0
+    }
+}
+
 #[derive(Default)]
 pub struct Overview {
     wins: Vec<Win>,
@@ -273,11 +310,10 @@ pub struct Overview {
     /// (the QML shows it at once)
     refocus: bool,
     key_out: String,
-    /// handing over to Search: the text sent last (it keeps the keyboard
-    /// until Search has it, tessera_core::handoff)
-    handing: Option<String>,
-    hand_timer: slint::Timer,
     key_ctx: Rc<Cell<KeyCtx>>,
+    /// typing searches here (searching.rs): the mode, and Search itself
+    mode: Mode,
+    search: OvSearch,
     icons: AppIcons,
     thumbs: Thumbs,
     wall: Wall,
@@ -357,15 +393,12 @@ impl Overview {
         let ui = ui::OverviewPanel::new().expect("OverviewPanel");
         st.shell.apply_theme(&ui.global::<ui::Theme>());
         let to = send(st);
+        // Search's field and results: its keys and clicks come here as
+        // search::Msg (the field's keys by `takes`)
+        let view = Rc::new(SearchUi::new(&ui));
         {
-            let (to, ctx) = (to.clone(), self.key_ctx.clone());
-            ui.on_key(move |text, shift, ctrl| {
-                let ok = handles(ctx.get(), &text);
-                if ok {
-                    to(Box::new(M::Key(text.to_string(), shift, ctrl)));
-                }
-                ok
-            });
+            let (octx, sctx) = (self.key_ctx.clone(), self.search.key_ctx());
+            view.wire(self.search.sender(st), Rc::new(move |text: &str, shift: bool, ctrl: bool| takes(octx.get(), sctx.get(), text, shift, ctrl)));
         }
         let o = output.to_string();
         macro_rules! on {
@@ -374,7 +407,6 @@ impl Overview {
                 ui.$set(move |$($a),*| to(Box::new($m)));
             }};
         }
-        on!(on_edited, |t| M::Edited(t.to_string()));
         {
             let o = o.clone();
             on!(on_pointer, |x, y, inside| M::Pointer(o.clone(), x, y, inside));
@@ -418,6 +450,7 @@ impl Overview {
             output: output.into(),
             surface,
             ui,
+            view,
             a11y,
             glass_sent: String::new(),
             w: 1920.0,
@@ -458,7 +491,6 @@ impl Overview {
             l_zones,
             l_zone_chips: HashMap::new(),
             l_menu,
-            faded: false,
         });
         let i = self.wins.len() - 1;
         self.look(st, i);
@@ -468,14 +500,24 @@ impl Overview {
     fn look(&mut self, st: &State, i: usize) {
         let m = st.shell.look.material;
         let w = &self.wins[i];
-        w.ui.set_g_search(wglyph("magnifying-glass", m, true));
         w.ui.set_g_plus(wglyph("plus", m, true));
         w.ui.set_g_monitor(wglyph("monitor", m, false));
         w.ui.set_glass_fill(crate::wm::glass_fill(st.shell.plugin, st.shell.look.dark));
         w.ui.set_scrim(w.ui.global::<ui::Theme>().get_m3_scrim());
-        w.ui.set_emoji_font(tessera_core::settings::emoji_font(&st.shell.cfg, &[]).into());
+        // (Search's field, on every display's Overview)
+        Search::look_view(st, &*w.view);
+        w.view.set_placeholder(Self::placeholder(st));
         let t = w.ui.global::<ui::Theme>();
         self.icons.restyle(st, t.get_accent(), t.get_m3_primary_container(), t.get_m3_on_primary_container());
+    }
+
+    /// The field's placeholder (Search's own says Search's)
+    fn placeholder(st: &State) -> &'static str {
+        if Self::cfg(st).style == "macos" {
+            "Search"
+        } else {
+            "Search, or pick a space"
+        }
     }
 
     fn open(&mut self, st: &mut State, screen: Option<String>) {
@@ -490,9 +532,9 @@ impl Overview {
         self.open = true;
         self.refocus = true;
         self.key_out = screen.clone();
-        // (opened again while handing over: the Overview again)
-        self.handing = None;
-        self.hand_timer.stop();
+        // (nothing typed yet: the spaces)
+        self.mode = Mode::default();
+        self.search.deactivate();
         let cfg = Self::cfg(st);
         if cfg.wallpapers {
             self.wall.want(st, NAME, (400, 250));
@@ -510,19 +552,24 @@ impl Overview {
             w.menu = None;
             w.press = Press::None;
             Self::reset_drag(w);
-            w.faded = false;
-            w.ui.set_handing(false);
-            w.ui.invoke_open();
+            w.ui.set_searching(false);
+            w.view.open();
             w.ui.set_shown(true);
             let key = *o == screen;
             w.surface.layer.set_keyboard_interactivity(if key { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::None });
             st.set_input_region(&w.surface, None);
             w.surface.show(0, 0);
             if key {
-                w.ui.invoke_focus_field();
+                w.view.focus();
             }
         }
         self.key_ctx.set(KeyCtx::default());
+        // (Search draws into the focused display's Overview)
+        if let Some(v) = self.wins.iter().find(|w| w.output == screen).map(|w| w.view.clone()) {
+            self.search.attach(st, Some(v.clone() as Rc<dyn View>));
+            self.search.reset_view(st);
+            v.set_placeholder(Self::placeholder(st));
+        }
         self.rebuild(st);
     }
 
@@ -532,15 +579,15 @@ impl Overview {
             return;
         }
         self.open = false;
-        let keep = self.handing.is_some().then(|| self.key_out.clone());
+        // (searching: it fades as it is, the spaces still away)
+        self.search.deactivate();
+        self.mode = Mode::default();
+        self.key_ctx.set(KeyCtx::default());
         for w in &mut self.wins {
             w.menu = None;
             w.ui.set_menu_shown(false);
             w.ui.set_shown(false);
-            // (handing over: the keyboard stays until Search has it, let_go)
-            if keep.as_deref() != Some(w.output.as_str()) {
-                w.surface.layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-            }
+            w.surface.layer.set_keyboard_interactivity(KeyboardInteractivity::None);
             st.set_input_region(&w.surface, Some(&[]));
             w.surface.layer.commit();
         }
@@ -553,14 +600,9 @@ impl Overview {
         if self.open {
             return;
         }
-        if self.handing.is_some() {
-            // (it hides once the keyboard is Search's: let_go)
-            if let Some(w) = self.wins.iter_mut().find(|w| w.output == out) {
-                w.faded = true;
-            }
-            return;
-        }
         if let Some(w) = self.wins.iter_mut().find(|w| w.output == out) {
+            // (the spaces back at once while hidden: the next opening shows them)
+            w.ui.set_searching(false);
             w.surface.hide();
             st.shell.glass.set(&w.output, NS, &[]);
             w.glass_sent.clear();
@@ -811,7 +853,9 @@ impl Overview {
             Self::push_state(w, &self.gone_win, self.space_gone, &snap);
         }
         if self.capturing {
-            self.thumbs.set_live(st, NAME, live);
+            // (searching, the spaces are away: the live previews rest, their
+            // pictures kept as they are)
+            self.thumbs.set_live(st, NAME, if self.mode.on { HashMap::new() } else { live });
         }
         self.icons.flush(send(st));
     }
@@ -925,79 +969,107 @@ impl Overview {
         px >= t.x - m && px < t.x + t.w + m && py >= t.y - m && py < t.y + t.h + m
     }
 
-    // ── Search: typing hands over to it ─────────────────────────────────────
+    // ── Search: typing searches here (searching.rs) ─────────────────────────
 
-    fn edited(&mut self, st: &mut State, t: String) {
-        if let Some(sent) = &mut self.handing {
-            // (typed while Search takes over: it follows)
-            if *sent != t {
-                *sent = t.clone();
-                st.shell.sender(handoff::SEARCH)(Box::new(Typed::Text(t)));
-            }
-            return;
-        }
-        if !handoff::starts(&t) {
-            // (a space alone: nothing to search for)
-            if !t.is_empty() {
-                if let Some(w) = self.wins.iter().find(|w| w.output == self.key_out) {
-                    w.ui.invoke_open();
-                }
-            }
-            return;
-        }
-        self.hand_over(st, t);
+    /// The focused display's window (the one that types)
+    fn key_win(&self) -> Option<usize> {
+        self.wins.iter().position(|w| w.output == self.key_out)
     }
 
-    /// The first letter typed: Search opens with it, the Overview goes (its
-    /// field gliding to Search's), keeping the keyboard until Search has it
-    fn hand_over(&mut self, st: &mut State, t: String) {
+    /// The field's text changed
+    fn edited(&mut self, st: &mut State, t: String) {
         if !self.open {
             return;
         }
-        // (Search hears it first: before Panels' open command for it)
-        st.shell.sender(handoff::SEARCH)(Box::new(Typed::Text(t.clone())));
-        self.handing = Some(t.clone());
-        self.key_ctx.set(KeyCtx { has_text: true, menu: false });
+        match self.mode.edited(&t) {
+            Edit::None => {}
+            Edit::Clear => {
+                if let Some(i) = self.key_win() {
+                    self.wins[i].view.set_text("");
+                }
+            }
+            Edit::Start => self.start_search(st, t),
+            Edit::Type => {
+                self.search.edited(st, t);
+                self.after_search(st);
+            }
+            Edit::Stop { clear } => self.stop_search(st, clear),
+        }
+    }
+
+    /// The first character: search mode, in place (the same field, so no key is lost)
+    fn start_search(&mut self, st: &mut State, t: String) {
+        let Some(i) = self.key_win() else {
+            self.mode = Mode::default();
+            return;
+        };
+        self.key_ctx.set(KeyCtx { searching: true, menu: false });
         for w in &mut self.wins {
             w.menu = None;
             w.ui.set_menu_shown(false);
             w.press = Press::None;
             Self::reset_drag(w);
-            w.faded = false;
-            w.ui.set_handing(w.output == self.key_out);
+            w.ui.set_dragging_win(false);
+            w.ui.set_proxy_shown(false);
         }
-        let to = send(st);
-        self.hand_timer.start(slint::TimerMode::SingleShot, handoff::LET_GO, move || to(Box::new(M::LetGo)));
-        crate::shell::ask("panels.search", serde_json::json!([t, self.key_out]));
-        // (Panels closes the Overview as Search opens: this when it doesn't)
-        self.close(st, true);
+        let v = self.wins[i].view.clone();
+        self.search.attach(st, Some(v.clone() as Rc<dyn View>));
+        // (nothing of the last search shows as the results grow in)
+        self.search.reset_view(st);
+        self.search.activate(st);
+        v.set_placeholder(Self::placeholder(st));
+        self.search.edited(st, t);
+        self.wins[i].ui.set_searching(true);
+        // (the live previews rest while the spaces are away; their pictures stay)
+        if self.capturing {
+            self.thumbs.set_live(st, NAME, HashMap::new());
+        }
     }
 
-    /// Handing over: Search has the keyboard (or LET_GO passed): the
-    /// Overview lets it go, and hides once faded
-    fn let_go(&mut self, st: &mut State) {
-        if self.handing.take().is_none() {
-            return;
-        }
-        self.hand_timer.stop();
+    /// Emptied: the results shrink away as they are, the spaces come back
+    fn stop_search(&mut self, st: &mut State, clear: bool) {
+        self.mode = Mode::default();
         self.key_ctx.set(KeyCtx::default());
-        if self.open {
+        self.search.deactivate();
+        if let Some(i) = self.key_win() {
+            let w = &self.wins[i];
+            if clear {
+                w.view.set_text("");
+            }
+            w.ui.set_searching(false);
+        }
+        // (the live previews again)
+        self.rebuild(st);
+    }
+
+    /// One of Search's messages (its field, its rows, its lookups)
+    fn search_msg(&mut self, st: &mut State, m: search::Msg) {
+        match m {
+            search::Msg::Key(t, shift, ctrl) => self.key(st, &t, shift, ctrl),
+            search::Msg::Edited(t) => self.edited(st, t),
+            // (Clear: the field is empty now)
+            search::Msg::Cleared => self.edited(st, String::new()),
+            m => {
+                self.search.message(st, m);
+                self.after_search(st);
+            }
+        }
+    }
+
+    /// Search closed itself (a row run, a link opened): so does the
+    /// Overview, as Search does. Its field emptied from inside (Tab to
+    /// Clear, Enter): the spaces again.
+    fn after_search(&mut self, st: &mut State) {
+        if self.search.take_done() {
             self.close(st, true);
-        }
-        let faded: Vec<String> = self.wins.iter().filter(|w| w.faded).map(|w| w.output.clone()).collect();
-        for w in &mut self.wins {
-            w.faded = false;
-            w.surface.layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-            w.surface.layer.commit();
-        }
-        for out in faded {
-            self.closed(st, &out);
+        } else if self.mode.on && self.search.text().trim().is_empty() {
+            self.edited(st, String::new());
         }
     }
 
     // ── Keys ────────────────────────────────────────────────────────────────
 
-    fn key(&mut self, st: &mut State, text: &str) {
+    fn key(&mut self, st: &mut State, text: &str, shift: bool, ctrl: bool) {
         let is = |k: Key| text == SharedString::from(k).as_str();
         let Some(i) = self.wins.iter().position(|w| w.output == self.key_out) else { return };
         if self.wins[i].menu.is_some() {
@@ -1014,10 +1086,15 @@ impl Overview {
             }
             return;
         }
-        if self.handing.is_some() {
-            // (handing over: Search's keys, in the order typed)
-            if is(Key::Escape) || is(Key::Return) || is(Key::UpArrow) || is(Key::DownArrow) {
-                st.shell.sender(handoff::SEARCH)(Box::new(Typed::Key(text.to_string())));
+        if self.mode.keys() == Keys::Search {
+            if is(Key::Escape) && self.mode.escape() == Esc::Clear {
+                // (Esc with text: the text goes, the spaces come back; a second Esc closes)
+                self.wins[i].view.set_text("");
+                self.edited(st, String::new());
+            } else {
+                // (Enter, the arrows, Tab…: Search's, as in its own window)
+                self.search.key(st, text, shift, ctrl);
+                self.after_search(st);
             }
             return;
         }
@@ -1123,18 +1200,18 @@ impl Overview {
     fn open_menu(&mut self, st: &State, i: usize, items: Vec<MenuItem>, x: f32, y: f32) {
         let h = self.wins[i].h;
         self.wins[i].menu = Some(Menu { items, x, y, up: y > h * 0.6, current: -1 });
-        self.key_ctx.set(KeyCtx { has_text: false, menu: true });
+        self.key_ctx.set(KeyCtx { searching: false, menu: true });
         let snap = Self::data(st).1;
         Self::push_state(&self.wins[i], &self.gone_win, self.space_gone, &snap);
     }
 
     fn menu_dismissed(&mut self, st: &mut State, i: usize) {
         self.wins[i].menu = None;
-        self.key_ctx.set(KeyCtx { has_text: false, menu: false });
+        self.key_ctx.set(KeyCtx { searching: self.mode.on, menu: false });
         let snap = Self::data(st).1;
         Self::push_state(&self.wins[i], &self.gone_win, self.space_gone, &snap);
         if self.open && self.wins[i].output == self.key_out {
-            self.wins[i].ui.invoke_focus_field();
+            self.wins[i].view.focus();
         }
     }
 
@@ -1195,6 +1272,10 @@ impl Overview {
     fn pointer(&mut self, st: &mut State, out: &str, px: f32, py: f32, _inside: bool) {
         let Some(i) = self.wins.iter().position(|w| w.output == out) else { return };
         if !self.open {
+            return;
+        }
+        // (searching: the spaces are away, nothing there to point at)
+        if self.mode.on && out == self.key_out {
             return;
         }
         let (wins, snap) = Self::data(st);
@@ -1325,6 +1406,14 @@ impl Overview {
         if !self.open {
             return;
         }
+        // (searching: a click outside Search's field and results closes, as
+        // in Search's own window)
+        if self.mode.on && out == self.key_out {
+            if button == 0 {
+                self.wins[i].press = Press::Background;
+            }
+            return;
+        }
         let (wins, snap) = Self::data(st);
         let mac = Self::cfg(st).style == "macos";
         let w = &self.wins[i];
@@ -1407,7 +1496,7 @@ impl Overview {
         let Some(i) = self.wins.iter().position(|w| w.output == out) else { return };
         let (wins, snap) = Self::data(st);
         let mac = Self::cfg(st).style == "macos";
-        if button == 1 && self.open {
+        if button == 1 && self.open && !(self.mode.on && out == self.key_out) {
             // right-click on a window: its menu
             if let Some((_, _, Some(a))) = Self::hit(&self.wins[i], mac, px, py) {
                 if !mac {
@@ -1562,24 +1651,24 @@ impl Overview {
             }
             let ui = &w.ui;
             let o = ui.get_openness().clamp(0.0, 1.0);
-            let k = ui.get_content_scale();
+            // (the spaces as drawn: stepped back, slid down, faded while searching)
+            let (k, dy, co) = (ui.get_content_k(), ui.get_content_dy(), ui.get_content_o().clamp(0.0, 1.0));
             let (cx, cy) = (w.w / 2.0, w.h / 2.0);
-            let sc = |r: Rect| Rect { x: cx + (r.x - cx) * k, y: cy + (r.y - cy) * k, w: r.w * k, h: r.h * k };
+            let sc = |r: Rect| Rect { x: cx + (r.x - cx) * k, y: cy + (r.y - cy) * k + dy, w: r.w * k, h: r.h * k };
             let mut shapes = Vec::new();
             // the whole screen behind it, blurred: borderless, no lens, no rim
             // (Mission Control's backdrop)
             let mut back = theme::shadow_margin(theme::glass_shape(&look, 0.0, 0.0, w.w, w.h, 0.0, o, 0.0), 0.0);
             back[11] = 0.0;
             shapes.push(back);
-            // (the field where it is: gliding to Search's while handing over, unscaled then)
-            let fk = ui.get_fk();
-            let f = Rect { x: cx + (ui.get_fx() - cx) * fk, y: cy + (ui.get_fy() - cy) * fk, w: ui.get_fw() * fk, h: ui.get_fh() * fk };
-            shapes.push(theme::shadow_margin(theme::glass_shape(&look, f.x, f.y, f.w, f.h, f.h / 2.0, ui.get_fo().clamp(0.0, 1.0), 1.0), 20.0 * fk));
             for z in &w.zones {
                 let r = sc(z.rect);
                 let rad = if !z.chips.is_empty() || z.side.vertical() { 18.0 } else { 22.0 };
-                shapes.push(theme::glass_shape(&look, r.x, r.y, r.w, r.h, rad * k, o, 1.0));
+                shapes.push(theme::glass_shape(&look, r.x, r.y, r.w, r.h, rad * k, co, 1.0));
             }
+            // Search: the field where it is (resting, or rising to Search's
+            // place), the results' and web results' panels as they grow
+            shapes.extend(search::glass_shapes(&*w.view, &look));
             if let Some(mn) = &w.menu {
                 let r = mn.rect(w.w, w.h);
                 shapes.push(theme::glass_shape(&look, r.x, r.y, r.w, r.h, 14.0, o, 0.35));
@@ -1612,6 +1701,7 @@ impl Part for Overview {
         for s in ["clients", "hypr", "apps", "icons"] {
             st.shell.want(s);
         }
+        self.search.start(st);
         self.info.count = wm::workspace_count(&st.shell.cfg);
         self.info.open = wm::spaces_open(&st.shell.cfg);
     }
@@ -1634,6 +1724,12 @@ impl Part for Overview {
             }
             self.look(st, i);
         }
+        // (Search's rows again in the new look, once the windows have it;
+        // the field keeps the Overview's placeholder)
+        self.search.config_changed(st);
+        for w in &self.wins {
+            w.view.set_placeholder(Self::placeholder(st));
+        }
         if self.open {
             if Self::cfg(st).wallpapers {
                 self.wall.want(st, NAME, (400, 250));
@@ -1643,6 +1739,7 @@ impl Part for Overview {
     }
 
     fn plugin_changed(&mut self, st: &mut State) {
+        self.search.plugin_changed(st);
         for i in 0..self.wins.len() {
             st.shell.apply_theme(&self.wins[i].ui.global::<ui::Theme>());
             self.wins[i].glass_sent.clear();
@@ -1651,6 +1748,8 @@ impl Part for Overview {
     }
 
     fn data(&mut self, st: &mut State, what: std::any::TypeId) {
+        // (Search's apps and icons, while it searches)
+        self.search.data(st, what);
         if what == std::any::TypeId::of::<Windows>() {
             // a window dropped elsewhere shows again where it landed
             let (wins, _) = Self::data(st);
@@ -1667,9 +1766,15 @@ impl Part for Overview {
     }
 
     fn message(&mut self, st: &mut State, msg: Box<dyn Any + Send>) {
-        // From the shell (RustWindows.qml): the spaces' blocks and names
+        // From the shell (RustWindows.qml): the spaces' blocks and names;
+        // and Search's lines while it searches here (its rows, the AI's
+        // progress: tessera_core::search_route)
         let msg = match msg.downcast::<serde_json::Value>() {
             Ok(v) => {
+                if v["extras"].is_object() || v["quick"].is_object() {
+                    self.search.shell_line(st, &v);
+                    self.after_search(st);
+                }
                 if v["spaces"].is_object() {
                     let count = wm::workspace_count(&st.shell.cfg);
                     self.info = spaces::Info::from_json(&v["spaces"], count);
@@ -1689,6 +1794,13 @@ impl Part for Overview {
                     let to = st.shell.sender(NAME);
                     self.shots_timer.start(slint::TimerMode::SingleShot, std::time::Duration::from_millis(50), move || to(Box::new(ShotsDue)));
                 }
+                return;
+            }
+            Err(m) => m,
+        };
+        let msg = match msg.downcast::<search::Msg>() {
+            Ok(m) => {
+                self.search_msg(st, *m);
                 return;
             }
             Err(m) => m,
@@ -1733,8 +1845,6 @@ impl Part for Overview {
         };
         let Ok(m) = msg.downcast::<M>() else { return };
         match *m {
-            M::Key(t, _, _) => self.key(st, &t),
-            M::Edited(t) => self.edited(st, t),
             M::Pointer(o, x, y, inside) => self.pointer(st, &o, x, y, inside),
             M::Press(o, x, y, b) => self.press(st, &o, x, y, b),
             M::Release(o, x, y, b) => self.release(st, &o, x, y, b),
@@ -1789,7 +1899,6 @@ impl Part for Overview {
                     }
                 }
             }
-            M::LetGo => self.let_go(st),
             M::Ungone => {
                 self.gone_win.clear();
                 self.space_gone = 0;
@@ -1802,11 +1911,6 @@ impl Part for Overview {
     }
 
     fn keyboard_left(&mut self, st: &mut State, s: &Rc<Surface>) {
-        // (handing over: Search has the keyboard now)
-        if self.handing.is_some() && self.wins.iter().any(|w| Rc::ptr_eq(&w.surface, s) && w.output == self.key_out) {
-            self.let_go(st);
-            return;
-        }
         // (another window took the keyboard: as the QML panel, close)
         if self.open && self.wins.iter().any(|w| Rc::ptr_eq(&w.surface, s) && w.output == self.key_out && w.menu.is_none()) {
             self.close(st, true);
@@ -1819,6 +1923,9 @@ impl Part for Overview {
                 self.close(st, true);
             }
             let w = self.wins.remove(i);
+            if self.key_out == name {
+                self.search.attach(st, None);
+            }
             Glass::clear_now(&w.output, NS);
             st.drop_surface(&w.surface);
         }
@@ -1854,6 +1961,7 @@ impl Part for Overview {
     }
 
     fn quit(&mut self, _st: &mut State) {
+        self.search.quit();
         for w in &self.wins {
             Glass::clear_now(&w.output, NS);
         }
@@ -1874,13 +1982,35 @@ mod tests {
     fn the_field_keeps_typing_keys() {
         let k = |t: Key| SharedString::from(t).to_string();
         let empty = KeyCtx::default();
-        let typed = KeyCtx { has_text: true, menu: false };
+        let typed = KeyCtx { searching: true, menu: false };
         assert!(handles(empty, &k(Key::Escape)) && handles(empty, &k(Key::LeftArrow)));
         // with text the arrows move the cursor
         assert!(!handles(typed, &k(Key::LeftArrow)) && handles(typed, &k(Key::DownArrow)));
         assert!(!handles(empty, "a"));
         // a menu takes Space too
-        assert!(handles(KeyCtx { has_text: false, menu: true }, " "));
+        assert!(handles(KeyCtx { searching: false, menu: true }, " "));
+    }
+
+    #[test]
+    fn searching_the_keys_are_searchs() {
+        let k = |t: Key| SharedString::from(t).to_string();
+        let s = search::KeyCtx::default();
+        let searching = KeyCtx { searching: true, menu: false };
+        // Search's keys, as in its own window: Esc, Enter, the arrows, Tab
+        for key in [Key::Escape, Key::Return, Key::UpArrow, Key::DownArrow, Key::Tab] {
+            assert!(takes(searching, s, &k(key), false, false));
+        }
+        // Left and Right move the caret; letters are typed
+        assert!(!takes(searching, s, &k(Key::LeftArrow), false, false) && !takes(searching, s, "a", false, false));
+        // Quick Look on a file row, as Search's
+        let file = search::KeyCtx { has_path: true, ..Default::default() };
+        assert!(takes(searching, file, " ", true, false) && !takes(KeyCtx::default(), file, " ", true, false));
+        // nothing typed: the spaces' keys (Left and Right pick a space; no Tab)
+        assert!(takes(KeyCtx::default(), s, &k(Key::LeftArrow), false, false));
+        assert!(!takes(KeyCtx::default(), s, &k(Key::Tab), false, false));
+        // a menu open: its keys, searching or not
+        let menu = KeyCtx { searching: true, menu: true };
+        assert!(takes(menu, s, " ", false, false) && !takes(menu, s, &k(Key::Tab), false, false));
     }
 
     #[test]

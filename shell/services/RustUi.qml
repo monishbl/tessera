@@ -336,9 +336,6 @@ Singleton {
                 Todos.update(t, { done: !t.done });
             break;
         }
-        case "panels.search": // (the Rust Overview's field hands over: Search opens, and the Rust Search takes the text from the Overview)
-            Panels.show("spotlight", Quickshell.screens.find(s => s.name === a[1]) ?? undefined);
-            break;
         case "panels.show": // (the panels a Rust surface opens: Control Center's power menu, Search's "Just ask")
             if (["session", "sidebar"].includes(a[0]))
                 Panels.show(a[0], Quickshell.screens.find(s => s.name === a[1]) ?? undefined);

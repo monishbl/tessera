@@ -69,8 +69,8 @@ pub struct Model {
     /// opens over it, so it can type into them, and its tile can close it)
     pub keyboard: bool,
     pub keyboard_screen: String,
-    /// Search opens with this typed in (`panels.search`: the Overview's
-    /// field handing over), taken by the open command that follows
+    /// Search opens with this typed in (`panels.search`), taken by the open
+    /// command that follows
     pub search_query: String,
 }
 
@@ -147,8 +147,8 @@ impl Model {
         self.cc_page.clear();
     }
 
-    /// panels.search: Search with this text typed in (the Overview's hand-over,
-    /// `tessera-ui ipc call panels search "water lily"`)
+    /// panels.search: Search with this text typed in
+    /// (`tessera-ui ipc call panels search "water lily"`)
     pub fn search(&mut self, text: &str, screen: Option<&str>, focused: &str, first: &str) {
         self.search_query = text.to_string();
         self.show("spotlight", screen, None, None, focused, first);
@@ -304,7 +304,7 @@ impl Panels {
                 self.m.show(&panel_of(str_arg(a, 0)), opt(str_arg(a, 1)), a.get(2).and_then(Value::as_f64), action, &f, &first);
             }
             "showSession" => self.m.show("session", opt(str_arg(a, 1)), None, Some(str_arg(a, 0)), &f, &first),
-            // search [text, screen?]: Search with the text typed in (the Overview's field hands over)
+            // search [text, screen?]: Search with the text typed in
             "search" => self.m.search(str_arg(a, 0), opt(str_arg(a, 1)), &f, &first),
             // (a surface's name for its panel, "osk" for "keyboard", is the
             // panel: what follows the open panel, the dock's step aside for

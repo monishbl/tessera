@@ -34,7 +34,6 @@ pub mod env;
 pub mod old_names; // (Tessera's old name, until it has moved on every machine: old_names.rs)
 pub mod face; // (face unlock's PAM services, hints and `--face-live`)
 pub mod health; // (the health record Settings → Health shows: health.rs)
-pub mod handoff; // (typing in the Overview hands over to Search: handoff.rs)
 pub mod global_shortcuts; // (Hyprland's global shortcuts, as Quickshell's GlobalShortcut: standalone)
 pub mod host; // (wave 4: the QML shell's side, in Rust; standalone only)
 pub mod icon_theme;
@@ -48,6 +47,7 @@ pub mod readlist; // (the reading list: share sheet "Read later", Search and Tod
 pub mod pacing; // (the display's refresh, frames on screen, frame timers, the idle timer grid)
 pub mod perf; // (debug: loop stalls and list/window reloads, TESSERA_DEBUG: perf.rs)
 pub mod rows; // (lists changed in place, not handed a new model: rows.rs)
+pub mod search_route; // (the shell's answers for Search reach the part that asked: Search or the Overview)
 pub mod saver; // (battery saver: 60 Hz, reduced motion, slower background refreshes)
 pub mod runloop;
 pub mod seed;
