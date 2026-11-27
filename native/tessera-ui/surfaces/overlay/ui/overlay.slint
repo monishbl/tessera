@@ -9,7 +9,7 @@
 
 import { Theme } from "@tessera/theme.slint";
 import { Gl, GIcon } from "@tessera/small-icons.slint";
-import { Switch } from "@tessera/widgets.slint";
+import { Switch, ScrollIndicator } from "@tessera/widgets.slint";
 
 export struct OvWidget {
     shown: bool,
@@ -609,7 +609,7 @@ export component OverlayUi inherits Window {
         moved(x, y, w, h) => { root.moved("notes", x, y, w, h); }
         saved => { root.saved("notes"); }
         flag(f) => { root.flag("notes", f); }
-        Flickable {
+        sb-list612 := Flickable {
             content-height: max(self.height, notes-input.preferred-height);
             notes-input := TextInput {
                 width: parent.width;
@@ -629,6 +629,16 @@ export component OverlayUi inherits Window {
                 color: Theme.tertiary;
                 font-size: Theme.body;
                 accessible-role: none;
+            }
+            // (the kit's scroll indicator, held still over the list's right
+            // edge while the content moves under it, #358 #1037)
+            ScrollIndicator {
+                x: sb-list612.width - self.width;
+                y: -sb-list612.content-y;
+                height: sb-list612.height;
+                content-y: sb-list612.content-y;
+                content-height: sb-list612.content-height;
+                view-height: sb-list612.height;
             }
         }
     }
@@ -747,7 +757,7 @@ export component OverlayUi inherits Window {
         moved(x, y, w, h) => { root.moved("mixer", x, y, w, h); }
         saved => { root.saved("mixer"); }
         flag(f) => { root.flag("mixer", f); }
-        Flickable {
+        sb-list750 := Flickable {
             content-height: mix.preferred-height;
             mix := VerticalLayout {
                 width: parent.width;
@@ -757,6 +767,16 @@ export component OverlayUi inherits Window {
                     s: sl;
                     moved(v) => { root.mixer(i, v); }
                 }
+            }
+            // (the kit's scroll indicator, held still over the list's right
+            // edge while the content moves under it, #358 #1037)
+            ScrollIndicator {
+                x: sb-list750.width - self.width;
+                y: -sb-list750.content-y;
+                height: sb-list750.height;
+                content-y: sb-list750.content-y;
+                content-height: sb-list750.content-height;
+                view-height: sb-list750.height;
             }
         }
     }
