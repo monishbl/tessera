@@ -203,6 +203,8 @@ fn glyphs(material: bool) -> ui::CcGlyphs {
         battery_low: i("battery-low"),
         speaker_x: i("speaker-x"),
         bolt: ic("lightning", false),
+        eye: i("eye"),
+        eye_slash: i("eye-slash"),
     }
 }
 

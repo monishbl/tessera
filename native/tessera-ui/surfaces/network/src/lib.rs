@@ -572,6 +572,8 @@ fn glyphs() -> ui::NetGlyphs {
         plus: g("plus"),
         check: g("check"),
         wifi_slash: g("wifi-slash"),
+        eye: g("eye"),
+        eye_slash: g("eye-slash"),
     }
 }
 
