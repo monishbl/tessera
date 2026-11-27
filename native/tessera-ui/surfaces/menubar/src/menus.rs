@@ -298,7 +298,8 @@ pub fn material_width(rows: &[Row]) -> f32 {
         .min(MAX_WIDTH)
 }
 
-/// Arrow keys: the next row that can be chosen, from `from` (-1: none yet)
+/// Arrow keys: the next row that can be chosen, from `from` (-1: none yet);
+/// a row of tiles is one too (Left/Right then move along it, #385)
 pub fn step(rows: &[Row], from: i32, d: i32) -> i32 {
     let n = rows.len() as i32;
     // (nothing chosen yet: Down lands on the first row, Up on the last)
@@ -306,7 +307,7 @@ pub fn step(rows: &[Row], from: i32, d: i32) -> i32 {
     for _ in 0..n {
         i = (i + d + n) % n;
         let r = &rows[i as usize];
-        if !r.separator && !r.header && r.tiles.is_empty() && r.enabled {
+        if !r.separator && !r.header && r.enabled {
             return i;
         }
     }
@@ -399,6 +400,13 @@ mod tests {
         let m2 = v.iter().find(|r| r.text == "Move to Space 2").unwrap();
         assert_eq!(m2.action, Action::Dispatch("hl.dsp.window.move({ workspace = 102, follow = false, window = \"address:0x55aa\" })".into()));
         assert!(v.iter().find(|r| r.text == "Picture in Picture").unwrap().checked.is_none());
+        // the arrow keys stop on the rows of tiles too (#385): from the
+        // header above them, Down lands on the first row of tiles
+        let head = v.iter().position(|r| r.header && r.text == "Move & resize").unwrap() as i32;
+        let first = step(&v, head, 1);
+        assert_eq!(v[first as usize].tiles.len(), 4);
+        assert_eq!(v[step(&v, first, 1) as usize].tiles.len(), 4);
+        assert_eq!(step(&v, first, -1), head - 2, "Up from the tiles: past the header and the separator");
     }
 
     #[test]

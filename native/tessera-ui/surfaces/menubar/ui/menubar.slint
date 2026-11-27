@@ -906,6 +906,11 @@ export component Menu inherits Window {
     // (a context menu draws the same rows in either look: ContextMenu.qml has no Material twin)
     property <bool> m3: Theme.material && !context;
     in-out property <int> current: -1;
+    // in a row of tiles (the Window menu's Move & resize): the one the
+    // keys are on, Left/Right move it, Enter picks it (#385)
+    in-out property <int> tile-current: 0;
+    changed current => { tile-current = 0; }
+    property <int> tile-count: current >= 0 && current < rows.length ? rows[current].tiles.length : 0;
     out property <float> openness: shown ? 1 : 0; // (Rust follows it for the glass shape)
     out property <length> panel-x: panel.x;
     out property <length> panel-y: panel.y;
@@ -955,7 +960,12 @@ export component Menu inherits Window {
             if e.text == Key.UpArrow { step(-1); return accept; }
             if e.text == Key.DownArrow || e.text == Key.Tab { step(1); return accept; }
             if e.text == Key.Escape { dismissed(); return accept; }
+            if tile-count > 0 && (e.text == Key.LeftArrow || e.text == Key.RightArrow) {
+                tile-current = max(0, min(tile-count - 1, tile-current + (e.text == Key.RightArrow ? 1 : -1)));
+                return accept;
+            }
             if can-back && (e.text == Key.LeftArrow || e.text == Key.Backspace) { activated(0); return accept; }
+            if (e.text == Key.Return || e.text == " ") && tile-count > 0 { tile(current, tile-current); return accept; }
             if e.text == Key.Return || e.text == " " { if current >= 0 { activated(current); } return accept; }
             reject
         }
@@ -1044,15 +1054,17 @@ export component Menu inherits Window {
                             width: self.preferred-width;
                             spacing: 4px;
                             for t[j] in r.tiles: Rectangle {
+                                property <bool> keyed: root.current == i && root.tile-current == j;
                                 width: 44px;
                                 border-radius: Theme.radius-menu-row;
-                                background: tt.has-hover ? Theme.highlight : transparent;
+                                background: tt.has-hover || keyed ? Theme.highlight : transparent;
                                 accessible-role: button;
                                 accessible-label: t.label;
+                                accessible-item-selected: keyed;
                                 accessible-action-default => { root.tile(i, j); }
                                 TileGlyph {
                                     t: t;
-                                    hot: tt.has-hover;
+                                    hot: tt.has-hover || parent.keyed;
                                 }
                                 tt := TouchArea {
                                     clicked => { root.tile(i, j); }
