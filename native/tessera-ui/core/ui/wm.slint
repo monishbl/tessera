@@ -134,12 +134,23 @@ export component WMenu inherits Rectangle {
     // (from Rust: the widest row's width and the rows' height)
     in property <length> menu-w: 200px;
     in property <length> rows-h;
-    property <length> natural: rows-h + 10px;
+    // (at most the area's height less 8 px each side: a longer list scrolls
+    // inside, the arrows keeping the current row in sight; it ran off the
+    // screen, its last rows out of reach; #882)
+    property <length> natural: min(rows-h + 10px, max(0px, area-h - 16px));
     property <length> below: area-h - point-y;
     property <bool> up: upward ? (natural <= point-y || point-y >= below) : (natural > below && point-y > below);
     out property <length> mx: max(0px, min(area-w - menu-w, point-x - menu-w / 2));
     out property <length> my: max(8px, min(area-h - 8px - natural, up ? point-y - natural : point-y));
     out property <length> mh: natural;
+    // (a row's top and height in the list: scrolled into sight when current)
+    function reveal(y: length, h: length) {
+        if y < -list.content-y {
+            list.content-y = -y;
+        } else if y + h > -list.content-y + list.height {
+            list.content-y = -(y + h - list.height);
+        }
+    }
     out property <float> openness: 0;
     init => { openness = 1; }
     animate openness { duration: Theme.motion(300ms); easing: spring(0.36); }
@@ -163,47 +174,58 @@ export component WMenu inherits Rectangle {
         opacity: min(1, openness);
         accessible-role: list;
         TouchArea { }
-        VerticalLayout {
-            padding: 5px;
-            for r[i] in rows: Rectangle {
-                height: r.separator ? 11px : r.header ? 26px : 28px;
-                accessible-role: list-item;
-                accessible-label: r.text;
-                accessible-action-default => { activate(i); }
-                property <bool> hot: (rt.has-hover || current == i) && r.enabled && !r.header && !r.separator;
-                if r.separator: Rectangle {
-                    width: parent.width - 18px;
-                    height: 1px;
-                    background: Theme.separator;
-                }
-                if r.header: Text {
-                    x: 12px;
-                    y: parent.height - self.height - 4px;
-                    text: r.text;
-                    color: Theme.material ? Theme.m3-primary : Theme.secondary;
-                    font-size: 12px;
-                    font-weight: 500;
-                    accessible-role: none;
-                }
-                if !r.separator && !r.header: Rectangle {
-                    border-radius: Theme.radius-menu-row;
-                    background: hot ? Theme.highlight : transparent;
-                    Text {
+        list := Flickable {
+            width: parent.width;
+            height: parent.height;
+            clip: true;
+            content-height: rows-h + 10px;
+            VerticalLayout {
+                padding: 5px;
+                for r[i] in rows: Rectangle {
+                    height: r.separator ? 11px : r.header ? 26px : 28px;
+                    accessible-role: list-item;
+                    accessible-label: r.text;
+                    accessible-action-default => { activate(i); }
+                    property <bool> hot: (rt.has-hover || current == i) && r.enabled && !r.header && !r.separator;
+                    property <bool> is-current: current == i;
+                    changed is-current => {
+                        // (the row's place in the list: the layout's padding and the row's own y)
+                        if is-current { root.reveal(self.y, self.height); }
+                    }
+                    if r.separator: Rectangle {
+                        width: parent.width - 18px;
+                        height: 1px;
+                        background: Theme.separator;
+                    }
+                    if r.header: Text {
                         x: 12px;
+                        y: parent.height - self.height - 4px;
                         text: r.text;
-                        // (on-highlight: dark text on a light accent, both looks)
-                        color: hot ? Theme.on-highlight : !r.enabled ? Theme.tertiary : Theme.label;
-                        font-size: Theme.body;
-                        vertical-alignment: center;
+                        color: Theme.material ? Theme.m3-primary : Theme.secondary;
+                        font-size: 12px;
+                        font-weight: 500;
                         accessible-role: none;
                     }
-                }
-                rt := TouchArea {
-                    enabled: r.enabled && !r.header && !r.separator;
-                    changed has-hover => {
-                        if self.has-hover { current = i; }
+                    if !r.separator && !r.header: Rectangle {
+                        border-radius: Theme.radius-menu-row;
+                        background: hot ? Theme.highlight : transparent;
+                        Text {
+                            x: 12px;
+                            text: r.text;
+                            // (on-highlight: dark text on a light accent, both looks)
+                            color: hot ? Theme.on-highlight : !r.enabled ? Theme.tertiary : Theme.label;
+                            font-size: Theme.body;
+                            vertical-alignment: center;
+                            accessible-role: none;
+                        }
                     }
-                    clicked => { activate(i); }
+                    rt := TouchArea {
+                        enabled: r.enabled && !r.header && !r.separator;
+                        changed has-hover => {
+                            if self.has-hover { current = i; }
+                        }
+                        clicked => { activate(i); }
+                    }
                 }
             }
         }
