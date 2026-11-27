@@ -650,6 +650,8 @@ impl Sidebar {
         st.accept_drops(&surface, true);
         let ui = ui::Sidebar::new().expect("Sidebar");
         st.shell.apply_theme(&ui.global::<ui::Theme>());
+        // (Material: the kit's switch draws its tick as a Material Symbol)
+        ui.global::<ui::Symbols>().on_of(|g| tessera_core::icons::symbol(&g).into());
         let rows = Rc::new(VecModel::default());
         ui.set_rows(ModelRc::from(rows.clone()));
         ui.set_cookie(crate::surfaces::shapes::outline("cookie9").into());

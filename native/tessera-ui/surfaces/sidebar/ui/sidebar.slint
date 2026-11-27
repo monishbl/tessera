@@ -7,7 +7,7 @@
 // LensButton.qml. The numbers are theirs, per look (Theme.material).
 
 import { Theme } from "@tessera/theme.slint";
-import { Busy, Spinner } from "@tessera/widgets.slint";
+import { Busy, Spinner, Switch, Segmented } from "@tessera/widgets.slint";
 
 // ── Icons: Phosphor in Glass, Material Symbols Rounded in Material, as
 // shell/common/Icon.qml (phosphor.js / material-symbols.js codes; "" where
@@ -287,64 +287,6 @@ export component ChatButton inherits FocusScope {
         enabled: !busy;
         mouse-cursor: busy ? default : pointer;
         clicked => { root.clicked(); }
-    }
-}
-
-// The tabs (shell/common/Segmented.qml): Glass, a track with a sliding
-// pill; Material, a connected button group, the chosen one primary
-component Segmented inherits Rectangle {
-    in property <[string]> options;
-    in property <int> current;
-    callback selected(int);
-    property <length> gap: Theme.material ? 2px : 0px;
-    property <length> seg: (self.width - 4px - gap * (options.length - 1)) / max(1, options.length);
-    height: Theme.material ? 36px : 30px;
-    border-radius: self.height / 2;
-    background: Theme.material ? transparent : Theme.toggle-off;
-    accessible-role: tab-list;
-    accessible-label: "Sidebar";
-    if !Theme.material: Rectangle {
-        x: 2px + current * (seg + gap);
-        y: 2px;
-        width: seg;
-        height: parent.height - 4px;
-        border-radius: self.height / 2;
-        background: Theme.dark ? #ffffff33 : #ffffff;
-        animate x { duration: Theme.motion(M.popover); easing: cubic-bezier(0.2, 0.9, 0.1, 1.0); }
-    }
-    for o[i] in options: Rectangle {
-        x: 2px + i * (seg + gap);
-        width: seg;
-        height: parent.height;
-        property <bool> chosen: i == current;
-        property <length> full: self.height / 2;
-        property <length> inner: chosen ? full : st.pressed ? 4px : 8px;
-        accessible-role: tab;
-        accessible-label: o;
-        accessible-item-selectable: true;
-        accessible-item-selected: chosen;
-        accessible-action-default => { selected(i); }
-        if Theme.material: Rectangle {
-            border-top-left-radius: i == 0 ? full : inner;
-            border-bottom-left-radius: i == 0 ? full : inner;
-            border-top-right-radius: i == options.length - 1 ? full : inner;
-            border-bottom-right-radius: i == options.length - 1 ? full : inner;
-            background: chosen ? Theme.m3-primary.mix(Theme.m3-on-primary, st.pressed ? 0.9 : st.has-hover ? 0.92 : 1) : Theme.m3-surface-container-highest.mix(Theme.m3-on-surface-variant, st.pressed ? 0.9 : st.has-hover ? 0.92 : 1);
-            animate background { duration: Theme.hover; }
-        }
-        Text {
-            text: o;
-            color: Theme.material ? (chosen ? Theme.m3-on-primary : Theme.m3-on-surface-variant) : chosen ? Theme.label : Theme.secondary;
-            font-size: Theme.material ? M.body : Theme.small;
-            font-weight: Theme.material ? 500 : 600;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            accessible-role: none;
-        }
-        st := TouchArea {
-            mouse-cursor: pointer;
-            clicked => { selected(i); }
-        }
     }
 }
 
@@ -1688,59 +1630,6 @@ component Translate inherits Rectangle {
 // ── The sidebar ─────────────────────────────────────────────────────────────
 // ── The Anime tab (Booru.qml) ──────────────────────────────────────────────
 
-// A switch (shell/common/Switch.qml): Glass, macOS's; Material, the 52×32
-// outlined track whose handle grows 16 → 24 when on (28 while pressed)
-component Toggle inherits Rectangle {
-    in property <bool> checked;
-    in property <string> label;
-    callback toggled();
-    width: Theme.material ? 52px : 38px;
-    height: Theme.material ? 32px : 22px;
-    border-radius: self.height / 2;
-    background: Theme.material ? (checked ? Theme.m3-primary : Theme.m3-surface-container-highest) : checked ? Theme.accent : Theme.toggle-off;
-    border-width: Theme.material && !checked ? 2px : 0px;
-    border-color: Theme.m3-outline;
-    animate background { duration: Theme.hover; }
-    accessible-role: switch;
-    accessible-label: label;
-    accessible-checkable: true;
-    accessible-checked: checked;
-    accessible-action-default => { toggled(); }
-    forward-focus: fs;
-    fs := FocusScope {
-        // (a click goes to what's under it: keys only; it covered link rows and choices, which then took two clicks or none)
-        focus-on-click: false;
-        key-pressed(e) => {
-            if e.text == " " || e.text == Key.Return { toggled(); return accept; }
-            reject
-        }
-    }
-    property <length> knob: Theme.material ? (ta.pressed ? 28px : checked ? 24px : 16px) : self.height - 4px;
-    if Theme.material: Rectangle {
-        width: 40px;
-        height: 40px;
-        border-radius: 20px;
-        x: hd.x + hd.width / 2 - 20px;
-        y: (parent.height - 40px) / 2;
-        background: checked ? Theme.m3-primary : Theme.m3-on-surface;
-        opacity: ta.pressed ? 0.1 : ta.has-hover ? 0.08 : 0;
-    }
-    hd := Rectangle {
-        width: knob;
-        height: knob;
-        border-radius: knob / 2;
-        y: (parent.height - self.height) / 2;
-        x: Theme.material ? (checked ? parent.width - 16px - knob / 2 : 16px - knob / 2) : checked ? parent.width - self.width - 2px : 2px;
-        background: Theme.material ? (checked ? Theme.m3-on-primary : ta.has-hover || ta.pressed ? Theme.m3-on-surface-variant : Theme.m3-outline) : #ffffff;
-        animate x, width, height { duration: Theme.motion(Theme.material ? 300ms : M.popover); easing: Theme.material ? spring(0.6) : cubic-bezier(0.2, 0.9, 0.1, 1.0); }
-        animate background { duration: Theme.hover; }
-        if Theme.material && checked: SIcon { g: G.check; size: 13px; bold: true; color: Theme.m3-on-primary-container; }
-    }
-    ta := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { toggled(); }
-    }
-}
 
 export struct BooruCell {
     picture: image,
@@ -1774,7 +1663,7 @@ component Booru inherits Rectangle {
         width: parent.width;
         options: providers;
         current: provider;
-        accessible-label: "Site";
+        label: "Site";
         selected(i) => { pick(i); }
     }
     property <length> bar-h: Theme.material ? 40px : 32px;
@@ -1833,7 +1722,7 @@ component Booru inherits Rectangle {
             font-size: Theme.small;
             accessible-role: none;
         }
-        Toggle {
+        Switch {
             checked: nsfw;
             label: "Explicit";
             toggled => { explicit(); }
