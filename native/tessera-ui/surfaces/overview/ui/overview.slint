@@ -190,6 +190,11 @@ export component OverviewPanel inherits Window {
     callback press(length, length, int);
     callback release(length, length, int);
     callback run-result(int);
+    // (a screen reader's "activate": clicks are placed from the pointer in
+    // Rust, so the buttons it lists did nothing; #540)
+    callback activate-space(int); // a space's id: go there
+    callback new-space(int); // the + of this display row
+    callback activate-zone(string); // a display: its space showing
     callback menu-activate(int);
     callback menu-dismissed();
     callback closed();
@@ -293,6 +298,7 @@ export component OverviewPanel inherits Window {
                 opacity: dragged ? 0.85 : space-gone == t.id ? 0 : 1;
                 accessible-role: button;
                 accessible-label: t.title;
+                accessible-action-default => { activate-space(t.id); }
                 // (at the top: a child without x/y is centred, which put the
                 // wallpaper half the title's room, 11 px, too low)
                 Rectangle {
@@ -382,6 +388,7 @@ export component OverviewPanel inherits Window {
                 transform-scale: self.hot ? 1.15 : Theme.material && plus-pressed == i ? 0.94 : 1;
                 accessible-role: button;
                 accessible-label: "New space";
+                accessible-action-default => { new-space(i); }
                 WIcon {
                     glyph: g-plus;
                     size: Theme.material ? 20px : 18px;
@@ -436,6 +443,7 @@ export component OverviewPanel inherits Window {
                 opacity: dragged ? 0.85 : space-gone == c.id ? 0 : 1;
                 accessible-role: button;
                 accessible-label: c.title;
+                accessible-action-default => { activate-space(c.id); }
                 // The space: a plain neutral container (Material: a card,
                 // the current space in secondaryContainer)
                 Rectangle {
@@ -585,6 +593,7 @@ export component OverviewPanel inherits Window {
             border-color: Theme.accent;
             accessible-role: button;
             accessible-label: z.label;
+            accessible-action-default => { activate-zone(z.name); }
             // (y: 0 on both: a layout with a height but no y is centred, and
             // slid down over the chips when an open zone grew)
             if z.vertical: VerticalLayout {

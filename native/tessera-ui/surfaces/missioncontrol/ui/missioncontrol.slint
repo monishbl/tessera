@@ -88,6 +88,10 @@ export component MissionControlPanel inherits Window {
     callback press(length, length, int);
     callback release(length, length, int);
     callback closed();
+    // (a screen reader's "activate": clicks are placed from the pointer in
+    // Rust, so the buttons it listed did nothing; #540)
+    callback activate-space(int);
+    callback activate-window(string);
 
     public function focus-keys() {
         keys.focus();
@@ -174,6 +178,7 @@ export component MissionControlPanel inherits Window {
             opacity: dragged ? 0.85 : 1;
             accessible-role: button;
             accessible-label: c.title;
+            accessible-action-default => { activate-space(c.id); }
             // (at the top: without y it was centred, half the title's room too low)
             Rectangle {
                 y: 0;
@@ -265,6 +270,7 @@ export component MissionControlPanel inherits Window {
             height: t.h;
             accessible-role: button;
             accessible-label: t.title;
+            accessible-action-default => { activate-window(t.address); }
             // (Material: a recents card, outlined in primary when hovered)
             Rectangle {
                 border-radius: Theme.material ? Theme.radius-tile : 12px;

@@ -92,6 +92,10 @@ enum M {
     Press(String, f32, f32, i32),
     Release(String, f32, f32, i32),
     RunResult(i32),
+    /// a screen reader's activate (#540): a space, a display row's +, a display
+    ActivateSpace(i32),
+    NewSpace(String, i32),
+    ActivateZone(String),
     MenuActivate(String, i32),
     MenuDismissed(String),
     Closed(String),
@@ -384,6 +388,12 @@ impl Overview {
             on!(on_release, |x, y, b| M::Release(o.clone(), x, y, b));
         }
         on!(on_run_result, |i| M::RunResult(i));
+        on!(on_activate_space, |id| M::ActivateSpace(id));
+        {
+            let o = o.clone();
+            on!(on_new_space, |p| M::NewSpace(o.clone(), p));
+        }
+        on!(on_activate_zone, |z| M::ActivateZone(z.to_string()));
         {
             let o = o.clone();
             on!(on_menu_activate, |i| M::MenuActivate(o.clone(), i));
@@ -1761,6 +1771,23 @@ impl Part for Overview {
             M::Press(o, x, y, b) => self.press(st, &o, x, y, b),
             M::Release(o, x, y, b) => self.release(st, &o, x, y, b),
             M::RunResult(i) => self.run_result(st, i.max(0) as usize),
+            M::ActivateSpace(id) => {
+                if id > 0 {
+                    self.go(st, id);
+                }
+            }
+            M::NewSpace(o, p) => {
+                let name = self.wins.iter().find(|w| w.output == o).and_then(|w| w.rows.get(p.max(0) as usize)).map(|r| r.0.clone());
+                if let Some(name) = name {
+                    self.close(st, true);
+                    wm::ask("spaces.newSpace", serde_json::json!([name]));
+                }
+            }
+            M::ActivateZone(z) => {
+                let (_, snap) = Self::data(st);
+                let id = snap.active.get(&z).copied().filter(|x| *x > 0).unwrap_or_else(|| self.info.id_for(&z, 1));
+                self.go(st, id);
+            }
             M::MenuActivate(o, r) => {
                 if let Some(i) = self.wins.iter().position(|w| w.output == o) {
                     self.menu_activate(st, i, r);

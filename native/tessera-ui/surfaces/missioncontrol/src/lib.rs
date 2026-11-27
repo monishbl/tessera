@@ -64,6 +64,9 @@ enum M {
     Press(String, f32, f32, i32),
     Release(String, f32, f32, i32),
     Closed(String),
+    /// a screen reader's activate (#540): a space's card, a window's tile
+    ActivateSpace(i32),
+    ActivateWindow(String),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -174,6 +177,14 @@ impl MissionControl {
         {
             let (to, o) = (to.clone(), o.clone());
             ui.on_closed(move || to(Box::new(M::Closed(o.clone()))));
+        }
+        {
+            let to = to.clone();
+            ui.on_activate_space(move |id| to(Box::new(M::ActivateSpace(id))));
+        }
+        {
+            let to = to.clone();
+            ui.on_activate_window(move |a| to(Box::new(M::ActivateWindow(a.to_string()))));
         }
         let (l_cards, l_tiles) = (Rows::new(), Rows::new());
         ui.set_cards(l_cards.model());
@@ -620,6 +631,17 @@ impl Part for MissionControl {
             M::Press(o, x, y, b) => self.press(&o, x, y, b),
             M::Release(o, x, y, b) => self.release(st, &o, x, y, b),
             M::Closed(o) => self.closed(st, &o),
+            // (as a click on them does)
+            M::ActivateSpace(id) => {
+                if id > 0 {
+                    crate::services::hypr::focus_workspace(id);
+                }
+            }
+            M::ActivateWindow(a) => {
+                if !a.is_empty() {
+                    self.focus_window(st, &a);
+                }
+            }
         }
     }
 
