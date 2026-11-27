@@ -100,6 +100,23 @@ pub fn restart_at_lock(was_secure: bool, secure: bool, ready: bool, restarting: 
     secure && !was_secure && ready && !restarting
 }
 
+/// How long the screen stays locked and awake before a ready update restarts
+/// the shell (#623): sleeping locks first, so the lock alone was also the
+/// moment before a suspend, and the swap could freeze half-way
+pub const LOCK_AWAKE_S: f64 = 60.0;
+/// The awake count's look, every few seconds; a gap much longer than that
+/// between two looks is a sleep, and the count starts again
+pub const LOCK_LOOK_MS: u64 = 5000;
+const LOCK_SLEPT_S: f64 = 15.0;
+
+/// One look while locked: (when the awake stretch began, due now). A gap
+/// since the last look of more than LOCK_SLEPT_S is a sleep (the timer's
+/// clock stops with the computer; the wall clock doesn't): awake from now
+pub fn lock_awake(awake_since: f64, last_look: f64, now: f64) -> (f64, bool) {
+    let since = if now - last_look > LOCK_SLEPT_S || now < last_look { now } else { awake_since };
+    (since, now - since >= LOCK_AWAKE_S)
+}
+
 /// What Software Update says when a restart into the update didn't happen
 /// within a minute, by whether the update is still ready or was discarded
 pub fn restart_failed_words(ready: bool) -> &'static str {
@@ -222,6 +239,11 @@ pub struct TesseraUpdate {
     pub cache_error: String,
     /// the last lockSecure seen (the lock trigger: restart_at_lock)
     pub was_secure: bool,
+    /// locked with an update ready: since when it has been awake, and the
+    /// last look (lock_awake); the restart waits for a minute of it
+    lock_awake_since: f64,
+    lock_looked: f64,
+    t_lock: Ticker,
     /// when the restart was asked for (a "busy" status after it ends it)
     restart_at: f64,
     /// the restart didn't happen within a minute: its words wait for what's
@@ -258,6 +280,9 @@ impl Default for TesseraUpdate {
             cache_busy: false,
             cache_error: String::new(),
             was_secure: false,
+            lock_awake_since: 0.0,
+            lock_looked: 0.0,
+            t_lock: Ticker::new("tuLock"),
             restart_at: 0.0,
             restart_timed_out: false,
             t_job: Ticker::new("tuJob"),
@@ -506,13 +531,37 @@ impl TesseraUpdate {
             t(Box::new(Ev::CacheDeleted(if v["ok"] == true { Ok(v["freed"].as_u64().unwrap_or(0)) } else { Err(v["why"].as_str().unwrap_or("it couldn't be deleted").to_string()) })));
         });
     }
-    /// The lock's state, each turn (About's settled): the moment the screen
-    /// locks, a ready update restarts the shell (no screen: the lock covers
-    /// it, and the new shell takes the lock back)
-    pub fn lock_seen(&mut self, h: &Host, tx: &Tx, secure: bool) {
+    /// The lock's state, each turn (About's settled): once the screen has
+    /// been locked and awake for a minute (#623), a ready update restarts
+    /// the shell (no screen: the lock covers it, and the new shell takes the
+    /// lock back). Not at the lock itself: a sleep locks first and suspends
+    /// as soon as the lock is there, which froze the swap half-way
+    pub fn lock_seen(&mut self, _h: &Host, tx: &Tx, secure: bool) {
         let go = restart_at_lock(self.was_secure, secure, self.ready(), self.restarting);
         self.was_secure = secure;
         if go {
+            let now = helpers::now_s();
+            self.lock_awake_since = now;
+            self.lock_looked = now;
+            self.t_lock.every(tx, LOCK_LOOK_MS);
+        } else if !secure {
+            self.t_lock.stop();
+        }
+    }
+
+    /// A look while locked (tuLock): a minute awake, still locked and still
+    /// ready, and the restart goes ahead
+    fn lock_look(&mut self, h: &Host, tx: &Tx) {
+        if !self.was_secure || !self.ready() || self.restarting {
+            self.t_lock.stop();
+            return;
+        }
+        let now = helpers::now_s();
+        let (since, due) = lock_awake(self.lock_awake_since, self.lock_looked, now);
+        self.lock_awake_since = since;
+        self.lock_looked = now;
+        if due {
+            self.t_lock.stop();
             self.restart(h, tx, true);
         }
     }
@@ -690,6 +739,7 @@ impl TesseraUpdate {
                 }
             }
             "tuJob" => self.read_job(tx),
+            "tuLock" => self.lock_look(h, tx),
             // Updated: an alert once the island is up, its button opens the notes
             "tuAnnounce" => {
                 let cl = self.result.as_ref().and_then(|r| r["changelog"].as_array()).cloned().unwrap_or_default();
@@ -904,6 +954,31 @@ mod tests {
         assert!(!restart_at_lock(false, true, false, false), "nothing ready");
         assert!(!restart_at_lock(false, true, true, true), "a restart under way");
         assert!(!restart_at_lock(true, false, true, false), "unlocking isn't locking");
+    }
+
+    #[test]
+    fn the_restart_waits_for_a_minute_locked_and_awake() {
+        // looks every 5 s from the lock at 1000: due at a minute
+        let (mut since, mut last) = (1000.0, 1000.0);
+        let mut due_at = None;
+        let mut t = 1000.0;
+        while t < 1100.0 && due_at.is_none() {
+            t += 5.0;
+            let (s, due) = lock_awake(since, last, t);
+            since = s;
+            last = t;
+            if due {
+                due_at = Some(t);
+            }
+        }
+        assert_eq!(due_at, Some(1060.0));
+        // locked, then asleep at once (a lid closed, Sleep in the menu): the
+        // first look after the wake sees the gap and counts from it
+        let (s, due) = lock_awake(1000.0, 1000.0, 1000.0 + 3600.0);
+        assert_eq!((s, due), (4600.0, false));
+        assert!(!lock_awake(s, 4650.0, 4655.0).1 && lock_awake(s, 4655.0, 4660.0).1);
+        // the clock set back: counted from now, never due at once
+        assert_eq!(lock_awake(1000.0, 1050.0, 900.0), (900.0, false));
     }
 
     #[test]

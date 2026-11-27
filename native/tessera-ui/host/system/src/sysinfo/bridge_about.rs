@@ -944,7 +944,7 @@ impl Service for About {
             Ok(t) => {
                 match t.0 {
                     "upPoll" | "upLog" | "upLock" => self.up.tick(&tx, t.0),
-                    "tuStart" | "tuAnnounce" | "tuPeek" | "tuJob" => self.tu.tick(h, &tx, t.0),
+                    "tuStart" | "tuAnnounce" | "tuPeek" | "tuJob" | "tuLock" => self.tu.tick(h, &tx, t.0),
                     _ => {}
                 }
                 return self.after(h);
