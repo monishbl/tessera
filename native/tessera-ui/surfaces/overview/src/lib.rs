@@ -676,7 +676,7 @@ impl Overview {
                             y: t.rect.y,
                             w: t.rect.w,
                             h: t.rect.h,
-                            title: self.info.title(t.id, &r.name, "Desktop").into(),
+                            title: self.info.title(t.id, &r.name, "Space").into(),
                             title_y: t.title.y,
                             current,
                             minis: ModelRc::default(),

@@ -300,7 +300,7 @@ impl MissionControl {
                     })
                     .collect();
                 card_minis.push((id, minis));
-                ui::McCard { id, x: r.x, w: r.w, h: r.h, title: self.info.title(id, &out, "Desktop").into(), current: id == active, minis: ModelRc::default() }
+                ui::McCard { id, x: r.x, w: r.w, h: r.h, title: self.info.title(id, &out, "Space").into(), current: id == active, minis: ModelRc::default() }
             })
             .collect();
         let list = windows_for(&wins, apps, &self.expose, active);

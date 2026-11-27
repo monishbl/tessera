@@ -253,7 +253,7 @@ export component MissionControlPanel inherits Window {
         transform-scale: 0.96 + 0.04 * progress;
         transform-origin: { x: self.width / 2, y: self.height / 2 };
         if tiles.length == 0: Text {
-            text: expose ? "No open windows" : "No windows on this desktop";
+            text: "No windows";
             color: Theme.material && !on-wall ? Theme.m3-on-surface-variant : Theme.material || Theme.dark ? #ffffff.with-alpha(0.7) : Theme.secondary;
             font-size: Theme.title;
         }
