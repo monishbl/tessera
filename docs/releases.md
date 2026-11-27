@@ -694,7 +694,9 @@ bash tools/release-builder/install-publisher.sh  # install or update it (from th
   hidden sandbox arena on server1 (`tools/release-builder/pretest.sh`, as
   `~/bin/tessera-pretest`; site/tools/arena.sh): it must start, answer IPC
   within 30 s, draw ("shell ready": the wallpaper and the bar) and lock and
-  unlock. The host's Wi-Fi and Bluetooth power must be the same afterwards. A
+  unlock for real: `ipc call lock state` must answer `locked` (the
+  compositor holds the session lock) within 10 s of the lock and `unlocked`
+  within 10 s of the unlock (a build that can't say fails). The host's Wi-Fi and Bluetooth power must be the same afterwards. A
   failure leaves no ready set; the reason is in the log and the status
   (`failed: the generic build failed its test before publishing: …`). About
   2 minutes.

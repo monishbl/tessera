@@ -463,7 +463,7 @@ class Trigger(unittest.TestCase):
         rb = (ROOT / "tools/release-builder/tessera-release").read_text()
         self.assertLess(rb.index('\n    pretest(tree, variants, t["channel"])'), rb.index("\n    make_set(t, tree, variants)"))
         pt = (ROOT / "tools/release-builder/pretest.sh").read_text()
-        for check in ("within 30 s", "lock lock", "lock unlock", "shell ready", "radios"):
+        for check in ("within 30 s", "lock lock", "lock unlock", "shell ready", "radios", "waitlock locked", "waitlock unlocked", "q call lock state"):
             self.assertIn(check, pt)
 
 
