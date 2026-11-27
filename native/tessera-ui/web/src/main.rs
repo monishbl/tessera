@@ -303,6 +303,26 @@ impl App {
         self.load(uri);
     }
 
+    /// Google let this browser through (its results page loaded, and was
+    /// still there a moment later: not a check that sends on to /sorry):
+    /// Search's web results stop backing off (google-ok.json, src/quirk.rs)
+    fn note_google_ok(self: &Rc<Self>) {
+        let uri = self.uri();
+        if !self.quirk.on() || !quirk::is_results_page(&uri) {
+            return;
+        }
+        let a = self.clone();
+        glib::timeout_add_local_once(Duration::from_secs(3), move || {
+            if a.uri() == uri {
+                let path = data_dir().join(quirk::OK_FILE);
+                let tmp = path.with_extension("json.tmp");
+                if std::fs::write(&tmp, quirk::ok_json(now())).and_then(|_| std::fs::rename(&tmp, &path)).is_err() {
+                    let _ = std::fs::remove_file(&tmp);
+                }
+            }
+        });
+    }
+
     /// Opens an address (with the user agent it gets: src/quirk.rs)
     fn load(&self, uri: &str) {
         self.quirk.set_for(uri);
@@ -921,6 +941,7 @@ fn wire(app: &Rc<App>, pill: &gtk::Box, browser: &gtk::Button) {
                 webkit6::LoadEvent::Finished => {
                     a.progress.set_opacity(0.0);
                     a.progress.set_fraction(0.0);
+                    a.note_google_ok();
                 }
                 _ => {}
             }

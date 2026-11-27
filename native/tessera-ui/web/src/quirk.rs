@@ -88,6 +88,41 @@ pub fn wants_safari(uri: &str) -> bool {
     search_host && !sign_in_path(path)
 }
 
+/// Google's own host or one under it (www.google.com, ipv4.google.com)
+fn google_host(host: &str) -> bool {
+    is_google_domain(host) || host.split_once('.').is_some_and(|(_, rest)| is_google_domain(rest))
+}
+
+/// Google's robot check ("unusual traffic", a reCAPTCHA): google.*/sorry.
+/// Never drawn by --render: the page shows the computer's address
+pub fn is_robot_check(uri: &str) -> bool {
+    host_of(uri).is_some_and(|(host, path)| {
+        let p = path.split(['?', '#']).next().unwrap_or("");
+        google_host(&host) && (p == "/sorry" || p.starts_with("/sorry/"))
+    })
+}
+
+/// A page with Google's reCAPTCHA form, as a script in it sees (for a page
+/// of Google's that isn't at /sorry): "yes" or "no"
+pub const CAPTCHA_JS: &str = r#"(function () {
+  var g = /(^|\.)google\.[a-z.]+$/.test(location.hostname);
+  var f = document.querySelector('form#captcha-form, #captcha-form, .g-recaptcha, iframe[src*="/recaptcha/"]');
+  return g && !!f ? 'yes' : 'no';
+})()"#;
+
+/// Google's results page (/search on a search host), the robot check passed
+pub fn is_results_page(uri: &str) -> bool {
+    wants_safari(uri) && !is_robot_check(uri) && host_of(uri).is_some_and(|(_, path)| path.split(['?', '#']).next() == Some("/search"))
+}
+
+/// The note Search reads (its web results back off after a robot check
+/// until Google lets this browser through): data folder/google-ok.json
+pub const OK_FILE: &str = "google-ok.json";
+
+pub fn ok_json(now: u64) -> String {
+    format!("{{\"at\": {now}}}")
+}
+
 /// Whether a navigation decided now is the page's own (so its agent follows
 /// the address): a link, a form, back or forward, a reload; a redirect
 /// while the page is still loading (a frame's redirect comes after the page
@@ -117,6 +152,11 @@ impl Quirk {
         let settings = WebViewExt::settings(view).unwrap_or_default();
         let honest = settings.user_agent().map(|s| s.to_string()).unwrap_or_default();
         Rc::new(Quirk { settings, honest, on, page_loading: Cell::new(false) })
+    }
+
+    /// Whether this view uses the quirk (not the sign-in windows)
+    pub fn on(&self) -> bool {
+        self.on
     }
 
     /// The agent for this address, set before it's opened
@@ -271,6 +311,44 @@ mod tests {
         // (the host is after the @: this is google's)
         assert!(wants_safari("https://someone@www.google.com/search?q=x"));
         assert!(!wants_safari("https://www.google.com@evil.org/search"));
+    }
+
+    #[test]
+    fn googles_robot_check() {
+        for u in [
+            "https://www.google.com/sorry/index?continue=https://www.google.com/search%3Fq%3Dx&q=EgQ",
+            "https://www.google.co.in/sorry/index",
+            "https://ipv4.google.com/sorry/index?continue=x",
+            "https://google.com/sorry",
+            "https://www.google.com/sorry?x=1",
+            "HTTPS://WWW.GOOGLE.COM/sorry/index",
+        ] {
+            assert!(is_robot_check(u), "{u}");
+        }
+        for u in [
+            "https://www.google.com/search?q=sorry",
+            "https://www.google.com/search?q=x#sorry/",
+            "https://www.google.com/sorryish",
+            "https://example.com/sorry/index",
+            "https://www.google.com.evil.org/sorry/index",
+            "https://www.google.com/",
+            "",
+        ] {
+            assert!(!is_robot_check(u), "{u}");
+        }
+        assert!(CAPTCHA_JS.contains("captcha-form") && CAPTCHA_JS.contains("google"));
+    }
+
+    #[test]
+    fn a_results_page_means_google_let_it_through() {
+        assert!(is_results_page("https://www.google.com/search?q=water+lily"));
+        assert!(is_results_page("https://www.google.co.in/search?q=x&sei=y"));
+        assert!(!is_results_page("https://www.google.com/sorry/index?continue=https://www.google.com/search"));
+        assert!(!is_results_page("https://www.google.com/"));
+        assert!(!is_results_page("https://www.google.com/searchx"));
+        assert!(!is_results_page("https://duckduckgo.com/search?q=x"));
+        assert!(!is_results_page("https://accounts.google.com/search"));
+        assert_eq!(ok_json(1_764_000_000), r#"{"at": 1764000000}"#);
     }
 
     #[test]

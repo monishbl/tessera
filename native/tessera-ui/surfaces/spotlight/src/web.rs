@@ -105,6 +105,30 @@ pub fn args(engine: &str, url: &str, out: &Path, scale: f32) -> Vec<String> {
     a
 }
 
+/// Google's robot check (tessera-web --render says `{"event":"blocked"}`
+/// for google.*/sorry or a reCAPTCHA page, never a picture of it: it shows
+/// the address): no more renders of Google's results for this long, or
+/// until you've passed the check in the quick-look browser (it writes
+/// `google-ok.json` in its data folder when a Google results page loads
+/// there and stays). Meanwhile the panel is the plain "Search Google for …"
+pub const BACKOFF_SECS: u64 = 30 * 60;
+
+/// tessera-web's note that Google let it through: {"at": unix seconds}
+pub fn google_ok_path() -> PathBuf {
+    tessera_core::util::xdg("XDG_DATA_HOME", ".local/share").join("tessera/web/google-ok.json")
+}
+
+/// When Google last let the quick-look browser through (unix seconds)
+pub fn google_ok_at(text: &str) -> Option<u64> {
+    serde_json::from_str::<Value>(text).ok()?["at"].as_u64()
+}
+
+/// Backing off Google's results now: blocked within BACKOFF_SECS, and
+/// not let through since
+pub fn backed_off(blocked_at: Option<u64>, ok_at: Option<u64>, now: u64) -> bool {
+    blocked_at.is_some_and(|b| now < b.saturating_add(BACKOFF_SECS) && !ok_at.is_some_and(|o| o >= b))
+}
+
 /// Where the pictures go: the session's runtime folder (memory, gone at log out)
 pub fn out_dir() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("tessera/search-web")
@@ -208,6 +232,26 @@ mod tests {
         let r = results(&l);
         // (top to bottom; the same address once)
         assert_eq!(r.iter().map(|i| l[*i].title.as_str()).collect::<Vec<_>>(), ["First", "Second"]);
+    }
+
+    #[test]
+    fn google_is_left_alone_for_a_while_after_its_robot_check() {
+        let b = 1_000_000;
+        // never blocked: renders as usual
+        assert!(!backed_off(None, None, b));
+        // blocked: 30 minutes off
+        assert!(backed_off(Some(b), None, b));
+        assert!(backed_off(Some(b), None, b + BACKOFF_SECS - 1));
+        assert!(!backed_off(Some(b), None, b + BACKOFF_SECS));
+        // passed the check in the browser since: renders again
+        assert!(!backed_off(Some(b), Some(b + 60), b + 61));
+        // a pass from before the block doesn't count
+        assert!(backed_off(Some(b), Some(b - 60), b + 61));
+        // google-ok.json
+        assert_eq!(google_ok_at(r#"{"at": 1764000000}"#), Some(1_764_000_000));
+        assert_eq!(google_ok_at("{}"), None);
+        assert_eq!(google_ok_at("not json"), None);
+        assert!(google_ok_path().ends_with("tessera/web/google-ok.json"));
     }
 
     #[test]

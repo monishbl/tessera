@@ -22,6 +22,11 @@
 //! {"event":"rendered","png":…,"links":…,"width":…,"height":…,"scale":…,"url":…}
 //! With --every it stays and loads the page again every SECONDS; without,
 //! it exits after one (0), or after {"event":"error","message":…} (1).
+//! Google's robot check (google.*/sorry, a reCAPTCHA page) is never drawn
+//! (it shows the computer's address): {"event":"blocked","url":…} (the
+//! address asked for), and out (1), --every or not.
+//! Google's search pages render in a session of their own that keeps
+//! nothing (src/quirk.rs), with the Safari-on-a-Mac user agent.
 
 use crate::args::{Area, Render};
 use gtk::{gdk, gio, glib};
@@ -229,6 +234,17 @@ impl R {
         self.view.allocate(w, h, -1, None);
     }
 
+    /// Google's robot check came: said, never drawn, and out
+    fn blocked(self: &Rc<Self>) {
+        if self.code.get() != 0 {
+            return;
+        }
+        self.taken.set(u64::MAX);
+        crate::emit(json!({"event": "blocked", "url": self.cfg.url}));
+        self.code.set(2);
+        self.main_loop.quit();
+    }
+
     fn fail(self: &Rc<Self>, why: &str) {
         crate::emit(json!({"event": "error", "message": why, "url": self.cfg.url}));
         self.done(false);
@@ -290,6 +306,24 @@ impl R {
             return;
         }
         self.taken.set(pass);
+        if crate::quirk::is_robot_check(&self.view.uri().map(|s| s.to_string()).unwrap_or_default()) {
+            return self.blocked();
+        }
+        // (a reCAPTCHA form on Google's page: the robot check too)
+        let me = self.clone();
+        self.view.evaluate_javascript(crate::quirk::CAPTCHA_JS, None, Some("tessera-render"), None::<&gio::Cancellable>, move |r| {
+            if r.is_ok_and(|v| v.to_str().as_str() == "yes") {
+                me.blocked();
+            } else {
+                me.measure(pass);
+            }
+        });
+    }
+
+    fn measure(self: &Rc<Self>, pass: u64) {
+        if pass != self.pass.get() {
+            return;
+        }
         self.size();
         let script = format!("{MEASURE_JS}({})", measure_cfg(&self.cfg));
         let me = self.clone();
@@ -309,6 +343,9 @@ impl R {
     fn links_then_shoot(self: &Rc<Self>, pass: u64, area: Found) {
         if pass != self.pass.get() {
             return;
+        }
+        if crate::quirk::is_robot_check(&self.view.uri().map(|s| s.to_string()).unwrap_or_default()) {
+            return self.blocked();
         }
         let script = format!("{LINKS_JS}({})", json!({"x": area.x, "y": area.y, "w": area.w, "h": area.h}));
         let me = self.clone();
@@ -333,6 +370,10 @@ impl R {
     fn write(self: &Rc<Self>, pass: u64, area: Found, got: &Value, tex: &gdk::Texture) {
         if pass != self.pass.get() {
             return;
+        }
+        // (moved on to the robot check meanwhile: never written)
+        if crate::quirk::is_robot_check(&self.view.uri().map(|s| s.to_string()).unwrap_or_default()) {
+            return self.blocked();
         }
         let (tw, th) = (tex.width(), tex.height());
         // (picture pixels per CSS px: what the snapshot came out at)
@@ -385,7 +426,10 @@ pub fn run(cfg: Render) -> i32 {
         let _ = std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700));
     }
     let (site, site_cache) = (data.join("site").to_string_lossy().into_owned(), cache.join("site").to_string_lossy().into_owned());
-    let session = NetworkSession::new(Some(site.as_str()), Some(site_cache.as_str()));
+    // (Google's search: a session that keeps nothing, as a clean one got
+    // results where this program's own was sent to the robot check)
+    let google = crate::quirk::wants_safari(&cfg.url);
+    let session = if google { NetworkSession::new_ephemeral() } else { NetworkSession::new(Some(site.as_str()), Some(site_cache.as_str())) };
     session.set_itp_enabled(true);
     let content = UserContentManager::new();
     let settings = webkit6::Settings::new();
@@ -409,7 +453,12 @@ pub fn run(cfg: Render) -> i32 {
     let r = Rc::new(R { cfg, view, quirk, _window: window, main_loop: main_loop.clone(), pass: Cell::new(0), taken: Cell::new(0), code: Cell::new(0) });
     {
         let me = r.clone();
-        r.view.connect_load_changed(move |_, ev| {
+        r.view.connect_load_changed(move |view, ev| {
+            // (sent to Google's robot check: said at once, never drawn)
+            if matches!(ev, LoadEvent::Redirected | LoadEvent::Committed) && crate::quirk::is_robot_check(&view.uri().map(|s| s.to_string()).unwrap_or_default()) {
+                me.blocked();
+                return;
+            }
             if ev == LoadEvent::Finished {
                 me.settle();
             }
@@ -451,7 +500,9 @@ pub fn run(cfg: Render) -> i32 {
     // (src/quirk.rs); then the blocker (as the browser's), then the page
     {
         let me = r.clone();
-        crate::quirk::reset_once(&session, &data, move || {
+        // (the session kept on disk only: a Google render's keeps nothing)
+        let reset_dir = if google { None } else { Some(data.clone()) };
+        let begin = move || {
             let started = Rc::new(Cell::new(false));
             let (s2, me2) = (started.clone(), me.clone());
             crate::with_blocker(&content, move || {
@@ -464,7 +515,11 @@ pub fn run(cfg: Render) -> i32 {
                     me.load();
                 }
             });
-        });
+        };
+        match reset_dir {
+            Some(d) => crate::quirk::reset_once(&session, &d, begin),
+            None => begin(),
+        }
     }
     main_loop.run();
     if r.code.get() == 1 {

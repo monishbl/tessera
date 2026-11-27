@@ -119,6 +119,8 @@ enum M {
     WebGo(u64),
     WebShot(u64, Option<Px>, Vec<web::Link>),
     WebEnded(u64),
+    /// Google's robot check instead of results (no picture of it)
+    WebBlocked(u64),
     /// a click on the picture (fractions of it), its buttons, the note's "Turn off"
     WebClick(f32, f32),
     WebExpand,
@@ -149,6 +151,12 @@ struct Web {
     notice: bool,
     noticed: bool,
     renderer: web::Renderer,
+    /// Google's robot check came instead (the row with Check in browser)
+    blocked: bool,
+    /// no picture while backing off from Google (the plain row)
+    plain: bool,
+    /// when the robot check last came (unix seconds): web::backed_off
+    blocked_at: Option<u64>,
 }
 
 /// The state key of the one-time note under the web results
@@ -1070,10 +1078,14 @@ impl Spotlight {
         self.key_ctx.set(KeyCtx { material: m, has_path, focus: if m { 0 } else { self.focus }, reading });
         // The live web results
         let wv = &self.web;
-        let shown = wv.loading || wv.shot.is_some();
+        let shown = wv.loading || wv.shot.is_some() || wv.blocked || wv.plain;
         ui.set_web_shown(shown);
         ui.set_web_loading(wv.loading);
-        ui.set_web_name(tessera_core::weblink::search::name(wv.engine).into());
+        let name = tessera_core::weblink::search::name(wv.engine);
+        ui.set_web_name(name.into());
+        ui.set_web_mode(if wv.blocked { 2 } else if wv.plain { 1 } else { 0 });
+        let title = if wv.blocked { format!("{name} wants to check this is you") } else { format!("Search {name} for “{}”", tessera_core::weblink::search::short(&wv.query, 40)) };
+        ui.set_web_title(title.as_str().into());
         match &wv.shot {
             Some((img, w, h)) => {
                 ui.set_web_shot(img.clone());
@@ -1117,6 +1129,8 @@ impl Spotlight {
     }
 
     fn web_clear(&mut self) {
+        self.web.blocked = false;
+        self.web.plain = false;
         self.web.shot = None;
         self.web.links.clear();
         self.web.results.clear();
@@ -1161,6 +1175,18 @@ impl Spotlight {
         let scale = self.win.as_ref().map_or(1.0, |w| w.ui.window().scale_factor());
         let args = web::args(self.web.engine, &url, &out, scale);
         self.web.url = url;
+        // (after Google's robot check: the plain row a while, no render)
+        if self.web.engine == "google" {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            let ok_at = std::fs::read_to_string(web::google_ok_path()).ok().and_then(|t| web::google_ok_at(&t));
+            if web::backed_off(self.web.blocked_at, ok_at, now) {
+                self.web.loading = false;
+                self.web_clear();
+                self.web.plain = true;
+                self.push(st);
+                return;
+            }
+        }
         let to = Self::send(st);
         let to2 = to.clone();
         let started = self.web.renderer.start(
@@ -1180,6 +1206,7 @@ impl Spotlight {
                         to(Box::new(M::WebShot(gen, px, links)));
                     }
                     Some("error") => to(Box::new(M::WebShot(gen, None, Vec::new()))),
+                    Some("blocked") => to(Box::new(M::WebBlocked(gen))),
                     _ => {}
                 }
             },
@@ -1716,6 +1743,15 @@ impl Part for Spotlight {
                         // (it couldn't be drawn: no panel, no noise)
                         None => self.web_clear(),
                     }
+                    self.push(st);
+                }
+            }
+            M::WebBlocked(gen) => {
+                if gen == self.web.gen && self.web.loading {
+                    self.web.loading = false;
+                    self.web_clear();
+                    self.web.blocked = true;
+                    self.web.blocked_at = Some(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()));
                     self.push(st);
                 }
             }

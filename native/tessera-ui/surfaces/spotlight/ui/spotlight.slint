@@ -652,6 +652,11 @@ component WebResults inherits Rectangle {
     in property <float> hl-w;
     in property <float> hl-h;
     in property <bool> notice;
+    // 0 the picture; 1 no picture (backing off from Google's robot check):
+    // the plain "Search Google for …"; 2 Google's robot check came: Check
+    // in browser (Expand's quick-look browser, where it can be passed)
+    in property <int> mode;
+    in property <string> title;
     callback click(float, float); // where, as fractions of the picture
     callback expand();
     callback browser();
@@ -675,7 +680,7 @@ component WebResults inherits Rectangle {
         }
         Text {
             horizontal-stretch: 1;
-            text: name;
+            text: mode == 0 ? name : title;
             color: ink;
             font-size: Theme.material ? 14px : Theme.caption;
             font-weight: Theme.material ? 500 : 600;
@@ -684,7 +689,7 @@ component WebResults inherits Rectangle {
             accessible-role: none;
         }
         if !Theme.material: GButton {
-            text: "Expand";
+            text: mode == 2 ? "Check in browser" : "Expand";
             clicked => { expand(); }
         }
         if !Theme.material: GButton {
@@ -693,7 +698,7 @@ component WebResults inherits Rectangle {
         }
         if Theme.material: MButton {
             height: 32px;
-            text: "Expand";
+            text: mode == 2 ? "Check in browser" : "Expand";
             clicked => { expand(); }
         }
         if Theme.material: MButton {
@@ -703,6 +708,7 @@ component WebResults inherits Rectangle {
         }
     }
     pic := Rectangle {
+        visible: mode == 0;
         y: 40px;
         height: pic-h;
         border-radius: Theme.material ? 16px : 12px;
@@ -753,7 +759,7 @@ component WebResults inherits Rectangle {
         }
     }
     if notice: HorizontalLayout {
-        y: 40px + pic-h + 6px;
+        y: (mode == 0 ? 40px + pic-h : 36px) + 6px;
         height: 22px;
         spacing: 6px;
         alignment: start;
@@ -841,6 +847,8 @@ export component SpotlightPanel inherits Window {
     in property <float> web-hl-w;
     in property <float> web-hl-h;
     in property <bool> web-notice;
+    in property <int> web-mode; // (WebResults.mode)
+    in property <string> web-title;
 
     out property <float> openness: shown ? 1 : 0;
     // Glass: where the glass shapes are (for the plugin)
@@ -865,7 +873,7 @@ export component SpotlightPanel inherits Window {
     property <length> web-w: Theme.material ? m-w - 40px : 680px - 24px;
     property <length> web-pic-max: max(120px, min(380px, root.height * 0.3));
     property <length> web-pic-h: web-has-shot ? min(web-w * web-aspect, web-pic-max) : min(150px, web-pic-max);
-    property <length> web-block: 40px + web-pic-h + (web-notice ? 30px : 0) + 6px;
+    property <length> web-block: (web-mode == 0 ? 40px + web-pic-h : 36px) + (web-notice ? 30px : 0) + 6px;
     property <length> web-room: web-on ? web-block + (Theme.material ? 12px : 28px) : 0;
     property <length> g-list-max: max(120px, min(440px, root.height - round(root.height * 0.2 / 1px) * 1px - 64px - 16px - 24px - web-room));
     property <length> m-list-max: max(120px, min(480px, root.height - m-top - 56px - 20px - 24px - web-room));
@@ -1126,6 +1134,8 @@ export component SpotlightPanel inherits Window {
                 hl-w: web-hl-w;
                 hl-h: web-hl-h;
                 notice: web-notice;
+                mode: web-mode;
+                title: web-title;
                 click(x, y) => { root.web-click(x, y); }
                 expand => { root.web-expand(); }
                 browser => { root.web-browser(); }
@@ -1231,6 +1241,8 @@ export component SpotlightPanel inherits Window {
                     hl-w: web-hl-w;
                     hl-h: web-hl-h;
                     notice: web-notice;
+                    mode: web-mode;
+                    title: web-title;
                     click(x, y) => { root.web-click(x, y); }
                     expand => { root.web-expand(); }
                     browser => { root.web-browser(); }
