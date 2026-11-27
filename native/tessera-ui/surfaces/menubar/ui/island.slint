@@ -2571,6 +2571,8 @@ export component Island inherits Rectangle {
     // the size it's going to, and the size it is now on its spring (Rust's;
     // below zero: none yet, the target itself)
     out property <length> want-w: target-w;
+    // its width at rest (the pill or the dots, not open): the bar's sides keep clear of it (#383)
+    out property <length> rest-w: mode == 3 ? min(420px, pill-row.preferred-width + 28px) : compact ? compact-w : dots-w + 14px;
     out property <length> want-h: target-h;
     in property <length> spring-w: -1px;
     in property <length> spring-h: -1px;

@@ -106,6 +106,8 @@ enum M {
     Sweep,
     MusicLinger,
     TrayCollapse,
+    /// the bar's right side changed its squeeze: look again (#383)
+    Squeeze,
     Menu(String, String, f32),
     Clicked(String, String, bool, f32),
     MenuActivated(i32),
@@ -191,6 +193,11 @@ struct BarEntry {
     chips_key: String,
     live_key: String,
     alerts_key: String,
+    /// the right side over its room (items::squeeze_step), what each step
+    /// freed, and the width before the last one (measured on the next look)
+    squeeze: u8,
+    freed: [f32; items::SQUEEZE_MAX as usize],
+    squeeze_from: Option<f32>,
     /// the island has the keyboard (an alert clicked: Esc dismisses the newest)
     keys: bool,
     /// the island's width and height on Qt's spring (spring.rs), stepped
@@ -1223,7 +1230,26 @@ impl Menubar {
                 self.alert_rows.set_keyed(alerts, |a| a.uid);
                 b.alerts_key = alerts_key;
             }
-            // right
+            // right: within its room (#383): what it needs as last drawn
+            // gives the next step (one a look: the layout follows a frame later)
+            let need = b.ui.get_right_need();
+            if let Some(before) = b.squeeze_from.take() {
+                if b.squeeze > 0 {
+                    b.freed[b.squeeze as usize - 1] = (before - need).max(0.0);
+                }
+            }
+            let freed = if b.squeeze > 0 { b.freed[b.squeeze as usize - 1] } else { 0.0 };
+            let step = items::squeeze_step(b.squeeze, need, b.ui.get_side_room(), freed);
+            if step != b.squeeze {
+                if step > b.squeeze {
+                    b.squeeze_from = Some(need);
+                }
+                b.squeeze = step;
+                let tx = st.tx.clone();
+                slint::Timer::single_shot(std::time::Duration::from_millis(30), move || {
+                    let _ = tx.send(crate::Msg::Part(NAME, Box::new(M::Squeeze)));
+                });
+            }
             let entries = items::entries(&items::Inputs {
                 bar: &cfg,
                 material,
@@ -1239,6 +1265,7 @@ impl Menubar {
                 clock: &clock,
                 clock_long: &clock_long,
                 now_ms,
+                squeeze: b.squeeze,
             });
             let rows: Vec<ui::Entry> = entries.iter().map(|e| entry_struct(e, &tray_images)).collect();
             b.entries.set_keyed(rows, |r| r.id.clone());
@@ -2299,6 +2326,7 @@ impl Menubar {
     fn handle(&mut self, st: &mut State, m: M) {
         match m {
             M::Tick => self.tick(st),
+            M::Squeeze => self.refresh(st),
             M::PlaySettle => {
                 if self.play_shown.as_ref().is_some_and(|(_, _, t)| t.elapsed() >= std::time::Duration::from_millis(1400)) {
                     self.play_shown = None;
@@ -3027,6 +3055,9 @@ impl Part for Menubar {
             chips_key: String::new(),
             live_key: String::new(),
             alerts_key: String::new(),
+            squeeze: 0,
+            freed: [0.0; items::SQUEEZE_MAX as usize],
+            squeeze_from: None,
             keys: false,
             size: None,
             size_tick: Default::default(),
