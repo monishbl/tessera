@@ -37,7 +37,19 @@ impl ShellState {
     }
     /// Is this panel open on this screen? (Panels.isOpen)
     pub fn open(&self, panel: &str, screen: &str) -> bool {
+        // (the on-screen keyboard is up beside the panels, not one of them: #763)
+        if panel == "keyboard" {
+            return self.bool("osk.open") && (self.str("osk.screen") == screen || self.str("osk.screen").is_empty());
+        }
         self.str("open") == panel && (self.str("screen") == screen || self.str("screen").is_empty())
+    }
+    /// The on-screen keyboard as the dock's under_keyboard takes it: ("keyboard", its screen) while up, else ("", "")
+    pub fn keyboard(&self) -> (String, String) {
+        if self.bool("osk.open") {
+            ("keyboard".into(), self.str("osk.screen").into())
+        } else {
+            (String::new(), String::new())
+        }
     }
 }
 
@@ -154,5 +166,15 @@ mod tests {
         // not for us, or not JSON
         assert!(parse_line(r#"{"src":"ui","kind":"ready"}"#).is_none());
         assert!(parse_line("hello").is_none());
+    }
+
+    #[test]
+    fn the_keyboard_is_up_beside_the_open_panel() {
+        let s = parse_line(r#"{"src":"shell","kind":"state","open":"spotlight","screen":"DP-1","osk":{"open":true,"screen":"DP-1"}}"#).unwrap().downcast::<ShellState>().unwrap();
+        assert!(s.open("spotlight", "DP-1") && s.open("keyboard", "DP-1") && !s.open("keyboard", "HDMI-A-1"));
+        assert_eq!(s.keyboard(), ("keyboard".to_string(), "DP-1".to_string()));
+        let s = parse_line(r#"{"src":"shell","kind":"state","open":"keyboard","screen":"DP-1"}"#).unwrap().downcast::<ShellState>().unwrap();
+        assert!(!s.open("keyboard", "DP-1"));
+        assert_eq!(s.keyboard(), (String::new(), String::new()));
     }
 }

@@ -43,6 +43,8 @@ const M: f32 = 20.0; // room for the shadow round the keyboard
 
 enum Msg {
     Press(i32, i32),
+    /// still held: the same stroke again (#1051)
+    Repeat(i32, i32),
 }
 
 struct Win {
@@ -53,6 +55,9 @@ struct Win {
     size: (u32, u32),
     glass_sent: String,
     settled: bool,
+    /// each row's keys, changed in place: a key held while Shift lets go
+    /// (its cap relabelled) keeps its element, so its press and repeat go on
+    rows: Vec<tessera_core::rows::Rows<ui::OskKey>>,
 }
 
 #[derive(Default)]
@@ -61,35 +66,32 @@ pub struct Osk {
     mods: Mods,
     caps: bool,
     typist: Option<vkbd::Typist>,
+    /// the key last typed and its stroke, with the modifiers it had: what a
+    /// held key repeats (the latched ones let go after the first)
+    held: Option<(i32, i32, keys::Stroke)>,
 }
 
 impl Osk {
-    fn rows(&self) -> ModelRc<ui::OskRow> {
-        let rows: Vec<ui::OskRow> = ROWS
-            .iter()
-            .map(|r| ui::OskRow {
-                keys: tessera_core::rows::shared(
-                    r.iter()
-                        .map(|k| ui::OskKey {
-                            text: k.text(self.mods, self.caps).into(),
-                            units: k.units,
-                            modifier: k.is_mod(),
-                            wide: k.wide(),
-                            action: k.action(),
-                            latched: k.latched(self.mods, self.caps),
-                            long: k.label.chars().count() > 1,
-                            name: if k.sym == "space" { "Space".into() } else { k.text(self.mods, self.caps).into() },
-                        })
-                        .collect::<Vec<_>>(),
-                ),
+    fn keys(&self, row: &[keys::Key]) -> Vec<ui::OskKey> {
+        row.iter()
+            .map(|k| ui::OskKey {
+                text: k.text(self.mods, self.caps).into(),
+                units: k.units,
+                modifier: k.is_mod(),
+                wide: k.wide(),
+                action: k.action(),
+                latched: k.latched(self.mods, self.caps),
+                long: k.label.chars().count() > 1,
+                name: if k.sym == "space" { "Space".into() } else { k.text(self.mods, self.caps).into() },
             })
-            .collect();
-        tessera_core::rows::shared(rows)
+            .collect()
     }
 
     fn refresh(&self) {
         if let Some(w) = &self.win {
-            w.ui.set_rows(self.rows());
+            for (rows, keys) in w.rows.iter().zip(ROWS.iter()) {
+                rows.set(self.keys(keys));
+            }
         }
     }
 
@@ -121,9 +123,16 @@ impl Osk {
         ui.set_unit(keys::unit(screen.0));
         let to = st.shell.sender(NAME);
         ui.on_pressed(move |r, c| to(Box::new(Msg::Press(r, c))));
+        let to = st.shell.sender(NAME);
+        ui.on_repeat(move |r, c| to(Box::new(Msg::Repeat(r, c))));
+        // (the rows' models are made once; refresh changes their keys in place)
+        let rows: Vec<tessera_core::rows::Rows<ui::OskKey>> = ROWS.iter().map(|_| tessera_core::rows::Rows::new()).collect();
+        ui.set_rows(ModelRc::new(VecModel::from(rows.iter().map(|r| ui::OskRow { keys: r.model() }).collect::<Vec<_>>())));
+        // (a finger presses a key as it goes down, and holds it: #1051)
+        tessera_core::touch::press_at_once(NS);
         ui.show().expect("show keyboard");
         let a11y = crate::a11y::A11y::new(&surface, st.tx.clone());
-        self.win = Some(Win { output, surface, ui, a11y, size, glass_sent: String::new(), settled: false });
+        self.win = Some(Win { output, surface, ui, a11y, size, glass_sent: String::new(), settled: false, rows });
         self.refresh();
         if self.typist.is_none() {
             self.typist = Some(vkbd::Typist::spawn());
@@ -141,26 +150,41 @@ impl Osk {
         // (a modifier latched and forgotten must not ride on the first key of
         // the next opening; Caps is a lock, kept as it is)
         self.mods = Mods::default();
+        self.held = None;
     }
 
     fn press(&mut self, r: i32, c: i32) {
         let Some(key) = usize::try_from(r).ok().and_then(|r| ROWS.get(r)).and_then(|row| usize::try_from(c).ok().and_then(|c| row.get(c))) else { return };
         let (stroke, mods, caps) = keys::press(key, self.mods, self.caps);
+        self.held = stroke.filter(|_| keys::repeats(key)).map(|s| (r, c, s));
         if let Some(s) = stroke {
-            if self.typist.is_none() {
-                self.typist = Some(vkbd::Typist::spawn());
-            }
-            // (a typist whose thread ended types nothing: drop it, so the next
-            // key starts a new one instead of typing into the void for good)
-            if self.typist.as_ref().is_some_and(|t| !t.type_stroke(s)) {
-                eprintln!("tessera-ui: osk: the typing thread is gone; a new one starts with the next key");
-                self.typist = None;
-            }
+            self.type_stroke(s);
         }
         if (mods, caps) != (self.mods, self.caps) {
             self.mods = mods;
             self.caps = caps;
             self.refresh();
+        }
+    }
+}
+
+impl Osk {
+    fn type_stroke(&mut self, s: keys::Stroke) {
+        if self.typist.is_none() {
+            self.typist = Some(vkbd::Typist::spawn());
+        }
+        // (a typist whose thread ended types nothing: drop it, so the next
+        // key starts a new one instead of typing into the void for good)
+        if self.typist.as_ref().is_some_and(|t| !t.type_stroke(s)) {
+            eprintln!("tessera-ui: osk: the typing thread is gone; a new one starts with the next key");
+            self.typist = None;
+        }
+    }
+
+    /// A key still held: its stroke again, with the modifiers its first had
+    fn repeat(&mut self, r: i32, c: i32) {
+        if let Some((_, _, s)) = self.held.filter(|h| (h.0, h.1) == (r, c)) {
+            self.type_stroke(s);
         }
     }
 }
@@ -182,6 +206,7 @@ impl Part for Osk {
         let Ok(m) = msg.downcast::<Msg>() else { return };
         match *m {
             Msg::Press(r, c) => self.press(r, c),
+            Msg::Repeat(r, c) => self.repeat(r, c),
         }
     }
 
@@ -200,12 +225,15 @@ impl Part for Osk {
     fn output_removed(&mut self, st: &mut State, name: &str) {
         if self.win.as_ref().is_some_and(|w| w.output == name) {
             self.close(st);
+            // (Panels keeps the keyboard up until told: its tile and button follow)
+            tessera_core::shell::closed(NAME);
         }
     }
 
     fn surface_closed(&mut self, st: &mut State, s: &Rc<Surface>) {
         if self.win.as_ref().is_some_and(|w| Rc::ptr_eq(&w.surface, s)) {
             self.close(st);
+            tessera_core::shell::closed(NAME);
         }
     }
 

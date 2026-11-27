@@ -75,7 +75,7 @@ pub const DEFS: &[Def] = &[
     d("record", "Record", Toggle, S11_21, "", "record"),
     d("easyEffects", "EasyEffects", Toggle, S11_21, "", "faders"),
     d("warp", "WARP", Toggle, S11_21, "", "cloud"),
-    d("keyboard", "Keyboard", Action, S11_21, "", "keyboard"),
+    d("keyboard", "Keyboard", Toggle, S11_21, "", "keyboard"),
     d("screenshot", "Screenshot", Action, S11_21, "", "camera"),
     d("colorPicker", "Colour picker", Action, S11_21, "", "eyedropper"),
     d("musicRecognition", "Identify song", Action, S11_21, "", "music-notes"),

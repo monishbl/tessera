@@ -473,7 +473,8 @@ impl ControlCenter {
                     d.needs = "warp-cli";
                     d
                 }
-                "keyboard" => def("Keyboard", "keyboard", false, ""),
+                // (a switch: the keyboard stays up beside Control Center, #763)
+                "keyboard" => def("Keyboard", "keyboard", bs(&st(h, "osk"), "open"), ""),
                 "screenshot" => def("Screenshot", "camera", false, ""),
                 "colorPicker" => {
                     let mut d = def("Colour picker", "eyedropper", false, "");
@@ -1395,7 +1396,7 @@ impl ControlCenter {
             "record" => ask(h, "recorder.openToolbar", json!([])), // the recording toolbar (again: stop)
             "easyEffects" => ask(h, "system.setEasyEffects", json!([!on])),
             "warp" => ask(h, "system.setWarp", json!([!on])),
-            "keyboard" => ask(h, "panels.show", json!(["keyboard"])),
+            "keyboard" => ask(h, "panels.toggle", json!(["keyboard"])),
             "screenshot" => ask(h, "panels.show", json!(["screenTools"])),
             "colorPicker" => {
                 ask(h, "panels.close", json!([]));
