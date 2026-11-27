@@ -6,6 +6,7 @@
 // stagger, frame by frame); this draws it.
 
 import { Theme } from "@tessera/theme.slint";
+import { Switch, Segmented, TextField } from "@tessera/widgets.slint";
 
 export struct TEvent {
     time: string,
@@ -936,218 +937,6 @@ component MaterialDay inherits Rectangle {
 
 // ── Options: TodayOptions.qml ───────────────────────────────────────────
 
-// Segmented.qml: a track with a sliding selection pill (Glass); Material 3
-// Expressive's connected button group (2 px apart, round outer ends, 8 px
-// inner corners; the chosen one fills and turns fully round). Arrow keys,
-// Home and End choose.
-component Segmented inherits FocusScope {
-    in property <[string]> options;
-    in property <int> current;
-    in property <string> label;
-    callback selected(int);
-    property <length> gap: Theme.material ? 2px : 0px;
-    property <length> pill-x;
-    property <length> pill-w;
-    focus-on-click: false;
-    height: Theme.material ? 36px : 30px;
-    accessible-role: tab-list;
-    accessible-label: label;
-    accessible-description: options[current];
-    key-pressed(e) => {
-        if e.text == Key.LeftArrow || e.text == Key.UpArrow {
-            if current > 0 { selected(current - 1); }
-            return accept;
-        }
-        if e.text == Key.RightArrow || e.text == Key.DownArrow {
-            if current < options.length - 1 { selected(current + 1); }
-            return accept;
-        }
-        if e.text == Key.Home { selected(0); return accept; }
-        if e.text == Key.End { selected(options.length - 1); return accept; }
-        reject
-    }
-    Rectangle {
-        border-radius: self.height / 2;
-        background: Theme.material ? transparent : Theme.toggle-off;
-    }
-    // Glass: the sliding selection pill
-    if !Theme.material: Rectangle {
-        x: root.pill-x;
-        y: 2px;
-        width: root.pill-w;
-        height: root.height - 4px;
-        border-radius: self.height / 2;
-        background: Theme.dark ? #ffffff33 : #ffffff;
-        animate x, width { duration: Theme.move-standard; easing: cubic-bezier(0.2, 0.9, 0.1, 1); }
-    }
-    HorizontalLayout {
-        x: 2px;
-        width: root.width - 4px;
-        spacing: root.gap;
-        for o[i] in options: Rectangle {
-            property <bool> chosen: i == root.current;
-            property <length> full: self.height / 2;
-            property <length> inner: chosen ? full : seg-touch.pressed ? 4px : 8px;
-            horizontal-stretch: 1;
-            preferred-width: label-text.preferred-width + 24px;
-            init => { if chosen { root.pill-x = self.x + 2px; root.pill-w = self.width; } }
-            changed chosen => { if chosen { root.pill-x = self.x + 2px; root.pill-w = self.width; } }
-            changed x => { if chosen { root.pill-x = self.x + 2px; root.pill-w = self.width; } }
-            changed width => { if chosen { root.pill-x = self.x + 2px; root.pill-w = self.width; } }
-            accessible-role: tab;
-            accessible-label: o;
-            accessible-item-selectable: true;
-            accessible-item-selected: chosen;
-            accessible-action-default => { root.selected(i); }
-            if Theme.material: Rectangle {
-                border-top-left-radius: i == 0 ? parent.full : parent.inner;
-                border-bottom-left-radius: self.border-top-left-radius;
-                border-top-right-radius: i == root.options.length - 1 ? parent.full : parent.inner;
-                border-bottom-right-radius: self.border-top-right-radius;
-                animate border-top-left-radius, border-top-right-radius, border-bottom-left-radius, border-bottom-right-radius { duration: Theme.move-fast; easing: spring(0.28); }
-                background: (parent.chosen ? Theme.m3-primary : Theme.m3-surface-container-highest.with-alpha(Theme.control-alpha)).mix(parent.chosen ? Theme.m3-on-primary : Theme.m3-on-surface-variant, seg-touch.pressed ? 0.9 : seg-touch.has-hover ? 0.92 : 1);
-                animate background { duration: Theme.hover; }
-            }
-            label-text := Text {
-                width: min(self.preferred-width, parent.width - 12px);
-                text: o;
-                overflow: elide;
-                horizontal-alignment: center;
-                color: Theme.material ? (parent.chosen ? Theme.m3-on-primary : Theme.m3-on-surface-variant) : parent.chosen ? Theme.label : Theme.secondary;
-                font-size: Theme.material ? Theme.body : Theme.small;
-                font-weight: Theme.material ? 500 : 600;
-                accessible-role: none;
-            }
-            seg-touch := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.selected(i); }
-            }
-        }
-    }
-    if root.has-focus: Ring { pw: parent.width; ph: parent.height; radius: root.height / 2 + (Theme.material ? 5px : 4px); }
-}
-
-// Switch.qml
-component Toggle inherits FocusScope {
-    in property <bool> checked;
-    in property <string> label;
-    callback toggled();
-    focus-on-click: false;
-    width: Theme.material ? 52px : 38px;
-    height: Theme.material ? 32px : 22px;
-    accessible-role: switch;
-    accessible-label: label;
-    accessible-checkable: true;
-    accessible-checked: checked;
-    accessible-action-default => { toggled(); }
-    key-pressed(e) => {
-        if e.text == " " || e.text == Key.Return {
-            toggled();
-            return accept;
-        }
-        reject
-    }
-    if root.has-focus: Ring { pw: parent.width; ph: parent.height; radius: root.height / 2 + (Theme.material ? 5px : 4px); }
-    if !Theme.material: Rectangle {
-        border-radius: self.height / 2;
-        background: root.checked ? Theme.accent : Theme.toggle-off;
-        animate background { duration: Theme.hover; }
-        Rectangle {
-            x: root.checked ? parent.width - self.width - 2px : 2px;
-            y: 2px;
-            width: parent.height - 4px;
-            height: self.width;
-            border-radius: self.width / 2;
-            background: white;
-            animate x { duration: Theme.move-standard; easing: cubic-bezier(0.2, 0.9, 0.1, 1); }
-        }
-    }
-    if Theme.material: Rectangle {
-        border-radius: self.height / 2;
-        background: root.checked ? Theme.m3-primary : Theme.m3-surface-container-highest.with-alpha(Theme.control-alpha);
-        border-width: root.checked ? 0 : 2px;
-        border-color: Theme.m3-outline;
-        animate background { duration: Theme.hover; }
-        property <length> size: touch.pressed ? 28px : root.checked ? 24px : 16px;
-        property <length> cx: root.checked ? self.width - 16px : 16px;
-        animate size, cx { duration: Theme.move-fast; easing: spring(0.28); }
-        if touch.has-hover || touch.pressed: Rectangle {
-            x: parent.cx - 20px;
-            y: (parent.height - 40px) / 2;
-            width: 40px;
-            height: 40px;
-            border-radius: 20px;
-            background: (root.checked ? Theme.m3-primary : Theme.m3-on-surface).with-alpha(touch.pressed ? 0.1 : 0.08);
-        }
-        Rectangle {
-            x: parent.cx - parent.size / 2;
-            y: (parent.height - parent.size) / 2;
-            width: parent.size;
-            height: parent.size;
-            border-radius: self.width / 2;
-            background: root.checked ? Theme.m3-on-primary : touch.has-hover || touch.pressed ? Theme.m3-on-surface-variant : Theme.m3-outline;
-            animate background { duration: Theme.hover; }
-            if root.checked: Glyph {
-                text: "\u{e668}";
-                bold: true;
-                size: 13px;
-                color: Theme.m3-on-primary-container;
-            }
-        }
-    }
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.toggled(); }
-    }
-}
-
-// TextField.qml (Material: FilledField's pill)
-component NameField inherits Rectangle {
-    in property <string> placeholder;
-    in property <string> label;
-    in-out property <string> text <=> input.text;
-    out property <bool> editing: input.has-focus;
-    callback committed(string);
-    public function focus-field() { input.focus(); }
-    public function set-text(t: string) { input.text = t; }
-    height: Theme.material ? 40px : 28px;
-    border-radius: Theme.material ? min(self.height / 2, 28px) : Theme.radius-control - 2px;
-    background: Theme.material ? (hover.has-hover && !input.has-focus ? Theme.m3-surface-container-highest.mix(Theme.m3-on-surface, 0.92) : Theme.m3-surface-container-highest.with-alpha(Theme.control-alpha)) : Theme.fill;
-    border-width: Theme.material ? (input.has-focus ? 2px : 0) : 1px;
-    border-color: Theme.material ? Theme.m3-primary : input.has-focus ? Theme.accent : Theme.separator;
-    hover := TouchArea {
-        mouse-cursor: MouseCursor.text;
-        clicked => { input.focus(); }
-    }
-    Rectangle {
-        x: Theme.material ? 16px : 10px;
-        width: parent.width - 2 * self.x;
-        clip: true;
-        input := TextInput {
-            width: 100%;
-            height: 100%;
-            color: Theme.label;
-            selection-background-color: Theme.material ? Theme.m3-primary.with-alpha(0.3) : Theme.accent.with-alpha(0.4);
-            font-size: Theme.body;
-            vertical-alignment: center;
-            single-line: true;
-            accessible-label: root.label;
-            accessible-placeholder-text: root.placeholder;
-            accepted => { root.committed(self.text); }
-            changed has-focus => { if !self.has-focus { root.committed(self.text); } }
-        }
-        if input.text == "" && !input.has-focus: Text {
-            width: 100%;
-            height: 100%;
-            text: root.placeholder;
-            color: Theme.tertiary;
-            font-size: Theme.body;
-            vertical-alignment: center;
-            accessible-role: none;
-        }
-    }
-}
-
 component OptionLabel inherits Text {
     wrap: word-wrap;
     color: Theme.label;
@@ -1169,7 +958,7 @@ component OptionsSheet inherits FocusScope {
         mode-choice.focus();
     }
     function done() {
-        if name-field.editing { Day.set-name(name-field.text); }
+        if name-field.focused { Day.set-name(name-field.text); }
         Day.options-done();
     }
     focus-on-click: false;
@@ -1244,11 +1033,12 @@ component OptionsSheet inherits FocusScope {
                 OptionLabel { text: "Your name"; }
                 HorizontalLayout {
                     alignment: start;
-                    name-field := NameField {
+                    name-field := TextField {
                         width: min(root.inner-w, 320px);
                         label: "Your name";
                         placeholder: Day.name-placeholder;
-                        committed(t) => { Day.set-name(t); }
+                        accepted(t) => { Day.set-name(t); }
+                        left(t) => { Day.set-name(t); }
                     }
                 }
                 OptionHint { text: Day.name-hint; }
@@ -1263,7 +1053,7 @@ component OptionsSheet inherits FocusScope {
                 }
                 VerticalLayout {
                     alignment: center;
-                    Toggle {
+                    Switch {
                         label: "Chime";
                         checked: Day.chime;
                         toggled => { Day.set-chime(!Day.chime); }
