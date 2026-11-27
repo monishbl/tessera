@@ -65,6 +65,8 @@ use std::time::Duration;
 const NAME: &str = "polkit";
 const NS: &str = "tessera:polkit";
 const PREVIEW: &str = "Authentication is required to install software";
+/// (the preview's Details: a made-up request's action)
+const PREVIEW_ACTION: &str = "org.freedesktop.packagekit.package-install";
 /// Phosphor's lock (the password request's glyph)
 const LOCK: &str = "\u{e2fe}";
 
@@ -128,6 +130,8 @@ struct Req {
     message: String,
     cookie: String,
     user: String,
+    /// the folded Details: (label, value) rows (details_rows)
+    details: Vec<(String, String)>,
     /// polkit's request: its answer
     reply: Option<Reply>,
 }
@@ -149,6 +153,50 @@ pub struct Ask {
     /// the helper waits for an answer (the field shows)
     pub required: bool,
     pub supplementary: String,
+}
+
+/// The dialog's folded Details (audit #768): which program asks and what it
+/// will run, so two requests with the same message can be told apart and a
+/// surprising one spotted before the password is typed. pkexec names its
+/// program, its command line and who it runs as; for any other request, the
+/// program of the process polkit says asked (`program_of`: a pid's
+/// program), then the action's id. Each value one line, at most 300 characters
+pub fn details_rows(action: &str, details: &std::collections::HashMap<String, String>, program_of: impl Fn(u32) -> Option<String>) -> Vec<(String, String)> {
+    let get = |k: &str| details.get(k).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let pid = |k: &str| get(k).and_then(|v| v.parse::<u32>().ok()).filter(|p| *p > 0);
+    let program = get("program").or_else(|| pid("polkit.subject-pid").and_then(&program_of)).or_else(|| pid("polkit.caller-pid").and_then(&program_of));
+    let mut rows = Vec::new();
+    if let Some(p) = program {
+        rows.push(("Program", p));
+    }
+    if let Some(c) = get("command_line") {
+        rows.push(("Command", c));
+    }
+    if let Some(u) = get("user") {
+        rows.push(("Runs as", u));
+    }
+    if !action.trim().is_empty() {
+        rows.push(("Action", action.trim().to_string()));
+    }
+    rows.into_iter().map(|(k, v)| (k.to_string(), one_line(&v, 300))).collect()
+}
+
+/// A value on one line: control characters as spaces, cut at `max` characters
+pub fn one_line(s: &str, max: usize) -> String {
+    let s: String = s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    if s.chars().count() <= max {
+        return s;
+    }
+    s.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
+}
+
+/// A process's program: its executable, else its command's first word,
+/// else its name (another user's process shows only that)
+pub fn program_of(pid: u32) -> Option<String> {
+    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok().map(|p| p.to_string_lossy().trim_end_matches(" (deleted)").to_string());
+    let first = || std::fs::read(format!("/proc/{pid}/cmdline")).ok().and_then(|b| b.split(|c| *c == 0).next().map(|a| String::from_utf8_lossy(a).into_owned()));
+    let comm = || std::fs::read_to_string(format!("/proc/{pid}/comm")).ok().map(|s| s.trim().to_string());
+    exe.filter(|s| !s.is_empty()).or_else(|| first().filter(|s| !s.is_empty())).or_else(|| comm().filter(|s| !s.is_empty()))
 }
 
 /// The message without its full stop, as Polkit.qml shows it
@@ -221,6 +269,8 @@ pub struct Polkit {
     bt_error: String,
     /// the request the field's text was typed for (0: a password's)
     bt_front: u64,
+    /// the request whose Details show (its cookie): another folds them
+    details_for: String,
 }
 
 impl Default for Polkit {
@@ -251,6 +301,7 @@ impl Default for Polkit {
             bt: Vec::new(),
             bt_error: String::new(),
             bt_front: 0,
+            details_for: String::new(),
         }
     }
 }
@@ -350,6 +401,7 @@ impl Polkit {
             ui.set_waiting(false);
             ui.set_finger_wait(false);
             ui.set_finger_missed(false);
+            ui.set_details(Default::default());
             ui.set_glyph(crate::icons::glyph_or("bluetooth", "lock").into());
             ui.set_hero(shape::outline("cookie9", "cookie9", 0.0, 0.0).into());
         } else {
@@ -363,6 +415,18 @@ impl Polkit {
             ui.set_ok_needs_text(true);
             ui.set_glyph(LOCK.into());
             ui.set_message(message.into());
+            // (the request's Details, folded each time another request comes to the front; #768)
+            let (cookie, rows) = if self.preview {
+                (String::new(), vec![("Action".to_string(), PREVIEW_ACTION.to_string())])
+            } else {
+                self.queue.first().map(|r| (r.cookie.clone(), r.details.clone())).unwrap_or_default()
+            };
+            if cookie != self.details_for {
+                self.details_for = cookie;
+                ui.set_details_open(false);
+            }
+            let rows: Vec<ui::PkDetail> = rows.into_iter().map(|(k, v)| ui::PkDetail { label: k.into(), value: v.into() }).collect();
+            ui.set_details(slint::ModelRc::new(slint::VecModel::from(rows)));
             ui.set_prompt(if self.preview { "Password".into() } else { prompt_of(&self.ask.prompt).into() });
             ui.set_secret(self.preview || self.ask.secret);
             ui.set_error(self.error.clone().into());
@@ -696,9 +760,10 @@ impl Part for Polkit {
         let msg = match msg.downcast::<Request>() {
             Ok(r) => {
                 match *r {
-                    Request::Begin { message, cookie, user, reply, .. } => {
+                    Request::Begin { action, message, cookie, user, details, reply } => {
                         let first = self.queue.is_empty();
-                        self.queue.push(Req { message, cookie, user, reply: Some(reply) });
+                        let details = details_rows(&action, &details, program_of);
+                        self.queue.push(Req { message, cookie, user, details, reply: Some(reply) });
                         if first {
                             self.error.clear();
                             self.start_session(st);
@@ -847,6 +912,37 @@ mod tests {
         assert_eq!(prompt_of("Password: "), "Password");
         assert_eq!(prompt_of("  "), "Password");
         assert_eq!(prompt_of("PIN:"), "PIN");
+    }
+
+    #[test]
+    fn details_say_who_asks_and_what_runs() {
+        use std::collections::HashMap;
+        let d = |v: &[(&str, &str)]| v.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<HashMap<_, _>>();
+        let none = |_: u32| None;
+        // pkexec: its program, the command line, who it runs as, then the action
+        let pk = d(&[("program", "/usr/bin/rm"), ("command_line", "/usr/bin/rm -rf /srv/old"), ("user", "root"), ("polkit.caller-pid", "4242")]);
+        let rows = details_rows("org.freedesktop.policykit.exec", &pk, |_| Some("/usr/bin/bash".into()));
+        let labels: Vec<&str> = rows.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(labels, ["Program", "Command", "Runs as", "Action"]);
+        assert_eq!(rows[0].1, "/usr/bin/rm", "pkexec's own program, not the caller's");
+        assert_eq!(rows[1].1, "/usr/bin/rm -rf /srv/old");
+        // others: the asking process's program (the subject's first, then the caller's)
+        let other = d(&[("polkit.subject-pid", "77"), ("polkit.caller-pid", "88")]);
+        let rows = details_rows("org.freedesktop.NetworkManager.settings.modify.system", &other, |p| (p == 77).then(|| "/usr/bin/nm-connection-editor".into()));
+        assert_eq!(rows[0], ("Program".into(), "/usr/bin/nm-connection-editor".into()));
+        let rows = details_rows("a.b", &other, |p| (p == 88).then(|| "/usr/bin/caller".into()));
+        assert_eq!(rows[0].1, "/usr/bin/caller");
+        // nothing known: only the action; nothing at all: no rows
+        assert_eq!(details_rows("a.b", &d(&[("polkit.caller-pid", "x")]), none), vec![("Action".into(), "a.b".into())]);
+        assert!(details_rows("", &HashMap::new(), none).is_empty());
+        // one line each, cut when long
+        let cmd = format!("echo {}\nrm -rf /", "a".repeat(400));
+        let long = d(&[("command_line", cmd.as_str())]);
+        let rows = details_rows("", &long, none);
+        assert!(!rows[0].1.contains('\n') && rows[0].1.chars().count() == 300 && rows[0].1.ends_with('…'));
+        // (this process's own program reads back)
+        assert!(program_of(std::process::id()).is_some_and(|p| !p.is_empty()));
+        assert_eq!(program_of(0), None);
     }
 
     #[test]

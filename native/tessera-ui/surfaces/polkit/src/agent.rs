@@ -97,7 +97,9 @@ pub fn oneshot() -> (Reply, impl Future<Output = bool>) {
 /// What the agent hears, for the part
 #[derive(Debug)]
 pub enum Request {
-    Begin { action: String, message: String, cookie: String, user: String, reply: Reply },
+    /// (`details`: polkit's, for the dialog's Details: pkexec's program and
+    /// command line, the asking process's pid…)
+    Begin { action: String, message: String, cookie: String, user: String, details: HashMap<String, String>, reply: Reply },
     Cancel { cookie: String },
     /// registered with the Authority (or why not)
     Registered(Result<(), String>),
@@ -124,14 +126,14 @@ impl Agent {
         action_id: String,
         message: String,
         _icon_name: String,
-        _details: HashMap<String, String>,
+        details: HashMap<String, String>,
         cookie: String,
         identities: Vec<(String, HashMap<String, OwnedValue>)>,
     ) -> Result<(), PkError> {
         let (reply, wait) = oneshot();
         let user = pick_user(&identities);
         if let Ok(to) = self.to.lock() {
-            to(Box::new(Request::Begin { action: action_id, message, cookie, user, reply }));
+            to(Box::new(Request::Begin { action: action_id, message, cookie, user, details, reply }));
         }
         if wait.await {
             Ok(())
