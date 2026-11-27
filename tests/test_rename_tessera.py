@@ -647,7 +647,7 @@ class Uninstall(Temp):
 ALLOWED = {
     "shell/assets/scripts/migrate-names.py", "shell/assets/scripts/old-names.sh", "shell/assets/scripts/tessera-root.py",
     "native/tessera-ui/core/src/old_names.rs", "shell/common/OldNames.qml", "sandbox/irice-session.sh",
-    "site/wrangler.jsonc", "site/bugs/wrangler.jsonc", "site/bugs/README.md", "CHANGELOG.md", "docs/rename-to-tessera.md",
+    "site/wrangler.jsonc", "site/bugs/wrangler.jsonc", "site/bugs/README.md", "CHANGELOG.md", "docs/rename-to-tessera.md", "docs/TESSERA-OVERVIEW.md",
     "tests/test_rename_tessera.py",
 }
 

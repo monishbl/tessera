@@ -877,7 +877,7 @@ class Wiring(unittest.TestCase):
     def test_install_sh_offers_it(self):
         sh = (ROOT / "install.sh").read_text()
         self.assertIn("--ui-source=auto|--ui-source=build|--ui-source=buildTuned", sh)
-        self.assertIn('part("rust")["uiSource"] = ui_source', sh)
+        self.assertIn('("rust.uiSource", ui_source)', sh)
         self.assertIn('"$ROOT/tools/build-native.sh" ${UI_SOURCE:+--source=$UI_SOURCE}', sh)
 
     def test_workflow(self):
