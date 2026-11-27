@@ -99,7 +99,8 @@ component FpSheet inherits Rectangle {
         HorizontalLayout {
             alignment: center;
             card := Rectangle {
-                width: 420px;
+                // (a narrow window: the sheet narrows with it, #308)
+                width: min(420px, root.width - 48px);
                 opacity: root.progress;
                 transform-scale: 0.96 + 0.04 * root.progress;
                 border-radius: Theme.material ? 28px : 20px;
