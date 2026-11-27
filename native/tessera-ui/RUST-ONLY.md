@@ -294,3 +294,4 @@ Removed: the passkeys daemon, its Settings group, its polkit-dialog requests and
 | Notification Center: a body cut at four lines shows whole on a click on it, with Show more / Show less (#396) | 27 Nov | done, unchecked | (this commit) |
 | Notification Center, Glass without a panel: the title takes the bar's wallpaper-aware ink and Clear all has its own chip of glass (#395) | 27 Nov | done, unchecked | (this commit) |
 | Island: an open island never grows past its window; alerts or activity rows that don't fit show as "+N more" (#363) | 27 Nov | done, unchecked | (this commit) |
+| Control Center: on a short or scaled screen the controls scroll (wheel or touch) and the footer (Settings, Power, Edit/Done) stays put, both looks; the Add controls list gives way so its last rows can be reached (#359) | 27 Nov | done, unchecked | (this commit) |

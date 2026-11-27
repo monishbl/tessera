@@ -2328,7 +2328,11 @@ export component ControlCenter inherits Window {
     out property <length> sub-h: sub-page.preferred-height + 32px;
     out property <length> sub-x: panel-x - sub-w - 10px;
     out property <length> sub-top: max(panel-y, min(sub-y - 16px, self.height - sub-h - 12px));
-    out property <length> footer-y: Theme.material ? 0 : grid-height + 12px;
+    out property <length> footer-y: Theme.material ? 0 : g-grid-view + 12px;
+    // Glass: the grid as scrolled, and the height of its view (lib.rs: the
+    // chips' glass follows; #359)
+    out property <length> grid-scroll: Theme.material ? 0 : -g-flick.content-y;
+    out property <length> grid-view: Theme.material ? m-grid-view : g-grid-view;
     out property <length> battery-w: bat-row.preferred-width + 28px;
     out property <length> gallery-h: gal-col.preferred-height;
     out property <float> page-t: paging && Theme.material ? 1 : 0;
@@ -2369,13 +2373,20 @@ export component ControlCenter inherits Window {
     property <length> content-w: Theme.material ? 368px : editing ? 320px + 16px + 260px : 320px;
     animate content-w { duration: Theme.move-fast; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     property <length> max-h: self.height - 34px - 2 * pad - 16px;
-    // Glass: the grid, 12, the footer (the gallery beside it while editing)
-    property <length> glass-h: max(grid-height + 12px + 40px, editing ? gal-col.preferred-height : 0);
+    // Glass: the grid, 12, the footer (the gallery beside it while editing);
+    // never past the screen: the grid scrolls in what's left above the
+    // footer, which stays put (#359)
+    property <length> g-grid-view: min(grid-height, max(120px, max-h - 12px - 40px));
+    property <length> glass-h: min(max-h, max(g-grid-view + 12px + 40px, editing ? gal-col.preferred-height : 0));
     // Material: the editor's header, the grid, the gallery or the footer
     // (QuickSettings: the grid's height glides on the default spring as tiles move)
     property <length> grid-h: grid-height;
     animate grid-h { duration: Theme.motion(322ms); easing: spring(0.2); }
-    property <length> home-h: (editing ? edit-head.preferred-height + 12px : 0) + (grid-h > 0 ? grid-h + 12px : 0) + (editing ? m-gal.preferred-height : 48px);
+    // (the grid's view: what's left of the screen's height after the editor's
+    // header and the footer, or the gallery's least, 96 px; the grid scrolls
+    // in it and the footer stays put, #359)
+    property <length> m-grid-view: min(grid-h, max(96px, max-h - (editing ? edit-head.preferred-height + 12px + 12px + 28px + 96px : 12px + 48px)));
+    property <length> home-h: (editing ? edit-head.preferred-height + 12px : 0) + (m-grid-view > 0 ? m-grid-view + 12px : 0) + (editing ? m-gal.preferred-height : 48px);
     property <length> m-target: min(max-h, page-t > 0.5 ? m-page.preferred-height : home-h);
     property <length> m-h: m-target;
     animate m-h { duration: Theme.motion(322ms); easing: spring(0.2); }
@@ -2496,7 +2507,8 @@ export component ControlCenter inherits Window {
                         font-size: Theme.caption;
                     }
                     Flickable {
-                        height: min(gl.preferred-height, 440px);
+                        // (on a short screen it gives way: the gallery fits the panel)
+                        height: min(gl.preferred-height, min(440px, max(80px, max-h - 160px)));
                         content-height: gl.preferred-height;
                         gl := VerticalLayout {
                             spacing: 2px;
@@ -2598,6 +2610,21 @@ export component ControlCenter inherits Window {
                     x: editing ? 260px + 16px + (bare ? 2 * pad : 0) : 0;
                     width: 320px;
                     height: parent.height;
+                    g-flick := Flickable {
+                    x: -8px;
+                    y: -8px;
+                    width: 320px + 16px;
+                    height: g-grid-view + 16px;
+                    content-width: self.width;
+                    content-height: grid-height + 16px;
+                    // (a wheel or a finger scrolls it; a mouse drag still moves a tile or a slider)
+                    mouse-drag-pan-enabled: false;
+                    interactive: grid-height > g-grid-view + 0.5px;
+                    Rectangle {
+                    x: 8px;
+                    y: 8px;
+                    width: 320px;
+                    height: grid-height;
                     for m[i] in modules: gm := GlassModule {
                         x: m.x + self.drag-dx;
                         y: m.y + self.drag-dy;
@@ -2627,9 +2654,11 @@ export component ControlCenter inherits Window {
                         media-do(w) => { media-do(w); }
                         pressed-any => { if paging { back(); } }
                     }
+                    }
+                    }
                     // You, the battery, Settings, Power, Edit controls
                     Rectangle {
-                        y: grid-height + 12px;
+                        y: g-grid-view + 12px;
                         height: 40px;
                         opacity: paging ? 0.45 : 1;
                         animate opacity { duration: 220ms; }
@@ -2821,8 +2850,19 @@ export component ControlCenter inherits Window {
                             font-size: 13px;
                         }
                     }
+                    m-flick := Flickable {
+                    x: -8px;
+                    y: (editing ? edit-head.preferred-height + 12px : 0) - 8px;
+                    width: parent.width + 16px;
+                    height: m-grid-view + 16px;
+                    content-width: self.width;
+                    content-height: grid-height + 16px;
+                    mouse-drag-pan-enabled: false;
+                    interactive: grid-height > m-grid-view + 0.5px;
                     Rectangle {
-                        y: editing ? edit-head.preferred-height + 12px : 0;
+                        x: 8px;
+                        y: 8px;
+                        width: parent.width - 16px;
                         height: grid-height;
                         for m[i] in modules: mc := Rectangle {
                             property <bool> due: stagger >= 1 || stagger * 24 >= m.order + 1;
@@ -2907,10 +2947,11 @@ export component ControlCenter inherits Window {
                             }
                         }
                     }
+                    }
                     // Edit controls: the controls to add
                     m-gal := VerticalLayout {
                         visible: editing;
-                        y: (editing ? edit-head.preferred-height + 12px : 0) + (grid-h > 0 ? grid-h + 12px : 0);
+                        y: (editing ? edit-head.preferred-height + 12px : 0) + (m-grid-view > 0 ? m-grid-view + 12px : 0);
                         height: editing ? self.preferred-height : 0;
                         spacing: 8px;
                         Text {
@@ -2920,7 +2961,9 @@ export component ControlCenter inherits Window {
                             font-weight: 500;
                         }
                         Flickable {
-                            height: min(mgl.preferred-height, max(176px, max-h - edit-head.preferred-height - grid-height - 36px - 40px));
+                            // (what's left under the grid's view, so the last rows can be
+                            // reached on a short or scaled screen: it was 176 px at least, #359)
+                            height: min(mgl.preferred-height, max(96px, max-h - edit-head.preferred-height - 12px - m-grid-view - 12px - 28px));
                             content-height: mgl.preferred-height;
                             mgl := VerticalLayout {
                                 spacing: 2px;
@@ -2949,7 +2992,7 @@ export component ControlCenter inherits Window {
                         property <bool> due: stagger >= 1 || stagger * 24 >= modules.length + 2;
                         property <float> rise: due ? 1 : 0;
                         animate rise { duration: Theme.motion(due ? 222ms : 0ms); easing: spring(0.58); }
-                        y: (grid-h > 0 ? grid-h + 12px : 0) + 12px * (1 - rise);
+                        y: (m-grid-view > 0 ? m-grid-view + 12px : 0) + 12px * (1 - rise);
                         height: 48px;
                         opacity: min(1, rise);
                         // (QuickSettings.qml: your picture in a cookie, MaterialShape "cookie9")

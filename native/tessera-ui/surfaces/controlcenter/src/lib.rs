@@ -149,6 +149,13 @@ pub fn grid_height(rows: u8, material: bool) -> f32 {
     }
 }
 
+/// How much of a chip's glass shows at `y` (h tall) in the grid's view
+/// (`view` tall): whole inside, fading over 16 px as it goes under an edge
+pub fn grid_fade(y: f32, h: f32, view: f32) -> f32 {
+    let cut = (-y).max(y + h - view).max(0.0);
+    (1.0 - cut / 16.0).clamp(0.0, 1.0)
+}
+
 /// Glass's chip radius for a module (ModuleView's shapeRadius)
 pub fn chip_radius(kind: Kind, cols: u8, rows: u8, w: f32, h: f32) -> f32 {
     let round = cols == 1 && rows == 1 && matches!(kind, Kind::Toggle | Kind::Action);
@@ -1729,14 +1736,22 @@ impl Part for ControlCenter {
                 let editing = ui.get_editing();
                 let gx = px + PAD + if editing { 260.0 + 16.0 + 2.0 * PAD } else { 0.0 };
                 let gy = py + PAD;
+                // (the grid scrolls on a short screen: each chip where it's drawn,
+                // fading out as it goes under the view's edges; #359)
+                let (scroll, view) = (ui.get_grid_scroll(), ui.get_grid_view());
                 for k in 0..self.model.row_count() {
                     let r = self.model.row_data(k).unwrap();
                     let kind = defs::def(&r.id).map_or(Kind::Action, |d| d.kind);
                     let rad = chip_radius(kind, r.cols as u8, r.rows as u8, r.w, r.h);
+                    let y = r.y - scroll;
+                    let fade = grid_fade(y, r.h, view);
+                    if fade <= 0.0 {
+                        continue;
+                    }
                     // (while a page is open the other controls fade, but their
                     // glass stays whole: at 40% it lost its blur and what's
                     // behind showed through sharp)
-                    shapes.push(theme::shadow_margin(theme::glass_shape(look, gx + r.x, gy + r.y, r.w, r.h, rad, o, 1.0), 12.0));
+                    shapes.push(theme::shadow_margin(theme::glass_shape(look, gx + r.x, gy + y, r.w, r.h, rad, o * fade, 1.0), 12.0));
                 }
                 let fy = gy + ui.get_footer_y();
                 let fo = o;
@@ -1796,6 +1811,18 @@ impl Part for ControlCenter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scrolled_grids_chips_fade_at_its_edges() {
+        assert_eq!(grid_fade(0.0, 70.0, 300.0), 1.0);
+        assert_eq!(grid_fade(230.0, 70.0, 300.0), 1.0);
+        // half of 16 px under the top, or the foot: half
+        assert_eq!(grid_fade(-8.0, 70.0, 300.0), 0.5);
+        assert_eq!(grid_fade(238.0, 70.0, 300.0), 0.5);
+        // scrolled away: none
+        assert_eq!(grid_fade(-80.0, 70.0, 300.0), 0.0);
+        assert_eq!(grid_fade(310.0, 70.0, 300.0), 0.0);
+    }
 
     #[test]
     fn the_battery_tile_says_held_at_the_limit() {
