@@ -642,7 +642,12 @@ component BlockView inherits VerticalLayout {
     in property <SBlock> b;
     in property <string> menu-open;
     padding-top: b.above;
-    if b.kind == "group": GroupView { b: b; menu-open: root.menu-open; }
+    // (a section opened by a link or a search: the whole group marked a
+    // moment, its title just below the header, #293)
+    if b.kind == "group": Rectangle {
+        GroupView { b: b; menu-open: root.menu-open; }
+        Flash { on: b.flash; margin: 12px; }
+    }
     // A part's heading (PagePart.qml)
     if b.kind == "heading": Rectangle {
         HorizontalLayout {

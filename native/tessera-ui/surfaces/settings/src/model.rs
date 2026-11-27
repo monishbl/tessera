@@ -1071,13 +1071,9 @@ impl Page {
                 r.flash = true;
                 return true;
             }
+            // (a section by its name, from a link or a search: the whole
+            // group marked, its title just below the header, #293)
             if b.title == target {
-                if b.kind == BKind::Group {
-                    if let Some(r) = b.rows.first_mut() {
-                        r.flash = true;
-                        return true;
-                    }
-                }
                 b.flash = true;
                 return true;
             }
@@ -1573,5 +1569,10 @@ mod tests {
         assert!(!p.mark("Deep"));
         assert!(p.mark("x"));
         assert_eq!(to_ui(&p, false).len(), 2);
+        // (a section by its name: the group itself, not its first row; #293)
+        let mut q = Page::default();
+        q.group("Windows, Stages and Overview").row(Row::new("Choose app"));
+        assert!(q.mark("Windows, Stages and Overview"));
+        assert!(q.blocks[0].flash && !q.blocks[0].rows[0].flash);
     }
 }
