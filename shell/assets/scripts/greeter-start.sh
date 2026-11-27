@@ -47,12 +47,29 @@ if [[ $STYLE == look && $LOOK == material && -f "$SHARE/material/shell.qml" && -
     ROOT=$(python3 -I "$SHARE/shell/assets/scripts/material-root.py" "$SHARE/shell" "$SHARE/material" "$T/material-shell" 2>/dev/null) || ROOT="$SHARE/shell"
 fi
 
+# The system's language (/etc/locale.conf: LANG, LC_TIME) for the clock's
+# day and month names, when greetd gave the greeter none. Only plain
+# locale names are taken; nothing in the file is run
+LOCALE_CONF="${TESSERA_LOCALE_CONF:-/etc/locale.conf}"
+lang_env() {
+    [[ -n ${LC_ALL:-}${LC_TIME:-}${LANG:-} ]] && return 0
+    [[ -r $LOCALE_CONF ]] || return 0
+    local k v
+    while IFS='=' read -r k v || [[ -n $k ]]; do
+        v=${v%\"}; v=${v#\"}; v=${v%\'}; v=${v#\'}
+        if [[ ($k == LANG || $k == LC_TIME) && $v =~ ^[A-Za-z0-9_.@-]+$ ]]; then
+            printf '%s=%s\0' "$k" "$v"
+        fi
+    done <"$LOCALE_CONF"
+    return 0
+}
 genv() { # style
     # (TESSERA_ROOT: this copy, for the icon and text fonts; without it the
     # Rust login screen looked in the folder it was built in, 20 Nov)
     local env=(TESSERA_ROOT="$SHARE" TESSERA_GREETER_STYLE="$1" TESSERA_GREETER_WALLPAPER="$SHARE/wallpaper.jpg" TESSERA_GREETER_CLOCK24="${CLOCK24:-0}")
     [[ -n $T ]] && env+=(XDG_CONFIG_HOME="$T/config" XDG_CACHE_HOME="$T/cache")
     printf '%s\0' "${env[@]}"
+    lang_env
 }
 run() { # style, root: the QML login screen
     local env
