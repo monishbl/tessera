@@ -16,7 +16,9 @@
 //! the sign-in there; Today gets its items from RustUi.tell's `accounts`).
 //! Not here: subscriptions over the network.
 //!
-//! The files are watched (their times, every 2 s); a change sends a new
+//! The files are watched (inotify on their folders, #840: it slept 2 s and
+//! looked at each file's time, 43,000 wake-ups a day; a minute's look stays
+//! for a folder that can't be watched); a change sends a new
 //! `Calendar` (Msg::Data), and so does a change to the accounts' items. A
 //! surface asks `Calendar::between(from, to)`.
 
@@ -752,6 +754,74 @@ fn file_path(url: &str) -> PathBuf {
     }
 }
 
+/// The folders the watched files are in, each once
+fn folders_of(files: &[(PathBuf, Option<SystemTime>)]) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = files.iter().filter_map(|(p, _)| p.parent().map(|d| d.to_path_buf())).filter(|d| !d.as_os_str().is_empty()).collect();
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
+
+/// How long the thread sleeps with nothing heard: a folder that couldn't be
+/// watched (not there yet) is looked at this often
+const FALLBACK: Duration = Duration::from_secs(60);
+
+/// An inotify watch on the watched files' folders: a write, a rename over a
+/// file, a new or deleted file in one wakes the calendar thread (#840)
+struct Folders {
+    fd: i32,
+    dirs: Vec<PathBuf>,
+    /// folders that weren't there to watch (a calendar's, the links' cache)
+    missing: Vec<PathBuf>,
+}
+
+impl Folders {
+    fn new(files: &[(PathBuf, Option<SystemTime>)]) -> Self {
+        let dirs = folders_of(files);
+        // SAFETY: plain inotify calls on an fd this owns (closed in drop)
+        let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC | libc::IN_NONBLOCK) };
+        let mut missing = Vec::new();
+        if fd >= 0 {
+            let mask = libc::IN_CLOSE_WRITE | libc::IN_MOVED_TO | libc::IN_MOVED_FROM | libc::IN_CREATE | libc::IN_DELETE | libc::IN_ATTRIB | libc::IN_ONLYDIR;
+            for d in &dirs {
+                let added = std::ffi::CString::new(d.as_os_str().as_encoded_bytes()).is_ok_and(|c| unsafe { libc::inotify_add_watch(fd, c.as_ptr(), mask) } >= 0);
+                if !added {
+                    missing.push(d.clone());
+                }
+            }
+        }
+        Self { fd, dirs, missing }
+    }
+
+    /// Waits up to `most` for a change in the folders: true when one came
+    /// (its events read and dropped); without inotify, a plain sleep
+    fn wait(&self, most: Duration) -> bool {
+        if self.fd < 0 {
+            std::thread::sleep(most);
+            return false;
+        }
+        let mut p = libc::pollfd { fd: self.fd, events: libc::POLLIN, revents: 0 };
+        let ms = most.as_millis().min(i32::MAX as u128) as i32;
+        // SAFETY: one pollfd for our fd
+        let n = unsafe { libc::poll(&mut p, 1, ms) };
+        if n <= 0 {
+            return false;
+        }
+        let mut buf = [0u8; 4096];
+        // (non-blocking: read until it's empty)
+        while unsafe { libc::read(self.fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) } > 0 {}
+        true
+    }
+}
+
+impl Drop for Folders {
+    fn drop(&mut self) {
+        if self.fd >= 0 {
+            unsafe { libc::close(self.fd) };
+        }
+    }
+}
+
 pub fn spawn(tx: Sender<Msg>) {
     std::thread::spawn(move || {
         // (sent with the accounts' items: accounts.rs keeps both halves)
@@ -760,11 +830,17 @@ pub fn spawn(tx: Sender<Msg>) {
         if !super::accounts::calendar_read(cal, &tx) {
             return;
         }
+        let mut folders = Folders::new(&watched);
         // (links fetched now, then every half hour and when the list changes)
         fetch_links(&links);
         let mut fetched = std::time::Instant::now();
         loop {
-            std::thread::sleep(Duration::from_secs(2));
+            // (asleep until a folder changes, the next fetch is due, or a minute)
+            if folders.wait(LINK_EVERY.saturating_sub(fetched.elapsed()).min(FALLBACK)) {
+                // (a writer's burst of events settles before the files are read)
+                std::thread::sleep(Duration::from_millis(250));
+                folders.wait(Duration::ZERO);
+            }
             if fetched.elapsed() >= LINK_EVERY {
                 fetch_links(&links);
                 fetched = std::time::Instant::now();
@@ -772,6 +848,11 @@ pub fn spawn(tx: Sender<Msg>) {
             if watched.iter().any(|(p, t)| mtime(p) != *t) {
                 let (cal, w) = read_all();
                 watched = w;
+                // (a calendar added in another folder: that one is watched too)
+                // (or a folder that wasn't there now is)
+                if folders_of(&watched) != folders.dirs || folders.missing.iter().any(|d| d.is_dir()) {
+                    folders = Folders::new(&watched);
+                }
                 let now = links_of(&cal.sources);
                 if now != links {
                     links = now;
@@ -842,6 +923,23 @@ fn fetch_links(links: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_files_folders_are_watched() {
+        let f = |p: &str| (PathBuf::from(p), None);
+        assert_eq!(folders_of(&[f("/s/events.json"), f("/c/calendars.json"), f("/s/other.ics")]), vec![PathBuf::from("/c"), PathBuf::from("/s")]);
+        // a file written in a watched folder wakes the thread; nothing, the wait runs out
+        let dir = std::env::temp_dir().join(format!("tessera-cal-watch-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("events.json");
+        let w = Folders::new(&[(file.clone(), None)]);
+        assert!(w.fd >= 0);
+        assert!(!w.wait(Duration::from_millis(50)));
+        std::fs::write(&file, "{}").unwrap();
+        assert!(w.wait(Duration::from_secs(2)));
+        assert!(!w.wait(Duration::from_millis(50)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn ev(start: i64, end: i64, rule: &str) -> IcsEvent {
         IcsEvent {

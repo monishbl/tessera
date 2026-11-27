@@ -214,7 +214,9 @@ pub fn entries(i: &Inputs) -> Vec<Entry> {
                 "keyboard" => "keyboard",
                 _ => "",
             };
-            out.push(Entry { tip, active: false, ..e(&format!("util:{b}"), panel, icon) });
+            // (the keyboard's button shows it's up: it stays up beside the panels)
+            let active = b == "keyboard" && open("keyboard");
+            out.push(Entry { tip, active, ..e(&format!("util:{b}"), panel, icon) });
         }
     }
     // Recording in progress: click to stop

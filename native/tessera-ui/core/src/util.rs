@@ -500,6 +500,68 @@ pub fn on_path(bin: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
 }
 
+/// How long `has_tool` trusts what it found
+pub const TOOL_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
+fn tools_seen() -> &'static std::sync::Mutex<std::collections::HashMap<String, (bool, std::time::Instant)>> {
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, (bool, std::time::Instant)>>> = std::sync::OnceLock::new();
+    SEEN.get_or_init(Default::default)
+}
+
+/// `on_path`, remembered for TOOL_TTL (#571: Settings' and Control
+/// Center's feeds asked for dozens of tools several times a second, each a
+/// stat in every PATH folder, on the thread that draws the bar). Something
+/// installed shows within that, or at once after `tools_changed`
+pub fn has_tool(bin: &str) -> bool {
+    let mut seen = tools_seen().lock().unwrap_or_else(|e| e.into_inner());
+    remembered(&mut seen, bin, std::time::Instant::now(), TOOL_TTL, on_path)
+}
+
+/// Tools were (un)installed, or Settings asked to look again (tools.recheck)
+pub fn tools_changed() {
+    tools_seen().lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
+fn remembered(seen: &mut std::collections::HashMap<String, (bool, std::time::Instant)>, bin: &str, now: std::time::Instant, ttl: std::time::Duration, probe: impl Fn(&str) -> bool) -> bool {
+    if let Some((has, at)) = seen.get(bin) {
+        if now.saturating_duration_since(*at) < ttl {
+            return *has;
+        }
+    }
+    let has = probe(bin);
+    seen.insert(bin.to_string(), (has, now));
+    has
+}
+
+/// A file's contents as read and parsed, read again only when its time or
+/// size changes (#571: Settings' feeds read the same files every second)
+pub struct FileMemo<T> {
+    stamp: Option<(Option<std::time::SystemTime>, u64)>,
+    value: Option<T>,
+}
+
+impl<T> Default for FileMemo<T> {
+    fn default() -> Self {
+        Self { stamp: None, value: None }
+    }
+}
+
+impl<T: Clone> FileMemo<T> {
+    pub fn get(&mut self, path: &std::path::Path, read: impl FnOnce(&std::path::Path) -> T) -> T {
+        let meta = std::fs::metadata(path).ok();
+        let stamp = (meta.as_ref().and_then(|m| m.modified().ok()), meta.as_ref().map_or(u64::MAX, |m| m.len()));
+        match &self.value {
+            Some(v) if self.stamp == Some(stamp) => v.clone(),
+            _ => {
+                let v = read(path);
+                self.stamp = Some(stamp);
+                self.value = Some(v.clone());
+                v
+            }
+        }
+    }
+}
+
 /// Calls `on_change` on a thread of its own: once when `dir` is being
 /// watched, then whenever an entry is added to it, removed or moved (one
 /// call per batch of events read together). Inotify, not a timer: nothing
@@ -588,6 +650,52 @@ pub fn encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tools_are_remembered_a_while() {
+        let mut seen = std::collections::HashMap::new();
+        let asked = std::cell::Cell::new(0);
+        let probe = |b: &str| {
+            asked.set(asked.get() + 1);
+            b == "wtype"
+        };
+        let t0 = std::time::Instant::now();
+        let ttl = std::time::Duration::from_secs(30);
+        assert!(remembered(&mut seen, "wtype", t0, ttl, probe));
+        assert!(remembered(&mut seen, "wtype", t0 + std::time::Duration::from_secs(5), ttl, probe));
+        assert!(!remembered(&mut seen, "swappy", t0, ttl, probe));
+        assert_eq!(asked.get(), 2);
+        // (past its time: looked at again)
+        assert!(remembered(&mut seen, "wtype", t0 + std::time::Duration::from_secs(31), ttl, probe));
+        assert_eq!(asked.get(), 3);
+    }
+
+    #[test]
+    fn a_file_is_read_again_only_when_it_changes() {
+        let dir = std::env::temp_dir().join(format!("tessera-memo-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let f = dir.join("x.json");
+        std::fs::write(&f, "one").unwrap();
+        let mut m: FileMemo<String> = FileMemo::default();
+        let reads = std::cell::Cell::new(0);
+        let read = |p: &std::path::Path| {
+            reads.set(reads.get() + 1);
+            std::fs::read_to_string(p).unwrap_or_default()
+        };
+        assert_eq!(m.get(&f, read), "one");
+        assert_eq!(m.get(&f, read), "one");
+        assert_eq!(reads.get(), 1);
+        // (a different size: read again, whatever the clock's resolution)
+        std::fs::write(&f, "three").unwrap();
+        assert_eq!(m.get(&f, read), "three");
+        assert_eq!(reads.get(), 2);
+        // gone: read (to the default) once, then remembered
+        std::fs::remove_file(&f).unwrap();
+        assert_eq!(m.get(&f, read), "");
+        assert_eq!(m.get(&f, read), "");
+        assert_eq!(reads.get(), 3);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn terminals_paste_with_shift() {

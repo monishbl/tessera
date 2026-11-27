@@ -236,6 +236,11 @@ pub fn press(key: &Key, mods: Mods, caps: bool) -> (Option<Stroke>, Mods, bool) 
     (Some(Stroke { code, depressed }), if mods.any() { Mods::default() } else { mods }, caps)
 }
 
+/// Does a held key type again? Every key but the modifiers and Caps (#1051)
+pub fn repeats(key: &Key) -> bool {
+    !key.is_mod()
+}
+
 /// The keyboard's size for a screen width (logical px): the key unit, then
 /// the window's width and height with the shadow's room `m` (Keyboard.qml)
 pub fn unit(screen_w: f32) -> f32 {
@@ -314,6 +319,12 @@ mod tests {
         let (_, m, _) = press(&find("Super"), Mods::default(), false);
         assert!(m.logo && find("Super").latched(m, false));
         assert_eq!(press(&find("Esc"), m, false).0.unwrap().depressed, LOGO);
+    }
+
+    #[test]
+    fn held_keys_repeat_but_modifiers_dont() {
+        assert!(repeats(&find("⌫")) && repeats(&find("a")) && repeats(&find("←")) && repeats(&find("")));
+        assert!(!repeats(&find("Shift")) && !repeats(&find("Caps")) && !repeats(&find("Ctrl")) && !repeats(&find("Super")));
     }
 
     #[test]

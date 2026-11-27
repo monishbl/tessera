@@ -218,6 +218,47 @@ pub fn tools(record_only: bool, recording: bool) -> Vec<Tool> {
     v
 }
 
+/// How the bar's buttons count, for fitting it on a narrow screen (#1071):
+/// labelled when it fits, icons only when not, and in two rows, broken at
+/// the separator `split`, when even that is too wide. Row one is the tools
+/// before `split`; row two the rest (Options is always the last).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Fit {
+    pub tools: i32,
+    pub seps: i32,
+    pub opts: i32,
+    /// the separator it breaks at (-1: none)
+    pub split: i32,
+    /// before the break: its tools and separators
+    pub tools_a: i32,
+    pub seps_a: i32,
+}
+
+pub fn fit(tools: &[Tool]) -> Fit {
+    let is_sep = |t: &Tool| matches!(t.act, Act::Sep);
+    let buttons = |s: &[Tool]| s.iter().filter(|t| !is_sep(t)).count() as i32;
+    let total = buttons(tools);
+    // (the separator that halves the buttons best; the earlier on a tie)
+    let split = tools
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| is_sep(t))
+        .min_by_key(|(i, _)| (total - 2 * buttons(&tools[..*i])).abs())
+        .map(|(i, _)| i);
+    let count = |s: &[Tool], what: fn(&Act) -> bool| s.iter().filter(|t| what(&t.act)).count() as i32;
+    let tool = |a: &Act| !matches!(a, Act::Sep | Act::Options);
+    let sep = |a: &Act| matches!(a, Act::Sep);
+    let before = split.map_or(&tools[..0], |i| &tools[..i]);
+    Fit {
+        tools: count(tools, tool),
+        seps: count(tools, sep),
+        opts: count(tools, |a| matches!(a, Act::Options)),
+        split: split.map_or(-1, |i| i as i32),
+        tools_a: count(before, tool),
+        seps_a: count(before, sep),
+    }
+}
+
 /// What the format's choice means (the note under it)
 pub fn codec_note(codec: &str) -> &'static str {
     match codec {
@@ -315,6 +356,22 @@ pub fn tilde(path: &str, home: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_bar_breaks_at_its_middle_separator() {
+        let f = fit(&tools(false, false));
+        // 8 tools, 3 separators, Options; two rows: 5 tools | 3 tools + Options
+        assert_eq!((f.tools, f.seps, f.opts), (8, 3, 1));
+        assert_eq!((f.split, f.tools_a, f.seps_a), (6, 5, 1));
+        // recording: Stop recording alone in its group
+        let f = fit(&tools(false, true));
+        assert_eq!((f.tools, f.seps, f.opts), (6, 3, 1));
+        assert_eq!((f.split, f.tools_a), (2, 2));
+        // recording only: the areas, then Options
+        let f = fit(&tools(true, false));
+        assert_eq!((f.tools, f.seps, f.opts, f.split, f.tools_a, f.seps_a), (3, 1, 1, 3, 3, 0));
+        assert_eq!(fit(&[]).split, -1);
+    }
     use serde_json::json;
 
     #[test]

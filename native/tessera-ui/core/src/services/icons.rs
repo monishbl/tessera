@@ -4,7 +4,10 @@
 //! hicolor, then /usr/share/pixmaps; scalable and large over small,
 //! full-colour over symbolic: assets/scripts/icon-index.py's rules). The
 //! shell's own cached index is read when it's there; otherwise the themes
-//! are walked here. The service sends `Icons` once it's built.
+//! are walked here. The service sends `Icons` once it's built, and again
+//! whenever an icon theme's folder, a data folder's icons or the pixmaps
+//! change (an app or a theme installed while the shell runs: its icon
+//! showed only after a restart, #846).
 
 use crate::Msg;
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
@@ -307,7 +310,80 @@ pub fn spawn(tx: Sender<Msg>) {
             write_cache(&theme, &index);
             send(index);
         }
+        // Then: built again when what it was built from changes
+        loop {
+            let dirs = watched(&roots, &chain_of(&roots, &theme));
+            if !wait_for_change(&dirs) {
+                return;
+            }
+            // (an install writes many files: settle, then build once)
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                if !changed_since(&dirs, std::time::Duration::from_secs(2)) {
+                    break;
+                }
+            }
+            let index = build(&roots, &theme);
+            write_cache(&theme, &index);
+            send(index);
+        }
     });
+}
+
+/// The folders whose change means the index is out of date: the data
+/// folders' icons (a theme added), each of the theme chain's folders (their
+/// top level: an install updates icon-theme.cache there, as pacman's and
+/// Flatpak's gtk-update-icon-cache triggers do), and /usr/share/pixmaps
+fn watched(roots: &[PathBuf], chain: &[String]) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = roots.to_vec();
+    for t in chain {
+        out.extend(roots.iter().map(|r| r.join(t)).filter(|p| p.is_dir()));
+    }
+    let pix = PathBuf::from("/usr/share/pixmaps");
+    if pix.is_dir() {
+        out.push(pix);
+    }
+    out.dedup();
+    out
+}
+
+/// Blocks until something is added, written, moved or removed in one of
+/// `dirs` (false: inotify can't be used, nothing more will come)
+fn wait_for_change(dirs: &[PathBuf]) -> bool {
+    // SAFETY: plain inotify calls on an fd this owns and closes
+    let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC) };
+    if fd < 0 {
+        return false;
+    }
+    let mask = libc::IN_CREATE | libc::IN_DELETE | libc::IN_MOVED_TO | libc::IN_MOVED_FROM | libc::IN_CLOSE_WRITE | libc::IN_ONLYDIR;
+    let mut any = false;
+    for d in dirs {
+        if let Ok(c) = std::ffi::CString::new(d.as_os_str().as_encoded_bytes()) {
+            any |= unsafe { libc::inotify_add_watch(fd, c.as_ptr(), mask) } >= 0;
+        }
+    }
+    if !any {
+        unsafe { libc::close(fd) };
+        return false;
+    }
+    let mut buf = [0u8; 4096];
+    let ok = loop {
+        let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+        if n > 0 {
+            break true;
+        }
+        if n < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+            continue;
+        }
+        break false;
+    };
+    unsafe { libc::close(fd) };
+    ok
+}
+
+/// Did one of `dirs` change within the last `within`? (still being installed)
+fn changed_since(dirs: &[PathBuf], within: std::time::Duration) -> bool {
+    dirs.iter().any(|d| std::fs::metadata(d).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|a| a < within))
 }
 
 impl Icons {
@@ -362,6 +438,29 @@ impl Icons {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_theme_folders_are_watched() {
+        let d = std::env::temp_dir().join(format!("tessera-icon-watch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("icons/Papirus")).unwrap();
+        std::fs::create_dir_all(d.join("icons/hicolor")).unwrap();
+        let roots = vec![d.join("icons")];
+        let w = watched(&roots, &["Papirus".into(), "breeze".into(), "hicolor".into()]);
+        assert!(w.contains(&d.join("icons")) && w.contains(&d.join("icons/Papirus")) && w.contains(&d.join("icons/hicolor")));
+        assert!(!w.contains(&d.join("icons/breeze")));
+        // a change wakes the wait
+        let dirs = vec![d.join("icons/hicolor")];
+        let file = d.join("icons/hicolor/icon-theme.cache");
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::fs::write(file, b"x").unwrap();
+        });
+        assert!(wait_for_change(&dirs));
+        t.join().unwrap();
+        assert!(changed_since(&dirs, std::time::Duration::from_secs(5)));
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     fn tmp(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("tessera-icons-{tag}-{}", std::process::id()));

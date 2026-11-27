@@ -549,6 +549,9 @@ Singleton {
             }
             property JsonObject keyboard: JsonObject {
                 property string superTap: "overview" // tapping Super alone: overview | spotlight | none
+                // the on-screen keyboard's button beside password fields (lock,
+                // login, the admin password dialog; Rust shell): always | touch | off
+                property string oskButton: "touch"
             }
             // Dictation (services/Dictation): speech to text with whisper.cpp, on
             // this computer. Super+H: tap to start and stop, or hold while speaking

@@ -326,6 +326,27 @@ impl Overlay {
         self.picture(st);
     }
 
+    /// A widget being dragged or resized: its own place only (push does the rest when it's let go)
+    fn push_moved(&mut self, id: &str) {
+        let (open, screen) = (self.open, self.screen);
+        let Some(win) = self.win.as_ref() else { return };
+        let ui = &win.ui;
+        let x = model::widget_on(&self.widgets, id, screen);
+        // (shown as push had it: gaming as push last set it)
+        let g = ui.get_gaming();
+        let v = ov(&x, x.shown(id, open, g));
+        match id {
+            "notes" => ui.set_notes(v),
+            "resources" => ui.set_resources(v),
+            "recorder" => ui.set_recorder(v),
+            "mixer" => ui.set_mixer_w(v),
+            "image" => ui.set_image_w(v),
+            "crosshair" => ui.set_crosshair_w(v),
+            "fps" => ui.set_fps_w(v),
+            _ => {}
+        }
+    }
+
     /// The apps in the mixer: not the shell's own sound effects (each one
     /// came and went for a moment and shifted the rows under a drag)
     fn mixer_streams(s: &Sound) -> Vec<&audio::Stream> {
@@ -542,12 +563,15 @@ impl Part for Overlay {
                 self.ensure(st);
             }
             Msg::Moved(id, x, y, w, h) => {
+                // (only the moved widget, per pointer move: the rest, the
+                // input region, the graphs and the picture wait for Saved, #405)
                 self.set_widget(&id, json!({"x": x, "y": y, "w": w, "h": h}), false);
-                self.push(st);
+                self.push_moved(&id);
             }
             Msg::Saved(id) => {
                 let w = self.widget(&id);
                 shell::ask("overlay.widget", json!([id, model::patch(&id, &json!({"x": w.x, "y": w.y, "w": w.w, "h": w.h}))]));
+                self.push(st);
             }
             Msg::Notes(text) => {
                 self.notes_text = text;

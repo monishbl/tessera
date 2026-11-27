@@ -977,7 +977,9 @@ impl Spotlight {
     }
 
     fn reveal(&mut self, st: &State) {
-        let view = if Self::material(st) { layout::MATERIAL_MAX } else { layout::GLASS_MAX };
+        // (the list's height on this screen: less than its most on a short one, #1078)
+        let most = if Self::material(st) { layout::MATERIAL_MAX } else { layout::GLASS_MAX };
+        let view = self.win.as_ref().map_or(most, |w| layout::view_height(w.ui.get_list_max(), most));
         let s = layout::reveal(&self.entries, self.sel, self.scroll, view);
         // (the Flickable may have been scrolled by hand)
         if let Some(w) = &self.win {

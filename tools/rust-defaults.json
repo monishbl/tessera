@@ -73,6 +73,7 @@
  "island.pinned": false,
  "island.playerArt": "island",
  "island.playerLayout": "overlay",
+ "keyboard.oskButton": "touch",
  "keyboard.superTap": "overview",
  "lock.clockFace": "dynamic",
  "lock.clockRound": true,

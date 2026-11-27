@@ -2,7 +2,9 @@
 //! desktop entry (the spaces' app icons). A small lookup, not the whole spec:
 //! the user's GTK icon theme, then Papirus, breeze, Adwaita and hicolor,
 //! trying the sizes a 16-32 px icon looks best at (scalable first), then
-//! /usr/share/pixmaps. Answers are remembered (names don't move while it runs).
+//! /usr/share/pixmaps. Answers are remembered until the shell's index is
+//! built again (an icon installed while it runs: services/icons.rs watches),
+//! a miss for MISS_KEPT at most (#846: a miss was kept all session).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -24,7 +26,9 @@ fn user_theme() -> Option<String> {
     text.lines().find_map(|l| l.trim().strip_prefix("gtk-icon-theme-name").map(|v| v.trim_start_matches([' ', '=']).trim().trim_matches('"').to_string()))
 }
 
-const SIZES: &[&str] = &["scalable", "32x32", "32", "24x24", "24", "22x22", "22", "48x48", "48", "16x16", "16", "64x64", "64", "128x128", "256x256", "symbolic"];
+// (the large ones last: an app that ships only 512, 192, 96 or 72 px icons,
+// as many Electron and Flatpak apps do, was never found; #846)
+const SIZES: &[&str] = &["scalable", "32x32", "32", "24x24", "24", "22x22", "22", "48x48", "48", "16x16", "16", "64x64", "64", "128x128", "256x256", "96x96", "72x72", "192x192", "512x512", "symbolic"];
 const KINDS: &[&str] = &["apps", "status", "devices", "panel", "actions", "categories", "places", "mimetypes", "emblems", "legacy"];
 
 /// Where a name's file is in one theme folder (both layouts: size/kind and kind/size)
@@ -117,19 +121,31 @@ fn lookup(name: &str, extra: Option<&Path>) -> Option<PathBuf> {
     None
 }
 
-static CACHE: Mutex<Option<HashMap<String, Option<PathBuf>>>> = Mutex::new(None);
+/// Answers by name: the file (None: a miss) and when it was looked for
+static CACHE: Mutex<Option<HashMap<String, (Option<PathBuf>, std::time::Instant)>>> = Mutex::new(None);
+
+/// How long a miss is trusted (an app installed meanwhile brings its icon)
+pub const MISS_KEPT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// A remembered answer still good at `now`: a file always (until forget), a miss for MISS_KEPT
+fn still_good(hit: &(Option<PathBuf>, std::time::Instant), now: std::time::Instant) -> bool {
+    hit.0.is_some() || now.saturating_duration_since(hit.1) < MISS_KEPT
+}
 
 /// The file for an icon name (`extra`: a folder of the app's own icons)
 pub fn find(name: &str, extra: Option<&Path>) -> Option<PathBuf> {
     let key = format!("{name}\n{}", extra.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
+    let now = std::time::Instant::now();
     if let Some(hit) = CACHE.lock().ok().and_then(|c| c.as_ref().and_then(|m| m.get(&key).cloned())) {
-        return hit;
+        if still_good(&hit, now) {
+            return hit.0;
+        }
     }
     let found = lookup(name, extra);
     // (a miss before the shell's index is built isn't kept: asked again once it is)
     if found.is_some() || crate::services::icons::shared().is_some() {
         if let Ok(mut c) = CACHE.lock() {
-            c.get_or_insert_with(HashMap::new).insert(key, found.clone());
+            c.get_or_insert_with(HashMap::new).insert(key, (found.clone(), now));
         }
     }
     found
@@ -160,6 +176,21 @@ pub fn for_class(class: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn misses_are_kept_a_minute() {
+        let t = std::time::Instant::now();
+        assert!(still_good(&(Some(PathBuf::from("/a.png")), t), t + std::time::Duration::from_secs(3600)));
+        assert!(still_good(&(None, t), t + std::time::Duration::from_secs(30)));
+        assert!(!still_good(&(None, t), t + MISS_KEPT));
+        // the large sizes Electron and Flatpak apps ship
+        let d = std::env::temp_dir().join(format!("tessera-icons-big-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("hicolor/512x512/apps")).unwrap();
+        std::fs::write(d.join("hicolor/512x512/apps/app.png"), b"x").unwrap();
+        assert_eq!(in_theme(&d.join("hicolor"), "app"), Some(d.join("hicolor/512x512/apps/app.png")));
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn both_theme_layouts() {

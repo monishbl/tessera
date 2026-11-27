@@ -17,6 +17,13 @@ pub const MATERIAL_HEAD_LINE: f32 = 18.0;
 pub const GLASS_MAX: f32 = 440.0;
 pub const MATERIAL_MAX: f32 = 480.0;
 
+/// The list's height as the window has it (capped by a short screen,
+/// #1078), never more than its most; before the window has laid it out (0),
+/// the most
+pub fn view_height(list_max: f32, most: f32) -> f32 {
+    if list_max > 0.0 { list_max.min(most) } else { most }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Entry {
     /// its top in the list, and its whole height (heading and gaps too)
@@ -108,6 +115,13 @@ pub fn reveal(entries: &[Entry], sel: usize, scroll: f32, view: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_short_screen_shortens_the_list() {
+        assert_eq!(view_height(0.0, GLASS_MAX), GLASS_MAX);
+        assert_eq!(view_height(300.0, GLASS_MAX), 300.0);
+        assert_eq!(view_height(900.0, MATERIAL_MAX), MATERIAL_MAX);
+    }
 
     fn rows(s: &[&str]) -> Vec<Row> {
         s.iter().map(|s| Row { section: s.to_string(), title: "t".into(), ..Default::default() }).collect()
