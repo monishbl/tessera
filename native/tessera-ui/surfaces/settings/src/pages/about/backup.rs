@@ -15,6 +15,14 @@
 //! about.backup.packages), the rest are installed as you, one by one, with
 //! each one's result. A manager that's missing ("needs fnm") can be
 //! installed first, with the system's packages.
+//! Each app's command is the helper's, made from the same checked fields
+//! as the one it runs (backup.py's checked_app → shown_command), never a
+//! string from the file; apps it refuses (a git or https address, a remote
+//! that isn't Flathub, an odd name) say why. A backup from another
+//! computer or user (`origin` ≠ "here") is marked "From another computer":
+//! its Hyprland files start off, and before anything that runs (Hyprland
+//! files, apps) Settings lists it and asks again; only then does it pass
+//! --confirm-elsewhere (audit #704).
 
 use super::super::super::model::{btn, Action, Ctx, Page, Row};
 use super::about::{answers as legacy_answers, config_dir, describe, helper as legacy_helper};
@@ -204,6 +212,36 @@ pub fn system_packages(picked: &[Value], managers: &[String]) -> (Vec<String>, V
         }
     }
     (repo, aur)
+}
+
+/// Not made by you on this computer (or made before backups said which)
+pub fn from_elsewhere(info: &Value) -> bool {
+    info["origin"].as_str() != Some("here")
+}
+
+/// What installing these apps runs, each as the helper will run it: the
+/// apps' own commands (made by backup.py from the fields it checked)
+pub fn what_runs(picked: &[Value]) -> Vec<(String, String)> {
+    picked
+        .iter()
+        .filter(|a| a["installable"] != false)
+        .filter_map(|a| {
+            let cmd = s(&a["command"]);
+            (!cmd.is_empty()).then(|| (app_label(a), cmd))
+        })
+        .collect()
+}
+
+/// The Hyprland files a restore would add or replace (they run at once)
+pub fn hypr_that_runs(plan: &Value) -> Vec<String> {
+    plan["parts"]["hypr"]["files"]
+        .as_array()
+        .map(|l| l.iter().filter(|f| f["action"] == "add" || f["action"] == "replace").map(|f| s(&f["path"])).collect())
+        .unwrap_or_default()
+}
+
+fn app_label(a: &Value) -> String {
+    if a["group"] == "fnm" || a["group"] == "nvm" { format!("Node.js {}", s(&a["version"])) } else { s(&a["name"]) }
 }
 
 /// An app's result in a word
@@ -409,6 +447,8 @@ fn restore(cx: &mut Ctx, p: &mut Page) {
             cx.local.remove("about.bk.info");
             cx.local.remove("about.bk.plan");
             cx.local.remove("about.bk.results");
+            cx.local.remove("about.bk.rconfirm");
+            cx.local.remove("about.bk.aconfirm");
             cx.local_set("about.bk.file", f.clone());
             cx.local_set("about.backup.pending", Value::Null);
             if is_legacy(&f) {
@@ -462,18 +502,31 @@ fn restore(cx: &mut Ctx, p: &mut Page) {
         return;
     }
 
-    // What's in it, each part switched on or off
+    // From another computer: said first, before anything can run
+    let elsewhere = from_elsewhere(&info);
+    if elsewhere {
+        let detail = if info["origin"] == "unknown" {
+            "This backup doesn't say it was made by you on this computer (older backups don't). Its Hyprland files and apps run commands: restore them only if you know where it came from. Each command is shown before it runs."
+        } else {
+            "This backup was made on another computer or by another user. Its Hyprland files and apps run commands here: restore them only from someone you trust. Each command is shown before it runs."
+        };
+        p.group("From another computer").row(Row::new("From another computer").detail(detail).icon("warning-circle"));
+    }
+
+    // What's in it, each part switched on or off (from another computer,
+    // Hyprland's files start off: they run as soon as they're written)
     let parts: Vec<Value> = info["parts"].as_array().cloned().unwrap_or_default().into_iter().filter(|x| x["id"] != "apps").collect();
     let mut on: Vec<(String, bool)> = Vec::new();
     let mut rows = Vec::new();
     for part in &parts {
         let id = s(&part["id"]);
         let key = format!("about.bk.rinc.{id}");
-        let v = cx.local.get(&key).and_then(Value::as_bool).unwrap_or(true);
+        let first = !(elsewhere && id == "hypr");
+        let v = cx.local.get(&key).and_then(Value::as_bool).unwrap_or(first);
         on.push((id.clone(), v));
         let k = key.clone();
         let act = cx.on(move |cx, _| {
-            let now = cx.local.get(&k).and_then(Value::as_bool).unwrap_or(true);
+            let now = cx.local.get(&k).and_then(Value::as_bool).unwrap_or(first);
             cx.local_set(&k, !now);
         });
         rows.push(Row::new(s(&part["name"])).detail(s(&part["summary"])).switch(v, act));
@@ -520,22 +573,65 @@ fn restore(cx: &mut Ctx, p: &mut Page) {
     for (title, detail) in lines {
         g.row(Row::new(title).detail(detail));
     }
-    let (f, inc) = (file.clone(), include.clone());
+    // (Hyprland files from another computer: listed, and a second yes)
+    let runs = if elsewhere { hypr_that_runs(&plan) } else { Vec::new() };
+    let asking = !runs.is_empty() && cx.local_b("about.bk.rconfirm");
+    let (f, inc, second) = (file.clone(), include.clone(), !runs.is_empty());
     let apply = cx.on(move |cx, a| {
         if a.i == 0 {
             cx.local_set("about.bk.file", "");
             cx.local.remove("about.bk.info");
             cx.local.remove("about.bk.plan");
+            cx.local_set("about.bk.rconfirm", false);
+            return;
+        }
+        if second {
+            cx.local_set("about.bk.rconfirm", true);
             return;
         }
         let (f, inc) = (f.clone(), inc.clone());
         cx.local_set("about.bk.rstatus", "Restoring…");
         cx.spawn("about.bk.restored", move || run(vec!["restore".into(), f, "--include".into(), inc]));
     });
-    g.row(Row::new("Restore these").buttons(vec![btn("Cancel"), btn(if restoring { "Restoring…" } else { "Apply" }).primary().on(restoring).off(restoring || nothing)], apply));
+    g.row(Row::new("Restore these").buttons(vec![btn("Cancel"), btn(if restoring { "Restoring…" } else { "Apply" }).primary().on(restoring).off(restoring || nothing || asking)], apply));
+    if asking {
+        let (f, inc) = (file.clone(), include.clone());
+        let decide = cx.on(move |cx, a| {
+            cx.local_set("about.bk.rconfirm", false);
+            if a.i == 1 {
+                let (f, inc) = (f.clone(), inc.clone());
+                cx.local_set("about.bk.rstatus", "Restoring…");
+                cx.spawn("about.bk.restored", move || run(vec!["restore".into(), f, "--include".into(), inc, "--confirm-elsewhere".into()]));
+            }
+        });
+        let g = p.group("These run as soon as they're restored");
+        g.footer("They're Hyprland files from another computer: Hyprland runs what's in them at once. Restore them only if you trust where the backup came from.");
+        for path in &runs {
+            g.row(Row::new(path.clone()).detail("Runs as Hyprland's config").icon("warning-circle"));
+        }
+        g.row(Row::new("Restore from another computer?").buttons(vec![btn("Cancel"), btn("Restore anyway").primary().off(restoring)], decide));
+    }
 }
 
 // ── Apps ────────────────────────────────────────────────────────────────
+
+/// Install the chosen ones: the system's with Software Update, the rest as
+/// you; `elsewhere_ok` once a backup from another computer's commands were
+/// shown and said yes to
+fn install_now(cx: &mut Ctx, file: &str, repo: &[String], aur: &[String], user: &[String], elsewhere_ok: bool) {
+    if !repo.is_empty() || !aur.is_empty() {
+        cx.ask("about", "backup.packages", json!([repo, aur]));
+        cx.local_set("about.bk.sysAsked", true);
+    }
+    if !user.is_empty() {
+        let mut args = vec!["apps-install".to_string(), file.to_string(), "--ids".into(), user.join(",")];
+        if elsewhere_ok {
+            args.push("--confirm-elsewhere".into());
+        }
+        cx.local_set("about.bk.astatus", "");
+        cx.spawn_progress("about.bk.installed", "about.bk.progress", move |say| run_telling(args, say));
+    }
+}
 
 fn app_key(id: &str) -> String {
     format!("about.bk.app.{id}")
@@ -628,7 +724,11 @@ fn apps(cx: &mut Ctx, p: &mut Page) {
             if r["state"] == "failed" && !s(&r["why"]).is_empty() {
                 detail.push(s(&r["why"]));
             }
-            let label = if a["group"] == "fnm" || a["group"] == "nvm" { format!("Node.js {}", s(&a["version"])) } else { s(&a["name"]) };
+            // (refused: why, e.g. "it was built from a git repository")
+            if a["installable"] == false && !s(&a["why"]).is_empty() && !matches!(a["group"].as_str(), Some("appimage" | "local" | "deno")) {
+                detail.push(s(&a["why"]));
+            }
+            let label = app_label(a);
             let row = Row::new(label).detail(detail.join(" · "));
             let row = if a["installed"] == true {
                 row.shows("Installed")
@@ -637,7 +737,7 @@ fn apps(cx: &mut Ctx, p: &mut Page) {
             } else if r["state"] == "running" {
                 row.spinner()
             } else if a["installable"] == false {
-                row.shows("Origin unknown")
+                row.shows(if matches!(a["group"].as_str(), Some("appimage" | "local" | "deno")) { "Origin unknown" } else { "Not from here" })
             } else if !s(&a["needs"]).is_empty() {
                 row.shows(format!("Needs {}", s(&a["needs"])))
             } else {
@@ -679,19 +779,37 @@ fn apps(cx: &mut Ctx, p: &mut Page) {
         (0, b) => format!("{b} as you"),
         (a, b) => format!("{a} with Software Update, {b} as you"),
     };
-    let f = file.clone();
+    let elsewhere = from_elsewhere(&info);
+    let asking = elsewhere && cx.local_b("about.bk.aconfirm");
+    let (f, r2, a2, u2) = (file.clone(), repo.clone(), aur.clone(), user.clone());
     let act = cx.on(move |cx, _| {
-        if !repo.is_empty() || !aur.is_empty() {
-            cx.ask("about", "backup.packages", json!([repo, aur]));
-            cx.local_set("about.bk.sysAsked", true);
-        }
-        if !user.is_empty() {
-            let args = vec!["apps-install".to_string(), f.clone(), "--ids".into(), user.join(",")];
-            cx.local_set("about.bk.astatus", "");
-            cx.spawn_progress("about.bk.installed", "about.bk.progress", move |say| run_telling(args, say));
+        if elsewhere {
+            cx.local_set("about.bk.aconfirm", true);
+        } else {
+            install_now(cx, &f, &r2, &a2, &u2, false);
         }
     });
-    g.row(Row::new("Install chosen apps").detail(words).buttons(vec![btn(if installing { "Installing…" } else { "Install" }).primary().on(installing).off(installing || job_running || sys_n + chosen_apps.iter().filter(|a| a["system"] != true).count() == 0)], act));
+    let nothing_chosen = sys_n + chosen_apps.iter().filter(|a| a["system"] != true).count() == 0;
+    g.row(Row::new("Install chosen apps").detail(words).buttons(vec![btn(if installing { "Installing…" } else if elsewhere { "Review…" } else { "Install" }).primary().on(installing).off(installing || job_running || nothing_chosen || asking)], act));
+    if asking && !nothing_chosen {
+        let f = file.clone();
+        let decide = cx.on(move |cx, a| {
+            cx.local_set("about.bk.aconfirm", false);
+            if a.i == 1 {
+                install_now(cx, &f, &repo, &aur, &user, true);
+            }
+        });
+        let g = p.group("What will run");
+        g.footer("This backup is from another computer. These are the exact commands, made from the backup's app names; nothing else in it runs.");
+        let mut runs = what_runs(&chosen_apps);
+        for m in &managers {
+            runs.insert(0, (m.trim_start_matches("aur:").to_string(), format!("Software Update: installs {}", m.trim_start_matches("aur:"))));
+        }
+        for (label, cmd) in runs {
+            g.row(Row::new(label).detail(cmd));
+        }
+        g.row(Row::new("Install these?").buttons(vec![btn("Cancel"), btn("Install").primary().off(installing || job_running)], decide));
+    }
 }
 
 #[cfg(test)]
@@ -759,6 +877,34 @@ mod tests {
         assert_eq!(result_word(&json!({"state": "skipped", "why": "needs fnm"})), "Skipped: needs fnm");
         assert_eq!(result_word(&json!({"state": "ok"})), "Installed");
         assert_eq!(result_word(&json!({"state": "system"})), "With Software Update");
+    }
+
+    #[test]
+    fn a_backup_from_elsewhere_lists_what_runs() {
+        // (audit #704: what's shown is the helper's command, the one it runs)
+        assert!(!from_elsewhere(&json!({"origin": "here"})));
+        assert!(from_elsewhere(&json!({"origin": "elsewhere"})));
+        assert!(from_elsewhere(&json!({"origin": "unknown"})));
+        assert!(from_elsewhere(&json!({})), "a helper that doesn't say: not trusted as here");
+        let apps = vec![
+            json!({"group": "uv", "name": "ruff", "installable": true, "command": "uv tool install ruff"}),
+            json!({"group": "cargo", "name": "ripgrep", "installable": false, "command": "", "why": "it was built from a git repository"}),
+            json!({"group": "nvm", "name": "node", "version": "v20.1.0", "installable": true, "command": "nvm install v20.1.0"}),
+            json!({"group": "pacman", "name": "firefox", "installable": true, "command": "Software Update: pacman -S --needed firefox"}),
+        ];
+        assert_eq!(
+            what_runs(&apps),
+            vec![
+                ("ruff".to_string(), "uv tool install ruff".to_string()),
+                ("Node.js v20.1.0".to_string(), "nvm install v20.1.0".to_string()),
+                ("firefox".to_string(), "Software Update: pacman -S --needed firefox".to_string()),
+            ]
+        );
+        let plan = json!({"parts": {"hypr": {"files": [{"path": "~/.config/hypr/custom.lua", "action": "add"},
+            {"path": "~/.config/hypr/a.lua", "action": "same"}, {"path": "~/.config/hypr/hyprland.lua.from-backup", "action": "beside"},
+            {"path": "~/.config/hypr/b.lua", "action": "replace"}]}}});
+        assert_eq!(hypr_that_runs(&plan), ["~/.config/hypr/custom.lua", "~/.config/hypr/b.lua"]);
+        assert!(hypr_that_runs(&json!({"parts": {}})).is_empty());
     }
 
     #[test]
