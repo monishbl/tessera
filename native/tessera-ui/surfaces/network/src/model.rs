@@ -333,6 +333,30 @@ pub fn step(cur: i32, n: i32, d: i32) -> i32 {
     (cur + d).rem_euclid(n)
 }
 
+/// Where the keyboard goes after a new list (audit #386): the focus is a
+/// network, not a row number. A rescan re-sorts by signal, so the number
+/// kept its place while the networks moved under it, and Return connected
+/// to (or disconnected) a network nobody picked. `old`/`new` are the names
+/// of the rows shown before and after (none while Wi-Fi is off or
+/// unmanaged), `old_join`/`new_join` whether "Join other network…" follows
+/// them; after it come the card's button and its link. A focused network
+/// that left the list leaves the keyboard nowhere (-1), never on another one.
+pub fn refocus(kbd: i32, old: &[&str], old_join: bool, new: &[&str], new_join: bool) -> i32 {
+    if kbd < 0 {
+        return -1;
+    }
+    let k = kbd as usize;
+    if k < old.len() {
+        return new.iter().position(|n| *n == old[k]).map_or(-1, |i| i as i32);
+    }
+    // 0: Join other network…, 1: the card's button, 2: its link
+    let what = k - old.len() + if old_join { 0 } else { 1 };
+    if what > 2 || (what == 0 && !new_join) {
+        return -1;
+    }
+    (new.len() + what - if new_join { 0 } else { 1 }) as i32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,5 +502,34 @@ mod tests {
         assert_eq!(step(3, 4, 1), 0);
         assert_eq!(step(0, 4, -1), 3);
         assert_eq!(step(0, 0, 1), -1);
+    }
+
+    #[test]
+    fn refocus_follows_the_network_not_the_row() {
+        // a rescan moved "Cafe" from row 1 to row 2: the focus goes with it
+        assert_eq!(refocus(1, &["Home", "Cafe", "Office"], true, &["Office", "Home", "Cafe"], true), 2);
+        // the focused network left: nothing focused, never the network now at its row
+        assert_eq!(refocus(1, &["Home", "Cafe"], true, &["Home", "Office"], true), -1);
+        // nothing focused stays so
+        assert_eq!(refocus(-1, &["Home"], true, &["Home"], true), -1);
+    }
+
+    #[test]
+    fn refocus_keeps_join_card_and_link() {
+        let old = ["A", "B"];
+        let new = ["A", "B", "C"];
+        // Join other network…, the card's button and the link move down a row
+        assert_eq!(refocus(2, &old, true, &new, true), 3);
+        assert_eq!(refocus(3, &old, true, &new, true), 4);
+        assert_eq!(refocus(4, &old, true, &new, true), 5);
+        // Wi-Fi turned off: no rows and no Join; the card stays the card
+        assert_eq!(refocus(3, &old, true, &[], false), 0);
+        assert_eq!(refocus(4, &old, true, &[], false), 1);
+        assert_eq!(refocus(2, &old, true, &[], false), -1);
+        // and back on
+        assert_eq!(refocus(0, &[], false, &new, true), 4);
+        assert_eq!(refocus(1, &[], false, &new, true), 5);
+        // out of range: nowhere
+        assert_eq!(refocus(9, &old, true, &new, true), -1);
     }
 }
