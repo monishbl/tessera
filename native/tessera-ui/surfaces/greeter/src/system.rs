@@ -1,6 +1,7 @@
 //! What the login screen reads from the system, as GreeterAuth.qml does:
 //! the people (/etc/passwd: a login shell and a normal uid), the sessions
-//! (/usr/share/wayland-sessions: Name and Exec, Tessera's first), this
+//! (/usr/share/wayland-sessions: Name and Exec, Tessera's first; the ones
+//! the system hides or can't run left out, never all of them), this
 //! computer's name (/etc/hostname), the pictures AccountsService keeps, and
 //! the last person and session chosen ($XDG_CACHE_HOME/tessera-greeter.json).
 //! A session's Exec line becomes its command as session-exec.js does (never
@@ -49,9 +50,69 @@ pub fn users() -> Vec<User> {
     std::fs::read_to_string(passwd_path()).map(|t| users_from_passwd(&t)).unwrap_or_default()
 }
 
-/// The first `key=` line's value (grep -m1 '^key=')
+/// A key's value in the file's [Desktop Entry] group only (an action's
+/// [Desktop Action …] block before it had its Name shown; audit #741):
+/// the first `key=` line there, "" when there's none
 fn field(text: &str, key: &str) -> String {
-    text.lines().find_map(|l| l.strip_prefix(key).and_then(|r| r.strip_prefix('='))).unwrap_or("").to_string()
+    let mut main = false;
+    for l in text.lines() {
+        let l = l.trim_end_matches('\r');
+        if l.starts_with('[') {
+            main = l.trim() == "[Desktop Entry]";
+            continue;
+        }
+        if !main {
+            continue;
+        }
+        if let Some(v) = l.strip_prefix(key).and_then(|r| r.trim_start().strip_prefix('=')) {
+            return v.trim().to_string();
+        }
+    }
+    String::new()
+}
+
+/// A program on PATH, or a path that exists (a session's TryExec)
+fn runnable(prog: &str, path: &str) -> bool {
+    if prog.contains('/') {
+        return Path::new(prog).is_file();
+    }
+    // (the greeter's own PATH, and the usual places in case greetd gave it a short one)
+    path.split(':').chain(["/usr/local/bin", "/usr/bin", "/bin"]).filter(|d| !d.is_empty()).any(|d| Path::new(d).join(prog).is_file())
+}
+
+/// A session file as the login screen offers it: None for one the system
+/// hides (NoDisplay or Hidden true), one with no command, or one whose
+/// TryExec isn't installed; its name the file's when it has none (#741)
+pub fn session_of(text: &str, file_stem: &str, path: &str) -> Option<Session> {
+    let yes = |k: &str| field(text, k).eq_ignore_ascii_case("true");
+    let exec = field(text, "Exec");
+    if yes("NoDisplay") || yes("Hidden") || exec.is_empty() {
+        return None;
+    }
+    let try_exec = field(text, "TryExec");
+    if !try_exec.is_empty() && !runnable(&try_exec, path) {
+        return None;
+    }
+    let name = field(text, "Name");
+    Some(Session { name: if name.is_empty() { file_stem.to_string() } else { name }, exec })
+}
+
+/// The sessions offered: the ones shown, never fewer than one. When every
+/// Hyprland or Tessera entry was hidden or broken, the first of them still
+/// comes (what Tessera runs on); with none at all, plain Hyprland
+/// (sort_sessions). `all`: each file's session and whether it's shown
+pub fn offered(all: Vec<(Session, bool)>) -> Vec<Session> {
+    let ours = |s: &Session| {
+        let n = s.name.to_lowercase();
+        n.contains("hyprland") || n.contains("tessera")
+    };
+    let mut list: Vec<Session> = all.iter().filter(|(_, shown)| *shown).map(|(s, _)| s.clone()).collect();
+    if !list.iter().any(ours) {
+        if let Some((s, _)) = all.iter().find(|(s, _)| ours(s) && !s.exec.is_empty()) {
+            list.push(s.clone());
+        }
+    }
+    sort_sessions(list)
 }
 
 /// Tessera's session first, then Hyprland's (what Tessera runs on), then
@@ -79,12 +140,17 @@ pub fn sessions_in(dir: &Path) -> Vec<Session> {
         .map(|d| d.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "desktop") && p.is_file()).collect())
         .unwrap_or_default();
     files.sort();
-    let list = files
+    let path = std::env::var("PATH").unwrap_or_default();
+    let all = files
         .iter()
-        .filter_map(|p| std::fs::read_to_string(p).ok())
-        .map(|t| Session { name: field(&t, "Name"), exec: field(&t, "Exec") })
+        .filter_map(|p| Some((std::fs::read_to_string(p).ok()?, p.file_stem()?.to_string_lossy().into_owned())))
+        .map(|(t, stem)| match session_of(&t, &stem, &path) {
+            Some(s) => (s, true),
+            // (kept aside: the fallback when nothing of Hyprland's is shown)
+            None => (Session { name: field(&t, "Name"), exec: field(&t, "Exec") }, false),
+        })
         .collect();
-    sort_sessions(list)
+    offered(all)
 }
 
 pub fn sessions() -> Vec<Session> {
@@ -256,6 +322,39 @@ mod tests {
         assert_eq!((s[1].name.as_str(), s[1].exec.as_str()), ("Hyprland", "Hyprland"));
         // none: Hyprland
         assert_eq!(sessions_in(&dir.0.join("missing"))[0].name, "Hyprland");
+    }
+
+    #[test]
+    fn hidden_and_broken_sessions_are_left_out() {
+        let p = "/nonexistent-bin";
+        // (an action's group before the entry's own keys: the entry's name)
+        let t = "[Desktop Action Safe]\nName=Safe mode\nExec=safe\n\n[Desktop Entry]\nName=Niri\nExec=niri-session\n";
+        assert_eq!(session_of(t, "niri", p), Some(Session { name: "Niri".into(), exec: "niri-session".into() }));
+        assert_eq!(session_of("[Desktop Entry]\nName=Helper\nExec=x\nNoDisplay=true\n", "h", p), None);
+        assert_eq!(session_of("[Desktop Entry]\nName=Gone\nExec=x\nHidden=True\n", "g", p), None);
+        assert_eq!(session_of("[Desktop Entry]\nName=Empty\nExec=  \n", "e", p), None);
+        assert_eq!(session_of("[Desktop Entry]\nName=Missing\nExec=x\nTryExec=/nonexistent/thing\n", "m", p), None);
+        assert_eq!(session_of("[Desktop Entry]\nName=Missing\nExec=x\nTryExec=no-such-program-here\n", "m", p), None);
+        // (a TryExec that's installed: sh is in /bin or /usr/bin everywhere)
+        assert!(session_of("[Desktop Entry]\nName=Shell\nExec=x\nTryExec=sh\n", "s", "").is_some());
+        // no name: the file's; NoDisplay=false shows
+        assert_eq!(session_of("[Desktop Entry]\nExec=sway\n", "sway", p).unwrap().name, "sway");
+        assert!(session_of("[Desktop Entry]\nName=A\nExec=a\nNoDisplay=false\n", "a", p).is_some());
+        // (a translated name isn't the name)
+        assert_eq!(session_of("[Desktop Entry]\nName[de]=Sitzung\nName=Session\nExec=s\n", "s", p).unwrap().name, "Session");
+    }
+
+    #[test]
+    fn at_least_hyprland_is_always_offered() {
+        let s = |n: &str| Session { name: n.into(), exec: n.to_lowercase() };
+        // Hyprland's own entry hidden (its TryExec not found): still offered
+        let got = offered(vec![(s("Hyprland"), false), (s("Sway"), true)]);
+        assert_eq!(got.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), ["Hyprland", "Sway"]);
+        // one of Hyprland's shown: the hidden ones stay hidden
+        assert_eq!(offered(vec![(s("Hyprland"), true), (s("Hyprland (uwsm)"), false)]).len(), 1);
+        // everything hidden and nothing of Hyprland's: plain Hyprland
+        assert_eq!(offered(vec![(s("Helper"), false)]), vec![Session { name: "Hyprland".into(), exec: "Hyprland".into() }]);
+        assert_eq!(offered(vec![]).len(), 1);
     }
 
     #[test]

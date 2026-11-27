@@ -119,6 +119,12 @@ export global Greet {
     in property <string> cookie12;
     // text: 0 session, 1 login, 2 password
     in-out property <int> row: 2;
+    // the lists a click on the session or the name opens (#743): the
+    // sessions' and the people's names, and which is chosen (-1: a typed name)
+    in property <[string]> session-names;
+    in property <[string]> people;
+    in property <int> session-at;
+    in property <int> person-at;
 
     callback submit(string);
     callback next-user(int);
@@ -131,6 +137,13 @@ export global Greet {
     callback name-key(string);
     callback power(string);
     callback row-changed(int);
+    callback pick-session(int);
+    // (-1: the list's "Another user…")
+    callback pick-user(int);
+    // the password field's own keys beyond Enter, the arrows, Tab and Esc
+    // (F1–F3 power, Ctrl+U another user, Shift+Tab the session before;
+    // #745): (text, shift, control, alt), true when it was one
+    callback field-key(string, bool, bool, bool) -> bool;
     // (dots for a password: `bullet` as often as `text` has characters)
     pure callback mask(string, string) -> string;
     // a key that types a character (not Return, an arrow, F1…)
@@ -391,7 +404,8 @@ component NameLabel inherits Rectangle {
     background: touch.has-hover ? hover-fill : hover-fill.with-alpha(0);
     animate background { duration: Theme.hover; }
     accessible-role: button;
-    accessible-label: root.text + ", type another username";
+    // (with several people a click lists them, #743)
+    accessible-label: root.text + (Greet.several ? ", choose another person" : ", type another username");
     accessible-action-default => {
         clicked();
     }
@@ -458,6 +472,187 @@ component NameInput inherits TextInput {
     }
 }
 
+// A small list to pick from, over the whole screen (the sessions, the
+// people; audit #743): it opens above the control that was clicked; a click
+// on a row picks it, as do Up/Down and Enter; Escape or a click anywhere
+// else closes it. It has the keyboard while it's open (nothing typed goes
+// into the password behind it); the style gives it back to the field.
+component PickList inherits FocusScope {
+    in property <[string]> items;
+    in property <int> current;
+    // a last row that isn't one of the items ("Another user…"), "" none
+    in property <string> extra;
+    // the control's middle and its top, in the list's own coordinates
+    in property <length> anchor-x;
+    in property <length> anchor-y;
+    in property <color> fill;
+    in property <color> ink;
+    in property <color> hi;
+    in property <string> family: "Inter";
+    in property <string> label;
+    // the row picked (-1: the extra row)
+    callback picked(int);
+    callback closed();
+    property <int> rows: root.items.length + (root.extra != "" ? 1 : 0);
+    property <length> row-h: 36px;
+    property <int> at: Math.max(0, root.current);
+    init => {
+        root.focus();
+    }
+    function choose(i: int) {
+        if i >= root.items.length {
+            root.picked(-1);
+        } else {
+            root.picked(i);
+        }
+    }
+    key-pressed(e) => {
+        if e.text == Key.UpArrow || e.text == Key.Backtab {
+            root.at = root.at <= 0 ? root.rows - 1 : root.at - 1;
+            return accept;
+        }
+        if e.text == Key.DownArrow || e.text == Key.Tab {
+            root.at = root.at >= root.rows - 1 ? 0 : root.at + 1;
+            return accept;
+        }
+        if e.text == Key.Return || e.text == " " {
+            root.choose(root.at);
+            return accept;
+        }
+        if e.text == Key.Escape {
+            root.closed();
+            return accept;
+        }
+        // (nothing else leaves the list)
+        accept
+    }
+    // (a click outside it closes it)
+    TouchArea {
+        clicked => {
+            root.closed();
+        }
+    }
+    box := Rectangle {
+        width: 260px;
+        height: Math.min(root.rows, 7) * root.row-h + 12px;
+        x: Math.max(8px, Math.min(root.width - self.width - 8px, root.anchor-x - self.width / 2));
+        y: Math.max(8px, root.anchor-y - 8px - self.height);
+        border-radius: 16px;
+        background: root.fill;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #00000066;
+        accessible-role: list;
+        accessible-label: root.label;
+        // (a click on the box itself isn't outside)
+        TouchArea { }
+        fl := Flickable {
+            x: 6px;
+            y: 6px;
+            width: parent.width - 12px;
+            height: parent.height - 12px;
+            content-height: root.rows * root.row-h;
+            // (the chosen row in view when it opens)
+            content-y: Math.min(0px, Math.max(self.height - self.content-height, (self.height - root.row-h) / 2 - root.at * root.row-h));
+            for t[i] in root.items: Rectangle {
+                y: i * root.row-h;
+                width: fl.width;
+                height: root.row-h;
+                border-radius: 10px;
+                background: i == root.at ? root.hi : rt.has-hover ? root.hi.transparentize(0.5) : transparent;
+                accessible-role: list-item;
+                accessible-label: t;
+                accessible-action-default => {
+                    root.choose(i);
+                }
+                Text {
+                    x: 12px;
+                    width: parent.width - 12px - 28px;
+                    height: parent.height;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    text: t;
+                    color: root.ink;
+                    font-family: root.family;
+                    font-size: 14px;
+                    font-weight: i == root.current ? 600 : 400;
+                    accessible-role: none;
+                }
+                // (the one chosen now: a dot at its end)
+                if i == root.current: Rectangle {
+                    x: parent.width - 12px - self.width;
+                    y: (parent.height - self.height) / 2;
+                    width: 6px;
+                    height: 6px;
+                    border-radius: 3px;
+                    background: root.ink;
+                }
+                rt := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.choose(i);
+                    }
+                }
+            }
+            if root.extra != "": Rectangle {
+                y: root.items.length * root.row-h;
+                width: fl.width;
+                height: root.row-h;
+                border-radius: 10px;
+                background: root.at == root.items.length ? root.hi : et.has-hover ? root.hi.transparentize(0.5) : transparent;
+                accessible-role: list-item;
+                accessible-label: root.extra;
+                accessible-action-default => {
+                    root.picked(-1);
+                }
+                Text {
+                    x: 12px;
+                    width: parent.width - 24px;
+                    height: parent.height;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    text: root.extra;
+                    color: root.ink;
+                    opacity: 0.8;
+                    font-family: root.family;
+                    font-size: 14px;
+                    accessible-role: none;
+                }
+                et := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.picked(-1);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The field's spinner while the password is checked, in place of the send
+// arrow (Glass, plain; audit #746: they showed nothing, as if Enter was
+// ignored). Still with Reduce Motion: the words under the field say it.
+component Spin inherits Rectangle {
+    in property <color> ink: white;
+    in property <length> size: 16px;
+    width: root.size;
+    height: root.size;
+    accessible-role: progress-indicator;
+    accessible-label: "Logging in";
+    property <duration> t: animation-tick();
+    Text {
+        width: 100%;
+        height: 100%;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        text: "\u{eb44}";
+        font-family: "Phosphor";
+        font-size: root.size;
+        color: root.ink;
+        transform-rotation: Greet.reduce-motion ? 0deg : mod(root.t / 900ms, 1) * 360deg;
+        accessible-role: none;
+    }
+}
+
 // The shake, as a list of offsets one frame (16 ms) apart (Rust works
 // them out per style: Glass's and plain's keyframes, Material's spring)
 component Shaker {
@@ -513,6 +708,8 @@ component GlassChevron inherits Rectangle {
 
 component GlassStyle inherits Rectangle {
     background: #0E0E10;
+    // the list open over it: "" | session | person (#743)
+    property <string> picking;
     public function clear-field() {
         pw.clear();
     }
@@ -673,7 +870,11 @@ component GlassStyle inherits Rectangle {
                     weight: 600;
                     hover-fill: rgba(255, 255, 255, 0.12);
                     clicked => {
-                        Greet.edit-name();
+                        if Greet.several {
+                            root.picking = "person";
+                        } else {
+                            Greet.edit-name();
+                        }
                     }
                 }
                 // (the username field's place: the field floats over it, below)
@@ -715,7 +916,7 @@ component GlassStyle inherits Rectangle {
                 font-size: 12px;
                 font-weight: 500;
             }
-            Rectangle {
+            sess := Rectangle {
                 width: gst.preferred-width;
                 height: 28px;
                 accessible-role: button;
@@ -736,7 +937,9 @@ component GlassStyle inherits Rectangle {
                 st := TouchArea {
                     mouse-cursor: pointer;
                     clicked => {
-                        Greet.next-session(1);
+                        if Greet.session-names.length > 1 {
+                            root.picking = "session";
+                        }
                     }
                 }
             }
@@ -813,6 +1016,9 @@ component GlassStyle inherits Rectangle {
             family: "Inter";
             ro: Greet.busy || Greet.power-choice != "";
             key(e) => {
+                if Greet.field-key(e.text, e.modifiers.shift, e.modifiers.control, e.modifiers.alt) {
+                    return true;
+                }
                 if e.text == Key.Return {
                     Greet.submit(self.text);
                     return true;
@@ -841,9 +1047,10 @@ component GlassStyle inherits Rectangle {
         }
         if pw.text == "": Text {
             x: 14px;
-            // (inside the input in the QML, which clips: cut at its width)
+            // (inside the input in the QML, which clips: cut at its width;
+            // a longer question shows whole under the field, #747)
             width: pw.width;
-            overflow: clip;
+            overflow: elide;
             height: parent.height;
             vertical-alignment: center;
             text: Greet.placeholder;
@@ -852,10 +1059,15 @@ component GlassStyle inherits Rectangle {
             font-size: 13px;
             accessible-role: none;
         }
+        if Greet.busy: Spin {
+            x: parent.width - 9px - self.width;
+            y: (parent.height - self.height) / 2;
+            ink: white;
+        }
         // The fingerprint while the reader listens; else the arrow, once
-        // there's something to send
+        // there's something to send (neither while it's checked)
         Rectangle {
-            visible: Greet.finger-on || pw.text != "";
+            visible: !Greet.busy && (Greet.finger-on || pw.text != "");
             x: parent.width - 5px - self.width;
             y: (parent.height - self.height) / 2;
             width: 24px;
@@ -886,6 +1098,37 @@ component GlassStyle inherits Rectangle {
                     Greet.submit(pw.text);
                 }
             }
+        }
+    }
+
+    // The session's or the people's list, over everything (#743)
+    if Greet.primary && root.picking != "": PickList {
+        width: root.width;
+        height: root.height;
+        items: root.picking == "session" ? Greet.session-names : Greet.people;
+        current: root.picking == "session" ? Greet.session-at : Greet.person-at;
+        extra: root.picking == "person" ? "Another user…" : "";
+        label: root.picking == "session" ? "Sessions" : "People";
+        anchor-x: root.width / 2;
+        anchor-y: root.picking == "session" ? col.y + sess.y : col.y + names.y;
+        fill: #2A2A2F;
+        ink: white;
+        hi: rgba(255, 255, 255, 0.14);
+        family: "Inter";
+        picked(i) => {
+            if root.picking == "session" {
+                Greet.pick-session(i);
+            } else {
+                Greet.pick-user(i);
+            }
+            root.picking = "";
+            if i >= 0 {
+                pw.focus-it();
+            }
+        }
+        closed => {
+            root.picking = "";
+            pw.focus-it();
         }
     }
 }
@@ -925,6 +1168,8 @@ component PlainStyle inherits Rectangle {
     property <color> fill: #1C1C1F;
     property <color> bad: #FF8A8A;
     property <color> accent: #A5B4FC;
+    // the list open over it: "" | session | person (#743)
+    property <string> picking;
     public function clear-field() {
         pw.clear();
     }
@@ -1015,7 +1260,11 @@ component PlainStyle inherits Rectangle {
                     weight: 600;
                     hover-fill: root.fill;
                     clicked => {
-                        Greet.edit-name();
+                        if Greet.several {
+                            root.picking = "person";
+                        } else {
+                            Greet.edit-name();
+                        }
                     }
                 }
                 if Greet.other: Rectangle {
@@ -1055,8 +1304,9 @@ component PlainStyle inherits Rectangle {
                 font-family: "Inter";
                 font-size: 13px;
             }
-            // The session (Tab, or a click, for the next)
-            Rectangle {
+            // The session (Tab for the next, Shift+Tab the one before; a
+            // click opens the list)
+            sess := Rectangle {
                 width: pst.preferred-width;
                 height: 32px;
                 accessible-role: button;
@@ -1077,7 +1327,9 @@ component PlainStyle inherits Rectangle {
                 st := TouchArea {
                     mouse-cursor: pointer;
                     clicked => {
-                        Greet.next-session(1);
+                        if Greet.session-names.length > 1 {
+                            root.picking = "session";
+                        }
                     }
                 }
             }
@@ -1131,7 +1383,7 @@ component PlainStyle inherits Rectangle {
         border-color: Greet.error != "" ? root.bad : #3A3A40;
         pw := Secret {
             x: 18px;
-            width: parent.width - 18px - (Greet.finger-on ? 44px : 18px);
+            width: parent.width - 18px - (Greet.finger-on || Greet.busy ? 44px : 18px);
             height: parent.height;
             ink: root.fg;
             size: 16px;
@@ -1139,6 +1391,9 @@ component PlainStyle inherits Rectangle {
             family: "Inter";
             ro: Greet.busy || Greet.power-choice != "";
             key(e) => {
+                if Greet.field-key(e.text, e.modifiers.shift, e.modifiers.control, e.modifiers.alt) {
+                    return true;
+                }
                 if e.text == Key.Return {
                     Greet.submit(self.text);
                     return true;
@@ -1167,9 +1422,10 @@ component PlainStyle inherits Rectangle {
         }
         if pw.text == "": Text {
             x: 18px;
-            // (inside the input in the QML, which clips: cut at its width)
+            // (inside the input in the QML, which clips: cut at its width;
+            // a longer question shows whole under the field, #747)
             width: pw.width;
-            overflow: clip;
+            overflow: elide;
             height: parent.height;
             vertical-alignment: center;
             text: Greet.placeholder;
@@ -1178,7 +1434,12 @@ component PlainStyle inherits Rectangle {
             font-size: 15px;
             accessible-role: none;
         }
-        if Greet.finger-on: Rectangle {
+        if Greet.busy: Spin {
+            x: parent.width - 15px - self.width;
+            y: (parent.height - self.height) / 2;
+            ink: root.accent;
+        }
+        if Greet.finger-on && !Greet.busy: Rectangle {
             x: parent.width - 12px - self.width;
             y: (parent.height - self.height) / 2;
             width: 22px;
@@ -1229,6 +1490,37 @@ component PlainStyle inherits Rectangle {
                 }
             }
         }
+        }
+    }
+
+    // The session's or the people's list, over everything (#743)
+    if Greet.primary && root.picking != "": PickList {
+        width: root.width;
+        height: root.height;
+        items: root.picking == "session" ? Greet.session-names : Greet.people;
+        current: root.picking == "session" ? Greet.session-at : Greet.person-at;
+        extra: root.picking == "person" ? "Another user…" : "";
+        label: root.picking == "session" ? "Sessions" : "People";
+        anchor-x: root.width / 2;
+        anchor-y: root.picking == "session" ? col.y + sess.y : col.y + names.y;
+        fill: #1C1C1F;
+        ink: root.fg;
+        hi: #2E2E33;
+        family: "Inter";
+        picked(i) => {
+            if root.picking == "session" {
+                Greet.pick-session(i);
+            } else {
+                Greet.pick-user(i);
+            }
+            root.picking = "";
+            if i >= 0 {
+                pw.focus-it();
+            }
+        }
+        closed => {
+            root.picking = "";
+            pw.focus-it();
         }
     }
 }
@@ -1765,6 +2057,8 @@ component Round {
 
 component MaterialStyle inherits Rectangle {
     background: Greet.m.bg;
+    // the list open over it: "" | session | person (#743)
+    property <string> picking;
     public function clear-field() {
         pw.clear();
     }
@@ -1863,7 +2157,11 @@ component MaterialStyle inherits Rectangle {
     property <bool> arrows: Greet.several && !Greet.other;
     property <length> row-w: 44px + 8px + (arrows ? 44px + 8px : 0px) + pill-w + (arrows ? 8px + 44px : 0px) + 8px + 44px;
     property <length> row-x: (root.width - row-w) / 2;
-    property <length> row-y: root.height - root.r(root.height * 0.06) - 56px;
+    // (lifted above the corner's session and power buttons when the two
+    // would meet: narrow or short screens, a long session name; #748)
+    property <length> row-y0: root.height - root.r(root.height * 0.06) - 56px;
+    property <bool> row-meets-corner: root.row-x + root.row-w + 12px > corner-box.x && root.row-y0 + 56px + 12px > corner-box.y;
+    property <length> row-y: root.row-meets-corner ? corner-box.y - 12px - 56px : root.row-y0;
     property <length> pill-x: row-x + 44px + 8px + (arrows ? 44px + 8px : 0px);
 
     // Above the pill: the name (it leaves the pill as it opens), or the
@@ -1911,7 +2209,11 @@ component MaterialStyle inherits Rectangle {
         family: "Tessera Text Flex";
         hover-fill: Greet.m.high;
         clicked => {
-            Greet.edit-name();
+            if Greet.several {
+                root.picking = "person";
+            } else {
+                Greet.edit-name();
+            }
         }
     }
     // A typed username (Switch user, or a click on the name), in its own pill
@@ -2056,6 +2358,9 @@ component MaterialStyle inherits Rectangle {
             }
             key(e) => {
                 root.wake();
+                if Greet.field-key(e.text, e.modifiers.shift, e.modifiers.control, e.modifiers.alt) {
+                    return true;
+                }
                 if e.text == Key.Return {
                     Greet.submit(self.text);
                     return true;
@@ -2084,9 +2389,10 @@ component MaterialStyle inherits Rectangle {
         }
         if pw.text == "": Text {
             x: 60px;
-            // (inside the input in the QML, which clips: cut at its width)
+            // (inside the input in the QML, which clips: cut at its width;
+            // a longer question shows whole above the pill, #747)
             width: pw.width;
-            overflow: clip;
+            overflow: elide;
             y: (parent.height - self.height) / 2;
             height: self.preferred-height;
             opacity: root.ot;
@@ -2151,7 +2457,11 @@ component MaterialStyle inherits Rectangle {
             mouse-cursor: MouseCursor.text;
             clicked => {
                 if self.mouse-x >= name-text.x && self.mouse-x <= name-text.x + name-text.width {
-                    Greet.edit-name();
+                    if Greet.several {
+                        root.picking = "person";
+                    } else {
+                        Greet.edit-name();
+                    }
                     return;
                 }
                 root.wake();
@@ -2161,7 +2471,7 @@ component MaterialStyle inherits Rectangle {
     }
 
     // The session, and the power buttons, in the corner
-    Rectangle {
+    corner-box := Rectangle {
         visible: Greet.primary;
         x: root.width - 24px - self.width;
         y: root.height - 24px - 44px;
@@ -2169,8 +2479,9 @@ component MaterialStyle inherits Rectangle {
         height: 44px;
         corner := HorizontalLayout {
         spacing: 8px;
-        Rectangle {
-            width: session-text.preferred-width + 32px;
+        session-pill := Rectangle {
+            // (a long session name is cut short: at most 220 px; #748)
+            width: Math.min(session-probe.preferred-width, 220px) + 32px;
             height: 44px;
             border-radius: 22px;
             background: stt.has-hover ? Greet.m.high-hover : Greet.m.high;
@@ -2179,7 +2490,16 @@ component MaterialStyle inherits Rectangle {
             accessible-action-default => {
                 Greet.next-session(1);
             }
-            session-text := Text {
+            session-probe := Text {
+                visible: false;
+                text: Greet.session;
+                font-family: "Tessera Text Flex";
+                font-size: 14px;
+                font-weight: 500;
+            }
+            Text {
+                width: Math.min(session-probe.preferred-width, 220px);
+                overflow: elide;
                 text: Greet.session;
                 color: Greet.m.on-surface;
                 font-family: "Tessera Text Flex";
@@ -2190,7 +2510,9 @@ component MaterialStyle inherits Rectangle {
             stt := TouchArea {
                 mouse-cursor: pointer;
                 clicked => {
-                    Greet.next-session(1);
+                    if Greet.session-names.length > 1 {
+                        root.picking = "session";
+                    }
                 }
             }
         }
@@ -2218,6 +2540,38 @@ component MaterialStyle inherits Rectangle {
                 Greet.power("poweroff");
             }
         }
+        }
+    }
+
+    // The session's or the people's list, over everything (#743)
+    if Greet.primary && root.picking != "": PickList {
+        width: root.width;
+        height: root.height;
+        items: root.picking == "session" ? Greet.session-names : Greet.people;
+        current: root.picking == "session" ? Greet.session-at : Greet.person-at;
+        extra: root.picking == "person" ? "Another user…" : "";
+        label: root.picking == "session" ? "Sessions" : "People";
+        anchor-x: root.picking == "session" ? corner-box.x + session-pill.x + session-pill.width / 2 : root.width / 2;
+        anchor-y: root.picking == "session" ? corner-box.y : root.name-y;
+        fill: Greet.m.high;
+        ink: Greet.m.on-surface;
+        hi: Greet.m.secondary-container;
+        family: "Tessera Text Flex";
+        picked(i) => {
+            if root.picking == "session" {
+                Greet.pick-session(i);
+            } else {
+                Greet.pick-user(i);
+            }
+            root.picking = "";
+            if i >= 0 {
+                root.wake();
+                pw.focus-it();
+            }
+        }
+        closed => {
+            root.picking = "";
+            pw.focus-it();
         }
     }
 }

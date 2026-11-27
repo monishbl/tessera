@@ -134,6 +134,11 @@ enum M {
     NameKey(String),
     Power(String),
     Row(i32),
+    /// picked from the session's and the people's lists (#743)
+    PickSession(i32),
+    PickUser(i32),
+    /// a key of the password field's own (F1–F3, Ctrl+U, Shift+Tab; #745)
+    FieldKey(view::FieldKey),
     Greetd(Event),
     Begin,
     Mock(String),
@@ -369,6 +374,8 @@ impl Greeter {
             g.set_say_bad(bad);
             g.set_placeholder(view::placeholder(self.style, m).into());
             g.set_session(view::session_label(self.style, m).into());
+            g.set_session_at(m.session as i32);
+            g.set_person_at(if m.other { -1 } else { m.user as i32 });
             g.set_login(m.user_name().into());
             g.set_host(self.host.clone().into());
             g.set_row(m.row);
@@ -453,7 +460,22 @@ impl Greeter {
         g.set_shake_frames(slint::ModelRc::new(slint::VecModel::from(frames)));
         g.on_mask(|t, b| view::mask(&t, &b).into());
         g.on_printable(|t| view::printable(&t));
+        // (the lists a click on the session or the name opens: the people
+        // and the sessions are read once, at the start; #743)
+        let names = |v: Vec<String>| slint::ModelRc::new(slint::VecModel::from(v.into_iter().map(slint::SharedString::from).collect::<Vec<_>>()));
+        g.set_session_names(names(self.model.sessions.iter().map(|s| s.name.clone()).collect()));
+        g.set_people(names(self.model.users.iter().map(|u| u.full.clone()).collect()));
         let to = Self::send(st);
+        {
+            let to = to.clone();
+            g.on_field_key(move |t, shift, ctrl, alt| match view::field_key(&t, shift, ctrl, alt) {
+                Some(k) => {
+                    to(M::FieldKey(k));
+                    true
+                }
+                None => false,
+            });
+        }
         macro_rules! on {
             ($set:ident, |$($a:ident),*| $m:expr) => {{
                 let to = to.clone();
@@ -471,6 +493,8 @@ impl Greeter {
         on!(on_name_key, |t| M::NameKey(t.to_string()));
         on!(on_power, |a| M::Power(a.to_string()));
         on!(on_row_changed, |r| M::Row(r));
+        on!(on_pick_session, |i| M::PickSession(i));
+        on!(on_pick_user, |i| M::PickUser(i));
     }
 
     /// A demo's state that needs the window: a typed password, an open pill
@@ -484,6 +508,21 @@ impl Greeter {
         }
         if state == "other" {
             ui.invoke_focus_name(self.model.other_name.clone().into());
+        }
+    }
+
+    /// A window went (its screen, or the compositor closed it): when it had
+    /// the keyboard and the controls, the first one left takes them
+    fn window_gone(&mut self, st: &mut State, output: &str) {
+        if !self.is_primary(output) {
+            return;
+        }
+        let left: Vec<String> = self.wins.iter().map(|w| w.output.clone()).collect();
+        let next = primary_after(self.primary.as_deref(), output, &left);
+        // (none left: the next screen to come takes it, output_added)
+        self.primary = None;
+        if let Some(next) = next {
+            self.set_primary(st, next);
         }
     }
 
@@ -502,6 +541,16 @@ impl Greeter {
         }
         self.push(st);
     }
+}
+
+/// The screen that takes the keyboard when `gone`'s window went: None when
+/// `gone` didn't have it (nothing moves) or no window is left; else the
+/// first one left
+pub fn primary_after(primary: Option<&str>, gone: &str, left: &[String]) -> Option<String> {
+    if primary != Some(gone) {
+        return None;
+    }
+    left.iter().find(|o| o.as_str() != gone).cloned()
 }
 
 /// The demo states (`--demo STATE`), set on the model
@@ -668,12 +717,7 @@ impl Part for Greeter {
             let w = self.wins.remove(i);
             st.drop_surface(&w.surface);
         }
-        if self.is_primary(name) {
-            self.primary = None;
-            if let Some(first) = self.wins.first().map(|w| w.output.clone()) {
-                self.set_primary(st, first);
-            }
-        }
+        self.window_gone(st, name);
     }
 
     fn message(&mut self, st: &mut State, msg: Box<dyn Any + Send>) {
@@ -694,6 +738,20 @@ impl Part for Greeter {
             M::NameKey(t) => self.model.name_key(&t),
             M::Power(a) => self.model.choose_power(&a),
             M::Row(r) => self.model.set_row(r),
+            M::PickSession(i) => self.model.pick_session(i.max(0) as usize),
+            M::PickUser(i) => {
+                // (-1: the list's "Another user…")
+                if i < 0 {
+                    self.model.edit_name();
+                } else {
+                    self.model.pick_user(i as usize);
+                }
+            }
+            M::FieldKey(k) => match k {
+                view::FieldKey::Power(a) => self.model.choose_power(a),
+                view::FieldKey::OtherUser => self.model.edit_name(),
+                view::FieldKey::SessionBack => self.model.next_session(-1),
+            },
             M::Greetd(Event::Response(r)) => self.model.heard(r),
             M::Greetd(Event::Closed) => {
                 if self.client.take().is_some() {
@@ -725,6 +783,9 @@ impl Part for Greeter {
         if let Some(i) = self.wins.iter().position(|w| Rc::ptr_eq(&w.surface, surface)) {
             let w = self.wins.remove(i);
             st.drop_surface(&w.surface);
+            // (the compositor closed the one with the keyboard: another screen
+            // takes it, as when a screen goes; audit #739)
+            self.window_gone(st, &w.output);
         }
     }
 
@@ -757,6 +818,10 @@ pub fn run(args: &[String], started: std::time::Instant) {
     use calloop::EventLoop;
     use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 
+    // (the system's language for the clock's day and month names, before any
+    // thread: main.rs hands over before its own init. Only LC_TIME: nothing
+    // about the password changes; a language that isn't installed stays C)
+    tessera_core::locale::init();
     let opts = Options::from_args(args, crate::env::var("GREETER_STYLE"), crate::env::var("GREETER_DRY").as_deref() == Some("1"));
     if let Some(l) = &opts.look {
         // (the look to draw, whatever config.json says: theme::read follows it)
@@ -872,6 +937,20 @@ mod tests {
         let mut m = fresh();
         demo_state(&mut m, "power");
         assert_eq!(m.power_choice, "reboot");
+    }
+
+    #[test]
+    fn the_keyboard_moves_when_its_window_goes() {
+        let left = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // the one with the keyboard closed: the first one left takes it
+        assert_eq!(primary_after(Some("eDP-1"), "eDP-1", &left(&["HDMI-A-1", "DP-2"])), Some("HDMI-A-1".into()));
+        // another one closed: nothing moves
+        assert_eq!(primary_after(Some("eDP-1"), "DP-2", &left(&["eDP-1"])), None);
+        // none left
+        assert_eq!(primary_after(Some("eDP-1"), "eDP-1", &[]), None);
+        // (never back to the one that went)
+        assert_eq!(primary_after(Some("eDP-1"), "eDP-1", &left(&["eDP-1"])), None);
+        assert_eq!(primary_after(None, "eDP-1", &left(&["DP-2"])), None);
     }
 
     #[test]

@@ -90,7 +90,7 @@ if __name__ == "__main__":
 FAKE_UI = r'''#!/bin/sh
 cfg=""
 [ -n "$XDG_CONFIG_HOME" ] && cfg=$(cat "$XDG_CONFIG_HOME/tessera/config.json")
-printf 'rust\t%s\t%s\n' "$*" "$cfg" >> "$FAKE_LOG"
+printf 'rust\t%s\t%s\t%s\t%s\n' "$*" "$cfg" "${LANG:-}" "${LC_TIME:-}" >> "$FAKE_LOG"
 [ -n "$FAKE_UI_FAIL" ] && exit 4
 exit 0
 '''
@@ -116,9 +116,27 @@ class GreeterStartRust(GreeterStart):
         r, runs = self.start(self.LOOK)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(len(runs), 1)
-        who, args, cfg = runs[0]
+        who, args, cfg = runs[0][:3]
         self.assertEqual((who, args), ("rust", "--greeter --style look --look material"))
         self.assertEqual(json.loads(cfg)["appearance"]["materialSeed"], "#6750A4")
+
+    def test_the_systems_language_when_greetd_gave_none(self):
+        # (the clock's day and month names: the greeter has no language of its own)
+        conf = self.d / "locale.conf"
+        conf.write_text('# the system\'s\nLANG="de_DE.UTF-8"\nLC_TIME=en_GB.UTF-8\nLC_PAPER=$(touch x)\nLC_TIME2=x')
+        _, runs = self.start(self.LOOK, LANG="", LC_ALL="", LC_TIME="", TESSERA_LOCALE_CONF=str(conf))
+        self.assertEqual(runs[0][3:], ["de_DE.UTF-8", "en_GB.UTF-8"])
+        # one greetd gave stays as it is
+        self.log.unlink()
+        _, runs = self.start(self.LOOK, LANG="fr_FR.UTF-8", LC_ALL="", LC_TIME="", TESSERA_LOCALE_CONF=str(conf))
+        self.assertEqual(runs[0][3:], ["fr_FR.UTF-8", ""])
+        # nothing but a plain name is taken; no file: none
+        conf.write_text('LANG=de_DE.UTF-8;reboot\n')
+        for f in (conf, self.d / "missing"):
+            self.log.unlink()
+            r, runs = self.start(self.LOOK, LANG="", LC_ALL="", LC_TIME="", TESSERA_LOCALE_CONF=str(f))
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(runs[0][3:], ["", ""])
 
     def test_a_rust_one_that_fails_gives_way_to_the_qml_one(self):
         r, runs = self.start(self.LOOK, FAKE_UI_FAIL="1")

@@ -82,14 +82,22 @@ fn hex_ok(s: &str) -> bool {
 
 /// What the greeter gets (keys in order: greeter.json is written sorted, so
 /// the two compare as text). `seed`/`dark`/`material` come from the look.
+/// `clock24` is your Time format worked out here (Auto: your language,
+/// tessera_core::locale): the greeter runs as its own user, without your
+/// settings or your language, so it's given the answer, not the setting
 pub fn look_json(cfg: &Value, dark: bool, look_seed: &str) -> String {
+    look_json_with(cfg, dark, look_seed, tessera_core::locale::clock24(cfg))
+}
+
+/// look_json with the 24-hour answer given (tests)
+pub fn look_json_with(cfg: &Value, dark: bool, look_seed: &str, clock24: bool) -> String {
     let a = &cfg["appearance"];
     let l = &cfg["lock"];
     let seed_cfg = a["materialSeed"].as_str().unwrap_or("wallpaper");
     let s = if hex_ok(seed_cfg) { seed_cfg.to_string() } else { look_seed.chars().take(7).collect() };
     let rnd = |v: &Value, d: f64| v.as_f64().unwrap_or(d).round() as i64;
     json!({
-        "clock24": a["clock24"] == true,
+        "clock24": clock24,
         "clockFace": l["clockFace"].as_str().unwrap_or("dynamic"),
         "clockRound": l["clockRound"].as_bool().unwrap_or(true),
         "clockWeight": rnd(&l["clockWeight"], 640.0),
@@ -389,7 +397,7 @@ impl LoginScreen {
         let cfg = h.cfg();
         let style = cfg["lock"]["loginStyle"].as_str().unwrap_or("look").to_string();
         let wall = tessera_core::wallpaper::showing_now(cfg, h.st.shell.look.material);
-        let clock24 = if cfg["appearance"]["clock24"] == true { "1" } else { "0" };
+        let clock24 = if tessera_core::locale::clock24(cfg) { "1" } else { "0" };
         let shell_dir = crate::util::root().join("shell").to_string_lossy().into_owned();
         let sh = "QS=qs; for d in \"${XDG_DATA_HOME:-}/tessera\" \"$HOME/.local/share/tessera\"; do if [ -x \"$d/quickshell/bin/qs\" ]; then QS=\"$d/quickshell/bin/qs\"; export QML_IMPORT_PATH=\"$d/quickshell/lib/qt6/qml${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}\"; break; fi; done; TESSERA_GREETER_MOCK=1 TESSERA_GREETER_STYLE=\"$1\" TESSERA_GREETER_WALLPAPER=\"$2\" TESSERA_GREETER_CLOCK24=\"$4\" exec \"$QS\" -p \"$3/greeter.qml\"";
         let qml = vec!["sh".to_string(), "-c".into(), sh.into(), "sh".into(), style.clone(), wall, shell_dir, clock24.into()];
@@ -425,6 +433,10 @@ mod tests {
         let s = look_json(&json!({"appearance": {"materialSeed": "#abcdef", "look": "material"}}), false, "nope");
         assert!(s.contains(r##""seed":"#abcdef""##) && s.contains("\"mode\":\"light\""));
         assert!(look_json(&json!({}), false, "zzz").contains("#6750A4"));
+        // (the login screen gets your Time format's answer: it can't read your settings)
+        assert!(look_json(&json!({"appearance": {"clockHours": "24"}}), true, "#112233").contains("\"clock24\":true"));
+        assert!(look_json(&json!({"appearance": {"clockHours": "12", "clock24": true}}), true, "#112233").contains("\"clock24\":false"));
+        assert!(look_json_with(&json!({}), true, "#112233", true).contains("\"clock24\":true"));
     }
 
     #[test]

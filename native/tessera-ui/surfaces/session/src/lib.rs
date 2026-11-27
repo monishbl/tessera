@@ -98,6 +98,43 @@ pub fn start_at(action: &str) -> usize {
     OPTIONS.iter().position(|o| o.0 == action).unwrap_or(0)
 }
 
+/// What a key does in the menu (audit #778: its decisions as a plain
+/// function, tested below)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyDo {
+    /// Esc: close it
+    Close,
+    /// Enter on the options: this one
+    Choose(usize),
+    /// Enter on the held-up view: this button (0 Cancel, 1 Anyway)
+    Press(usize),
+    /// an arrow on the options: this one is chosen now
+    Move(usize),
+    /// an arrow on the held-up view: this button is chosen now
+    Button(usize),
+    Nothing,
+}
+
+/// `held`: the held-up view shows (its chosen `button`), else the options
+/// (the chosen one `current`); `repeat`: a key still repeating, which never
+/// confirms anything (Enter held down in Search)
+pub fn key_do(held: bool, current: usize, button: usize, key: &str, repeat: bool) -> KeyDo {
+    match key {
+        "\u{1b}" => KeyDo::Close,
+        "\u{a}" if repeat => KeyDo::Nothing,
+        "\u{a}" if held => KeyDo::Press(button),
+        "\u{a}" => KeyDo::Choose(current),
+        _ if held => moved(button, key).map_or(KeyDo::Nothing, |b| KeyDo::Button(b.min(1))),
+        _ => moved(current, key).map_or(KeyDo::Nothing, KeyDo::Move),
+    }
+}
+
+/// A hover moves the choice, unless the menu was opened for one action
+/// (Search's: Enter confirms that one, wherever the pointer rests)
+pub fn hovered(action: &str, i: i32) -> Option<usize> {
+    (action.is_empty() && i >= 0 && (i as usize) < OPTIONS.len()).then_some(i as usize)
+}
+
 enum M {
     Hover(i32),
     Choose(i32),
@@ -553,8 +590,8 @@ impl Part for Session {
         let Ok(m) = msg.downcast::<M>() else { return };
         match *m {
             M::Hover(i) => {
-                if self.action.is_empty() && i >= 0 {
-                    self.current = i as usize;
+                if let Some(c) = hovered(&self.action, i) {
+                    self.current = c;
                     self.options(st);
                     self.animate(st);
                 }
@@ -564,36 +601,25 @@ impl Part for Session {
                 self.pressed = if p { Some(i.max(0) as usize) } else { None };
                 self.animate(st);
             }
-            M::Key(k, repeat) if !self.held.is_empty() => {
-                if k == "\u{1b}" {
-                    self.close(st, true);
-                } else if k == "\u{a}" {
-                    // (a key still repeating never presses a button)
-                    if !repeat {
-                        self.press_button(st, self.button);
-                    }
-                } else if let Some(b) = moved(self.button, &k) {
-                    self.button = b.min(1);
+            // (a key still repeating never confirms: holding Enter in Search
+            // must never run the action, nor press a held-up view's button)
+            M::Key(k, repeat) => match key_do(!self.held.is_empty(), self.current, self.button, &k, repeat) {
+                KeyDo::Close => self.close(st, true),
+                KeyDo::Choose(c) => self.choose(st, c),
+                KeyDo::Press(b) => self.press_button(st, b),
+                KeyDo::Button(b) => {
+                    self.button = b;
                     if let Some(w) = &self.win {
                         w.ui.set_held_button(self.button as i32);
                     }
                 }
-            }
-            M::Key(k, repeat) => {
-                if k == "\u{1b}" {
-                    self.close(st, true);
-                } else if k == "\u{a}" {
-                    // (holding Enter in Search must never confirm the action)
-                    if !repeat {
-                        let c = self.current;
-                        self.choose(st, c);
-                    }
-                } else if let Some(c) = moved(self.current, &k) {
+                KeyDo::Move(c) => {
                     self.current = c;
                     self.options(st);
                     self.animate(st);
                 }
-            }
+                KeyDo::Nothing => {}
+            },
             M::Dismissed => {
                 // a click on the scrim closes
                 if !self.open.is_empty() {
@@ -692,5 +718,58 @@ mod tests {
         assert_eq!(start_at("sleep"), 1);
         assert_eq!(start_at(""), 0);
         assert_eq!(start_at("nonsense"), 0);
+    }
+
+    const ENTER: &str = "\u{a}";
+    const ESC: &str = "\u{1b}";
+    const LEFT: &str = "\u{f702}";
+    const RIGHT: &str = "\u{f703}";
+    const DOWN: &str = "\u{f701}";
+
+    #[test]
+    fn asked_for_shut_down_enter_chooses_it() {
+        // Search's "Shut down": the menu opens on it, Enter (not a repeat) chooses it
+        let at = start_at("shutdown");
+        assert_eq!(OPTIONS[at].0, "shutdown");
+        assert_eq!(key_do(false, at, 0, ENTER, false), KeyDo::Choose(at));
+        // the Enter still held from Search does nothing
+        assert_eq!(key_do(false, at, 0, ENTER, true), KeyDo::Nothing);
+        // and the pointer resting on another option doesn't move it
+        assert_eq!(hovered("shutdown", 0), None);
+        // opened with nothing asked for: Lock, so a stray Enter locks
+        assert_eq!(key_do(false, start_at(""), 0, ENTER, false), KeyDo::Choose(0));
+    }
+
+    #[test]
+    fn hover_then_enter_chooses_the_hovered_one() {
+        let c = hovered("", 3).unwrap();
+        assert_eq!(OPTIONS[c].0, "restart");
+        assert_eq!(key_do(false, c, 0, ENTER, false), KeyDo::Choose(3));
+        assert_eq!(hovered("", -1), None);
+        assert_eq!(hovered("", OPTIONS.len() as i32), None);
+    }
+
+    #[test]
+    fn arrows_move_and_stop_at_the_ends() {
+        assert_eq!(key_do(false, 0, 0, LEFT, false), KeyDo::Move(0));
+        assert_eq!(key_do(false, 0, 0, RIGHT, false), KeyDo::Move(1));
+        assert_eq!(key_do(false, 4, 0, DOWN, false), KeyDo::Move(4));
+        assert_eq!(key_do(false, 2, 0, "x", false), KeyDo::Nothing);
+        // (a repeating arrow still moves)
+        assert_eq!(key_do(false, 1, 0, RIGHT, true), KeyDo::Move(2));
+        assert_eq!(key_do(false, 2, 0, ESC, false), KeyDo::Close);
+    }
+
+    #[test]
+    fn the_held_up_view_starts_on_cancel() {
+        // Enter on it at first: Cancel, never "Anyway"
+        assert_eq!(key_do(true, 4, 0, ENTER, false), KeyDo::Press(0));
+        assert_eq!(key_do(true, 4, 0, ENTER, true), KeyDo::Nothing);
+        // an arrow chooses Anyway, then Enter presses it; only two buttons
+        assert_eq!(key_do(true, 4, 0, RIGHT, false), KeyDo::Button(1));
+        assert_eq!(key_do(true, 4, 1, RIGHT, false), KeyDo::Button(1));
+        assert_eq!(key_do(true, 4, 1, ENTER, false), KeyDo::Press(1));
+        assert_eq!(key_do(true, 4, 1, LEFT, false), KeyDo::Button(0));
+        assert_eq!(key_do(true, 4, 1, ESC, false), KeyDo::Close);
     }
 }
