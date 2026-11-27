@@ -101,13 +101,17 @@ if want gtk; then
     include "$CFG/gtk-3.0/gtk.css" "@import 'tessera-colors.css';" create
     include "$CFG/gtk-4.0/gtk.css" "@import 'tessera-colors.css';" create
     # GTK apps follow light/dark too, on Adwaita (coloured by the files
-    # above); a MacTahoe theme set by an older Tessera is put back to it, any
-    # other theme you chose is left alone
+    # above); a MacTahoe theme set by an older Tessera is put back to it
+    # once (desktop-theme.py gtk-ours knows; after that it's yours: audit
+    # #963), any other theme you chose is left alone
     if command -v gsettings >/dev/null; then
         gsettings set org.gnome.desktop.interface color-scheme "prefer-$mode" 2>/dev/null
         cur=$(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null | tr -d "'")
         t=""
-        [[ $cur == MacTahoe* || $cur == Adwaita* || $cur == adw-gtk3* ]] && t=$([[ $mode == dark ]] && echo Adwaita-dark || echo Adwaita)
+        ours=0
+        [[ $cur == Adwaita* || $cur == adw-gtk3* ]] && ours=1
+        [[ $cur == MacTahoe* ]] && python3 -I "$DESKTOP" gtk-ours "$cur" 2>/dev/null && ours=1
+        [[ $ours == 1 ]] && t=$([[ $mode == dark ]] && echo Adwaita-dark || echo Adwaita)
         # Material: libadwaita's look for GTK 3 apps (adw-gtk3), when installed
         if [[ -n "$roles" ]]; then
             a3=$([[ $mode == dark ]] && echo adw-gtk3-dark || echo adw-gtk3)
@@ -115,7 +119,7 @@ if want gtk; then
                 [[ -d "$d/$a3" ]] && t="$d/$a3" && break
             done
         fi
-        [[ -n "$t" && ( $cur == MacTahoe* || $cur == Adwaita* || $cur == adw-gtk3* ) ]] && gsettings set org.gnome.desktop.interface gtk-theme "$(basename "$t")" 2>/dev/null
+        [[ -n "$t" && $ours == 1 ]] && gsettings set org.gnome.desktop.interface gtk-theme "$(basename "$t")" 2>/dev/null
     fi
 fi
 if want qt; then

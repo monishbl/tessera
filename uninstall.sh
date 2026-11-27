@@ -164,6 +164,13 @@ if [[ $DRY == 1 ]]; then
 elif [[ -f "$HERE/shell/assets/scripts/desktop-theme.py" ]] && command -v python3 >/dev/null; then
     python3 -I "$HERE/shell/assets/scripts/desktop-theme.py" undo-gtk >/dev/null 2>&1 || true
 fi
+# Qt and KDE apps' colours Tessera set (kdeglobals, Dolphin, qt6ct): back to
+# what they held before it (desktop-theme.py recorded them; audit #962)
+if [[ $DRY == 1 ]]; then
+    echo "  would put Qt and KDE apps' colours back as they were (desktop-theme.py undo-kde)"
+elif [[ -f "$HERE/shell/assets/scripts/desktop-theme.py" ]] && command -v python3 >/dev/null; then
+    python3 -I "$HERE/shell/assets/scripts/desktop-theme.py" undo-kde >/dev/null 2>&1 || true
+fi
 # The file picker's portal preference Tessera wrote (yours is never touched)
 if [[ $DRY == 1 ]]; then
     echo "  would remove Tessera's file picker preference (file-picker.py remove)"
