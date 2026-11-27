@@ -43,6 +43,16 @@ set packed from a build made for main said "Stable" (and patches were made
 from programs beta installs never had; audit #725). A tree promoted from
 beta to main is built again for main.
 
+The tests pass first (audit #627): before a set or a bundle is made ready,
+the commit's own tests run here, once per commit: tools/run-python-tests.sh
+(every Python test file, then the Node tests), and cargo test (dev profile
+at opt-level 1, never --release; through ~/bin/tbuild, memory capped) for
+tessera-ui's workspace and tessera-events. The result is kept in
+~/tessera-release/tests/<commit>.json and written into READY ("tests":
+commit, passed, when, each suite's verdict); a commit whose tests failed is
+never made ready (tried again an hour later), and the laptop's publisher
+refuses any set whose READY doesn't say its own commit's tests passed.
+
 Tested before it's offered: each variant is installed in a hidden sandbox
 arena here (tools/release-builder/pretest.sh, installed as
 ~/bin/tessera-pretest) and must start, answer IPC within 30 s, draw, and lock
@@ -122,6 +132,8 @@ SET_FORMAT = 2
 STALL_HOURS = 6
 ALERT_HOOK = os.environ.get("TESSERA_RELEASE_ALERT") or os.path.join(os.path.expanduser("~"), "bin", "tessera-release-alert")
 BUILT = os.path.join(ROOT, "built")
+TESTS = os.path.join(ROOT, "tests")  # tests/<commit>.json: that commit's tests (audit #627)
+TESTS_RETRY = 3600  # a commit whose tests failed is tried again after this
 TARGETS = os.path.join(ROOT, "target")
 LOGS = os.path.join(ROOT, "logs")
 CACHE = os.path.join(HOME, ".cache")
@@ -516,6 +528,99 @@ def pack(outdir, tree, variant, epoch, profile="release"):
     return v
 
 
+# ── The tests pass first (audit #627) ────────────────────────────────────
+
+def load_json(path):
+    try:
+        with open(path) as f:
+            v = json.load(f)
+        return v if isinstance(v, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def suite_verdict(code, output):
+    """run-python-tests.sh's verdict: {"passed", "summary"}. Its Node tests
+    must have run and passed too (no node: not passed; it only notes that)."""
+    lines = output.splitlines()
+    py = next((l for l in reversed(lines) if l.startswith("python tests: ")), "")
+    node = next((l for l in reversed(lines) if l.startswith("node tests: ") or l.startswith("FAIL node tests")
+                 or l.startswith("NOTE: node isn't installed")), "")
+    passed = code == 0 and bool(py) and node.startswith("node tests: ")
+    return {"passed": passed, "summary": "; ".join(x for x in (py, node) if x) or f"exit {code}, no summary"}
+
+
+def tests_for(t):
+    """The tests for T's commit, run once: the record ({"commit", "passed":
+    true, "at", "python", "cargo"}) when they passed; Stop (with what
+    failed) otherwise. The checkout is at the commit (checkout()).
+    TESSERA_RELEASE_TESTS_CMD (tests only): the Python/Node suite's command."""
+    commit = t["commit"]
+    if not re.match(r"^[0-9a-f]{40}$", commit or ""):
+        raise Stop(f"no commit to test ({commit!r})")
+    path = os.path.join(TESTS, commit + ".json")
+    rec = load_json(path)
+    if rec.get("commit") == commit and rec.get("passed") is True:
+        return rec
+    if rec.get("commit") == commit and rec.get("passed") is False and time.time() - rec.get("t", 0) < TESTS_RETRY:
+        raise Stop(f"its tests failed: {rec.get('why', '')}")
+    os.makedirs(TESTS, exist_ok=True)
+    os.makedirs(LOGS, exist_ok=True)
+    rec = {"commit": commit, "t": time.time(), "at": now()}
+    logname = os.path.join(LOGS, f"tests-{commit[:12]}.log")
+    with open(logname, "a") as logf:
+        status(state="building", step="tests: Python and Node", progress=None)
+        cmd = (os.environ.get("TESSERA_RELEASE_TESTS_CMD") or "").split() or ["nice", "-n", "10", "tools/run-python-tests.sh"]
+        logf.write(f"\n== {now()} tests: {' '.join(cmd)}\n")
+        logf.flush()
+        try:
+            r = subprocess.run(cmd, cwd=SRC, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                               errors="replace", timeout=3 * 3600)
+            out, code = r.stdout, r.returncode
+        except (OSError, subprocess.TimeoutExpired) as e:
+            out, code = f"the tests didn't run: {e}", -1
+        logf.write(out)
+        logf.flush()
+        rec["python"] = suite_verdict(code, out)
+        rec["cargo"] = {"passed": False, "summary": "not run (the Python or Node tests failed)"}
+        if rec["python"]["passed"]:
+            status(step="tests: cargo test", progress=None)
+            try:
+                # (the dev profile at opt-level 1: --release would be a fat
+                # LTO link per test binary, hours; tbuild caps the memory)
+                dev = {"CARGO_PROFILE_DEV_OPT_LEVEL": "1", "CARGO_PROFILE_DEV_DEBUG": "0"}
+                cargo(["test", "--locked", "--workspace", "--manifest-path", "native/tessera-ui/Cargo.toml"], "test", "", "tests (tessera-ui)", logf, dev)
+                cargo(["test", "--locked", "--manifest-path", "native/tessera-events/Cargo.toml"], "test", "", "tests (tessera-events)", logf, dev)
+                rec["cargo"] = {"passed": True, "summary": "cargo test passed (tessera-ui's workspace, tessera-events)"}
+            except Stop as e:
+                rec["cargo"] = {"passed": False, "summary": str(e)}
+    rec["passed"] = rec["python"]["passed"] and rec["cargo"]["passed"]
+    if not rec["passed"]:
+        rec["why"] = next(v["summary"] for v in (rec["python"], rec["cargo"]) if not v["passed"]) + f" (log: {logname})"
+    write_json(path, rec)
+    log(f"commit {commit[:12]}: tests " + ("passed" if rec["passed"] else "failed: " + rec["why"]))
+    if not rec["passed"]:
+        raise Stop(f"its tests failed: {rec['why']}")
+    return rec
+
+
+def drop_untested(here):
+    """A READY set from before the tests were required (no "tests" for its
+    commit): the publisher refuses it for good, so it goes, and is made
+    again with them. True when it went."""
+    info = load_json(os.path.join(here, "READY"))
+    t = info.get("tests")
+    if info and not (isinstance(t, dict) and t.get("passed") is True and t.get("commit") == info.get("commit")):
+        shutil.rmtree(here, ignore_errors=True)
+        return True
+    return False
+
+
+def tests_word(rec):
+    """What READY carries about the tests (the publisher checks it)"""
+    return {k: rec.get(k) for k in ("commit", "passed", "at", "python", "cargo")}
+
+
 # ── Tested before it's offered ───────────────────────────────────────────
 
 def pretest(tree, variants, channel):
@@ -617,9 +722,10 @@ def make_patches(tag, tree, variants, dest, channel):
 
 # ── The set for the laptop (unsigned: the laptop signs) ──────────────────
 
-def make_set(t, tree, variants):
+def make_set(t, tree, variants, tests=None):
     """Both archives and the manifest (as the workflow writes it) in
-    out/<tag>/<tree>/, READY written last. Nothing is signed here."""
+    out/<tag>/<tree>/, READY written last (with TESTS: tests_for's record
+    for the commit, which the publisher requires). Nothing is signed here."""
     commit, tag = t["commit"], t["tag"]
     built = built_dir(tree, t["channel"])
     dest = os.path.join(OUT, tag, tree)
@@ -639,6 +745,8 @@ def make_set(t, tree, variants):
              for n in sorted(os.listdir(dest))}
     ready = {"format": SET_FORMAT, "name": t["name"], "kind": t["kind"], "tag": tag, "channel": t["channel"], "tree": tree,
              "commit": commit, "version": version, "ready": now(), "files": files, "patches": sorted(patches)}
+    if tests:
+        ready["tests"] = tests_word(tests)
     write_json(os.path.join(dest, "READY"), ready)
     log(f"{t['name']}: ready for the laptop to sign and publish: {dest}")
     return ready
@@ -692,7 +800,7 @@ def build_parts(plugin_dir, logf):
             raise Stop(f"the bundle's {what} didn't build (exit {r.returncode}); its output: {logf.name}")
 
 
-def make_bundle(t, tree, variants):
+def make_bundle(t, tree, variants, tests=None):
     """The commit's bundle, both variants, and its manifest, in
     out/<tag>/<commit>/ with READY ("type": "bundle") written last.
     VARIANTS: the programs' packed variants (built/<tree>-<channel>). Unsigned."""
@@ -734,6 +842,8 @@ def make_bundle(t, tree, variants):
     ready = {"format": SET_FORMAT, "type": "bundle", "name": t["name"], "kind": t["kind"], "tag": tag, "channel": t["channel"], "tree": tree,
              "commit": commit, "version": version, "ready": now(), "files": files, "patches": [],
              "latest": t["kind"] == "branch"}
+    if tests:
+        ready["tests"] = tests_word(tests)
     write_json(os.path.join(dest, "READY"), ready)
     sizes = ", ".join("%s %d bytes" % (v, e["size"]) for v, e in entries.items())
     held = ", ".join(m["packages"]["held"]) or "none"
@@ -749,6 +859,8 @@ def do_bundle(t, tree, build_only):
         return
     name, tag, commit = t["name"], t["tag"], t["commit"]
     here = os.path.join(OUT, tag, commit)
+    if os.path.isfile(os.path.join(here, "READY")) and drop_untested(here):
+        log(f"{name}: the bundle for {commit[:12]} was made before tests were required: made again")
     if os.path.isfile(os.path.join(here, "READY")) or os.path.isfile(os.path.join(here, "PUBLISHED")):
         return
     if git("cat-file", "-e", f"{commit}:tools/tessera-bundle.py", check=False) is None:
@@ -767,7 +879,7 @@ def do_bundle(t, tree, build_only):
     try:
         checkout(commit)
         variants = build(t, tree)
-        make_bundle(t, tree, variants)
+        make_bundle(t, tree, variants, tests_for(t))
     except Stop as e:
         fails = prev.get("fails", 0) + 1 if prev.get("commit") == commit else 1
         if prev.get("why") != f"bundle: {e}":
@@ -915,6 +1027,8 @@ def programs_target(t, build_only):
             target_result(name, result="skipped", tree=tree, commit=commit, why=why)
         return None
     here = os.path.join(OUT, tag, tree)
+    if os.path.isfile(os.path.join(here, "READY")) and drop_untested(here):
+        log(f"{name}: the set for tree {tree[:12]} was made before tests were required: made again")
     if os.path.isfile(os.path.join(here, "READY")):
         if prev.get("result") != "ready" or prev.get("tree") != tree:
             target_result(name, result="ready", tag=tag, tree=tree, commit=commit, dir=here)
@@ -935,8 +1049,9 @@ def programs_target(t, build_only):
     if build_only:
         target_result(name, result="built", tree=tree, commit=commit, seconds=int(time.time() - t0))
         return tree
+    tests = tests_for(t)
     pretest(tree, variants, t["channel"])
-    make_set(t, tree, variants)
+    make_set(t, tree, variants, tests)
     target_result(name, result="ready", tag=tag, tree=tree, commit=commit, dir=here, seconds=int(time.time() - t0))
     return tree
 

@@ -690,6 +690,18 @@ bash tools/release-builder/install-publisher.sh  # install or update it (from th
   tessera-release.service` over ssh); `tools/push-release --install-hook`
   does the same from a git pre-push hook after any push to main or beta. The
   10-minute timer stays as the fallback.
+- **The tests pass first.** Before a set or a bundle is made ready,
+  server1 runs that commit's own tests, once per commit:
+  `tools/run-python-tests.sh` (every Python test file, then the Node tests;
+  no Node there counts as not passed) and `cargo test` (the dev profile at
+  opt-level 1, never `--release`, through `~/bin/tbuild`) for tessera-ui's
+  workspace and tessera-events. The result is kept in
+  `~/tessera-release/tests/<commit>.json` and written into `READY`
+  (`"tests"`: the commit, passed, when, each suite's summary), and the
+  laptop's publisher refuses any set whose `READY` doesn't say its own
+  commit's tests passed (and keeps that word with what it published). A
+  commit whose tests failed is never made ready; it's tried again an hour
+  later. A set made before this rule is made again.
 - **Tested before it's offered.** After building, each variant runs in a
   hidden sandbox arena on server1 (`tools/release-builder/pretest.sh`, as
   `~/bin/tessera-pretest`; site/tools/arena.sh): it must start, answer IPC

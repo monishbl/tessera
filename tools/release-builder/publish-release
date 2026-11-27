@@ -472,8 +472,21 @@ def check_format(s):
                      f"Run tools/release-builder/install-publisher.sh from an up-to-date checkout")
 
 
+def check_tested(s):
+    """Nothing is published unless the builder ran that very commit's tests
+    and they passed (its READY's "tests": tessera-release tests_for; audit
+    #627). A set from a builder that doesn't run them is refused too."""
+    t = s.get("tests")
+    commit = s.get("commit", "")
+    if not isinstance(t, dict) or t.get("passed") is not True or not commit or t.get("commit") != commit:
+        why = (t or {}).get("why") if isinstance(t, dict) else None
+        raise Refused(f"the tests didn't pass for commit {str(commit)[:12] or '?'}" + (f" ({why})" if why else "")
+                      + ": nothing is published until they do (server1's tessera-release runs them)")
+
+
 def fetch_and_check(s):
     check_format(s)
+    check_tested(s)
     if is_bundle(s):
         return fetch_and_check_bundle(s)
     tag, tree, commit, name = s.get("tag", ""), s.get("tree", ""), s.get("commit", ""), s.get("name", "")
@@ -842,7 +855,7 @@ def main(argv=None):
             secs = int(time.time() - t0)
             STATE.setdefault("published", {})[s["tag"] + (":bundle" if is_bundle(s) else "")] = {
                 "tree": s["tree"], "commit": s["commit"], "name": s.get("name"), "at": now(), "seconds": secs,
-                "urls": urls, "sizes": sizes}
+                "urls": urls, "sizes": sizes, "tests": s.get("tests")}
             status()
             log(f"{s['tag']}: published tree {s['tree'][:12]} in {secs} s")
             shutil.rmtree(dest, ignore_errors=True)

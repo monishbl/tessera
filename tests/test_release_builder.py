@@ -120,7 +120,7 @@ class Release(unittest.TestCase):
         built = self.rb.built_dir(self.tree, "beta")
         os.makedirs(built, exist_ok=True)
         variants = {v: self.rb.pack(built, self.tree, v, self.epoch) for v, _ in self.rb.VARIANTS}
-        self.rb.make_set(self.target, self.tree, variants)
+        self.rb.make_set(self.target, self.tree, variants, {"commit": self.commit, "passed": True, "at": "now"})
         return self.rb.list_ready()
 
     def set_dir(self):
@@ -461,10 +461,114 @@ class Trigger(unittest.TestCase):
 
     def test_the_builder_tests_before_it_offers(self):
         rb = (ROOT / "tools/release-builder/tessera-release").read_text()
-        self.assertLess(rb.index('\n    pretest(tree, variants, t["channel"])'), rb.index("\n    make_set(t, tree, variants)"))
+        self.assertLess(rb.index('\n    pretest(tree, variants, t["channel"])'), rb.index("\n    make_set(t, tree, variants, tests)"))
         pt = (ROOT / "tools/release-builder/pretest.sh").read_text()
         for check in ("within 30 s", "lock lock", "lock unlock", "shell ready", "radios", "waitlock locked", "waitlock unlocked", "q call lock state"):
             self.assertIn(check, pt)
+
+
+class TestsFirst(unittest.TestCase):
+    """Nothing is made ready, or published, unless the commit's own tests
+    passed (audit #627)"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="tessera-release-tests-")
+        d = self.d = Path(self.tmp.name)
+        self.rb = rb = load("tessera_release_builder_tests", BUILDER)
+        rb.ROOT, rb.SRC, rb.OUT = str(d), str(d / "src"), str(d / "out")
+        rb.TESTS, rb.LOGS = str(d / "tests"), str(d / "logs")
+        rb.CACHE, rb.LOG, rb.STATUS = str(d), str(d / "r.log"), str(d / "r.json")
+        rb.STATE.clear()
+        (d / "src").mkdir()
+        self.commit = "c" * 40
+        self.t = {"name": "beta", "commit": self.commit, "channel": "beta"}
+        self.cargo_calls = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def suite(self, code, text):
+        script = self.d / "suite.sh"
+        script.write_text("#!/bin/sh\ncat <<'EOF'\n" + text + "\nEOF\nexit " + str(code) + "\n")
+        script.chmod(0o755)
+        return mock.patch.dict(os.environ, {"TESSERA_RELEASE_TESTS_CMD": str(script)})
+
+    def fake_cargo(self, fail=False):
+        def cargo(args, variant, rustflags, label, logf, extra=None):
+            self.cargo_calls.append((args, variant, extra))
+            if fail:
+                raise self.rb.Stop("the test build of tests (tessera-ui) failed (exit 101)")
+        return mock.patch.object(self.rb, "cargo", cargo)
+
+    def test_the_verdict_needs_python_and_node(self):
+        v = self.rb.suite_verdict
+        self.assertTrue(v(0, "python tests: 900 ran, 3 skipped, 0 file(s) failing\nnode tests: 40 passed")["passed"])
+        self.assertFalse(v(1, "python tests: 900 ran, 0 skipped, 2 file(s) failing\nnode tests: 40 passed")["passed"])
+        # (no node here: the script only notes it, exit 0; not passed)
+        self.assertFalse(v(0, "python tests: 900 ran, 0 skipped, 0 file(s) failing\nNOTE: node isn't installed: …")["passed"])
+        self.assertFalse(v(0, "")["passed"])
+
+    def test_passed_once_is_kept_and_carried_in_ready(self):
+        rb = self.rb
+        with self.suite(0, "python tests: 9 ran, 0 skipped, 0 file(s) failing\nnode tests: 3 passed"), self.fake_cargo():
+            rec = rb.tests_for(self.t)
+        self.assertIs(rec["passed"], True)
+        self.assertEqual(rec["commit"], self.commit)
+        # cargo test in the dev profile, never --release
+        self.assertEqual(len(self.cargo_calls), 2)
+        for args, variant, extra in self.cargo_calls:
+            self.assertEqual(args[0], "test")
+            self.assertNotIn("--release", args)
+            self.assertEqual(extra.get("CARGO_PROFILE_DEV_OPT_LEVEL"), "1")
+        # (kept: the bundle of the same commit doesn't run them again)
+        with self.suite(1, "boom"), self.fake_cargo(fail=True):
+            self.assertIs(rb.tests_for(self.t)["passed"], True)
+        self.assertEqual(rb.tests_word(rec)["passed"], True)
+
+    def test_failed_tests_stop_the_set_and_wait_before_trying_again(self):
+        rb = self.rb
+        with self.suite(1, "python tests: 9 ran, 0 skipped, 1 file(s) failing\nnode tests: 3 passed"), self.fake_cargo():
+            with self.assertRaises(rb.Stop) as e:
+                rb.tests_for(self.t)
+        self.assertIn("tests failed", str(e.exception))
+        self.assertEqual(self.cargo_calls, [], "cargo isn't run once the Python tests failed")
+        # within the hour: not run again, still refused
+        with self.suite(0, "python tests: 9 ran, 0 skipped, 0 file(s) failing\nnode tests: 3 passed"), self.fake_cargo():
+            with self.assertRaises(rb.Stop):
+                rb.tests_for(self.t)
+        self.assertEqual(self.cargo_calls, [])
+        # cargo failing fails it too
+        with self.suite(0, "python tests: 9 ran, 0 skipped, 0 file(s) failing\nnode tests: 3 passed"), self.fake_cargo(fail=True):
+            with self.assertRaises(rb.Stop):
+                rb.tests_for(dict(self.t, commit="d" * 40))
+
+    def test_a_set_made_before_the_tests_is_made_again(self):
+        rb = self.rb
+        here = self.d / "out/tessera-ui-beta" / ("a" * 40)
+        here.mkdir(parents=True)
+        (here / "READY").write_text(json.dumps({"commit": self.commit}))
+        self.assertTrue(rb.drop_untested(str(here)))
+        self.assertFalse(here.exists())
+        here.mkdir(parents=True)
+        (here / "READY").write_text(json.dumps({"commit": self.commit, "tests": {"commit": self.commit, "passed": True}}))
+        self.assertFalse(rb.drop_untested(str(here)))
+        self.assertTrue(here.exists())
+
+    def test_the_publisher_refuses_a_set_without_passed_tests(self):
+        pr = load("tessera_publish_release_tests", PUBLISHER)
+        c = self.commit
+        pr.check_tested({"commit": c, "tests": {"commit": c, "passed": True}})
+        for bad in ({"commit": c}, {"commit": c, "tests": {"commit": c, "passed": False, "why": "1 file failing"}},
+                    {"commit": c, "tests": {"commit": "d" * 40, "passed": True}}, {"commit": c, "tests": "yes"}):
+            with self.assertRaises(pr.Refused):
+                pr.check_tested(bad)
+        src = PUBLISHER.read_text()
+        self.assertIn("    check_format(s)\n    check_tested(s)\n", src)
+
+    def test_the_builder_runs_them_before_every_ready(self):
+        src = BUILDER.read_text()
+        self.assertIn("make_bundle(t, tree, variants, tests_for(t))", src)
+        self.assertLess(src.index("\n    tests = tests_for(t)"), src.index("\n    make_set(t, tree, variants, tests)"))
 
 
 class BuildEnv(unittest.TestCase):
@@ -580,7 +684,7 @@ class Bundles(unittest.TestCase):
     def test_a_commits_bundle_is_made_and_the_laptop_checks_it(self):
         rb = self.rb
         with mock.patch.object(rb, "build_parts", self.fake_parts):
-            ready = rb.make_bundle(self.target, self.tree, self.variants)
+            ready = rb.make_bundle(self.target, self.tree, self.variants, {"commit": self.commit, "passed": True, "at": "now"})
         c = self.commit
         self.assertEqual((ready["type"], ready["commit"], ready["tree"], ready["latest"]), ("bundle", c, self.tree, True))
         here = Path(rb.OUT, "tessera-ui-beta", c)
