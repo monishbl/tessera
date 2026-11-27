@@ -551,8 +551,8 @@ export component CalendarTab {
     property <bool> grid-focused;
     property <bool> grid-keyed;
     function grid-key(e: KeyEvent) -> bool {
-        let up-down = week ? 1 : 7;
-        let d = e.text == Key.LeftArrow ? -1 : e.text == Key.RightArrow ? 1 : e.text == Key.UpArrow ? -up-down : e.text == Key.DownArrow ? up-down : 0;
+        let vstep = week ? 1 : 7;
+        let d = e.text == Key.LeftArrow ? -1 : e.text == Key.RightArrow ? 1 : e.text == Key.UpArrow ? 0 - vstep : e.text == Key.DownArrow ? vstep : 0;
         if d != 0 {
             grid-keyed = true;
             let n = sel-index + d;
