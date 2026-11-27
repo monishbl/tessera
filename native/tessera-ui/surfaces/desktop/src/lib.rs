@@ -516,15 +516,18 @@ impl Desktop {
         let (list, unknown) = grid::read(&c.widgets);
         self.list = list;
         self.unknown = unknown;
-        let g = self.grid_now();
+        let g = self.grid_now(st);
         self.placed = g.placed(&self.list);
         self.grid = Some(g);
     }
 
-    fn grid_now(&self) -> Grid {
+    /// The grid on this screen, above the dock as it is now (its size, on,
+    /// off or auto-hiding: a change to `dock.*` or the look re-places the
+    /// widgets and files through config_changed, #499)
+    fn grid_now(&self, st: &State) -> Grid {
         let (w, h) = self.win.as_ref().map(|w| w.surface.logical_size()).unwrap_or((1920, 1080));
         let (w, h) = if w == 0 || h == 0 { (1920, 1080) } else { (w, h) };
-        Grid::new(w as f32, h as f32)
+        Grid::new(w as f32, h as f32, grid::dock_room(&st.shell.cfg, st.shell.look.material))
     }
 
     fn save(&mut self, list: Vec<W>) {
@@ -2251,7 +2254,7 @@ impl Part for Desktop {
     fn after_frame(&mut self, st: &mut State) {
         self.gallery_frame(st);
         if let Some(w) = &self.win {
-            let g = self.grid_now();
+            let g = self.grid_now(st);
             if w.surface.mapped.get() && self.grid != Some(g) {
                 self.read_layout(st);
                 self.after_layout(st);

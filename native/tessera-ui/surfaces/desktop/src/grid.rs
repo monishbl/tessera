@@ -10,8 +10,29 @@ pub const CELL: f32 = 164.0;
 pub const GAP: f32 = 16.0;
 /// The grid's top left on screen (below the menu bar)
 pub const ORIGIN: (f32, f32) = (32.0, 54.0);
-/// Room left for the dock at the bottom
-const DOCK_ROOM: f32 = 110.0;
+/// Room kept between the grid and the dock
+const ABOVE_DOCK: f32 = 16.0;
+
+/// The room the dock takes at the bottom of the screen, as the dock's
+/// layout::Metrics sizes it from `dock.*` (its pill and the gap under it)
+/// plus a gap above; 0 when it's off or auto-hides (it comes up over the
+/// desktop only when asked), so the grid gets that row back (#499)
+pub fn dock_room(cfg: &serde_json::Value, material: bool) -> f32 {
+    let d = &cfg["dock"];
+    let auto_hide = matches!(d["autoHide"].as_str(), Some("always" | "windows"));
+    if !d["enabled"].as_bool().unwrap_or(true) || auto_hide {
+        return 0.0;
+    }
+    let icon = (d["iconSize"].as_f64().unwrap_or(48.0) as f32).clamp(16.0, 160.0);
+    let (bar_h, bottom_gap) = if material {
+        let base = icon.clamp(36.0, 56.0).round();
+        (base + 16.0, 16.0)
+    } else {
+        let base = icon.round();
+        (base + 2.0 * (base * 0.26).round(), 6.0)
+    };
+    bar_h + bottom_gap + ABOVE_DOCK
+}
 
 pub struct KindDef {
     pub id: &'static str,
@@ -163,11 +184,12 @@ pub struct Grid {
 }
 
 impl Grid {
-    pub fn new(width: f32, height: f32) -> Self {
+    /// `bottom`: the room the dock keeps at the bottom (dock_room)
+    pub fn new(width: f32, height: f32, bottom: f32) -> Self {
         let step = CELL + GAP;
         Grid {
             cols: (((width - 2.0 * ORIGIN.0 + GAP) / step).floor() as i32).max(1),
-            rows: (((height - ORIGIN.1 - DOCK_ROOM + GAP) / step).floor() as i32).max(1),
+            rows: (((height - ORIGIN.1 - bottom.max(0.0) + GAP) / step).floor() as i32).max(1),
         }
     }
 
@@ -481,7 +503,7 @@ pub fn move_icon(key: &str, x: f32, y: f32, placed: &HashMap<String, (i32, i32)>
 mod tests {
     #[test]
     fn odd_entries_place_without_trouble() {
-        let g = Grid::new(1920.0, 1080.0);
+        let g = Grid::new(1920.0, 1080.0, 110.0);
         let list: Vec<W> = ["clock:m:2147483647:-2147483648", "clock:x:1e12:-1e12", "weather::nan:inf", "::", "", "clock:l:a:b:c:d:e"].iter().map(|e| parse(e)).collect();
         for w in &list {
             assert!((0..=999).contains(&w.col) && (0..=999).contains(&w.row), "{w:?}");
@@ -490,7 +512,7 @@ mod tests {
         assert_eq!(placed.len(), list.len());
         let _ = g.nearest_free(&list, 999, 999, "l", None);
         // (no room at all: a tiny screen)
-        let _ = Grid::new(0.0, -50.0).placed(&list);
+        let _ = Grid::new(0.0, -50.0, 110.0).placed(&list);
     }
 
     use super::*;
@@ -516,12 +538,37 @@ mod tests {
     #[test]
     fn the_grid_fits_the_screen() {
         // 1920 × 1080: (1920 - 64 + 16) / 180 = 10.4; (1080 - 54 - 110 + 16) / 180 = 5.18
-        assert_eq!(Grid::new(1920.0, 1080.0), Grid { cols: 10, rows: 5 });
-        assert_eq!(Grid::new(10.0, 10.0), Grid { cols: 1, rows: 1 });
+        assert_eq!(Grid::new(1920.0, 1080.0, 110.0), Grid { cols: 10, rows: 5 });
+        assert_eq!(Grid::new(10.0, 10.0, 110.0), Grid { cols: 1, rows: 1 });
+        assert_eq!(Grid::new(10.0, 10.0, -5.0), Grid { cols: 1, rows: 1 });
         assert_eq!(pixel_size("s"), (164.0, 164.0));
         assert_eq!(pixel_size("m"), (344.0, 164.0));
         assert_eq!(pixel_size("l"), (344.0, 344.0));
         assert_eq!(Grid::home(1, 2), (32.0 + 180.0, 54.0 + 360.0));
+    }
+
+    #[test]
+    fn the_dock_room_follows_the_dock() {
+        use serde_json::json;
+        // Glass at 48 px: a 72 px pill, 6 under it, 16 above
+        assert_eq!(dock_room(&json!({}), false), 94.0);
+        // Material at 48 px: a 64 px pill, 16 under, 16 above
+        assert_eq!(dock_room(&json!({}), true), 96.0);
+        // big icons: the room grows (160 px Glass: 160 + 2 * 42, 250 in all)
+        assert_eq!(dock_room(&json!({"dock": {"iconSize": 160}}), false), 160.0 + 84.0 + 6.0 + 16.0);
+        // (Material's pill stops at 56 px icons)
+        assert_eq!(dock_room(&json!({"dock": {"iconSize": 160}}), true), 56.0 + 16.0 + 16.0 + 16.0);
+        // off or auto-hiding: none
+        assert_eq!(dock_room(&json!({"dock": {"enabled": false}}), false), 0.0);
+        assert_eq!(dock_room(&json!({"dock": {"autoHide": "always"}}), false), 0.0);
+        assert_eq!(dock_room(&json!({"dock": {"autoHide": "windows"}}), true), 0.0);
+        assert_eq!(dock_room(&json!({"dock": {"autoHide": "off"}}), false), 94.0);
+        // 1366 × 768 with the dock hidden gets its fourth row back; big icons lose one
+        assert_eq!(Grid::new(1366.0, 768.0, 110.0).rows, 3);
+        assert_eq!(Grid::new(1366.0, 768.0, 0.0).rows, 4);
+        assert_eq!(Grid::new(1920.0, 1080.0, dock_room(&json!({"dock": {"iconSize": 160}}), false)).rows, 4);
+        // a hand-edited size is held to what the dock draws
+        assert_eq!(dock_room(&json!({"dock": {"iconSize": 5000}}), false), dock_room(&json!({"dock": {"iconSize": 160}}), false));
     }
 
     #[test]

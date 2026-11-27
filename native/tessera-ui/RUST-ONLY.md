@@ -287,3 +287,4 @@ Removed: the passkeys daemon, its Settings group, its polkit-dialog requests and
 | Change | Asked | Status | Commit |
 |---|---|---|---|
 | Overview, Mission Control and the switcher call a space "Space" (untitled spaces "Space N", never "Desktop N") and say "No windows" when one is empty (#536) | 27 Nov | done, unchecked | (this commit) |
+| Desktop: the widget and file grid keeps room for the dock as it really is (its icon size and look; none when it is off or auto-hides) instead of a fixed 110 px, and re-places when the dock settings change (#499) | 27 Nov | done, unchecked (unit tests) | (this commit) |
