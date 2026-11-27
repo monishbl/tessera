@@ -481,6 +481,7 @@ Singleton {
             }
             property JsonObject network: JsonObject {
                 property string speedTest: "cloudflare" // speed test server: cloudflare (speed.cloudflare.com, needs only curl) | ookla (speedtest.net; needs speedtest or speedtest-cli)
+                property bool ooklaAccepted: false // (Rust shell) you accepted Ookla's licence and privacy notice in Settings → Network
             }
             property JsonObject power: JsonObject {
                 // Battery & Power (Settings; services/Power.qml)

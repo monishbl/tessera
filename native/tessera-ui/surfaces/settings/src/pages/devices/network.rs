@@ -428,6 +428,11 @@ fn join_form(cx: &mut Ctx, rows: &mut Vec<Row>, f: &Value, join: &Value) {
     rows.push(Row::new("").buttons(vec![Opt::new("Cancel"), Opt::new(label).primary().on(joining)], id));
 }
 
+/// Ookla's notice before its first test (#338), and its links
+pub const OOKLA_NOTICE: &str = "Ookla collects your IP address, the test results and details of your connection and device, and may share them, as its privacy policy says. Testing with Ookla means accepting its licence.";
+pub const OOKLA_EULA: &str = "https://www.speedtest.net/about/eula";
+pub const OOKLA_PRIVACY: &str = "https://www.speedtest.net/about/privacy";
+
 pub fn network(cx: &mut Ctx, p: &mut Page) {
     p.title = "Network".into();
     cx.want("status");
@@ -760,11 +765,21 @@ pub fn network(cx: &mut Ctx, p: &mut Page) {
             "Cloudflare tests against its nearest data centre, using curl. Nothing to install.".into()
         };
         let pick = cx.pick("network.speedTest", &["cloudflare", "ookla"]);
+        // Ookla's terms, shown once and accepted by you (never answered for
+        // you: #338); Cloudflare needs none
+        let accepted = cx.get("network.ooklaAccepted").as_bool().unwrap_or(false);
+        let terms = cx.on(|cx, a| match a.i {
+            0 => cx.ask("about", "openLink", json!([OOKLA_EULA])),
+            1 => cx.ask("about", "openLink", json!([OOKLA_PRIVACY])),
+            _ => cx.set("network.ooklaAccepted", true),
+        });
         p.group("Server").footer(footer).row(Row::new("Test with")
             .detail(if ready { if has { "Ookla's speedtest is installed" } else { "speedtest-cli is installed" } } else { "Ookla needs its speedtest app" })
             .segmented(&["Cloudflare", "Ookla"], if ookla { 1 } else { 0 }, pick)
             .enabled(!stt["running"].as_bool().unwrap_or(false))
-            .width(220.0));
+            .width(220.0))
+            .row(Row::new("Ookla's terms").visible(ookla && !accepted).detail(OOKLA_NOTICE))
+            .row(Row::new("").visible(ookla && !accepted).buttons(vec![Opt::new("Licence"), Opt::new("Privacy policy"), Opt::new("Accept").primary()], terms));
 
         let history: Vec<Value> = stt["history"].as_array().cloned().unwrap_or_default();
         let clear = cx.on(|cx, _| {
