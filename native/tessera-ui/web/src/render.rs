@@ -196,6 +196,8 @@ fn write_whole(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 struct R {
     cfg: Render,
     view: WebView,
+    /// Google's results as Safari on a Mac (src/quirk.rs)
+    quirk: Rc<crate::quirk::Quirk>,
     // (never shown: it only holds the view, as a window holds a page)
     _window: gtk::Window,
     main_loop: glib::MainLoop,
@@ -250,6 +252,7 @@ impl R {
         let pass = self.pass.get() + 1;
         self.pass.set(pass);
         self.size();
+        self.quirk.set_for(&self.cfg.url);
         self.view.load_uri(&self.cfg.url);
         // (a page that never finishes: drawn as it is)
         let me = self.clone();
@@ -393,6 +396,8 @@ pub fn run(cfg: Render) -> i32 {
     settings.set_allow_universal_access_from_file_urls(false);
     settings.set_enable_smooth_scrolling(false);
     let view = WebView::builder().network_session(&session).user_content_manager(&content).settings(&settings).build();
+    // (Google's results as Safari on a Mac, as the browser's: src/quirk.rs)
+    let quirk = crate::quirk::Quirk::new(&view, true);
     view.set_is_muted(true);
     view.set_zoom_level(cfg.scale);
     let pg = palette.page;
@@ -401,7 +406,7 @@ pub fn run(cfg: Render) -> i32 {
     let window = gtk::Window::builder().title("Tessera Web render").decorated(false).build();
     window.set_child(Some(&view));
     let main_loop = glib::MainLoop::new(None, false);
-    let r = Rc::new(R { cfg, view, _window: window, main_loop: main_loop.clone(), pass: Cell::new(0), taken: Cell::new(0), code: Cell::new(0) });
+    let r = Rc::new(R { cfg, view, quirk, _window: window, main_loop: main_loop.clone(), pass: Cell::new(0), taken: Cell::new(0), code: Cell::new(0) });
     {
         let me = r.clone();
         r.view.connect_load_changed(move |_, ev| {
@@ -439,22 +444,26 @@ pub fn run(cfg: Render) -> i32 {
             req.deny();
             true
         });
+        // (after the decide-policy above: the agent follows the page's own navigations)
+        r.quirk.watch(&r.view);
     }
-    // The blocker first (as the browser's), then the page
+    // Once, Google's cookies from before the user agent quirk
+    // (src/quirk.rs); then the blocker (as the browser's), then the page
     {
         let me = r.clone();
-        let started = Rc::new(Cell::new(false));
-        let s2 = started.clone();
-        crate::with_blocker(&content, move || {
-            if !s2.replace(true) {
-                me.load();
-            }
-        });
-        let me = r.clone();
-        glib::timeout_add_local_once(Duration::from_millis(1500), move || {
-            if !started.replace(true) {
-                me.load();
-            }
+        crate::quirk::reset_once(&session, &data, move || {
+            let started = Rc::new(Cell::new(false));
+            let (s2, me2) = (started.clone(), me.clone());
+            crate::with_blocker(&content, move || {
+                if !s2.replace(true) {
+                    me2.load();
+                }
+            });
+            glib::timeout_add_local_once(Duration::from_millis(1500), move || {
+                if !started.replace(true) {
+                    me.load();
+                }
+            });
         });
     }
     main_loop.run();

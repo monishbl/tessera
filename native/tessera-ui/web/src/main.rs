@@ -26,6 +26,7 @@ mod lens;
 mod nav;
 mod perms;
 mod place;
+mod quirk;
 mod render;
 mod theme;
 
@@ -219,6 +220,8 @@ struct App {
     placing: Cell<bool>,
     /// the page's selected text now (SELECTION_JS)
     selection: RefCell<String>,
+    /// Google Search's user agent (src/quirk.rs)
+    quirk: Rc<quirk::Quirk>,
     main_loop: glib::MainLoop,
 }
 
@@ -297,6 +300,12 @@ impl App {
 
     fn go(&self, uri: &str) {
         self.end_edit(true);
+        self.load(uri);
+    }
+
+    /// Opens an address (with the user agent it gets: src/quirk.rs)
+    fn load(&self, uri: &str) {
+        self.quirk.set_for(uri);
         self.view.load_uri(uri);
     }
 
@@ -473,7 +482,7 @@ impl App {
                     // (one window: a link meant for a new one opens here)
                     decision.ignore();
                     if !uri.is_empty() {
-                        self.view.load_uri(&uri);
+                        self.load(&uri);
                     }
                     return true;
                 }
@@ -522,7 +531,7 @@ impl App {
                                 s.set_enable_javascript(false);
                             }
                         }
-                        self.view.load_uri(&uri);
+                        self.load(&uri);
                     }
                     None => {
                         self.view.load_uri("about:blank");
@@ -683,6 +692,8 @@ fn build(args: Args, main_loop: glib::MainLoop) -> Rc<App> {
     settings.set_allow_universal_access_from_file_urls(false);
     settings.set_enable_smooth_scrolling(true);
     let view = WebView::builder().network_session(&session).user_content_manager(&content).settings(&settings).build();
+    // (Google Search as Safari on a Mac: never for sign-in or Wi-Fi sign-in pages)
+    let quirk = quirk::Quirk::new(&view, matches!(args.mode, Mode::Browse | Mode::Lens(_) | Mode::QuickLook));
     view.set_vexpand(true);
     view.set_hexpand(true);
     view.add_css_class("page");
@@ -837,6 +848,7 @@ fn build(args: Args, main_loop: glib::MainLoop) -> Rc<App> {
         from_file: Cell::new(false),
         placing: Cell::new(false),
         selection: RefCell::new(String::new()),
+        quirk,
         main_loop,
     });
     wire(&app, &pill, &browser);
@@ -924,13 +936,16 @@ fn wire(app: &Rc<App>, pill: &gtk::Box, browser: &gtk::Button) {
     {
         let a = app.clone();
         v.connect_decide_policy(move |_, decision, kind| a.decide(decision, kind));
+        // (after it: the user agent follows only what goes ahead)
+        app.quirk.watch(v);
     }
     {
         // (window.open(): opens here, as one window)
-        v.connect_create(move |view, action| {
+        let a = app.clone();
+        v.connect_create(move |_, action| {
             let uri = action.request().and_then(|r| r.uri()).map(|s| s.to_string()).unwrap_or_default();
             if !uri.is_empty() && !uri.starts_with("javascript:") {
-                view.load_uri(&uri);
+                a.load(&uri);
             }
             None
         });
@@ -1259,11 +1274,14 @@ fn main() {
     // The blocker first (not for sign-in or Wi-Fi pages: nothing may break those)
     let blocked = matches!(app.args.mode, Mode::Browse | Mode::Lens(_) | Mode::QuickLook);
     if blocked {
+        // (and once, Google's cookies from before the user agent quirk: src/quirk.rs)
         let a = app.clone();
-        with_blocker(&app.content, move || a.begin());
-        // (a store that never answers doesn't keep the page waiting)
-        let a = app.clone();
-        glib::timeout_add_local_once(Duration::from_millis(1500), move || a.begin());
+        quirk::reset_once(&app.session, &data_dir(), move || {
+            let a2 = a.clone();
+            with_blocker(&a.content, move || a2.begin());
+            // (a store that never answers doesn't keep the page waiting)
+            glib::timeout_add_local_once(Duration::from_millis(1500), move || a.begin());
+        });
     } else {
         app.begin();
     }
