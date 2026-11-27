@@ -47,11 +47,12 @@
 // the accent that reads on white). out: add(text), toggle(key), remove(key),
 // restore(), rename(key, text).
 //
-// Also exported: Segmented (Segmented.qml) and Tick (a tick box:
+// Also exported: Tick (a tick box:
 // MaterialCheck.qml in Material).
 
-import { Theme, Ease, Icon } from "theme.slint";
-import { IconButton } from "widgets.slint";
+import { Theme, Ease } from "theme.slint";
+import { IconButton, Segmented, Switch, TextField, PillButton } from "widgets.slint";
+import { SymIcon } from "symbols.slint";
 
 export struct NcItem {
     event: bool,
@@ -120,88 +121,6 @@ export struct NcDraft {
     target: string, // a new event's calendar ("" this computer)
 }
 
-// Segmented.qml: Glass, a track with a sliding pill; Material, a connected
-// button group (2 px apart, round ends, 8 px inside; the chosen one fills
-// and turns round). Each segment fits its label plus 24 px; the room to
-// spare is shared equally (too little shrinks them alike).
-export component Segmented inherits Rectangle {
-    in property <[string]> options;
-    in property <int> current;
-    in property <string> label;
-    callback selected(int);
-    property <length> gap: Theme.material ? 2px : 0;
-    height: Theme.material ? 36px : 30px;
-    border-radius: self.height / 2;
-    background: Theme.material ? transparent : Theme.toggle-off;
-    accessible-role: tab-list;
-    accessible-label: label;
-    forward-focus: keys;
-    keys := FocusScope {
-        // (a click goes to what's under it: keys only; it covered link rows and choices, which then took two clicks or none)
-        focus-on-click: false;
-        key-pressed(e) => {
-            if e.text == Key.LeftArrow && current > 0 { selected(current - 1); return accept; }
-            if e.text == Key.RightArrow && current < options.length - 1 { selected(current + 1); return accept; }
-            reject
-        }
-    }
-    HorizontalLayout {
-    padding-left: 2px;
-    padding-right: 2px;
-    spacing: gap;
-    for o[i] in options: Rectangle {
-        property <bool> chosen: i == current;
-        property <length> full: self.height / 2;
-        property <length> inner: chosen ? full : touch.pressed ? 4px : 8px;
-        min-width: 0;
-        preferred-width: measure.preferred-width + 24px;
-        horizontal-stretch: 1;
-        height: parent.height;
-        measure := Text {
-            visible: false;
-            text: o;
-            font-size: Theme.material ? Theme.body : Theme.small;
-            font-weight: Theme.material ? 500 : 600;
-        }
-        // Glass: the selection pill on the chosen one
-        if !Theme.material: Rectangle {
-            y: 2px;
-            height: parent.height - 4px;
-            border-radius: self.height / 2;
-            background: Theme.dark ? #ffffff33 : #ffffff;
-            opacity: chosen ? 1 : 0;
-            animate opacity { duration: 280ms; easing: Ease.standard; }
-        }
-        border-top-left-radius: !Theme.material ? 0 : i == 0 ? full : inner;
-        border-bottom-left-radius: self.border-top-left-radius;
-        border-top-right-radius: !Theme.material ? 0 : i == options.length - 1 ? full : inner;
-        border-bottom-right-radius: self.border-top-right-radius;
-        animate border-top-left-radius, border-top-right-radius { duration: Theme.motion(200ms); easing: spring(0.6); }
-        background: !Theme.material ? transparent : chosen ? Theme.m3-primary.mix(Theme.m3-on-primary, touch.pressed ? 0.9 : touch.has-hover ? 0.92 : 1)
-            : Theme.m3-surface-container-highest.mix(Theme.m3-on-surface-variant, touch.pressed ? 0.9 : touch.has-hover ? 0.92 : 1);
-        animate background { duration: Theme.hover; }
-        accessible-role: tab;
-        accessible-label: o;
-        accessible-checked: chosen;
-        accessible-action-default => { selected(i); }
-        Text {
-            text: o;
-            color: Theme.material ? (chosen ? Theme.m3-on-primary : Theme.m3-on-surface-variant) : chosen ? Theme.label : Theme.secondary;
-            font-size: Theme.material ? Theme.body : Theme.small;
-            font-weight: Theme.material ? 500 : 600;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            overflow: elide;
-            accessible-role: none;
-        }
-        touch := TouchArea {
-            mouse-cursor: pointer;
-            clicked => { root.selected(i); }
-        }
-    }
-    }
-}
-
 // A tick box: Glass a circle (accent when done), Material MaterialCheck.qml
 // (a rounded square, primary when checked)
 export component Tick inherits Rectangle {
@@ -221,10 +140,10 @@ export component Tick inherits Rectangle {
     accessible-checked: checked;
     accessible-label: label;
     accessible-action-default => { toggled(); }
-    if checked: Icon {
+    if checked: SymIcon {
         text: "\u{e182}"; // check
         bold: true;
-        font-size: Theme.material ? 14px : 10px;
+        font-size: Theme.material ? 12px : 10px;
         color: Theme.material ? Theme.m3-on-primary : Theme.on-accent;
     }
     TouchArea {
@@ -234,97 +153,6 @@ export component Tick inherits Rectangle {
         height: parent.height + 12px;
         mouse-cursor: pointer;
         clicked => { root.toggled(); }
-    }
-}
-
-// TextField.qml in the editor: Glass a fill outlined in the accent while
-// typing; Material FilledField's pill, outlined in primary
-component CalField inherits Rectangle {
-    in-out property <string> text <=> input.text;
-    in property <string> placeholder;
-    in property <bool> read-only;
-    callback committed();
-    public function focus-input() {
-        input.focus();
-    }
-    height: Theme.material ? 40px : 32px;
-    border-radius: Theme.material ? min(self.height / 2, 28px) : Theme.radius-control - 2px;
-    background: Theme.material ? Theme.m3-surface-container-highest : Theme.fill;
-    border-width: Theme.material ? (input.has-focus ? 2px : 0) : 1px;
-    border-color: Theme.material ? Theme.m3-primary : input.has-focus ? Theme.accent : Theme.separator;
-    opacity: read-only ? 0.6 : 1;
-    input := TextInput {
-        x: Theme.material ? 16px : 10px;
-        width: parent.width - 2 * self.x;
-        color: Theme.label;
-        font-size: Theme.body;
-        vertical-alignment: center;
-        single-line: true;
-        read-only: root.read-only;
-        selection-background-color: Theme.material ? Theme.m3-primary.with-alpha(0.3) : Theme.accent.with-alpha(0.4);
-        accessible-label: placeholder;
-        accepted => { root.committed(); }
-    }
-    Text {
-        x: input.x;
-        width: input.width;
-        visible: input.text == "" && !input.has-focus;
-        text: placeholder;
-        color: Theme.tertiary;
-        font-size: Theme.body;
-        vertical-alignment: center;
-        overflow: elide;
-        accessible-role: none;
-    }
-}
-
-// Switch.qml
-component CalSwitch inherits Rectangle {
-    in property <bool> checked;
-    in property <bool> enabled: true;
-    in property <string> label;
-    callback toggled();
-    width: Theme.material ? 52px : 38px;
-    height: Theme.material ? 32px : 22px;
-    opacity: enabled ? 1 : 0.4;
-    border-radius: self.height / 2;
-    background: Theme.material ? (checked ? Theme.m3-primary : Theme.m3-surface-container-highest) : checked ? Theme.accent : Theme.toggle-off;
-    animate background { duration: Theme.hover; }
-    border-width: Theme.material && !checked ? 2px : 0;
-    border-color: Theme.m3-outline;
-    accessible-role: switch;
-    accessible-checked: checked;
-    accessible-label: label;
-    accessible-action-default => { if enabled { toggled(); } }
-    if !Theme.material: Rectangle {
-        width: parent.height - 4px;
-        height: self.width;
-        y: 2px;
-        x: checked ? parent.width - self.width - 2px : 2px;
-        border-radius: self.width / 2;
-        background: #ffffff;
-        animate x { duration: Theme.move-standard; easing: Ease.standard; }
-    }
-    if Theme.material: Rectangle {
-        property <length> size: t.pressed ? 28px : checked ? 24px : 16px;
-        width: size;
-        height: size;
-        y: (parent.height - size) / 2;
-        x: checked ? parent.width - 16px - size / 2 : 16px - size / 2;
-        border-radius: size / 2;
-        background: checked ? Theme.m3-on-primary : t.has-hover || t.pressed ? Theme.m3-on-surface-variant : Theme.m3-outline;
-        animate x, width, height, y { duration: Theme.motion(300ms); easing: spring(0.54); }
-        animate background { duration: Theme.hover; }
-        if checked: Icon {
-            text: "\u{e182}";
-            bold: true;
-            font-size: 14px;
-            color: Theme.m3-primary;
-        }
-    }
-    t := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { if enabled { root.toggled(); } }
     }
 }
 
@@ -364,12 +192,12 @@ component CalChoice inherits Rectangle {
         vertical-alignment: center;
         overflow: elide;
     }
-    Icon {
+    SymIcon {
         x: parent.width - self.width - (Theme.material ? 12px : 8px);
         width: self.preferred-width;
         text: Theme.material ? "\u{e136}" : "\u{e140}"; // caret-down, caret-up-down
         bold: true;
-        font-size: Theme.material ? 14px : 11px;
+        font-size: Theme.material ? 12px : 11px;
         color: Theme.secondary;
         transform-rotation: Theme.material && open ? 180deg : 0deg;
         animate transform-rotation { duration: Theme.motion(200ms); easing: Ease.out-cubic; }
@@ -380,38 +208,6 @@ component CalChoice inherits Rectangle {
             keys.focus();
             root.clicked();
         }
-    }
-}
-
-// The editor's buttons: 0 Cancel (tonal; Material a text button), 1 Save
-// (filled), 2 Delete (red text)
-component CalButton inherits Rectangle {
-    in property <string> text;
-    in property <int> kind;
-    callback clicked();
-    width: label.preferred-width + (kind == 1 && Theme.material ? 32px : 24px);
-    height: Theme.material ? 40px : 32px;
-    border-radius: Theme.material ? self.height / 2 : Theme.radius-control;
-    background: kind == 2 ? (t.has-hover ? Theme.danger.with-alpha(Theme.material ? 0.08 : 0.15) : transparent)
-        : kind == 1 ? (Theme.material ? Theme.m3-primary.mix(Theme.m3-on-primary, t.pressed ? 0.9 : t.has-hover ? 0.92 : 1) : t.pressed ? Theme.accent.darker(0.2) : t.has-hover ? Theme.accent.darker(0.1) : Theme.accent)
-        : Theme.material ? (t.pressed ? Theme.m3-primary.with-alpha(0.1) : t.has-hover ? Theme.m3-primary.with-alpha(0.08) : transparent)
-        : t.pressed ? Theme.fill-pressed : t.has-hover ? Theme.fill-hover : Theme.fill;
-    animate background { duration: Theme.hover; }
-    accessible-role: button;
-    accessible-label: text;
-    accessible-action-default => { clicked(); }
-    label := Text {
-        text: root.text;
-        color: kind == 2 ? Theme.danger : kind == 1 ? (Theme.material ? Theme.m3-on-primary : Theme.on-accent) : Theme.material ? Theme.m3-primary : Theme.label;
-        font-size: Theme.material ? 14px : Theme.small;
-        font-weight: kind == 1 && !Theme.material ? 600 : 500;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        accessible-role: none;
-    }
-    t := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
     }
 }
 
@@ -829,7 +625,7 @@ export component CalendarTab {
         }
         if every-day != "": HorizontalLayout {
             spacing: 6px;
-            Icon {
+            SymIcon {
                 text: "\u{e3f6}"; // repeat
                 font-size: 12px;
                 color: Theme.tertiary;
@@ -1082,11 +878,11 @@ export component CalendarTab {
                         label: "Calendar";
                         clicked => { root.open-menu(1, self.absolute-position.x - editor.absolute-position.x, self.absolute-position.y + self.height + 4px - editor.absolute-position.y, self.width); }
                     }
-                    title-f := CalField {
+                    title-f := TextField {
                         text <=> ed-title;
                         read-only: ed-readonly;
                         placeholder: ed-todo ? "What to do" : "Title";
-                        committed => { root.save-now(); }
+                        accepted(t) => { root.save-now(); }
                     }
                     // Event: all day, or from–to; to-do: an optional time
                     if !ed-todo: HorizontalLayout {
@@ -1098,7 +894,7 @@ export component CalendarTab {
                             font-size: Theme.small;
                             vertical-alignment: center;
                         }
-                        CalSwitch {
+                        Switch {
                             y: (parent.height - self.height) / 2;
                             checked: ed-all-day;
                             enabled: !ed-readonly;
@@ -1106,20 +902,20 @@ export component CalendarTab {
                             toggled => { ed-all-day = !ed-all-day; }
                         }
                     }
-                    if ed-todo: CalField {
+                    if ed-todo: TextField {
                         text <=> ed-start;
                         read-only: ed-readonly;
                         placeholder: "Time (optional), e.g. 5pm";
-                        committed => { root.save-now(); }
+                        accepted(t) => { root.save-now(); }
                     }
                     if !ed-todo && !ed-all-day: HorizontalLayout {
                         spacing: 8px;
-                        CalField {
+                        TextField {
                             horizontal-stretch: 1;
                             text <=> ed-start;
                             read-only: ed-readonly;
                             placeholder: "Starts";
-                            committed => { root.save-now(); }
+                            accepted(t) => { root.save-now(); }
                         }
                         Text {
                             width: 8px;
@@ -1129,23 +925,23 @@ export component CalendarTab {
                             vertical-alignment: center;
                             horizontal-alignment: center;
                         }
-                        CalField {
+                        TextField {
                             horizontal-stretch: 1;
                             text <=> ed-end;
                             read-only: ed-readonly;
                             placeholder: "Ends";
-                            committed => { root.save-now(); }
+                            accepted(t) => { root.save-now(); }
                         }
                     }
-                    if ed-google && !ed-readonly: CalField {
+                    if ed-google && !ed-readonly: TextField {
                         text <=> ed-location;
                         placeholder: "Location";
-                        committed => { root.save-now(); }
+                        accepted(t) => { root.save-now(); }
                     }
-                    if !ed-todo && !ed-readonly: CalField {
+                    if !ed-todo && !ed-readonly: TextField {
                         text <=> ed-notes;
                         placeholder: "Notes";
-                        committed => { root.save-now(); }
+                        accepted(t) => { root.save-now(); }
                     }
                     if !ed-todo && !ed-all-day && !ed-readonly && !ed-google: HorizontalLayout {
                         spacing: 8px;
@@ -1193,11 +989,14 @@ export component CalendarTab {
                     if asking != 0: HorizontalLayout {
                         spacing: 8px;
                         alignment: end;
-                        CalButton {
+                        // (Material: text buttons; Glass: tonal)
+                        PillButton {
+                            kind: Theme.material ? 3 : 0;
                             text: "Cancel";
                             clicked => { asking = 0; }
                         }
-                        CalButton {
+                        PillButton {
+                            kind: Theme.material ? 3 : 0;
                             text: "This event";
                             clicked => {
                                 let w = asking;
@@ -1205,7 +1004,8 @@ export component CalendarTab {
                                 if w == 1 { root.save(draft(), 0); } else if w == 2 { root.remove(ed-key, 0); } else { root.move(ed-key, ask-day, 0); }
                             }
                         }
-                        CalButton {
+                        PillButton {
+                            kind: Theme.material ? 3 : 0;
                             text: "All events";
                             clicked => {
                                 let w = asking;
@@ -1217,7 +1017,7 @@ export component CalendarTab {
                     // Delete (when editing) on the left; Cancel and Save on the right
                     if asking == 0: HorizontalLayout {
                         spacing: 8px;
-                        if ed-key != "" && !ed-readonly: CalButton {
+                        if ed-key != "" && !ed-readonly: PillButton {
                             kind: 2;
                             text: ed-todo ? "Delete to-do" : "Delete event";
                             clicked => { root.remove(ed-key, -1); }
@@ -1225,11 +1025,12 @@ export component CalendarTab {
                         Rectangle {
                             horizontal-stretch: 1;
                         }
-                        CalButton {
+                        PillButton {
+                            kind: Theme.material ? 3 : 0;
                             text: ed-readonly ? "Close" : "Cancel";
                             clicked => { root.close-editor(); }
                         }
-                        if !ed-readonly: CalButton {
+                        if !ed-readonly: PillButton {
                             kind: 1;
                             text: ed-key != "" ? "Save changes" : ed-todo ? "Add to-do" : "Add event";
                             clicked => { root.save-now(); }
@@ -1330,12 +1131,12 @@ export component TodoTab {
             // (focused: outlined in both looks, as the search field)
             border-width: input.has-focus ? (Theme.material ? 2px : 1px) : 0;
             border-color: Theme.material ? Theme.m3-primary : Theme.accent;
-            Icon {
+            SymIcon {
                 x: Theme.material ? 14px : 10px;
                 width: self.preferred-width;
                 text: "\u{e3d4}"; // plus
                 bold: !Theme.material;
-                font-size: Theme.material ? 18px : 12px;
+                font-size: Theme.material ? 15px : 12px;
                 color: Theme.secondary;
             }
             input := TextInput {
