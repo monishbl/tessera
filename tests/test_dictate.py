@@ -1,6 +1,7 @@
 """dictate.py: whisper-cli's output to plain words, model downloads (checked
 before they're kept), and a transcription run (with stand-ins for the network
 and for whisper-cli)."""
+import hashlib
 import importlib.util
 import io
 import json
@@ -52,9 +53,13 @@ class Data(unittest.TestCase):
         self.env.stop()
         self.tmp.cleanup()
 
-    def run_download(self, data, length=None):
+    def run_download(self, data, length=None, pinned=None):
+        """pinned: the bytes whose size and SHA-256 stand in for the real
+        model's (default: data itself)."""
+        pin = data if pinned is None else pinned
+        sums = dict(dp.SUMS, base=(len(pin), hashlib.sha256(pin).hexdigest()))
         out = io.StringIO()
-        with redirect_stdout(out):
+        with redirect_stdout(out), mock.patch.object(dp, "SUMS", sums):
             code = dp.download("base", opener=lambda req, timeout: Response(data, length))
         return code, [json.loads(x) for x in out.getvalue().splitlines()]
 
@@ -79,6 +84,27 @@ class Download(Data):
         self.assertEqual(code, 1)
         self.assertIn("didn't finish", lines[-1]["error"])
         self.assertFalse(os.path.exists(dp.model_path("base")))
+
+    def test_a_changed_file_is_refused(self):
+        # (#991: whole and a ggml file, but not the one whose sum is pinned)
+        code, lines = self.run_download(dp.MAGIC + b"y" * 5000, pinned=dp.MAGIC + b"x" * 5000)
+        self.assertEqual(code, 1)
+        self.assertIn("expected file", lines[-1]["error"])
+        self.assertFalse(os.path.exists(dp.model_path("base")))
+        self.assertFalse(os.path.exists(dp.model_path("base") + ".part"))
+
+    def test_short_without_a_length_is_unfinished(self):
+        code, lines = self.run_download(dp.MAGIC + b"x" * 10, length=0, pinned=dp.MAGIC + b"x" * 5000)
+        self.assertEqual(code, 1)
+        self.assertIn("didn't finish", lines[-1]["error"])
+
+    def test_every_model_is_pinned(self):
+        self.assertEqual(set(dp.SUMS), set(dp.MODELS))
+        for size, sha in dp.SUMS.values():
+            self.assertGreater(size, 1 << 20)
+            self.assertRegex(sha, r"^[0-9a-f]{64}$")
+        self.assertIn("/resolve/" + dp.REVISION + "/", dp.URL)
+        self.assertRegex(dp.REVISION, r"^[0-9a-f]{40}$")
 
     def test_network_error(self):
         def fail(req, timeout):
