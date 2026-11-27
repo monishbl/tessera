@@ -54,6 +54,7 @@ pub mod reading;
 pub use tessera_core::rank;
 
 use tessera_core::appicon::{self, Style};
+use tessera_core::handoff::{self, Typed};
 use tessera_core::services::apps::Apps;
 use tessera_core::services::hypr::Glass;
 use tessera_core::services::icons::Icons;
@@ -427,6 +428,10 @@ pub struct Spotlight {
     remote: HashMap<String, Option<PathBuf>>,
     /// the live web results under the rows
     web: Web,
+    /// typed in the Overview before this opened (tessera_core::handoff)
+    handoff: handoff::Inbox,
+    /// the Overview's text shown last (handoff::merge)
+    handoff_last: String,
 }
 
 impl Default for Spotlight {
@@ -478,6 +483,8 @@ impl Default for Spotlight {
             pictures: HashMap::new(),
             remote: HashMap::new(),
             web: Web::default(),
+            handoff: handoff::Inbox::default(),
+            handoff_last: String::new(),
         }
     }
 }
@@ -636,6 +643,7 @@ impl Spotlight {
         self.answering = false;
         self.quick = Quick::default();
         self.text.clear();
+        self.handoff_last.clear();
         self.rows.clear();
         self.entries.clear();
         self.sel = 0;
@@ -1384,6 +1392,22 @@ impl Spotlight {
         }
     }
 
+    /// What the Overview passed on: its text into the field (the caret at
+    /// the end), or a key it doesn't type
+    fn typed(&mut self, st: &mut State, t: Typed) {
+        match t {
+            Typed::Text(t) => {
+                let Some(new) = handoff::merge(&self.text, &self.handoff_last, &t) else { return };
+                self.handoff_last = t;
+                if let Some(w) = &self.win {
+                    w.ui.invoke_set_text_end(new.as_str().into());
+                }
+                self.edited(st, new);
+            }
+            Typed::Key(k) => self.key(st, &k, false, false),
+        }
+    }
+
     fn edited(&mut self, st: &State, t: String) {
         self.focus = 0;
         if self.answering {
@@ -1472,7 +1496,17 @@ impl Part for Spotlight {
 
     fn command(&mut self, st: &mut State, cmd: &Command) {
         match cmd.cmd.as_str() {
-            "open" => self.open(st, cmd.screen.clone()),
+            "open" => {
+                self.open(st, cmd.screen.clone());
+                // (typed in the Overview: Panels' "query", then what came meanwhile)
+                if self.open {
+                    let mut typed: Vec<Typed> = cmd.args["query"].as_str().filter(|q| !q.is_empty()).map(|q| Typed::Text(q.to_string())).into_iter().collect();
+                    typed.extend(self.handoff.take(Instant::now()));
+                    for t in typed {
+                        self.typed(st, t);
+                    }
+                }
+            }
             "close" => self.close(false),
             _ => {}
         }
@@ -1511,6 +1545,19 @@ impl Part for Spotlight {
     }
 
     fn message(&mut self, st: &mut State, msg: Box<dyn Any + Send>) {
+        // Typed in the Overview, handing over (tessera_core::handoff): now
+        // if open, else held for the opening that follows
+        let msg = match msg.downcast::<Typed>() {
+            Ok(t) => {
+                if self.open {
+                    self.typed(st, *t);
+                } else {
+                    self.handoff.push(*t, Instant::now());
+                }
+                return;
+            }
+            Err(m) => m,
+        };
         // A line from the shell: its rows for a query, the AI's progress
         let msg = match msg.downcast::<serde_json::Value>() {
             Ok(v) => {

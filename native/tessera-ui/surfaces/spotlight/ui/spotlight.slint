@@ -918,6 +918,11 @@ export component SpotlightPanel inherits Window {
     public function set-text(t: string) {
         field.text = t;
     }
+    // (the Overview's text, handed over: the caret after it)
+    public function set-text-end(t: string) {
+        field.text = t;
+        field.set-selection-offsets(1000000, 1000000);
+    }
     public function focus-field() {
         field.focus();
     }

@@ -2,7 +2,7 @@
 // styles, compare shell/modules/overview/Overview.qml and WindowPreview.qml:
 // the spaces as miniatures of the screen (grid: a row per display with
 // several) or a strip of them on a bar at the top (macos), each window a
-// picture at its place, a search field that searches like Search, the edge
+// picture at its place, a search field that hands over to Search, the edge
 // zones of the other displays. Rust (src/surfaces/overview) lays it out and
 // decides every hover, click and drag from the pointer (one tracker over the
 // spaces); this draws it.
@@ -97,15 +97,6 @@ export struct OvZone {
     chips: [OvChip],
 }
 
-export struct OvResult {
-    title: string,
-    sub: string,
-    icon: image,
-    has-icon: bool,
-    emoji: string,
-    glyph: WGlyph,
-}
-
 export component OverviewPanel inherits Window {
     in property <bool> shown;
     in property <bool> mac;
@@ -118,10 +109,10 @@ export component OverviewPanel inherits Window {
     in property <[OvPlus]> pluses;
     in property <[OvZone]> zones;
     in property <length> bar-h;
-    in property <[OvResult]> results;
-    in property <int> selected;
-    in-out property <length> results-y;
-    in property <string> placeholder: mac ? "Search" : "Search apps, or pick a space";
+    in property <string> placeholder: mac ? "Search" : "Search, or pick a space";
+    // Typing hands over to Search: the spaces fade and shrink away, and the
+    // field glides to where Search's field opens (tessera_core::handoff)
+    in property <bool> handing;
     in property <WGlyph> g-search;
     in property <WGlyph> g-plus;
     in property <WGlyph> g-monitor;
@@ -177,19 +168,33 @@ export component OverviewPanel inherits Window {
 
     out property <float> openness: shown ? 1 : 0;
     out property <length> sx: round((root.width - 600px) / 2 / 1px) * 1px;
+    // (the macOS style's field sits at 36 % of the height)
     out property <length> sy: (mac ? round(root.height * 0.36 / 1px) * 1px : 64px);
-    // (the list at most 420 px, and never past the screen's bottom: the
-    // macOS style's field sits at 36 % of the height)
-    out property <length> res-h: results.length > 0 ? min(results.length * 40px, 420px, max(40px, floor((root.height - res-y - 60px - 56px) / 40px) * 40px)) + 56px : 0;
-    out property <length> res-y: sy + 62px;
-    out property <float> content-scale: 0.97 + 0.03 * openness;
+    // (handing over, the spaces shrink further as they fade: toward Search)
+    out property <float> content-scale: handing ? 0.9 + 0.1 * openness : 0.97 + 0.03 * openness;
+    // The field's glide to Search's (spotlight.slint: Glass 680 × 56 px,
+    // Material min(720, width − 64) px, both at 20 % of the height): 0 here,
+    // 1 there. Reduce motion: there at once.
+    property <float> morph: handing ? 1 : 0;
+    animate morph {
+        duration: handing ? Theme.motion(Theme.material ? 300ms : 260ms) : 0ms;
+        easing: Theme.material ? cubic-bezier(0.2, 0, 0, 1) : cubic-bezier(0.25, 0.1, 0.25, 1);
+    }
+    property <length> to-w: Theme.material ? min(720px, root.width - 64px) : 680px;
+    // The field where it is now (the glass shape follows it; Rust reads these)
+    out property <length> fx: sx + 20px + (round((root.width - to-w) / 2 / 1px) * 1px - sx - 20px) * morph;
+    out property <length> fy: sy + 20px + (round(root.height * 0.2 / 1px) * 1px - sy - 20px) * morph;
+    out property <length> fw: 560px + (to-w - 560px) * morph;
+    out property <length> fh: 52px + 4px * morph;
+    // (it fades over the glide's last third, as Search's field comes in under it)
+    out property <float> fo: handing ? max(0, min(1, (1 - morph) * 3)) : min(1, openness);
+    out property <float> fk: handing ? 1 : content-scale;
 
     callback key(string, bool, bool) -> bool; // text, shift, control: handled?
     callback edited(string);
     callback pointer(length, length, bool);
     callback press(length, length, int);
     callback release(length, length, int);
-    callback run-result(int);
     // (a screen reader's "activate": clicks are placed from the pointer in
     // Rust, so the buttons it lists did nothing; #540)
     callback activate-space(int); // a space's id: go there
@@ -227,7 +232,11 @@ export component OverviewPanel inherits Window {
         easing: shown ? (Theme.material ? spring(0.11) : spring(0.37)) : cubic-bezier(0.3333, 0, 0.6667, 0);
     }
     changed openness => {
-        if !shown && openness <= 0.001 { closed(); }
+        if !shown && !handing && openness <= 0.001 { closed(); }
+    }
+    // (handing over: closed once the field has reached Search's)
+    changed morph => {
+        if handing && !shown && morph >= 0.999 { closed(); }
     }
     // A window's miniature glides to a new place (a re-tile while open) only
     // once it's in place: 400 ms after opening (the QML's `settled`)
@@ -408,7 +417,7 @@ export component OverviewPanel inherits Window {
 
         // The grid: a row per display with several (labelled), or this display's
         Rectangle {
-            visible: !mac && results.length == 0;
+            visible: !mac;
             for l in labels: Rectangle {
                 x: l.x;
                 y: l.y;
@@ -714,32 +723,32 @@ export component OverviewPanel inherits Window {
 
     // The search (Glass: its glass is the plugin's; Material: a pill)
     Rectangle {
-        x: sx + 20px;
-        y: sy + 20px;
-        width: 560px;
-        height: 52px;
-        opacity: min(1, openness);
-        transform-scale: content-scale;
+        x: fx;
+        y: fy;
+        width: fw;
+        height: fh;
+        opacity: fo;
+        transform-scale: fk;
         transform-origin: { x: root.width / 2 - self.x, y: root.height / 2 - self.y };
-        border-radius: 26px;
+        border-radius: self.height / 2;
         background: Theme.material ? Theme.m3-surface-container-high : glass-fill;
         WIcon {
-            x: 18px;
+            x: 18px + (Theme.material ? 0px : 2px) * morph;
             width: 22px;
             glyph: g-search;
-            size: 20px;
+            size: 20px + 2px * morph;
             tint: Theme.secondary;
         }
         Rectangle {
-            x: 50px;
-            width: 490px;
+            x: 50px + 6px * morph;
+            width: parent.width - self.x - 20px;
             clip: true;
             field := TextInput {
                 width: 100%;
                 height: 100%;
                 color: Theme.label;
                 selection-background-color: Theme.accent.with-alpha(0.5);
-                font-size: 20px;
+                font-size: 20px + ((Theme.material ? 18px : 22px) - 20px) * morph;
                 vertical-alignment: center;
                 single-line: true;
                 input-type: search;
@@ -761,88 +770,6 @@ export component OverviewPanel inherits Window {
                 font-size: 20px;
                 vertical-alignment: center;
                 accessible-role: none;
-            }
-        }
-    }
-
-    // Results while typing
-    if results.length > 0: Rectangle {
-        x: sx + 20px;
-        y: res-y + 20px;
-        width: 560px;
-        height: res-h - 40px;
-        opacity: min(1, openness);
-        border-radius: Theme.material ? Theme.radius-panel : 22px;
-        background: Theme.material ? Theme.panel : glass-fill;
-        accessible-role: list;
-        TouchArea { }
-        Flickable {
-            x: 8px;
-            y: 8px;
-            width: 544px;
-            height: parent.height - 16px;
-            content-height: results.length * 40px;
-            content-y <=> results-y;
-            for r[i] in results: Rectangle {
-                y: i * 40px;
-                height: 40px;
-                border-radius: Theme.radius-control;
-                background: i == selected ? Theme.accent : rt.pressed ? Theme.fill-pressed : rt.has-hover ? Theme.fill : transparent;
-                accessible-role: list-item;
-                accessible-label: r.title;
-                accessible-item-selected: i == selected;
-                accessible-action-default => { run-result(i); }
-                rt := TouchArea {
-                    clicked => { run-result(i); }
-                }
-                if r.has-icon: Image {
-                    x: 10px;
-                    y: 7px;
-                    width: 26px;
-                    height: 26px;
-                    source: r.icon;
-                    accessible-role: none;
-                }
-                if r.emoji != "": Text {
-                    x: 10px;
-                    width: 26px;
-                    text: r.emoji;
-                    font-family: emoji-font;
-                    font-size: 20px;
-                    horizontal-alignment: center;
-                    accessible-role: none;
-                }
-                if !r.has-icon && r.emoji == "": WIcon {
-                    x: 10px;
-                    width: 26px;
-                    glyph: r.glyph;
-                    size: 18px;
-                    tint: i == selected ? Theme.on-accent : Theme.secondary;
-                }
-                HorizontalLayout {
-                    x: 46px;
-                    width: parent.width - 58px;
-                    spacing: 8px;
-                    Text {
-                        horizontal-stretch: 0;
-                        text: r.title;
-                        color: i == selected ? Theme.on-accent : Theme.label;
-                        font-size: Theme.title;
-                        font-weight: 500;
-                        overflow: elide;
-                        vertical-alignment: center;
-                        accessible-role: none;
-                    }
-                    Text {
-                        horizontal-stretch: 1;
-                        text: r.sub;
-                        color: i == selected ? Theme.on-accent.with-alpha(0.75) : Theme.tertiary;
-                        font-size: Theme.body;
-                        overflow: elide;
-                        vertical-alignment: center;
-                        accessible-role: none;
-                    }
-                }
             }
         }
     }

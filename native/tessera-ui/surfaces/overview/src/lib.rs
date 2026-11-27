@@ -15,9 +15,11 @@
 //! another space (or a display's zone, or push it against that display's
 //! edge) to move it; drag a space (by its empty area or its title) to put it
 //! elsewhere in its row, or onto another display; right-click a window or a
-//! space for its menu. Typing searches apps and actions as Search does
-//! (spotlight::rank), Enter opens the first result or goes to the picked
-//! space; the arrows pick a space.
+//! space for its menu. The arrows pick a space, Enter goes there. Typing
+//! hands over to Search (tessera_core::handoff, 27 Nov): the first letter
+//! opens Search with it typed in (its AI, the web, the dictionary, the
+//! reading list, sums…), the spaces fade and shrink away and the field
+//! glides to Search's field as it goes; what's typed meanwhile follows.
 //!
 //! It opens as the QML one did, through Panels ("overview": Super's tap, the
 //! hot corner, the four-finger swipe's `tessera:overview`, `qs ipc call`):
@@ -30,15 +32,13 @@
 //! second for every window (live) or the current spaces' (hybrid).
 //!
 //! Every list (spaces, their windows, the strip's tiles and miniatures, the
-//! zones and their chips, results, menu rows) is a `Rows`, handed to the
+//! zones and their chips, menu rows) is a `Rows`, handed to the
 //! window once: a refresh (a picture arriving, a live frame, a re-tile)
 //! changes only the rows that differ, so nothing is made again and a window
 //! that moves glides there (200 ms OutCubic, once settled, as the QML).
 //!
 //! Not like the QML yet:
-//! - search: apps, actions, emoji and sums from spotlight::rank; the rows
-//!   only the QML shell knows (files, conversions, the calendar, contacts,
-//!   the App Store…) aren't asked for here (Search in Rust has them);
+//! - search is Search's own (the QML Overview listed results in itself);
 //! - Material's press swell (ElasticControl) is the hover and press scale;
 //! - no elastic pull on the context menu (ElasticGrab).
 
@@ -60,7 +60,7 @@ use tessera_core::services::clients::{Client, Windows};
 use tessera_core::services::hypr::{Glass, Snapshot};
 use tessera_core::services::icons::Icons;
 use tessera_core::shell::{Command, Part};
-use tessera_core::rank::{self, Known, Row, Run};
+use tessera_core::handoff::{self, Typed};
 use tessera_core::wm::{self, spaces, AppIcons, IconsDone, LiveTick, OverviewCfg, Thumbs, Wall, WallPicture};
 use tessera_core::theme;
 use tessera_core::wayland::{Spec, State, Surface};
@@ -91,7 +91,6 @@ enum M {
     Pointer(String, f32, f32, bool),
     Press(String, f32, f32, i32),
     Release(String, f32, f32, i32),
-    RunResult(i32),
     /// a screen reader's activate (#540): a space, a display row's +, a display
     ActivateSpace(i32),
     NewSpace(String, i32),
@@ -102,6 +101,8 @@ enum M {
     Expand(String, String),
     Collapse(String, String),
     Ungone,
+    /// handing over to Search: the keyboard goes now at the latest
+    LetGo,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -239,8 +240,9 @@ struct Win {
     l_pluses: Rows<ui::OvPlus>,
     l_zones: Rows<ui::OvZone>,
     l_zone_chips: HashMap<String, Rows<ui::OvChip>>,
-    l_results: Rows<ui::OvResult>,
     l_menu: Rows<ui::WMenuRow>,
+    /// handing over: its close animation ended (it hides once the keyboard goes)
+    faded: bool,
 }
 
 /// One list per key (a space's windows, a zone's chips), kept across refreshes:
@@ -271,12 +273,10 @@ pub struct Overview {
     /// (the QML shows it at once)
     refocus: bool,
     key_out: String,
-    text: String,
-    results: Vec<Row>,
-    selected: usize,
-    apps: Vec<rank::App>,
-    actions: Vec<rank::Action>,
-    home: String,
+    /// handing over to Search: the text sent last (it keeps the keyboard
+    /// until Search has it, tessera_core::handoff)
+    handing: Option<String>,
+    hand_timer: slint::Timer,
     key_ctx: Rc<Cell<KeyCtx>>,
     icons: AppIcons,
     thumbs: Thumbs,
@@ -387,7 +387,6 @@ impl Overview {
             let o = o.clone();
             on!(on_release, |x, y, b| M::Release(o.clone(), x, y, b));
         }
-        on!(on_run_result, |i| M::RunResult(i));
         on!(on_activate_space, |id| M::ActivateSpace(id));
         {
             let o = o.clone();
@@ -406,13 +405,12 @@ impl Overview {
             let o = o.clone();
             on!(on_closed, | | M::Closed(o.clone()));
         }
-        let (l_cells, l_tiles, l_labels, l_pluses, l_zones, l_results, l_menu) = (Rows::new(), Rows::new(), Rows::new(), Rows::new(), Rows::new(), Rows::new(), Rows::new());
+        let (l_cells, l_tiles, l_labels, l_pluses, l_zones, l_menu) = (Rows::new(), Rows::new(), Rows::new(), Rows::new(), Rows::new(), Rows::new());
         ui.set_cells(l_cells.model());
         ui.set_tiles(l_tiles.model());
         ui.set_labels(l_labels.model());
         ui.set_pluses(l_pluses.model());
         ui.set_zones(l_zones.model());
-        ui.set_results(l_results.model());
         ui.set_menu_rows(l_menu.model());
         ui.show().expect("show overview");
         let a11y = crate::a11y::A11y::new(&surface, st.tx.clone());
@@ -459,8 +457,8 @@ impl Overview {
             l_pluses,
             l_zones,
             l_zone_chips: HashMap::new(),
-            l_results,
             l_menu,
+            faded: false,
         });
         let i = self.wins.len() - 1;
         self.look(st, i);
@@ -492,9 +490,9 @@ impl Overview {
         self.open = true;
         self.refocus = true;
         self.key_out = screen.clone();
-        self.text.clear();
-        self.results.clear();
-        self.selected = 0;
+        // (opened again while handing over: the Overview again)
+        self.handing = None;
+        self.hand_timer.stop();
         let cfg = Self::cfg(st);
         if cfg.wallpapers {
             self.wall.want(st, NAME, (400, 250));
@@ -512,7 +510,8 @@ impl Overview {
             w.menu = None;
             w.press = Press::None;
             Self::reset_drag(w);
-            w.l_results.set(Vec::new());
+            w.faded = false;
+            w.ui.set_handing(false);
             w.ui.invoke_open();
             w.ui.set_shown(true);
             let key = *o == screen;
@@ -533,11 +532,15 @@ impl Overview {
             return;
         }
         self.open = false;
+        let keep = self.handing.is_some().then(|| self.key_out.clone());
         for w in &mut self.wins {
             w.menu = None;
             w.ui.set_menu_shown(false);
             w.ui.set_shown(false);
-            w.surface.layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            // (handing over: the keyboard stays until Search has it, let_go)
+            if keep.as_deref() != Some(w.output.as_str()) {
+                w.surface.layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            }
             st.set_input_region(&w.surface, Some(&[]));
             w.surface.layer.commit();
         }
@@ -548,6 +551,13 @@ impl Overview {
 
     fn closed(&mut self, st: &mut State, out: &str) {
         if self.open {
+            return;
+        }
+        if self.handing.is_some() {
+            // (it hides once the keyboard is Search's: let_go)
+            if let Some(w) = self.wins.iter_mut().find(|w| w.output == out) {
+                w.faded = true;
+            }
             return;
         }
         if let Some(w) = self.wins.iter_mut().find(|w| w.output == out) {
@@ -804,7 +814,6 @@ impl Overview {
             self.thumbs.set_live(st, NAME, live);
         }
         self.icons.flush(send(st));
-        self.push_results(st);
     }
 
     /// The edge zones (each display its own): their pills and chips
@@ -916,89 +925,73 @@ impl Overview {
         px >= t.x - m && px < t.x + t.w + m && py >= t.y - m && py < t.y + t.h + m
     }
 
-    // ── Search ──────────────────────────────────────────────────────────────
+    // ── Search: typing hands over to it ─────────────────────────────────────
 
     fn edited(&mut self, st: &mut State, t: String) {
-        self.text = t;
-        // (the web row on the engine Settings chose: Google unless changed)
-        let engine = tessera_core::weblink::search::engine(&st.shell.cfg);
-        let k = Known {
-            apps: &self.apps,
-            actions: &self.actions,
-            emoji: if self.text.trim().starts_with(':') { crate::rank::emoji() } else { &[] },
-            home: &self.home,
-            engine,
-            ..Default::default()
-        };
-        self.results = rank::query(&self.text, &k).0.into_iter().filter(|r| !r.ai && !r.loading).collect();
-        self.selected = 0;
-        self.key_ctx.set(KeyCtx { has_text: !self.text.is_empty(), menu: false });
-        for w in &self.wins {
-            w.ui.set_results_y(0.0);
+        if let Some(sent) = &mut self.handing {
+            // (typed while Search takes over: it follows)
+            if *sent != t {
+                *sent = t.clone();
+                st.shell.sender(handoff::SEARCH)(Box::new(Typed::Text(t)));
+            }
+            return;
         }
-        self.push_results(st);
-    }
-
-    fn push_results(&mut self, st: &State) {
-        let m = st.shell.look.material;
-        let Some(i) = self.wins.iter().position(|w| w.output == self.key_out) else { return };
-        let scale = self.wins[i].ui.window().scale_factor();
-        let rows: Vec<ui::OvResult> = self
-            .results
-            .iter()
-            .map(|r| {
-                let styled = r.section == "Applications" || (r.section == "Top Hit" && matches!(r.run, Run::App(_)));
-                let icon = if r.icon.is_empty() { None } else { self.icons.get(st, &r.icon, 26.0, scale, styled) };
-                ui::OvResult {
-                    title: r.title.as_str().into(),
-                    sub: r.subtitle.as_str().into(),
-                    has_icon: icon.is_some(),
-                    icon: icon.unwrap_or_default(),
-                    emoji: r.emoji.as_str().into(),
-                    glyph: wglyph(if r.glyph.is_empty() { "circle" } else { &r.glyph }, m, false),
-                }
-            })
-            .collect();
-        self.icons.flush(send(st));
-        let w = &self.wins[i];
-        w.l_results.set(rows);
-        w.ui.set_selected(self.selected as i32);
-    }
-
-    fn select(&mut self, i: usize) {
-        self.selected = i;
-        let Some(w) = self.wins.iter().find(|w| w.output == self.key_out) else { return };
-        w.ui.set_selected(i as i32);
-        // keep it in view (the list shows up to 420 px: less on a short screen)
-        let shown = (w.ui.get_res_h() - 56.0).clamp(40.0, 420.0);
-        let top = i as f32 * 40.0;
-        let cur = -w.ui.get_results_y();
-        if top < cur {
-            w.ui.set_results_y(-top);
-        } else if top + 40.0 > cur + shown {
-            w.ui.set_results_y(-(top + 40.0 - shown));
-        }
-    }
-
-    fn run_result(&mut self, st: &mut State, i: usize) {
-        let Some(r) = self.results.get(i).cloned() else { return };
-        self.close(st, true);
-        use serde_json::json;
-        match &r.run {
-            Run::Nothing | Run::Ask(_) | Run::Shell(_) => {}
-            Run::Copy(t) => crate::util::pipe_to(&["wl-copy"], t.clone().into_bytes()),
-            Run::App(id) => {
-                if let Some(e) = st.shell.get::<Apps>().and_then(|a| a.by_id(id)) {
-                    crate::services::apps::launch(e);
+        if !handoff::starts(&t) {
+            // (a space alone: nothing to search for)
+            if !t.is_empty() {
+                if let Some(w) = self.wins.iter().find(|w| w.output == self.key_out) {
+                    w.ui.invoke_open();
                 }
             }
-            // (a web result: where Settings says, tessera-web or your browser)
-            Run::Url(u) => crate::shell::ask("launch.openLink", json!([u])),
-            Run::Terminal(c) => crate::shell::ask("search.command", json!([c])),
-            Run::File(p) => crate::shell::ask("files.open", json!([p])),
-            Run::Action(t) => crate::shell::ask("search.action", json!([t])),
-            Run::SetupAi => crate::shell::ask("panels.openSettings", json!(["ai"])),
-            Run::Read(u) => tessera_core::weblink::reader(u),
+            return;
+        }
+        self.hand_over(st, t);
+    }
+
+    /// The first letter typed: Search opens with it, the Overview goes (its
+    /// field gliding to Search's), keeping the keyboard until Search has it
+    fn hand_over(&mut self, st: &mut State, t: String) {
+        if !self.open {
+            return;
+        }
+        // (Search hears it first: before Panels' open command for it)
+        st.shell.sender(handoff::SEARCH)(Box::new(Typed::Text(t.clone())));
+        self.handing = Some(t.clone());
+        self.key_ctx.set(KeyCtx { has_text: true, menu: false });
+        for w in &mut self.wins {
+            w.menu = None;
+            w.ui.set_menu_shown(false);
+            w.press = Press::None;
+            Self::reset_drag(w);
+            w.faded = false;
+            w.ui.set_handing(w.output == self.key_out);
+        }
+        let to = send(st);
+        self.hand_timer.start(slint::TimerMode::SingleShot, handoff::LET_GO, move || to(Box::new(M::LetGo)));
+        crate::shell::ask("panels.search", serde_json::json!([t, self.key_out]));
+        // (Panels closes the Overview as Search opens: this when it doesn't)
+        self.close(st, true);
+    }
+
+    /// Handing over: Search has the keyboard (or LET_GO passed): the
+    /// Overview lets it go, and hides once faded
+    fn let_go(&mut self, st: &mut State) {
+        if self.handing.take().is_none() {
+            return;
+        }
+        self.hand_timer.stop();
+        self.key_ctx.set(KeyCtx::default());
+        if self.open {
+            self.close(st, true);
+        }
+        let faded: Vec<String> = self.wins.iter().filter(|w| w.faded).map(|w| w.output.clone()).collect();
+        for w in &mut self.wins {
+            w.faded = false;
+            w.surface.layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            w.surface.layer.commit();
+        }
+        for out in faded {
+            self.closed(st, &out);
         }
     }
 
@@ -1021,35 +1014,28 @@ impl Overview {
             }
             return;
         }
+        if self.handing.is_some() {
+            // (handing over: Search's keys, in the order typed)
+            if is(Key::Escape) || is(Key::Return) || is(Key::UpArrow) || is(Key::DownArrow) {
+                st.shell.sender(handoff::SEARCH)(Box::new(Typed::Key(text.to_string())));
+            }
+            return;
+        }
         let mac = Self::cfg(st).style == "macos";
         let ids: Vec<i32> = self.wins[i].cells.iter().map(|c| c.id).collect();
         let cols = layout::columns(self.wins[i].rows_mode, self.wins[i].rows.iter().map(|r| r.1.len()).max().unwrap_or(1)) as i32;
-        let has_text = !self.text.is_empty();
         if is(Key::Escape) {
-            if has_text {
-                self.wins[i].ui.invoke_open();
-                self.edited(st, String::new());
-            } else {
-                self.close(st, true);
-            }
+            self.close(st, true);
         } else if is(Key::Return) {
-            if !self.results.is_empty() {
-                let s = self.selected;
-                self.run_result(st, s);
-            } else {
-                let id = self.wins[i].picked;
-                self.go(st, id);
-            }
+            let id = self.wins[i].picked;
+            self.go(st, id);
         } else if is(Key::LeftArrow) || is(Key::RightArrow) {
             let w = &mut self.wins[i];
             w.picked = layout::step(&ids, w.picked, if is(Key::LeftArrow) { -1 } else { 1 });
             w.ui.set_picked(w.picked);
         } else if is(Key::UpArrow) || is(Key::DownArrow) {
             let up = is(Key::UpArrow);
-            if has_text {
-                let n = if up { self.selected.saturating_sub(1) } else { (self.selected + 1).min(self.results.len().saturating_sub(1)) };
-                self.select(n);
-            } else if !mac {
+            if !mac {
                 let w = &mut self.wins[i];
                 w.picked = layout::step(&ids, w.picked, if up { -cols } else { cols });
                 w.ui.set_picked(w.picked);
@@ -1137,14 +1123,14 @@ impl Overview {
     fn open_menu(&mut self, st: &State, i: usize, items: Vec<MenuItem>, x: f32, y: f32) {
         let h = self.wins[i].h;
         self.wins[i].menu = Some(Menu { items, x, y, up: y > h * 0.6, current: -1 });
-        self.key_ctx.set(KeyCtx { has_text: !self.text.is_empty(), menu: true });
+        self.key_ctx.set(KeyCtx { has_text: false, menu: true });
         let snap = Self::data(st).1;
         Self::push_state(&self.wins[i], &self.gone_win, self.space_gone, &snap);
     }
 
     fn menu_dismissed(&mut self, st: &mut State, i: usize) {
         self.wins[i].menu = None;
-        self.key_ctx.set(KeyCtx { has_text: !self.text.is_empty(), menu: false });
+        self.key_ctx.set(KeyCtx { has_text: false, menu: false });
         let snap = Self::data(st).1;
         Self::push_state(&self.wins[i], &self.gone_win, self.space_gone, &snap);
         if self.open && self.wins[i].output == self.key_out {
@@ -1167,10 +1153,7 @@ impl Overview {
     // ── The pointer ─────────────────────────────────────────────────────────
 
     /// The space (and the window in it) under a point
-    fn hit(w: &Win, results: bool, mac: bool, px: f32, py: f32) -> Option<(i32, usize, Option<String>)> {
-        if results && !mac {
-            return None;
-        }
+    fn hit(w: &Win, mac: bool, px: f32, py: f32) -> Option<(i32, usize, Option<String>)> {
         for c in &w.cells {
             if c.rect.has(px, py) {
                 let (lx, ly) = (px - c.rect.x, py - c.rect.y);
@@ -1216,7 +1199,6 @@ impl Overview {
         }
         let (wins, snap) = Self::data(st);
         let mac = Self::cfg(st).style == "macos";
-        let results = !self.results.is_empty();
         let edge = self.edge_at(&wins, &self.wins[i], px, py);
         let w = &mut self.wins[i];
         w.pointer = (px, py);
@@ -1239,7 +1221,7 @@ impl Overview {
                 w.ui.set_drag_copy(copy);
                 w.ui.set_dragging_win(true);
                 w.edge_zone = edge;
-                w.drop_cell = Self::hit(w, results, mac, px, py).map(|h| h.0).unwrap_or(0);
+                w.drop_cell = Self::hit(w, mac, px, py).map(|h| h.0).unwrap_or(0);
                 self.track_zone(st, i, px, py);
             }
             Press::Space { id, row, from, moved } => {
@@ -1272,7 +1254,7 @@ impl Overview {
                     w.ui.set_proxy_x(px);
                     w.ui.set_proxy_y(py);
                     w.edge_zone = edge;
-                    w.drop_cell = Self::hit(w, results, mac, px, py).map(|h| h.0).unwrap_or(0);
+                    w.drop_cell = Self::hit(w, mac, px, py).map(|h| h.0).unwrap_or(0);
                     self.icons.flush(send(st));
                     self.track_zone(st, i, px, py);
                     let w = &mut self.wins[i];
@@ -1293,7 +1275,7 @@ impl Overview {
                 }
             }
             Press::None => {
-                let hit = Self::hit(w, results, mac, px, py);
+                let hit = Self::hit(w, mac, px, py);
                 w.hover_cell = hit.as_ref().map(|h| h.0).unwrap_or(0);
                 w.hover_win = hit.as_ref().and_then(|h| h.2.clone()).filter(|_| !mac).unwrap_or_default();
                 let title = w.cells.iter().find(|c| Self::title_hit(c, px, py)).map(|c| c.id);
@@ -1345,10 +1327,9 @@ impl Overview {
         }
         let (wins, snap) = Self::data(st);
         let mac = Self::cfg(st).style == "macos";
-        let results = !self.results.is_empty();
         let w = &self.wins[i];
-        let hit = Self::hit(w, results, mac, px, py);
-        let title = if results && !mac { None } else { w.cells.iter().find(|c| Self::title_hit(c, px, py)).map(|c| (c.id, c.row)) };
+        let hit = Self::hit(w, mac, px, py);
+        let title = w.cells.iter().find(|c| Self::title_hit(c, px, py)).map(|c| (c.id, c.row));
         let plus = if mac { w.plus.iter().position(|p| p.has(px, py)) } else { None };
         let zone = Self::zone_at(w, px, py).map(|z| z.name.clone());
         if button == 1 {
@@ -1415,8 +1396,6 @@ impl Overview {
             }
         } else if mac && py < w.bar_h {
             Press::None // (a click on the bar doesn't close)
-        } else if results && (Rect { x: w.ui.get_sx() + 20.0, y: w.ui.get_res_y() + 20.0, w: 560.0, h: w.ui.get_res_h() - 40.0 }).has(px, py) {
-            Press::None
         } else {
             Press::Background
         };
@@ -1428,10 +1407,9 @@ impl Overview {
         let Some(i) = self.wins.iter().position(|w| w.output == out) else { return };
         let (wins, snap) = Self::data(st);
         let mac = Self::cfg(st).style == "macos";
-        let results = !self.results.is_empty();
         if button == 1 && self.open {
             // right-click on a window: its menu
-            if let Some((_, _, Some(a))) = Self::hit(&self.wins[i], results, mac, px, py) {
+            if let Some((_, _, Some(a))) = Self::hit(&self.wins[i], mac, px, py) {
                 if !mac {
                     let items = self.window_menu(&wins, &snap, &self.wins[i], &a);
                     self.open_menu(st, i, items, px, py);
@@ -1575,17 +1553,7 @@ impl Overview {
         self.gone_timer.start(slint::TimerMode::SingleShot, Duration::from_millis(1500), move || to(Box::new(M::Ungone)));
     }
 
-    fn apps_changed(&mut self, st: &State) {
-        let Some(a) = st.shell.get::<Apps>() else { return };
-        self.apps = a
-            .entries
-            .iter()
-            .filter(|e| !e.no_display)
-            .map(|e| rank::App { id: e.id.clone(), name: e.name.clone(), generic: e.generic_name.clone(), comment: e.comment.clone(), keywords: e.keywords.clone(), icon: e.icon.clone() })
-            .collect();
-    }
-
-    /// Glass: the screen behind, the field, the results, the zones and the menu on the plugin's glass
+    /// Glass: the screen behind, the field, the zones and the menu on the plugin's glass
     fn glass(&mut self, st: &mut State) {
         let look = st.shell.look.clone();
         for w in &mut self.wins {
@@ -1603,12 +1571,10 @@ impl Overview {
             let mut back = theme::shadow_margin(theme::glass_shape(&look, 0.0, 0.0, w.w, w.h, 0.0, o, 0.0), 0.0);
             back[11] = 0.0;
             shapes.push(back);
-            let f = sc(Rect { x: ui.get_sx() + 20.0, y: ui.get_sy() + 20.0, w: 560.0, h: 52.0 });
-            shapes.push(theme::shadow_margin(theme::glass_shape(&look, f.x, f.y, f.w, f.h, 26.0 * k, o, 1.0), 20.0 * k));
-            if ui.get_res_h() > 0.0 && w.output == self.key_out {
-                let r = sc(Rect { x: ui.get_sx() + 20.0, y: ui.get_res_y() + 20.0, w: 560.0, h: ui.get_res_h() - 40.0 });
-                shapes.push(theme::glass_shape(&look, r.x, r.y, r.w, r.h, 22.0 * k, o, 1.0));
-            }
+            // (the field where it is: gliding to Search's while handing over, unscaled then)
+            let fk = ui.get_fk();
+            let f = Rect { x: cx + (ui.get_fx() - cx) * fk, y: cy + (ui.get_fy() - cy) * fk, w: ui.get_fw() * fk, h: ui.get_fh() * fk };
+            shapes.push(theme::shadow_margin(theme::glass_shape(&look, f.x, f.y, f.w, f.h, f.h / 2.0, ui.get_fo().clamp(0.0, 1.0), 1.0), 20.0 * fk));
             for z in &w.zones {
                 let r = sc(z.rect);
                 let rad = if !z.chips.is_empty() || z.side.vertical() { 18.0 } else { 22.0 };
@@ -1646,8 +1612,6 @@ impl Part for Overview {
         for s in ["clients", "hypr", "apps", "icons"] {
             st.shell.want(s);
         }
-        self.actions = rank::actions();
-        self.home = std::env::var("HOME").unwrap_or_default();
         self.info.count = wm::workspace_count(&st.shell.cfg);
         self.info.open = wm::spaces_open(&st.shell.cfg);
     }
@@ -1687,9 +1651,6 @@ impl Part for Overview {
     }
 
     fn data(&mut self, st: &mut State, what: std::any::TypeId) {
-        if what == std::any::TypeId::of::<Apps>() {
-            self.apps_changed(st);
-        }
         if what == std::any::TypeId::of::<Windows>() {
             // a window dropped elsewhere shows again where it landed
             let (wins, _) = Self::data(st);
@@ -1777,7 +1738,6 @@ impl Part for Overview {
             M::Pointer(o, x, y, inside) => self.pointer(st, &o, x, y, inside),
             M::Press(o, x, y, b) => self.press(st, &o, x, y, b),
             M::Release(o, x, y, b) => self.release(st, &o, x, y, b),
-            M::RunResult(i) => self.run_result(st, i.max(0) as usize),
             M::ActivateSpace(id) => {
                 if id > 0 {
                     self.go(st, id);
@@ -1829,6 +1789,7 @@ impl Part for Overview {
                     }
                 }
             }
+            M::LetGo => self.let_go(st),
             M::Ungone => {
                 self.gone_win.clear();
                 self.space_gone = 0;
@@ -1841,6 +1802,11 @@ impl Part for Overview {
     }
 
     fn keyboard_left(&mut self, st: &mut State, s: &Rc<Surface>) {
+        // (handing over: Search has the keyboard now)
+        if self.handing.is_some() && self.wins.iter().any(|w| Rc::ptr_eq(&w.surface, s) && w.output == self.key_out) {
+            self.let_go(st);
+            return;
+        }
         // (another window took the keyboard: as the QML panel, close)
         if self.open && self.wins.iter().any(|w| Rc::ptr_eq(&w.surface, s) && w.output == self.key_out && w.menu.is_none()) {
             self.close(st, true);

@@ -69,6 +69,9 @@ pub struct Model {
     /// opens over it, so it can type into them, and its tile can close it)
     pub keyboard: bool,
     pub keyboard_screen: String,
+    /// Search opens with this typed in (`panels.search`: the Overview's
+    /// field handing over), taken by the open command that follows
+    pub search_query: String,
 }
 
 /// The panel that is the on-screen keyboard (Panels calls it so; the surface is "osk")
@@ -142,6 +145,23 @@ impl Model {
         }
         self.open.clear();
         self.cc_page.clear();
+    }
+
+    /// panels.search: Search with this text typed in (the Overview's hand-over,
+    /// `tessera-ui ipc call panels search "water lily"`)
+    pub fn search(&mut self, text: &str, screen: Option<&str>, focused: &str, first: &str) {
+        self.search_query = text.to_string();
+        self.show("spotlight", screen, None, None, focused, first);
+    }
+
+    /// The text Search's open command carries, once (only for Search)
+    pub fn take_query(&mut self, surface: &str) -> String {
+        let q = std::mem::take(&mut self.search_query);
+        if surface == "spotlight" {
+            q
+        } else {
+            String::new()
+        }
     }
 
     /// A close shortcut: Quick Look first (it is over everything), else the
@@ -284,6 +304,8 @@ impl Panels {
                 self.m.show(&panel_of(str_arg(a, 0)), opt(str_arg(a, 1)), a.get(2).and_then(Value::as_f64), action, &f, &first);
             }
             "showSession" => self.m.show("session", opt(str_arg(a, 1)), None, Some(str_arg(a, 0)), &f, &first),
+            // search [text, screen?]: Search with the text typed in (the Overview's field hands over)
+            "search" => self.m.search(str_arg(a, 0), opt(str_arg(a, 1)), &f, &first),
             // (a surface's name for its panel, "osk" for "keyboard", is the
             // panel: what follows the open panel, the dock's step aside for
             // the keyboard, knows it by one name; #151)
@@ -469,9 +491,15 @@ impl Panels {
             h.command("close", &self.forwarded.clone(), None, json!({}));
         }
         let panel = if want.is_empty() { String::new() } else { self.m.open.clone() };
-        if !want.is_empty() && (want != self.forwarded || scr != self.forwarded_screen || panel != self.forwarded_panel) {
+        // (Search with text typed in: told again even when already open)
+        let query = self.m.take_query(&want);
+        if !want.is_empty() && (want != self.forwarded || scr != self.forwarded_screen || panel != self.forwarded_panel || !query.is_empty()) {
             // (which panel and where its item is: the status menus' surface draws several)
-            h.command("open", &want, Some(&scr), json!({"panel": panel, "anchorX": self.m.anchor_x}));
+            let mut extra = json!({"panel": panel, "anchorX": self.m.anchor_x});
+            if !query.is_empty() {
+                extra["query"] = json!(query);
+            }
+            h.command("open", &want, Some(&scr), extra);
         }
         self.forwarded = want;
         self.forwarded_screen = scr;
@@ -914,6 +942,21 @@ mod tests {
         assert_eq!(panel_of("keyboard"), "keyboard");
         assert_eq!(panel_of("spotlight"), "spotlight");
         assert_eq!(surface_of(&panel_of("osk")), "osk");
+    }
+
+    #[test]
+    fn search_opens_with_the_text_once() {
+        let mut m = Model::new();
+        m.show("overview", Some("DP-1"), None, None, "DP-1", "");
+        m.search("water lily", Some("DP-1"), "DP-1", "");
+        assert!(m.is_open("spotlight", Some("DP-1")) && !m.is_open("overview", None));
+        // (the open command carries it once, and only Search's)
+        assert_eq!(m.take_query("spotlight"), "water lily");
+        assert_eq!(m.take_query("spotlight"), "");
+        m.search("x", None, "HDMI-A-1", "");
+        assert_eq!(m.screen, "HDMI-A-1");
+        assert_eq!(m.take_query("overview"), "");
+        assert_eq!(m.take_query("spotlight"), "");
     }
 
     #[test]
