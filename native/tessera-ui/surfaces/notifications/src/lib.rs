@@ -1606,7 +1606,7 @@ mod tests {
         assert_eq!(p[0], before[0]); // where it was
         assert_eq!(p[1], Place::WHOLE); // the front now, whole
         assert_eq!(h, 120.0);
-        assert!(pills(staying, false).is_empty());
+        assert!(pills(staying, false, 0).is_empty());
     }
 
     #[test]
