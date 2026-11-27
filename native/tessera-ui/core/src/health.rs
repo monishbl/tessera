@@ -329,12 +329,46 @@ pub fn event_now(kind: &str, mut fields: Value) {
 
 static WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// The lock every writer of the record takes, other processes too: an
+/// flock on `.health.jsonl.lock` beside it (health_event.py and the
+/// scripts' appends take the same one through settings_file.py's
+/// lock_file), so a trim never drops a line appended meanwhile (audit #824)
+pub struct FileLock(Option<std::fs::File>);
+
+impl FileLock {
+    pub fn new(path: &Path) -> Self {
+        use std::os::unix::fs::OpenOptionsExt;
+        use std::os::unix::io::AsRawFd;
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let lock = path.with_file_name(format!(".{name}.lock"));
+        let Ok(f) = std::fs::OpenOptions::new().create(true).write(true).mode(0o600).open(&lock) else { return Self(None) };
+        // (never forever: a stuck holder costs a moment, never the shell)
+        for _ in 0..200 {
+            if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+                return Self(Some(f));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        Self(None)
+    }
+}
+
+impl Drop for FileLock {
+    fn drop(&mut self) {
+        use std::os::unix::io::AsRawFd;
+        if let Some(f) = &self.0 {
+            unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_UN) };
+        }
+    }
+}
+
 /// A line added; past the cap the file is cut to its newest lines
 pub fn append(path: &Path, line: &str) {
     let _g = WRITE.lock();
     if let Some(d) = path.parent() {
         let _ = std::fs::create_dir_all(d);
     }
+    let _lock = FileLock::new(path);
     let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) else { return };
     let _ = f.write_all(format!("{line}\n").as_bytes());
     if f.metadata().is_ok_and(|m| m.len() > CAP_BYTES) {
@@ -344,15 +378,19 @@ pub fn append(path: &Path, line: &str) {
 }
 
 /// Cut to the newest `KEEP_BYTES` of whole lines: samples none older than
-/// `KEEP_DAYS`, events none older than `EVENT_DAYS`
+/// `KEEP_DAYS`, events none older than `EVENT_DAYS`. Called with the
+/// record's lock held: no other writer appends between the read and the
+/// rename (the temporary name is this process's own)
 fn trim(path: &Path, now_secs: i64) {
     // (bytes, read lossily: one bad line must not stop the trimming for good)
     let Ok(bytes) = std::fs::read(path) else { return };
     let text = String::from_utf8_lossy(&bytes);
     let kept = ring_events(&text, KEEP_BYTES, now_secs - KEEP_DAYS * 86400, now_secs - EVENT_DAYS * 86400);
-    let tmp = path.with_extension("jsonl.tmp");
+    let tmp = path.with_extension(format!("jsonl.tmp-{}", std::process::id()));
     if std::fs::write(&tmp, kept).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
+        if std::fs::rename(&tmp, path).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
     }
 }
 
@@ -858,6 +896,29 @@ mod tests {
         // (the tail read at start begins at a whole line)
         let tail = read_tail(&p, 1000);
         assert!(tail.lines().all(|l| l == line) && !tail.is_empty());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn writers_share_one_lock_beside_the_record() {
+        use std::os::unix::io::AsRawFd;
+        // (audit #824) the scripts' lock file: `.health.jsonl.lock`, held
+        // while a line is added or the file is cut
+        let d = std::env::temp_dir().join(format!("tessera-health-lock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("health.jsonl");
+        let held = FileLock::new(&p);
+        assert!(held.0.is_some());
+        let other = std::fs::OpenOptions::new().write(true).open(d.join(".health.jsonl.lock")).unwrap();
+        assert_ne!(unsafe { libc::flock(other.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0, "taken while held");
+        drop(held);
+        assert_eq!(unsafe { libc::flock(other.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0, "free once dropped");
+        unsafe { libc::flock(other.as_raw_fd(), libc::LOCK_UN) };
+        append(&p, "{\"t\":1,\"ev\":\"stop\"}");
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "{\"t\":1,\"ev\":\"stop\"}\n");
+        // (no temporary file left behind)
+        assert!(std::fs::read_dir(&d).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().contains(".tmp")));
         let _ = std::fs::remove_dir_all(&d);
     }
 

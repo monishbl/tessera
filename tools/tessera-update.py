@@ -2056,44 +2056,68 @@ def apply_after_merge(config_dir, choices, report, edited, merged, stash):
             fh.write(text)
 
     progress(35, "Updating settings and shortcuts")
-    # Settings and shortcuts
+    # Settings and shortcuts (the settings read, changed and written under
+    # the shell's own settings lock: a change it makes meanwhile is kept;
+    # audit #815)
     config_path = os.path.join(config_dir, "config.json")
-    config = load_json(config_path, {})
-    user_path = os.path.join(config_dir, "keybinds.json")
-    user = load_json(user_path, {"version": 1, "keybinds": {}, "shortcuts": [], "gestures": {"changes": {}, "custom": []}})
-    user.setdefault("keybinds", {})
-    for c in report["conflicts"]:
-        pick = choices[c["id"]]
-        if c["kind"] == "setting" and pick == "new":
-            set_path(config, c["title"], c["new"])
-        elif c["kind"] == "setting" and pick == "keep":
-            set_path(config, c["title"], c["old"])  # (written down, so it stays put)
-        elif c["kind"] == "removed":
-            if pick == "move" and c.get("target"):
-                set_path(config, c["target"], c["value"])
-            del_path(config, c["title"])
-        elif c["kind"] == "preset" and pick == "keep":
-            lens, frost, solid, tint = (c["old"] + [0.45])[:4]
-            set_path(config, "appearance.glass", "custom")
-            for k, v in (("glassLens", lens), ("glassFrost", frost), ("glassSolid", solid), ("glassTint", tint)):
-                set_path(config, "appearance." + k, v)
-        elif c["kind"] == "shortcut":
-            bid = c["id"].split(":", 1)[1]
-            if pick == "mine":
-                user["keybinds"].setdefault(bid, {})["disabled"] = True
-            else:
-                y = c["yours"]
-                if y["kind"] == "override":
-                    user["keybinds"].get(y["id"], {}).pop("keys", None)
-                    if not user["keybinds"].get(y["id"]):
-                        user["keybinds"].pop(y["id"], None)
+    lock = settings_lock(config_path)
+    try:
+        config = load_json(config_path, {})
+        user_path = os.path.join(config_dir, "keybinds.json")
+        user = load_json(user_path, {"version": 1, "keybinds": {}, "shortcuts": [], "gestures": {"changes": {}, "custom": []}})
+        user.setdefault("keybinds", {})
+        for c in report["conflicts"]:
+            pick = choices[c["id"]]
+            if c["kind"] == "setting" and pick == "new":
+                set_path(config, c["title"], c["new"])
+            elif c["kind"] == "setting" and pick == "keep":
+                set_path(config, c["title"], c["old"])  # (written down, so it stays put)
+            elif c["kind"] == "removed":
+                if pick == "move" and c.get("target"):
+                    set_path(config, c["target"], c["value"])
+                del_path(config, c["title"])
+            elif c["kind"] == "preset" and pick == "keep":
+                lens, frost, solid, tint = (c["old"] + [0.45])[:4]
+                set_path(config, "appearance.glass", "custom")
+                for k, v in (("glassLens", lens), ("glassFrost", frost), ("glassSolid", solid), ("glassTint", tint)):
+                    set_path(config, "appearance." + k, v)
+            elif c["kind"] == "shortcut":
+                bid = c["id"].split(":", 1)[1]
+                if pick == "mine":
+                    user["keybinds"].setdefault(bid, {})["disabled"] = True
                 else:
-                    for s in user.get("shortcuts", []):
-                        if s.get("id") == y["id"]:
-                            s["disabled"] = True
-    if config:
-        write_json(config_path, config)
+                    y = c["yours"]
+                    if y["kind"] == "override":
+                        user["keybinds"].get(y["id"], {}).pop("keys", None)
+                        if not user["keybinds"].get(y["id"]):
+                            user["keybinds"].pop(y["id"], None)
+                    else:
+                        for s in user.get("shortcuts", []):
+                            if s.get("id") == y["id"]:
+                                s["disabled"] = True
+        if config:
+            write_json(config_path, config)
+    finally:
+        lock.__exit__(None, None, None)
     write_json(user_path, user)
+
+
+class _NoLock:
+    def __exit__(self, *_):
+        pass
+
+
+def settings_lock(path):
+    """The settings folder's lock, as the shell takes it (settings_file.py,
+    the one helper every script uses); none when this checkout has no helper"""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("settings_file", os.path.join(REPO, "shell", "assets", "scripts", "settings_file.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.Lock(path)
+    except Exception:  # (never the update's failure)
+        return _NoLock()
 
 
 # ── Parts: what each of Tessera's other builds is made from ─────────────────

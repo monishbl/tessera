@@ -48,6 +48,16 @@ again; whole files it wrote go, and a file it replaced comes back from its
                                                light or dark again (only what it set
                                                and you haven't changed)
 
+Whether it's on is your choice, kept in your settings
+(appearance.desktopLook in config.json, written under the shell's own lock
+through settings_file.py; absent: on), so clearing the state folder never
+turns it on again (audit #960). The state keeps only what's needed to put
+things back (and whether this machine was set up once); an older state's
+"on" moves into the settings the first time this runs.
+  desktop-look.py off --forget                 off, and the choice taken out of
+                                               the settings (the uninstaller: an
+                                               install sets it up again)
+
 State: $XDG_STATE_HOME/tessera/desktop-look.json. For the tests:
 TESSERA_LOGIN_SHELL (the login shell), TESSERA_FONTS (the font families
 there are, "|"-separated, instead of fc-list), TESSERA_GSETTINGS (the
@@ -143,6 +153,66 @@ def load_state(p):
         return s if isinstance(s, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def settings_file():
+    """settings_file.py beside this: the shell's own settings lock and write"""
+    import importlib.util
+    here = os.path.dirname(os.path.realpath(__file__))
+    spec = importlib.util.spec_from_file_location("settings_file", os.path.join(here, "settings_file.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def choice(p):
+    """Your choice in the settings (appearance.desktopLook): True, False,
+    or None when it was never made there"""
+    try:
+        with open(p.tessera_cfg) as f:
+            c = json.load(f)
+    except (OSError, ValueError):
+        return None
+    v = c.get("appearance", {}).get("desktopLook") if isinstance(c, dict) and isinstance(c.get("appearance"), dict) else None
+    return v if isinstance(v, bool) else None
+
+
+def is_on(p, state):
+    """On unless you turned it off: the settings say, else an older state"""
+    c = choice(p)
+    if c is not None:
+        return c
+    return state.get("on", True) is not False
+
+
+def save_choice(p, on):
+    """The choice written into your settings (on, None: taken out); a
+    settings file that isn't there yet is made only to say off"""
+    if on is not False and not os.path.exists(p.tessera_cfg) and choice(p) is None:
+        return
+
+    def change(c):
+        a = c.get("appearance")
+        if on is None:
+            if isinstance(a, dict) and "desktopLook" in a:
+                del a["desktopLook"]
+                return True
+            return False
+        return settings_file().put(c, "appearance.desktopLook", bool(on))
+    settings_file().edit(change, path=p.tessera_cfg)
+
+
+def move_choice(p, state, dry):
+    """An older state's "on" moved into the settings, once"""
+    if "on" not in state:
+        return
+    if not dry:
+        if choice(p) is None and state.get("on") is False:
+            try:
+                save_choice(p, False)
+            except OSError:
+                return  # (kept in the state: moved next time)
+        state.pop("on", None)
 
 
 def save_state(p, s):
@@ -1053,7 +1123,7 @@ def restore(p, state, d):
 def status(p, state):
     cur = read(p.starship_ours)
     return {
-        "on": state.get("on", True) is not False,
+        "on": is_on(p, state),
         "applied": bool(state.get("starship")) or os.path.exists(p.fish_ours) or os.path.exists(p.kitty_ours) or bool(state.get("kde")),
         "migrated": bool(state.get("migrated")),
         "starship": which("starship"),
@@ -1070,6 +1140,7 @@ def main(argv=None):
     ap.add_argument("--text", action="store_true", help="lines for people, not JSON")
     ap.add_argument("--mode", choices=["dark", "light"])
     ap.add_argument("--accent")
+    ap.add_argument("--forget", action="store_true", help="off: the choice taken out of the settings too")
     a = ap.parse_args(argv)
     p = Paths()
     # (one run at a time: a refresh racing the set-up read the state before
@@ -1083,6 +1154,10 @@ def main(argv=None):
         except OSError:
             lock = None
     state = load_state(p)
+    # (the on/off choice lives in the settings; an older state's moves there)
+    on = is_on(p, state)
+    if a.command != "status":
+        move_choice(p, state, a.dry_run)
     d = Doer(a.dry_run)
     out = {}
     if a.mode:
@@ -1095,29 +1170,29 @@ def main(argv=None):
         # (an install from before Tessera's prompt had its own file: moved
         # once, at the first refresh after the update, so every install gets
         # it; audit #121)
-        if state.get("on", True) is not False and read(p.starship_ours) is None and (read(p.starship) or "").startswith(HEADER):
+        if on and read(p.starship_ours) is None and (read(p.starship) or "").startswith(HEADER):
             try:
                 state["notes"] = apply(p, state, d)
             except OSError:
                 pass
         cur = read(p.starship_ours)
-        if state.get("on", True) is not False and cur is not None and cur.startswith(HEADER) and state.get("starship") == sha(cur):
+        if on and cur is not None and cur.startswith(HEADER) and state.get("starship") == sha(cur):
             text = starship_toml(current_mode(p, state), state.get("accent", ""), nerd_font())
             d.write(p.starship_ours, text, "wrote " + home(p.starship_ours))
             state["starship"] = sha(text)
-        if state.get("on", True) is not False:
+        if on:
             write_plain(p, d, current_mode(p, state), state.get("accent", ""), nerd_font())
             try:
                 keyring_launchers(p, d, ours_only=True)
             except OSError:
                 pass
-        if state.get("on", True) is not False and "Icons/Theme" in state.get("kde", {}):
+        if on and "Icons/Theme" in state.get("kde", {}):
             icons = breeze_plus(current_mode(p, state))
             if icons:
                 set_kde(p, state, d, [("Icons", "Theme", icons)])
         out = {"did": d.did}
-    elif a.command in ("install", "migrate") and (state.get("on", True) is False or (a.command == "migrate" and state.get("migrated"))):
-        out = {"did": [], "notes": ["Tessera's desktop look is off (" + WHERE + ")" if state.get("on", True) is False else "Set up before"]}
+    elif a.command in ("install", "migrate") and (not on or (a.command == "migrate" and state.get("migrated"))):
+        out = {"did": [], "notes": ["Tessera's desktop look is off (" + WHERE + ")" if not on else "Set up before"]}
         state["migrated"] = True
     elif a.command in ("install", "migrate", "on"):
         # (stopped part-way, a read-only folder or a full disk: what was
@@ -1128,7 +1203,12 @@ def main(argv=None):
             err = ""
         except OSError as e:
             notes, err = [], "Stopped part-way (" + str(e) + "): what was changed is recorded, and turning the look off puts it back"
-        state["on"] = True
+        on = True
+        if a.command == "on" and not a.dry_run:
+            try:
+                save_choice(p, True)
+            except OSError as e:
+                err = err or "Couldn't save the choice in your settings: " + str(e)
         state["migrated"] = True
         state["notes"] = notes
         out = {"did": d.did, "notes": notes}
@@ -1140,7 +1220,12 @@ def main(argv=None):
             err = ""
         except OSError as e:
             notes, err = [], "Stopped part-way (" + str(e) + "): turn the look off again once that's fixed"
-        state["on"] = False
+        on = False
+        if not a.dry_run:
+            try:
+                save_choice(p, None if a.forget else False)
+            except OSError as e:
+                err = err or "Couldn't save the choice in your settings: " + str(e)
         state["notes"] = []
         out = {"did": d.did, "notes": notes}
         if err:
@@ -1150,7 +1235,7 @@ def main(argv=None):
             save_state(p, state)
         except OSError as e:
             out["error"] = (out.get("error", "") + "; " if out.get("error") else "") + "Couldn't save " + p.state + ": " + str(e)
-    out.setdefault("on", state.get("on", True) is not False)
+    out.setdefault("on", on)
     if a.text:
         for line in ([("would: " if a.dry_run else "") + x for x in out.get("did", [])] if a.dry_run else []) + out.get("notes", []):
             print(line)

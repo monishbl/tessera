@@ -256,10 +256,11 @@ sys.exit(1 if off else 0)' "$c" 2>/dev/null && return 1
                 report=$(ls -1t "$(dirname "$STARTS")/crashes/"*.txt 2>/dev/null | head -1)
                 printf '%s\n%s\n%s\n' "The Rust shell crashed twice${why:+ ($why)}${report:+; report: ${report##*/}}" "$(date +%s)" "${HYPRLAND_INSTANCE_SIGNATURE:-}" >"$FALLBACK" 2>/dev/null
             fi
-            # (Settings → Health lists it: tessera-ui's core/src/health.rs)
-            python3 -I -c 'import json, sys, time
-print(json.dumps({"t": int(time.time()), "ev": "fallback", "why": open(sys.argv[1]).readline().strip()[:200]}, separators=(",", ":")))' "$FALLBACK" \
-                >>"$(dirname "$STARTS")/health.jsonl" 2>/dev/null || true
+            # (Settings → Health lists it: tessera-ui's core/src/health.rs;
+            # health_event.py adds it under the record's lock, so the shell
+            # cutting the file never drops it; audit #824)
+            XDG_STATE_HOME="$(dirname "$(dirname "$STARTS")")" python3 -I "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/health_event.py" \
+                event fallback why "$(head -n1 "$FALLBACK" 2>/dev/null | cut -c1-200)" >/dev/null 2>&1 || true
             return 1
         fi
     fi

@@ -1333,33 +1333,29 @@ settings() {
         mkdir -p "$DATA/tessera/backups"
         cp -a "$cfg" "$DATA/tessera/backups/config-$(date +%Y%m%d-%H%M%S).json" || return 1
     fi
-    python3 -I - "$cfg" "$LOOK" "$MODE" "$LOGIN_STYLE" "$UI_SOURCE" <<'PY'
-import json, os, sys
-path, look, mode, style, ui_source = sys.argv[1:6]
+    # (under the shell's own settings lock, through settings_file.py: a
+    # running shell's change at the same moment is never lost; audit #815)
+    python3 -I - "$cfg" "$LOOK" "$MODE" "$LOGIN_STYLE" "$UI_SOURCE" "$ROOT/shell/assets/scripts/settings_file.py" <<'PY'
+import importlib.util, json, sys
+path, look, mode, style, ui_source, helper = sys.argv[1:7]
+spec = importlib.util.spec_from_file_location("settings_file", helper)
+SF = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(SF)
 try:
     with open(path) as f:
         c = json.load(f)
+    if not isinstance(c, dict):
+        sys.exit(f"  {path} isn't Tessera's settings: left as it is")
 except FileNotFoundError:
-    c = {"welcome": {"done": False}}
+    pass
 except (OSError, ValueError) as e:
     sys.exit(f"  {path} couldn't be read ({e}): left as it is")
-if not isinstance(c, dict):
-    sys.exit(f"  {path} isn't Tessera's settings: left as it is")
-def part(k):
-    if not isinstance(c.get(k), dict):
-        c[k] = {}
-    return c[k]
-if look:
-    part("appearance")["look"] = look
-if mode:
-    part("appearance")["mode"] = mode
-if style:
-    part("lock")["loginStyle"] = style
-if ui_source:
-    part("rust")["uiSource"] = ui_source
-with open(path + ".tmp", "w") as f:
-    json.dump(c, f, indent=4)
-os.replace(path + ".tmp", path)
+def change(c):
+    for key, v in (("appearance.look", look), ("appearance.mode", mode), ("lock.loginStyle", style), ("rust.uiSource", ui_source)):
+        if v:
+            SF.put(c, key, v)
+if not SF.edit(change, path=path):
+    sys.exit(f"  {path} couldn't be changed: left as it is")
 PY
 }
 

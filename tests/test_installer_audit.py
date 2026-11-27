@@ -425,7 +425,7 @@ class LaunchFallback(Temp):
     def setUp(self):
         super().setUp()
         self.checkout = self.d / "checkout"
-        for f in ("launch-shell.sh", "old-names.sh"):
+        for f in ("launch-shell.sh", "old-names.sh", "health_event.py"):
             self.write(self.checkout / "shell/assets/scripts" / f, (SCRIPTS / f).read_text(), 0o755)
         self.mark = self.d / "mark"
         stub = 'import os, sys\nopen(os.environ["MARK"], "a").write("{} " + " ".join(sys.argv[1:]) + "\\n")\n'

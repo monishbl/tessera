@@ -152,6 +152,37 @@ else: d[sys.argv[3]] = sys.argv[4]; json.dump(d, open(f, "w"))
         self.run_look("on")
         self.assertIn("font=Google Sans Flex", self.text(".config/kdeglobals"))
 
+    def test_off_is_kept_in_the_settings_not_the_state(self):
+        # (audit #960) the choice survives a cleared state folder
+        self.cachyos()
+        (self.cfg / "tessera").mkdir(parents=True, exist_ok=True)
+        (self.cfg / "tessera/config.json").write_text(json.dumps({"dock": {"iconSize": 48}}))
+        original = self.snapshot()
+        self.run_look("install")
+        self.run_look("off")
+        c = json.loads((self.cfg / "tessera/config.json").read_text())
+        self.assertIs(c["appearance"]["desktopLook"], False)
+        self.assertEqual(c["dock"], {"iconSize": 48})
+        self.assertNotIn("on", json.loads((self.state / "tessera/desktop-look.json").read_text()))
+        (self.state / "tessera/desktop-look.json").unlink()
+        self.assertEqual(self.run_look("migrate")["did"], [])
+        self.assertEqual(self.snapshot(), original)
+        self.assertFalse(self.run_look("status")["on"])
+        self.run_look("on")
+        self.assertIs(json.loads((self.cfg / "tessera/config.json").read_text())["appearance"]["desktopLook"], True)
+        # the uninstaller's off takes the choice out
+        self.run_look("off", "--forget")
+        self.assertNotIn("desktopLook", json.loads((self.cfg / "tessera/config.json").read_text())["appearance"])
+
+    def test_an_older_states_off_moves_into_the_settings(self):
+        (self.cfg / "tessera").mkdir(parents=True, exist_ok=True)
+        (self.cfg / "tessera/config.json").write_text("{}")
+        (self.state / "tessera").mkdir(parents=True, exist_ok=True)
+        (self.state / "tessera/desktop-look.json").write_text(json.dumps({"on": False, "migrated": True}))
+        self.assertEqual(self.run_look("install")["did"], [])
+        self.assertIs(json.loads((self.cfg / "tessera/config.json").read_text())["appearance"]["desktopLook"], False)
+        self.assertNotIn("on", json.loads((self.state / "tessera/desktop-look.json").read_text()))
+
     def test_what_you_changed_since_stays_yours(self):
         self.cachyos()
         self.run_look("install")
