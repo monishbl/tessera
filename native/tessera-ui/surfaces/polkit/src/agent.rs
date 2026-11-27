@@ -4,7 +4,9 @@
 //!
 //! The agent serves BeginAuthentication and CancelAuthentication at
 //! OBJECT on a bus, and registers with the Authority there
-//! (RegisterAuthenticationAgent, for this session). BeginAuthentication
+//! (RegisterAuthenticationAgent, for this session), trying on until it's
+//! taken, and again each time polkitd comes back (NameOwnerChanged for
+//! org.freedesktop.PolicyKit1: a restart forgets every agent). BeginAuthentication
 //! returns when the part answers: Ok once the helper said SUCCESS, the
 //! Cancelled error when you cancel. Which bus is the part's choice (its top
 //! comment): the system bus only for the real agent.
@@ -230,30 +232,108 @@ pub fn spawn(system: bool, to: impl Fn(Box<dyn Any + Send>) + Send + 'static) {
             }
         };
         let locale = std::env::var("LANG").unwrap_or_else(|_| "C".into());
-        let mut last = String::new();
-        for attempt in 0..10 {
-            let r = conn.call_method(
+        let register = || {
+            conn.call_method(
                 Some("org.freedesktop.PolicyKit1"),
                 "/org/freedesktop/PolicyKit1/Authority",
                 Some("org.freedesktop.PolicyKit1.Authority"),
                 "RegisterAuthenticationAgent",
                 &(&subject, locale.as_str(), OBJECT),
-            );
-            match r {
-                Ok(_) => {
-                    say(Ok(()));
-                    // (served for as long as this process lives)
-                    loop {
-                        std::thread::park();
-                    }
-                }
-                Err(e) => last = e.to_string(),
+            )
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        };
+        // polkitd forgets its agents when it restarts (an update, a crash,
+        // `systemctl restart polkit`): every admin action then said "Not
+        // authorized" with no dialog until the shell restarted (audit #769).
+        // So its name is watched (first, so a restart in between isn't
+        // missed) and the agent registers again with each new polkitd.
+        let rule = zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .sender("org.freedesktop.DBus")
+            .and_then(|b| b.interface("org.freedesktop.DBus"))
+            .and_then(|b| b.member("NameOwnerChanged"))
+            .and_then(|b| b.arg(0, AUTHORITY))
+            .map(|b| b.build());
+        let signals = rule.and_then(|r| zbus::blocking::MessageIterator::for_match_rule(r, &conn, Some(16)));
+        register_until_done(&register, &say);
+        let mut owner = name_owner(&conn);
+        let Ok(signals) = signals else {
+            eprintln!("tessera-ui: polkit: can't watch for polkit restarts");
+            // (served for as long as this process lives)
+            loop {
+                std::thread::park();
             }
-            // (the shell's own agent letting go of this session, a moment)
-            std::thread::sleep(std::time::Duration::from_millis(500 * (attempt + 1)));
+        };
+        for m in signals.flatten() {
+            let Ok((name, _old, new)) = m.body().deserialize::<(String, String, String)>() else { continue };
+            if name != AUTHORITY {
+                continue;
+            }
+            if new.is_empty() {
+                // (gone: Settings → Health says so until it's back)
+                say(Err("polkit stopped".into()));
+                continue;
+            }
+            if !register_again(&name, &new, &owner) {
+                continue;
+            }
+            eprintln!("tessera-ui: polkit came back: registering the agent again");
+            register_until_done(&register, &say);
+            owner = name_owner(&conn).or(Some(new));
         }
-        say(Err(last));
+        // (the bus went: the object goes with the process)
+        loop {
+            std::thread::park();
+        }
     });
+}
+
+/// polkit's well-known name on the bus
+pub const AUTHORITY: &str = "org.freedesktop.PolicyKit1";
+
+/// The bus name polkitd has now (its unique name), if it's there
+fn name_owner(conn: &zbus::blocking::Connection) -> Option<String> {
+    let m = conn.call_method(Some("org.freedesktop.DBus"), "/org/freedesktop/DBus", Some("org.freedesktop.DBus"), "GetNameOwner", &(AUTHORITY,)).ok()?;
+    m.body().deserialize::<String>().ok()
+}
+
+/// A NameOwnerChanged for `name` with `new_owner` means registering again:
+/// polkit's name, a new owner, not the one the agent registered with (a
+/// signal queued while registering mustn't register twice: polkit refuses a
+/// second agent for the session, and that would retry for ever)
+pub fn register_again(name: &str, new_owner: &str, registered_with: &Option<String>) -> bool {
+    name == AUTHORITY && !new_owner.is_empty() && registered_with.as_deref() != Some(new_owner)
+}
+
+/// How long before try `attempt` (from 0) again: half a second more each
+/// time (the shell's own agent letting go of this session takes a moment),
+/// at most 30 s; it never gives up (it stopped after ten tries, 27 s)
+pub fn retry_after(attempt: u32) -> std::time::Duration {
+    std::time::Duration::from_millis((500 * (attempt as u64 + 1)).min(30_000))
+}
+
+/// The first answer that's not yet a registration is said after ten tries
+/// (Settings → Health: "not registered"), as before; the tries go on
+pub fn say_failure_at(attempt: u32) -> bool {
+    attempt == 9
+}
+
+/// Register until it's done, saying so (and saying once that it isn't yet)
+fn register_until_done(register: &impl Fn() -> Result<(), String>, say: &impl Fn(Result<(), String>)) {
+    let mut attempt = 0u32;
+    loop {
+        match register() {
+            Ok(()) => return say(Ok(())),
+            Err(e) => {
+                if say_failure_at(attempt) {
+                    say(Err(e));
+                }
+            }
+        }
+        std::thread::sleep(retry_after(attempt));
+        attempt = attempt.saturating_add(1);
+    }
 }
 
 // ── One conversation with the helper ────────────────────────────────────────
@@ -401,6 +481,33 @@ mod tests {
         assert_eq!(choose_session(None, Some("52".into())), Some("52".into()));
         assert_eq!(choose_session(Some(String::new()), Some(String::new())), None);
         assert_eq!(choose_session(None, None), None);
+    }
+
+    #[test]
+    fn polkit_coming_back_registers_again_once() {
+        let had = Some(":1.10".to_string());
+        // a new polkitd: again
+        assert!(register_again(AUTHORITY, ":1.42", &had));
+        assert!(register_again(AUTHORITY, ":1.42", &None));
+        // the one it registered with (a signal queued meanwhile): not twice
+        assert!(!register_again(AUTHORITY, ":1.10", &had));
+        // gone, or another name
+        assert!(!register_again(AUTHORITY, "", &had));
+        assert!(!register_again("org.bluez", ":1.42", &had));
+    }
+
+    #[test]
+    fn registering_tries_on_with_a_capped_wait() {
+        use std::time::Duration;
+        assert_eq!(retry_after(0), Duration::from_millis(500));
+        assert_eq!(retry_after(9), Duration::from_secs(5));
+        assert_eq!(retry_after(59), Duration::from_secs(30));
+        assert_eq!(retry_after(u32::MAX), Duration::from_secs(30));
+        // (Health hears "not registered" once, after the ten tries it used to give up at)
+        let said: Vec<u32> = (0..100).filter(|a| say_failure_at(*a)).collect();
+        assert_eq!(said, vec![9]);
+        let waited: u64 = (0..9).map(|a| retry_after(a).as_millis() as u64).sum();
+        assert!(waited < 30_000, "{waited} ms before Health hears it");
     }
 
     #[test]
