@@ -5,8 +5,14 @@
 //! src/main.rs hands it here first thing (`set`); tessera-core itself has no
 //! build script, so a new commit recompiles only the binary's crate.
 //!
-//!   tessera-ui 0.1.0 (beta, 7baa48d, 2026-11-17, x86-64-v3, signed release)
-//!   tessera-ui 0.1.0 (local build, 7baa48d-dirty, 2026-11-17, generic, fast profile, built locally)
+//!   tessera-ui 0.1.0 (beta, 7baa48d, 2026-11-17, x86-64-v3, fast build, release build)
+//!   tessera-ui 0.1.0 (stable, 7baa48d, 2026-11-17, x86-64-v3, release build)
+//!   tessera-ui 0.1.0 (local build, 7baa48d-dirty, 2026-11-17, generic, fast build, built locally)
+//!
+//! The binary only says what it was built as: "release build" is the
+//! release builder's label, not a checked fact. Settings adds "signed" only
+//! when the installer checked the installed file's signature (its record:
+//! about/version.rs; audit #693).
 
 use serde_json::{json, Value};
 use std::sync::OnceLock;
@@ -27,7 +33,8 @@ pub struct BuildInfo {
     pub channel: &'static str,
     /// x86-64-v3, generic, native (tuned for the computer that built it)
     pub variant: &'static str,
-    /// release (the release builder's, signed when published) or local
+    /// release (the release builder's, signed when published; the label
+    /// alone proves nothing) or local
     pub kind: &'static str,
     /// cargo's profile: release, fast, debug
     pub profile: &'static str,
@@ -67,20 +74,28 @@ impl BuildInfo {
         self.kind == "release"
     }
 
-    /// "signed release" or "built locally"
+    /// "release build" or "built locally": what it was built as, never
+    /// "signed" (that's kind_text_signed's, from the installer's check)
     pub fn kind_text(&self) -> &'static str {
-        if self.is_release() {
-            "signed release"
-        } else {
-            "built locally"
+        self.kind_text_signed(false)
+    }
+
+    /// The kind, with "signed" only when the installer verified this very
+    /// file's signature (`signed`); a local build is never signed
+    pub fn kind_text_signed(&self, signed: bool) -> &'static str {
+        match (self.is_release(), signed) {
+            (true, true) => "signed release build",
+            (true, false) => "release build",
+            _ => "built locally",
         }
     }
 
-    /// The profile when it isn't the release one ("fast profile", "dev
-    /// profile"), else ""
+    /// The profile when it isn't the release one ("fast build": Beta's
+    /// thin-LTO profile, and the local fast one; "dev profile"), else ""
     pub fn profile_text(&self) -> String {
         match self.profile {
             "" | "release" => String::new(),
+            "local" | "fast" => "fast build".into(),
             "debug" => "dev profile".into(),
             p => format!("{p} profile"),
         }
@@ -144,9 +159,15 @@ impl BuildInfo {
         s
     }
 
-    /// Settings' second line: "x86-64-v3 · signed release" (· fast profile)
+    /// Settings' second line: "x86-64-v3 · release build" (· fast build)
     pub fn details(&self) -> String {
-        let mut v = vec![self.variant_text(), self.kind_text().to_string()];
+        self.details_signed(false)
+    }
+
+    /// The second line, "signed release build" when the installer verified
+    /// the signature of the file that's running (about/version.rs)
+    pub fn details_signed(&self, signed: bool) -> String {
+        let mut v = vec![self.variant_text(), self.kind_text_signed(signed).to_string()];
         let p = self.profile_text();
         if !p.is_empty() {
             v.push(p);
@@ -199,9 +220,14 @@ mod tests {
 
     #[test]
     fn the_version_line() {
-        assert_eq!(beta().line(), "tessera-ui 0.1.0 (beta, 7baa48d, 2026-11-17, x86-64-v3, signed release)");
+        // (a label, not a check: never "signed" in the binary's own line)
+        assert_eq!(beta().line(), "tessera-ui 0.1.0 (beta, 7baa48d, 2026-11-17, x86-64-v3, release build)");
+        assert!(!beta().line().contains("signed"));
+        // (Beta's sets: the thin-LTO "local" profile reads "fast build")
+        let beta_set = BuildInfo { profile: "local", ..beta() };
+        assert_eq!(beta_set.line(), "tessera-ui 0.1.0 (beta, 7baa48d, 2026-11-17, x86-64-v3, fast build, release build)");
         let local = BuildInfo { channel: "local build", dirty: true, variant: "generic", kind: "local", profile: "fast", branch: "version", ..beta() };
-        assert_eq!(local.line(), "tessera-ui 0.1.0 (local build, 7baa48d-dirty, 2026-11-17, generic, fast profile, built locally)");
+        assert_eq!(local.line(), "tessera-ui 0.1.0 (local build, 7baa48d-dirty, 2026-11-17, generic, fast build, built locally)");
         let dev = BuildInfo { profile: "debug", kind: "local", ..beta() };
         assert_eq!(dev.line(), "tessera-ui 0.1.0 (beta, 7baa48d, 2026-11-17, x86-64-v3, dev profile, built locally)");
         // (a tarball build: nothing known but the version)
@@ -224,10 +250,13 @@ mod tests {
     #[test]
     fn what_settings_shows() {
         assert_eq!(beta().summary(), "Beta · 7baa48d · 17 November 2026");
-        assert_eq!(beta().details(), "x86-64-v3 · signed release");
+        assert_eq!(beta().details(), "x86-64-v3 · release build");
+        assert_eq!(beta().details_signed(true), "x86-64-v3 · signed release build");
         let tuned = BuildInfo { channel: "local build", branch: "rust-rewrite", variant: "native", kind: "local", profile: "fast", dirty: true, ..beta() };
         assert_eq!(tuned.summary(), "Local build of rust-rewrite · 7baa48d-dirty · 17 November 2026");
-        assert_eq!(tuned.details(), "tuned for this processor · built locally · fast profile");
+        assert_eq!(tuned.details(), "tuned for this processor · built locally · fast build");
+        // (a local build is never called signed, whatever is said)
+        assert_eq!(tuned.details_signed(true), "tuned for this processor · built locally · fast build");
         assert_eq!(BuildInfo { date: "", ..beta() }.summary(), "Beta · 7baa48d");
         assert_eq!(long_date("2026-01-02"), "2 January 2026");
         assert_eq!(long_date("2026-13-02"), "");

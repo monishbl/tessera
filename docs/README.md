@@ -7,6 +7,7 @@ Start with the [README](../README.md) or [tessera.monishbl.in](https://tessera.m
 | Doc | What's in it |
 |---|---|
 | [FEATURES.md](FEATURES.md) | Everything Tessera does, area by area, with keys and gestures |
+| [TESSERA-OVERVIEW.md](TESSERA-OVERVIEW.md) | The whole picture on one page: stack, features, what makes it fast, install, keys, history |
 | [INSTALL.md](INSTALL.md) | Requirements, the install lines, mirrors, installer options, VMs, the `tessera` command |
 | [RECOVERY.md](RECOVERY.md) | If Tessera can't log you in: getting in from a console, what protects the login, what it writes that the start depends on |
 | [material-look.md](material-look.md) | The Material look and how it differs from Glass |

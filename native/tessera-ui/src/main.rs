@@ -12,7 +12,7 @@
 //!                                `{"to":"osd",…}` for that surface (RustUi.tell)
 //!   tessera-ui --material-roles SEED dark|light [style]   print Material roles (for checking colours)
 //!   tessera-ui --seed PICTURE    print the Material seed a wallpaper gives (as matugen)
-//!   tessera-ui --version [--json]   which build: (channel, commit, date, variant, [profile,] signed release | built locally)
+//!   tessera-ui --version [--json]   which build: (channel, commit, date, variant, [profile,] release build | built locally)
 //!   tessera-ui --greeter [--style …] [--demo [STATE]]   the login screen (surfaces/greeter)
 //!   tessera-ui --update-screen [-p] DIR   the update screen update-run.sh shows (surfaces/updatescreen)
 //!   tessera-ui --look-cover [-p] DIR      the cover switch-look.sh shows (surfaces/lookcover)

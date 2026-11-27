@@ -11,7 +11,7 @@ Done and pushed (bdb631a, 0d41611, 6aebe8e), tested in the sandbox; these
 parts need the real laptop:
 - **Fingerprint**: Settings -> Lock Screen -> Fingerprint -> Install (libfprint-tod
   + libfprint-2-tod1-broadcom + fprintd from the AUR), then enrol a finger.
-  Check: the Broadcom ControlVault 3 (0a5c:5843) shows up in fprintd; the lock
+  Check: the reader shows up in fprintd; the lock
   screen takes a finger and a password at once; password prompts and sudo wait
   ~10 s for a finger then ask for the password; the login screen (ly).
 - **Dictation** (confirmed working by you, 1 Nov): Settings -> Dictation -> Install (whisper-cpp), then Download
@@ -35,7 +35,7 @@ All pushed, tested in the sandbox; these parts need the real laptop:
   with curl/mesa found both in /var/cache/pacman/pkg). The recovery window
   (shell stopping 3x in 15 min after an update) and `tessera undo-update` from a
   text console were only checked up to the password. Snapshots in the boot
-  menu: the switch turns grub-btrfsd on (it's off on this laptop); then the
+  menu: the switch turns grub-btrfsd on (when it's off); then the
   GRUB "snapshots" submenu, booting one, and the island's notice. Keeping a
   snapshot is done in Btrfs Assistant (the page opens it).
 - **Shake to find the pointer**: the ring was checked in the sandbox; the
@@ -66,14 +66,14 @@ Still to check with the real things:
   the next update's native helpers); Outlook events and To Do tasks appear.
 - **Drive / OneDrive folders**: Install rclone, Connect: the browser sign-in,
   then ~/Google Drive opens in Dolphin.
-- **Android phone**: the watcher was checked with the Realme over USB (31 Oct:
-  name, Android 14, battery, charging; it now shows "realme GT NEO 3T", not
-  "RMX3371"). Still to check: Settings -> Phone -> Install (scrcpy isn't
+- **Android phone**: the watcher was checked with an Android 14 phone over USB (31 Oct:
+  name, battery, charging; it now shows the phone's marketing name, not its
+  model number). Still to check: Settings -> Phone -> Install (scrcpy isn't
   installed yet); Show Screen; pair by QR; webcam (Set Up asks for the
   password: v4l2loopback).
-- **Mirroring**: Screen Mirroring tile with a Miracast TV (this laptop's Wi-Fi reports Wi-Fi Direct (iw), so it should work)
+- **Mirroring**: Screen Mirroring tile with a Miracast TV (on a Wi-Fi card that reports Wi-Fi Direct (iw) it should work)
   and with a Chromecast.
-- **Fast Pair** (connecting confirmed with the realme Buds T100, 1 Nov; still to see: left/right/case levels and the 20%/10% warnings): the WH-CH720N or realme Buds T100 in pairing mode -> the
+- **Fast Pair** (connecting confirmed with Fast Pair earbuds, 1 Nov; still to see: left/right/case levels and the 20%/10% warnings): Fast Pair headphones or earbuds in pairing mode -> the
   island's Connect; open the case while connected -> batteries.
 - **Face unlock**: Settings -> Lock Screen -> Face -> Install (AUR,
   howdy-next, compiles), Set Up, Add Face, lock and look. Check that
@@ -82,7 +82,7 @@ Still to check with the real things:
 
 ## Quick Share: faster Bluetooth and Wi-Fi Direct next to your Wi-Fi (merged 31 Oct)
 
-Checked with the Realme over USB adb and merged into `main` (a02e2d9):
+Checked with an Android phone over USB adb and merged into `main` (a02e2d9):
 - **L2CAP:** Bluetooth-only transfers, byte-identical both ways. Phone →
   computer 51-104 KB/s (was 7 KB/s over GATT); computer → phone 100 KB in
   under a second, after fixing writes bigger than the phone's MTU.
@@ -105,7 +105,7 @@ Checked with the Realme over USB adb and merged into `main` (a02e2d9):
 
 ## Quick Share: tested with a real phone (31 Oct)
 
-Realme GT Neo 3T (Android 14, Play services 26.34) over USB adb, both ways:
+An Android 14 phone over USB adb, both ways:
 - Phone → computer, same Wi-Fi: works (found over mDNS or Bluetooth; a
   3 MB photo moves to the network and arrives in 0.3 s, byte-identical).
 - Phone → computer, no shared network: the phone finds it over Bluetooth
@@ -140,8 +140,8 @@ Realme GT Neo 3T (Android 14, Play services 26.34) over USB adb, both ways:
 ## Needs your check on real hardware or accounts
 
 - Calls: a real Discord and WhatsApp call (Answer/Decline, Missed call, the Call pill after answering).
-- Displays with the BenQ: per-display spaces (its own 1, 2, 3; kept on unplug), the connect animation timing (1.8 s), Overview moves across displays with a real mouse, the switch cue (Off / Glow / Dim).
-- BenQ speakers in Control Center → Sound.
+- Displays with an external display: per-display spaces (its own 1, 2, 3; kept on unplug), the connect animation timing (1.8 s), Overview moves across displays with a real mouse, the switch cue (Off / Glow / Dim).
+- The external display's speakers in Control Center → Sound.
 - Claude Desktop: Quick Entry stays open and looks right; no wallet prompt (sign in once).
 - Webex: Super+Q closes the window and keeps it in the tray (open it, press Super+Q, report).
 - Island: flick/×/Esc to dismiss, Recent list, the Tessera group in Notification Center.
