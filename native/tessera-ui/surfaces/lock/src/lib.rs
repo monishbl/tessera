@@ -966,7 +966,7 @@ impl Lock {
         let roles: std::collections::HashMap<String, String> = if look.material { crate::theme::look_roles(&look).into_iter().collect() } else { Default::default() };
         let r = |k: &str| roles.get(k).map(|v| hex(v)).unwrap_or(slint::Color::from_rgb_u8(255, 255, 255));
         let name = account_name();
-        let h24 = b(&st.shell.cfg["appearance"], "clock24", false);
+        let h24 = tessera_core::locale::clock24(&st.shell.cfg);
         for w in &self.wins {
             // lock.text "auto": dark ink where the wallpaper is light behind
             // the clock and date (this screen's top 6..44 %, both layouts'
@@ -1029,7 +1029,7 @@ impl Lock {
             self.wall_path = path.clone();
         }
         self.wall_ink.follow(&path, &st.tx);
-        let h24 = b(&st.shell.cfg["appearance"], "clock24", false);
+        let h24 = tessera_core::locale::clock24(&st.shell.cfg);
         let (h, m) = (t.h as u32, t.mi as u32);
         let date = logic::date_long(t.wday as u32, t.d as u32, t.mo as u32);
         let hh = logic::hour(h, h24);
@@ -1066,9 +1066,11 @@ impl Lock {
         use crate::services::calendar as cal;
         let now = crate::util::now_ms();
         let t = cal::local(now);
-        let h24 = b(&st.shell.cfg["appearance"], "clock24", false);
+        let h24 = tessera_core::locale::clock24(&st.shell.cfg);
+        let start = tessera_core::locale::week_start(&st.shell.cfg);
         let first = cal::local(cal::make(t.y, t.mo, 1, 12, 0, 0));
-        let lead = logic::lead(first.wday);
+        let lead = logic::lead(first.wday, start);
+        let letters: Vec<slint::SharedString> = tessera_core::locale::weekday_letters(start).into_iter().map(Into::into).collect();
         let (from, to) = (cal::make(t.y, t.mo, 1 - lead, 0, 0, 0), cal::make(t.y, t.mo, 1 - lead + 42, 0, 0, 0));
         let c = st.shell.get::<Calendar>();
         let list = c.map(|c| c.between(from, to)).unwrap_or_default();
@@ -1144,9 +1146,10 @@ impl Lock {
         }));
         items.truncate(8);
         let every = daily.values().cloned().collect::<Vec<_>>().join(", ");
-        let month = format!("{} {}", &logic::month_name(t.mo as u32)[..3], t.y);
+        let month = logic::month_short(t.mo as u32, t.y);
         self.each(|d| {
             d.set_month(month.clone().into());
+            d.set_letters(ModelRc::new(VecModel::from(letters.clone())));
             d.set_every_day(every.clone().into());
             d.set_cal_items(ModelRc::new(VecModel::from(items.clone())));
         });
@@ -1157,7 +1160,7 @@ impl Lock {
         let bat = st.shell.get::<Battery>().cloned().unwrap_or_default();
         let wx = st.shell.get::<Weather>().cloned().unwrap_or_default();
         let material = st.shell.look.material;
-        let h24 = b(&st.shell.cfg["appearance"], "clock24", false);
+        let h24 = tessera_core::locale::clock24(&st.shell.cfg);
         let now = crate::util::now_ms();
         let next = st.shell.get::<Calendar>().map(|c| c.between(now, now + 14 * 86_400_000)).unwrap_or_default().into_iter().find(|e| e.all_day || e.end > now);
         let todos = st.shell.get::<Todos>().map(|t| t.list.iter().filter(|t| !t.done).count()).unwrap_or(0);

@@ -163,6 +163,8 @@ export global LockData {
     in property <image> photo;
     in property <bool> has-photo;
     in property <[LDay]> days;
+    // the calendar's weekday letters, from the week's first day (Rust: tessera_core::locale)
+    in property <[string]> letters: ["M", "T", "W", "T", "F", "S", "S"];
     in property <string> month;
     in property <string> every-day;
     in property <string> day-title: "Today";
@@ -448,7 +450,7 @@ component BedCalendar inherits Rectangle {
         // M T W …, then six weeks of dates
         Rectangle {
             height: 16px + 6 * root.ch;
-            for l[i] in ["M", "T", "W", "T", "F", "S", "S"]: Text {
+            for l[i] in LockData.letters: Text {
                 x: i * root.cell;
                 y: 0;
                 width: root.cell;

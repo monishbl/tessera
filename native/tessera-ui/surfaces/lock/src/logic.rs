@@ -4,6 +4,8 @@
 //! against burn-in and its night, the clock's and the date's text, the
 //! notification shelf, the morph's ramps. The part (mod.rs) keeps the state.
 
+use tessera_core::locale;
+
 /// pam_faillock's settings (faillock.conf), its defaults when unread
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Faillock {
@@ -275,21 +277,22 @@ pub fn hm(h: u32, m: u32, h24: bool) -> String {
     }
 }
 
-const DAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+// (names in the system's language: tessera_core::locale, LC_TIME; English
+// without one)
 
 /// Qt's "dddd d MMMM": "Thursday 5 November" (`wday` 0 = Sunday)
 pub fn date_long(wday: u32, day: u32, month0: u32) -> String {
-    format!("{} {day} {}", DAYS[(wday % 7) as usize], MONTHS[(month0 % 12) as usize])
+    format!("{} {day} {}", locale::day_name(wday % 7, false), locale::month_name(month0 % 12 + 1, false))
 }
 
 /// Qt's "d MMM": "5 Nov" (the dynamic clock with 24-hour time)
 pub fn date_short(day: u32, month0: u32) -> String {
-    format!("{day} {}", &MONTHS[(month0 % 12) as usize][..3])
+    format!("{day} {}", locale::month_name(month0 % 12 + 1, true))
 }
 
-pub fn month_name(month0: u32) -> &'static str {
-    MONTHS[(month0 % 12) as usize]
+/// Bedside Mode's calendar's header: "Nov 2026"
+pub fn month_short(month0: u32, year: i32) -> String {
+    format!("{} {year}", locale::month_name(month0 % 12 + 1, true))
 }
 
 /// Notifications.timeLabel: "now", "5m ago", else the time it came
@@ -363,9 +366,11 @@ pub fn standby_weight(setting: &str, material: bool) -> i32 {
 }
 
 /// Bedside Mode's calendar: how many days of the month before fill its
-/// first week (Monday first) when the 1st is on `first_wday` (0 = Sunday)
-pub fn lead(first_wday: i32) -> i32 {
-    (first_wday + 6).rem_euclid(7)
+/// first week, the week starting on `start` (0 Sunday … 6 Saturday:
+/// appearance.weekStart or the system's language), when the 1st is on
+/// `first_wday` (0 = Sunday)
+pub fn lead(first_wday: i32, start: u32) -> i32 {
+    locale::column(first_wday.rem_euclid(7) as u32, start) as i32
 }
 
 /// Whether to treat the face camera's or the reader's tries as given back
@@ -608,9 +613,14 @@ mod tests {
     #[test]
     fn months() {
         // November 2026 starts on a Sunday: six days of October first
-        assert_eq!(lead(0), 6);
-        assert_eq!(lead(1), 0);
-        assert_eq!(lead(6), 5);
+        assert_eq!(lead(0, 1), 6);
+        assert_eq!(lead(1, 1), 0);
+        assert_eq!(lead(6, 1), 5);
+        // weeks from Sunday: none; from Saturday: one
+        assert_eq!(lead(0, 0), 0);
+        assert_eq!(lead(0, 6), 1);
+        assert_eq!(lead(6, 6), 0);
+        assert_eq!(month_short(10, 2026), "Nov 2026");
         assert!(came_back(true, 0, 0));
         assert!(came_back(false, 40_000, 0));
         assert!(!came_back(false, 20_000, 0));
