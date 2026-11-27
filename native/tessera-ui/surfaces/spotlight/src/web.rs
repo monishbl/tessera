@@ -13,8 +13,33 @@ use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::sync::{Arc, Mutex};
 
-/// How long typing has to pause before the words go out
-pub const DEBOUNCE_MS: u64 = 500;
+/// How long typing has to stop before the words go out: long enough that
+/// a pause mid-word doesn't send each half-typed word (Google takes a burst
+/// of searches for a robot and asks for its check)
+pub const DEBOUNCE_MS: u64 = 1200;
+/// The fewest characters worth a web search (fewer: only the local results)
+pub const MIN_CHARS: usize = 3;
+/// At most one search this often, and this many a minute; past that the
+/// next one waits for its turn instead of going out
+pub const MIN_GAP_MS: u64 = 4000;
+pub const PER_MINUTE: usize = 5;
+
+/// How long (ms) until the next search may go out, from when the last ones
+/// did (`starts`, ms, oldest first) and now: 0, at once
+pub fn wait_ms(starts: &[u64], now: u64) -> u64 {
+    let mut w = starts.last().map_or(0, |&last| (last + MIN_GAP_MS).saturating_sub(now));
+    let recent: Vec<u64> = starts.iter().copied().filter(|&t| t + 60_000 > now).collect();
+    if recent.len() >= PER_MINUTE {
+        let oldest = recent[recent.len() - PER_MINUTE];
+        w = w.max((oldest + 60_000).saturating_sub(now));
+    }
+    w
+}
+
+/// Enough typed for a web search
+pub fn long_enough(q: &str) -> bool {
+    q.trim().chars().count() >= MIN_CHARS
+}
 /// The page's width (CSS px): wide enough that Google puts its knowledge
 /// panel in a column of its own, so the results' column is the one shown
 pub const RENDER_W: i32 = 1200;
@@ -194,6 +219,27 @@ impl Drop for Renderer {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn searches_wait_their_turn() {
+        assert_eq!(wait_ms(&[], 100_000), 0);
+        // one a moment ago: the rest of the gap
+        assert_eq!(wait_ms(&[99_000], 100_000), 3_000);
+        assert_eq!(wait_ms(&[90_000], 100_000), 0);
+        // five in the last minute: until the oldest of them is a minute old
+        let five = [50_000, 60_000, 70_000, 80_000, 90_000];
+        assert_eq!(wait_ms(&five, 100_000), 10_000);
+        // older ones don't count
+        assert_eq!(wait_ms(&[1_000, 2_000, 3_000, 4_000, 90_000], 100_000), 0);
+    }
+
+    #[test]
+    fn half_a_word_isnt_searched() {
+        assert!(!long_enough("if"));
+        assert!(!long_enough("  a "));
+        assert!(long_enough("ifs"));
+        assert_eq!(DEBOUNCE_MS, 1200);
+    }
+
     use super::*;
     use serde_json::json;
 

@@ -596,6 +596,8 @@ struct Web {
     plain: bool,
     /// when the robot check last came (unix seconds): web::backed_off
     blocked_at: Option<u64>,
+    /// when the last searches went out (unix ms, oldest first): web::wait_ms
+    starts: Vec<u64>,
 }
 
 /// The state key of the one-time note under the web results
@@ -1594,7 +1596,7 @@ impl Search {
     /// or a sum, or with the setting off
     fn web_typed(&mut self, st: &State) {
         let q = self.text.trim().to_string();
-        let want = self.web.on && self.active && !self.answering && rank::wants_web(&q);
+        let want = self.web.on && self.active && !self.answering && rank::wants_web(&q) && web::long_enough(&q);
         if !want {
             if self.web.loading || self.web.shot.is_some() || !self.web.query.is_empty() {
                 self.web_stop();
@@ -1619,6 +1621,13 @@ impl Search {
     /// Typing paused: draw the results page (one render at a time)
     fn web_go(&mut self, st: &State, gen: u64) {
         if gen != self.web.gen || !self.active || self.web.query.is_empty() {
+            return;
+        }
+        // (its turn: no more than one every few seconds, a few a minute)
+        let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+        let wait = web::wait_ms(&self.web.starts, now_ms);
+        if wait > 0 {
+            self.after(st, T_WEB, wait, move || Msg::WebGo(gen));
             return;
         }
         let url = tessera_core::weblink::search::url_for(self.web.engine, &self.web.query);
@@ -1665,7 +1674,10 @@ impl Search {
             move || to2(Box::new(Msg::WebEnded(gen))),
         );
         self.web.loading = started;
-        if !started {
+        if started {
+            self.web.starts.retain(|&t| t + 60_000 > now_ms);
+            self.web.starts.push(now_ms);
+        } else {
             self.web_clear();
         }
         self.push(st);
