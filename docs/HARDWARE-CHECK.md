@@ -37,7 +37,7 @@ replaced it. Do them on the laptop with the devices listed. Mark each one
 - [ ] **Tray menus:** right-click the Claude, Webex and Discord tray icons.
       Each menu has entries. *(fixed 21 Nov)*
 
-## With your phone (Realme, about 15 min)
+## With your phone (an Android phone, about 15 min)
 
 - [ ] **Quick Share, phone → laptop:** on the same Wi-Fi, and with no shared
       network.
@@ -50,11 +50,11 @@ replaced it. Do them on the laptop with the devices listed. Mark each one
 
 ## With other devices
 
-- [ ] **Earbuds (realme Buds / WH-CH720N):** Fast Pair connects. Left /
+- [ ] **Fast Pair earbuds or headphones:** Fast Pair connects. Left /
       right / case levels show, and the 20% and 10% warnings appear.
       Bluetooth headphones become the sound output.
-- [ ] **BenQ display:** per-display spaces (kept on unplug), the connect
-      animation, Overview across displays, pointer boundaries, and the BenQ
+- [ ] **An external display:** per-display spaces (kept on unplug), the connect
+      animation, Overview across displays, pointer boundaries, and the display's
       speakers in Control Center → Sound.
 - [ ] **TV:** Screen Mirroring (Miracast), and Chromecast with a local video
       and a YouTube link.

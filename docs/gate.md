@@ -1,22 +1,23 @@
 # The gate: smoothness and stability before Beta
 
 `tools/gate/` decides whether a change to the Rust shell (native/tessera-ui)
-may go to the Beta branch. It runs on the build machine (server1), builds the
+may go to the Beta branch. It runs on the build machine (`<builder>`), builds the
 baseline and the candidate, plays the same scripted session on each in a hidden
 sandbox arena, and compares the two against fixed budgets. Exit code 0 = pass.
+(`<builder>` and `<checkout>`, its build checkout, are placeholders: which machine and folder they are is in the operator's private notes.)
 
 ## How to run it
 
-On server1, from a checkout that has `tools/gate` (e.g. `~/tb-d`):
+On `<builder>`, from a checkout that has `tools/gate` (`<checkout>`):
 
     tools/gate/run.sh <baseline-ref> <candidate-ref>
     # e.g. tools/gate/run.sh rust-rewrite gate-candidate
 
-- Refs are anything `~/tessera-build` knows (a sha, or a branch pushed there:
-  `git push server1 mybranch`); branches are also tried as `tb/<name>`.
+- Refs are anything the build checkout (`GATE_TB`, `<checkout>`) knows (a sha, or a branch pushed there:
+  `git push <builder> mybranch`); branches are also tried as `tb/<name>`.
 - Each side is built in its own copy, `~/tb-gate-base` and `~/tb-gate-cand`
-  (`git clone --shared ~/tessera-build`; the target is warmed once from
-  `~/tessera-build/native/tessera-ui/target/fast` with reflinks; only `fast`
+  (`git clone --shared <checkout>`; the target is warmed once from
+  `<checkout>/native/tessera-ui/target/fast` with reflinks; only `fast`
   is copied, the 71 GB `debug` is no use here), with
   `cargo build --profile fast --locked` through `~/bin/tbuild` (a low-weight
   cgroup scope that `~/bin/tgovernor` watches; plain
@@ -49,7 +50,7 @@ must leave the machine to others between its holds.
 
 ### A busy machine
 
-server1 is also used for work and for other agents' builds. While measuring
+`<builder>` is also used for work and for other agents' builds. While measuring
 a round, run.sh creates `~/.cache/tessera-governor.hold`: `~/bin/tgovernor`
 then freezes every Tessera build's cgroup within ~2 s (run.sh waits until
 `~/.cache/tessera-governor.json` says `"hold": true` with no build running)
@@ -172,7 +173,7 @@ A metric fails when candidate > baseline + max(abs, rel × baseline).
 
 ## Noise: five A/A runs (baseline = candidate = 41539ac)
 
-16 Nov 2026 on server1, one run each (raw data in `~/tb-gate-reports/aa1..aa5`;
+16 Nov 2026 on `<builder>`, one run each (raw data in `~/tb-gate-reports/aa1..aa5`;
 aa1 went through a retry, the first attempt flagged UNRELIABLE at 9.8 tasks
 running). The A/A differences, candidate − baseline:
 
@@ -193,7 +194,7 @@ What it showed, and what the gate does about it:
   4-9 long stalls, the same binary), and one after the other the later run
   differs. Hence two rounds with the arenas swapped, averaged: aa3+aa4
   combined that way agree within 1 long stall and 26 ms.
-- **Stalls of 16-33 ms are GPU jitter** here (server1's NVIDIA under a hidden
+- **Stalls of 16-33 ms are GPU jitter** here (`<builder>`'s NVIDIA under a hidden
   KWin): ±20 between runs of one binary. Over 33 ms is steadier. Budgets:
   all stalls +max(15, 40 %) and +max(800 ms, 40 %); over 33 ms +max(8, 30 %)
   and +max(400 ms, 30 %).
@@ -261,7 +262,7 @@ loop's own work (`msg host …`) shows 0-2 stalls per run.
 the same way (stall chains grouped as in the gate; wakes lines give the
 seconds covered). Read-only, 16 Nov 2026, ~22:00:
 
-| | laptop, current session | laptop, the session before (`.log.1`) | server1's own session | gate sandbox (A/A, per run) |
+| | laptop, current session | laptop, the session before (`.log.1`) | `<builder>`'s own session | gate sandbox (A/A, per run) |
 |---|---|---|---|---|
 | time covered (wake-log seconds) | 1.0 h | 7.1 h | 0.3 h (locked the whole time) | 5 min, mostly scripted |
 | quiet seconds (nothing drawn) | 65 % | 67 % | 0 % (the lock screen animates) | idle windows: 0.4-0.55 frames/s |
@@ -281,11 +282,11 @@ What it says:
   workspaces, close) exercises it, but lightly; real stalls there come
   from many windows and long uptime.
 - The sandbox's stalls are almost all **draws** (`femtovg draw` of a
-  surface on first open or a page switch). On server1's NVIDIA GPU under a
+  surface on first open or a page switch). On `<builder>`'s NVIDIA GPU under a
   hidden KWin, draws of 16-33 ms jitter run to run, so the gate budgets
   stalls over 33 ms on their own (steadier) and the 16-33 ms ones loosely.
 - **Frame-callback losses** are frequent in real sessions (the bar on the
-  laptop, the lock on server1: an output that stops sending frame callbacks
+  laptop, the lock on `<builder>`: an output that stops sending frame callbacks
   while dimmed or locked) and nearly absent in the sandbox, whose headless
   output always answers. The gate still counts them, but a regression there
   would mostly show in real use.
@@ -332,9 +333,9 @@ Spotlight, the dock, windows, 120 Hz, scale 1.5, the lock), then 10 minutes
 alone; `tools/gate/memmap.py <pid>` sums a process's smaps by kind (heap,
 arenas, other anonymous, GPU, fonts, binary, libraries). `PROBE_ENV` adds env
 (`__EGL_VENDOR_LIBRARY_FILENAMES=…50_mesa.json DRI_PRIME=pci-0000_00_02_0`
-draws on server1's Intel GPU with Mesa's iris, the laptop's driver; frames
+draws on `<builder>`'s Intel GPU with Mesa's iris, the laptop's driver; frames
 stay black on the NVIDIA desktop, the memory is real). Read RssAnon + VmSwap:
-server1 swaps idle sandboxes out within minutes, and RSS then reads low.
+`<builder>` swaps idle sandboxes out within minutes, and RSS then reads low.
 
 Where it went (round ee8e8dc, glibc defaults):
 - **malloc arenas**: glibc makes an arena per thread (8 per core allowed,
@@ -396,7 +397,7 @@ the rest 0.3-6 ms either way).
 
 ## Limits and what's left
 
-- The sandbox draws through a hidden KWin on server1's NVIDIA GPU, not the
+- The sandbox draws through a hidden KWin on `<builder>`'s NVIDIA GPU, not the
   laptop's Intel one: absolute numbers (draw times, stall counts) differ from
   the laptop; only the comparison is meant to be trusted.
 - The glass plugin, Hyprland config and sandbox scripts are the gate
