@@ -4845,6 +4845,7 @@ dependencies = [
  "slint-build",
  "smithay-client-toolkit",
  "tessera-core",
+ "tessera-osk",
 ]
 
 [[package]]

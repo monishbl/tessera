@@ -6,6 +6,7 @@
 // Bluetooth pairing (`pair`: src/btagent.rs): the device, its code, Pair /
 // Cancel, and the field only for a PIN or passkey typed here.
 
+import { CapsHint, OskButton } from "@tessera/password.slint";
 import { Theme, Icon } from "@tessera/theme.slint";
 import { SymIcon, Symbols } from "@tessera/symbols.slint";
 
@@ -22,6 +23,17 @@ export component PolkitDialog inherits Window {
     in property <string> user: "your account";
     in property <string> hero; // Material: the hero's shape (0..100 box)
     in property <string> glyph: "\u{e2fe}"; // the hero's glyph (Phosphor; Material maps it)
+    // Caps Lock, and the keyboard layout when several are set up (#761);
+    // the on-screen keyboard's button beside the field, whether it's up and
+    // what it covers, the dialog lifting above it (#763)
+    in property <bool> caps;
+    in property <string> layout;
+    in property <bool> osk-button;
+    in property <bool> osk-up;
+    in property <length> osk-covers: 360px;
+    callback osk();
+    // (#760: a password as the field draws it, for its width)
+    pure callback mask(string) -> string;
     // Bluetooth pairing: the line under the title, the code shown large,
     // whether the field shows (a PIN or passkey typed here), digits only,
     // the main button (none: Cancel alone), and whether it needs the field
@@ -46,8 +58,9 @@ export component PolkitDialog inherits Window {
     out property <length> body-w: 340px;
     out property <length> body-h: col.preferred-height + 2 * pad;
     out property <length> body-x: (root.width - body-w) / 2 + shake;
-    // (never above the screen's top, however long the message)
-    out property <length> body-y: max(16px, (root.height - body-h) / 2 - 40px);
+    // (never above the screen's top, however long the message; above the
+    // on-screen keyboard while it's up)
+    out property <length> body-y: max(16px, min((root.height - body-h) / 2 - 40px, osk-up ? root.height - osk-covers - 16px - body-h : root.height));
     out property <float> body-scale: 0.96 + 0.04 * progress;
     out property <float> body-opacity: progress;
 
@@ -184,12 +197,23 @@ export component PolkitDialog inherits Window {
                 background: Theme.material ? Theme.m3-surface-container-highest : Theme.fill;
                 border-width: Theme.material ? (field.has-focus || error != "" ? 2px : 0px) : 1px;
                 border-color: error != "" ? (Theme.material ? Theme.m3-error : Theme.danger) : field.has-focus ? (Theme.material ? Theme.m3-primary : Theme.accent) : Theme.separator;
-                Rectangle {
+                // (#760: the text scrolls with the caret: the input in a
+                // clipping box, its end kept in sight; Slint's TextInput
+                // doesn't scroll by itself, and a long password's newest
+                // dots and caret were cut off)
+                pbox := Rectangle {
                     x: Theme.material ? 16px : 12px;
-                    width: parent.width - 2 * self.x;
+                    width: parent.width - 2 * self.x - (root.osk-button && root.secret ? (Theme.material ? 36px : 28px) : 0px);
                     clip: true;
+                    pdots := Text {
+                        visible: false;
+                        text: root.secret ? root.mask(field.text) : field.text;
+                        font-size: Theme.material ? 16px : Theme.body;
+                        accessible-role: none;
+                    }
                     field := TextInput {
-                        width: 100%;
+                        x: min(0px, pbox.width - pdots.preferred-width - 4px);
+                        width: max(pbox.width, pdots.preferred-width + 4px);
                         height: 100%;
                         vertical-alignment: center;
                         input-type: secret ? InputType.password : numeric ? InputType.number : InputType.text;
@@ -219,6 +243,28 @@ export component PolkitDialog inherits Window {
                         accessible-role: none;
                     }
                 }
+                // The on-screen keyboard's button, at the field's end (#763)
+                if root.osk-button && root.secret: OskButton {
+                    x: parent.width - self.width - (Theme.material ? 6px : 2px);
+                    y: (parent.height - self.height) / 2;
+                    width: Theme.material ? 40px : 32px;
+                    height: self.width;
+                    icon-size: Theme.material ? 18px : 16px;
+                    ink: Theme.material ? Theme.m3-on-surface-variant : Theme.secondary;
+                    active: root.osk-up;
+                    clicked => {
+                        field.focus();
+                        root.osk();
+                    }
+                }
+            }
+            // Caps Lock, and the layout when several are set up (#761)
+            if !finger-wait && field-shown && secret && (caps || layout != ""): CapsHint {
+                caps: root.caps;
+                layout: root.layout;
+                ink: Theme.secondary;
+                warn: Theme.material ? Theme.m3-on-surface : Theme.label;
+                font-size: Theme.material ? 13px : Theme.small;
             }
             if error != "": Text {
                 horizontal-alignment: center;

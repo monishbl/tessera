@@ -44,7 +44,7 @@ use smithay_client_toolkit::{
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
-        keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
+        keyboard::{KeyEvent, KeyboardHandler, Keymap, Keysym, Modifiers, RawModifiers},
         pointer::{cursor_shape::CursorShapeManager, PointerEvent, PointerEventKind, PointerHandler},
         Capability, SeatHandler, SeatState,
     },
@@ -1566,12 +1566,22 @@ impl KeyboardHandler for State {
     fn release_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlKeyboard, _: u32, e: KeyEvent) {
         self.key(e, KeyKind::Release);
     }
+    /// A new keymap: the layouts' names (keystate.rs; the password fields' hint)
+    fn update_keymap(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlKeyboard, keymap: Keymap<'_>) {
+        if crate::keystate::set_keymap(&keymap.as_string()) {
+            self.each_part(|p, st| p.keys_changed(st));
+        }
+    }
     /// The seat's modifiers: Slint follows modifier key presses, so one it
     /// didn't see go down or up (a virtual keyboard's, wtype -M) is pressed
     /// or released for it here
-    fn update_modifiers(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlKeyboard, _: u32, m: Modifiers, _: RawModifiers, _: u32) {
+    fn update_modifiers(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlKeyboard, _: u32, m: Modifiers, _: RawModifiers, layout: u32) {
         if crate::env::is_set("DEBUG") {
-            eprintln!("debug: modifiers {m:?} (sent {:?})", self.mods_sent);
+            eprintln!("debug: modifiers {m:?} layout {layout} (sent {:?})", self.mods_sent);
+        }
+        // (Caps Lock and the layout, for the password fields' hint: #761)
+        if crate::keystate::set_modifiers(m.caps_lock, layout) {
+            self.each_part(|p, st| p.keys_changed(st));
         }
         let Some(s) = self.keyboard_on.clone() else { return };
         for (i, want) in [m.shift, m.ctrl, m.alt, m.logo].into_iter().enumerate() {

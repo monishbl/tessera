@@ -13,6 +13,15 @@
 //! character its cap shows ("!" for Shift + 1), where wtype -M shift -k 1
 //! typed "1". Material's press swell (ElasticControl) is a small scale on
 //! Material's fast spring here.
+//!
+//! Beside the password fields (#763): the lock's and the admin dialog's
+//! keyboard button ask Panels (panels.toggle "keyboard"); over the session
+//! lock it shows and takes touches through Hyprland's `above_lock = 2`
+//! layer rule for its namespace (hypr/tessera/rules.lua), and its keys go
+//! to the lock, which holds the keyboard. The login screen's process has no
+//! Panels: it runs this part itself and sends it "toggle" (State::send_part
+//! with a shell::Command). Opened without a screen, it goes where the
+//! keyboard focus is.
 
 pub mod ui {
     slint::include_modules!();
@@ -39,7 +48,7 @@ use std::rc::Rc;
 
 const NAME: &str = "osk";
 pub const NS: &str = "tessera:keyboard";
-const M: f32 = 20.0; // room for the shadow round the keyboard
+const M: f32 = tessera_core::surfaces::kit::OSK_SHADOW; // room for the shadow round the keyboard
 
 enum Msg {
     Press(i32, i32),
@@ -96,7 +105,12 @@ impl Osk {
     }
 
     fn open(&mut self, st: &mut State, screen: Option<String>) {
-        let output = screen.or_else(|| self.win.as_ref().map(|w| w.output.clone())).or_else(|| st.outputs_now().first().map(|o| o.1.clone()));
+        // (no screen said: this one's, else where the keyboard focus is, the
+        // login screen's field, else the first)
+        let output = screen
+            .or_else(|| self.win.as_ref().map(|w| w.output.clone()))
+            .or_else(|| st.keyboard_surface().map(|s| s.output.clone()).filter(|o| !o.is_empty()))
+            .or_else(|| st.outputs_now().first().map(|o| o.1.clone()));
         let Some(output) = output else { return };
         if self.win.as_ref().is_some_and(|w| w.output == output) {
             return;
@@ -198,11 +212,20 @@ impl Part for Osk {
         match cmd.cmd.as_str() {
             "open" => self.open(st, cmd.screen.clone()),
             "close" => self.close(st),
+            // (the login screen's button: its own process has no Panels)
+            "toggle" if self.win.is_some() => self.close(st),
+            "toggle" => self.open(st, cmd.screen.clone()),
             _ => {}
         }
     }
 
-    fn message(&mut self, _: &mut State, msg: Box<dyn Any + Send>) {
+    fn message(&mut self, st: &mut State, msg: Box<dyn Any + Send>) {
+        // (a command from another part of this process: State::send_part,
+        // the login screen's keyboard button)
+        let msg = match msg.downcast::<Command>() {
+            Ok(c) => return self.command(st, &c),
+            Err(m) => m,
+        };
         let Ok(m) = msg.downcast::<Msg>() else { return };
         match *m {
             Msg::Press(r, c) => self.press(r, c),

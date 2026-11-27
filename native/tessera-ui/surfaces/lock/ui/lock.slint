@@ -10,6 +10,7 @@
 import { Theme, Icon } from "@tessera/theme.slint";
 import { SymIcon, Symbols } from "@tessera/symbols.slint";
 import { Busy } from "@tessera/widgets.slint";
+import { CapsHint, OskButton } from "@tessera/password.slint";
 
 export struct LNote {
     icon: image,
@@ -46,7 +47,13 @@ export global LockData {
     // Settings and the look
     in property <bool> ios: true;
     in property <string> plate: "glass"; // glass | frost | solid
+    // dark ink over a light wallpaper, measured where the text sits (#307):
+    // the clock and date (top), the sign-in block (the bottom middle: your
+    // name, the field, the error, the hints), the cards' column beside the
+    // clock ("N more")
     in property <bool> dark-ink;
+    in property <bool> dark-ink-low;
+    in property <bool> dark-ink-side;
     in property <string> note-style: "shelf"; // shelf | column | icons
     in property <bool> previews;
     in property <string> lock-fx: "zoom";
@@ -74,6 +81,9 @@ export global LockData {
     in property <color> m-clock-ink3: white;
     in property <color> m-ink: white;
     in property <color> m-ink2: white;
+    // (the same where the sign-in and the cards' column sit, #307)
+    in property <color> m-ink-low: white;
+    in property <color> m-ink-side: white;
     in property <color> sb-m-ink: white;
     in property <color> sb-m-ink2: white;
     in property <color> sb-m-ink3: white;
@@ -133,6 +143,20 @@ export global LockData {
     in property <bool> has-avatar;
     // The field, the reader, the camera
     in-out property <string> password;
+    // (#760: the dots as the field draws them, for its width: the field
+    // scrolls to keep its end in sight)
+    pure callback mask(string) -> string;
+    // Caps Lock is on, and the keyboard layout's name when several are set
+    // up (tessera_core::keystate, #761)
+    in property <bool> caps;
+    in property <string> layout;
+    // The on-screen keyboard (#763): its button shows (keyboard.oskButton),
+    // it's up on this screen, and how much of the screen's bottom it takes
+    // (the sign-in lifts above it)
+    in property <bool> osk-button;
+    in property <bool> osk-up;
+    in property <length> osk-covers: 360px;
+    callback osk();
     in property <string> error;
     in property <int> error-count;
     in property <bool> busy;
@@ -375,72 +399,33 @@ component BedCalendar inherits Rectangle {
     property <color> ink2: ink.with-alpha(0.6);
     property <color> ink3: ink.with-alpha(0.35);
     property <length> cell: self.width / 7;
-    property <length> ch: 22px;
-    property <length> btn: Theme.material ? 32px : 24px;
+    // (#753: sized from the card: the rows are as tall as leave room for
+    // the day's first event, 16 to 22 px; on a 1366x768 screen the list was
+    // cut off whole)
+    property <length> head-h: Theme.material ? 32px : 26px;
+    property <length> day-h: Theme.material ? 32px : 22px;
+    property <length> item-h: Theme.material ? 44px : 36px;
+    property <length> every-h: LockData.every-day != "" ? 16px + 8px : 0px;
+    property <length> ch: max(16px, min(22px, (root.height - head-h - 8px - 16px - 8px - every-h - day-h - 8px - item-h) / 6));
+    // the day's lines that fit under the month (the rest aren't drawn)
+    property <length> list-top: head-h + 8px + 16px + 6 * ch + 8px + every-h + day-h + 8px;
+    property <int> fit: max(0, floor((root.height - list-top + 8px) / (item-h + 8px)));
     clip: true;
-    // Mmm yyyy, Month | Week | To-do, ‹ ›
+    // Mmm yyyy (the month's switcher and its arrows do nothing on the lock:
+    // gone, so the month has the width; they covered it on a small screen)
     head := Rectangle {
         y: 0;
-        height: Theme.material ? 32px : 26px;
+        height: head-h;
         Text {
             x: 0;
+            width: parent.width;
             text: LockData.month;
             color: ink;
             font-size: Theme.material ? 14px : Theme.body;
             font-weight: 600;
             vertical-alignment: center;
+            overflow: elide;
             accessible-role: none;
-        }
-        HorizontalLayout {
-            x: parent.width - self.preferred-width;
-            width: self.preferred-width;
-            spacing: 4px;
-            // (Segmented, the first tab chosen)
-            seg := Rectangle {
-                property <length> gap: Theme.material ? 2px : 0;
-                property <length> w: (self.width - 4px - self.gap * 2) / 3;
-                y: (parent.height - self.height) / 2;
-                width: Theme.material ? 172px : 150px;
-                height: Theme.material ? 32px : 24px;
-                border-radius: self.height / 2;
-                // (an always-dark card: dark mode's values whatever the look's mode)
-                background: Theme.material ? transparent : #ffffff24;
-                if !Theme.material: Rectangle {
-                    x: 2px;
-                    y: 2px;
-                    width: seg.w;
-                    height: parent.height - 4px;
-                    border-radius: self.height / 2;
-                    background: #ffffff33;
-                }
-                for o[i] in ["Month", "Week", "To-do"]: Rectangle {
-                    property <length> full: self.height / 2;
-                    x: 2px + i * (seg.w + seg.gap);
-                    width: seg.w;
-                    height: parent.height;
-                    border-top-left-radius: !Theme.material ? 0 : i == 0 ? self.full : 8px;
-                    border-bottom-left-radius: self.border-top-left-radius;
-                    border-top-right-radius: !Theme.material ? 0 : i == 0 || i == 2 ? self.full : 8px;
-                    border-bottom-right-radius: self.border-top-right-radius;
-                    background: !Theme.material ? transparent : i == 0 ? Theme.m3-primary : Theme.m3-surface-container-highest;
-                    Text {
-                        text: o;
-                        color: Theme.material ? (i == 0 ? Theme.m3-on-primary : Theme.m3-on-surface-variant) : i == 0 ? root.ink : root.ink2;
-                        font-size: Theme.material ? Theme.body : Theme.small;
-                        font-weight: Theme.material ? 500 : 600;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                        overflow: elide;
-                        accessible-role: none;
-                    }
-                }
-            }
-            for c in ["\u{e138}", "\u{e13a}"]: Rectangle { // caret-left, caret-right
-                y: (parent.height - self.height) / 2;
-                width: root.btn;
-                height: root.btn;
-                Icon { text: c; font-size: Theme.material ? 18px : 12px; color: root.ink2; }
-            }
         }
     }
     VerticalLayout {
@@ -535,7 +520,7 @@ component BedCalendar inherits Rectangle {
         }
         // the chosen day (today), and its add button
         Rectangle {
-            height: Theme.material ? 32px : 22px;
+            height: root.day-h;
             Text {
                 x: 0;
                 text: LockData.day-title;
@@ -559,8 +544,9 @@ component BedCalendar inherits Rectangle {
             wrap: word-wrap;
             accessible-role: none;
         }
-        for it in LockData.cal-items: Rectangle {
-            height: Theme.material ? 44px : 36px;
+        for it[i] in LockData.cal-items: Rectangle {
+            visible: i < root.fit;
+            height: root.item-h;
             border-radius: Theme.material ? 12px : 8px;
             background: Theme.material ? Theme.fill : transparent;
             if it.event: Rectangle {
@@ -683,7 +669,8 @@ component GlassField inherits Rectangle {
     in property <bool> focused;
     // (Reduce Transparency: solid, as the cards are)
     property <bool> solid: LockData.plate == "solid";
-    property <bool> dark: LockData.dark-ink;
+    // (dark ink over it: the sign-in block's own, #307)
+    in property <bool> dark: LockData.dark-ink-low;
     // light ink: a faint white frost, then dark glass as the picture gets
     // brighter (its brightest part, frosted, kept under ~88 of 255)
     property <float> hi: LockData.field-hi * 255 * 0.9 + 25.5;
@@ -1125,8 +1112,18 @@ component GlassLock inherits Rectangle {
     property <bool> split: LockData.note-style == "column" && self.width > self.height;
     property <color> ink: LockData.dark-ink ? #18181B : #FFFFFF;
     property <color> ink2: LockData.dark-ink ? rgba(23, 23, 28, 0.66) : rgba(255, 255, 255, 0.72);
+    // (#307: the sign-in block's ink from the wallpaper behind it, and the
+    // cards' column's: a sky over dark land wrote dark text on the land)
+    property <color> ink-low: LockData.dark-ink-low ? #18181B : #FFFFFF;
+    property <color> ink2-low: LockData.dark-ink-low ? rgba(23, 23, 28, 0.66) : rgba(255, 255, 255, 0.72);
+    property <color> ink-side: LockData.dark-ink-side ? rgba(23, 23, 28, 0.66) : rgba(255, 255, 255, 0.72);
     property <length> W: self.width;
     property <length> H: self.height;
+    // (#757: sized from the screen: as before 1080 px tall and up, smaller
+    // below; the morph's flying clock, LockScreen, uses the same)
+    property <float> k: clamp(H / 1080px, 0.68, 1);
+    property <length> clock-px: round((ios ? 168px : 150px) * k / 1px) * 1px;
+    property <length> date-px: round(24px * max(k, 0.8) / 1px) * 1px;
     opacity: 1 - exit;
     transform-scale: LockData.zoom-out ? 1 + 0.08 * exit : 1;
     transform-origin: { x: self.width / 2, y: self.height / 2 };
@@ -1153,7 +1150,7 @@ component GlassLock inherits Rectangle {
             horizontal-alignment: center;
             text: LockData.date;
             color: ink2;
-            font-size: 24px;
+            font-size: date-px;
             font-weight: 600;
         }
         Text {
@@ -1161,9 +1158,9 @@ component GlassLock inherits Rectangle {
             opacity: morph-on && sb > 0 ? 0 : 1;
             text: LockData.time;
             color: LockData.dark-ink ? rgba(23, 23, 28, 0.85) : rgba(255, 255, 255, 0.85);
-            font-size: ios ? 168px : 150px;
+            font-size: clock-px;
             font-weight: 700;
-            letter-spacing: -5px;
+            letter-spacing: -5px * k;
             accessible-label: "It's " + LockData.time;
         }
     }
@@ -1171,7 +1168,9 @@ component GlassLock inherits Rectangle {
     // ── iOS: small widgets under the clock
     property <int> n-comp: (LockData.has-battery ? 1 : 0) + (LockData.weather-ready ? 1 : 0) + (LockData.has-event ? 1 : 0) + (LockData.todos > 0 ? 1 : 0);
     property <length> comp-y: header-y + header.height + 4px;
-    if ios: HorizontalLayout {
+    // (#757: dropped when the sign-in reaches up to it: the keyboard up on a small screen)
+    property <bool> comp-fits: comp-y + 64px + 16px <= login-y;
+    if ios && comp-fits: HorizontalLayout {
         x: (W - self.width) / 2;
         y: comp-y;
         width: self.preferred-width;
@@ -1240,10 +1239,21 @@ component GlassLock inherits Rectangle {
     property <length> login-y: login.y;
 
     // ── Notifications and Now Playing
-    property <length> cards-w: split ? min(420px, W * 0.3) : 420px;
+    property <length> cards-w: split ? min(420px, W * 0.3) : min(420px, W - 48px);
     property <length> cards-x: split ? round((W * 0.74 - cards-w / 2) / 1px) * 1px : round((W - cards-w) / 2 / 1px) * 1px;
-    property <length> cards-y: split ? header-y + (LockData.has-player ? 94px : 0px) : (ios ? comp-y + (n-comp > 0 ? 64px : 0px) : header-y + header.height) + 40px;
-    if LockData.has-player: Plate {
+    property <length> cards-y: split ? header-y + (LockData.has-player ? 94px : 0px) : (ios ? comp-y + (n-comp > 0 && comp-fits ? 64px : 0px) : header-y + header.height) + round(40px * k / 1px) * 1px;
+    // (#757: one flow between the widgets and the sign-in, each piece only
+    // where there's room for it, the least needed going first: the newest
+    // card, then Now Playing, then the shelf. On a 1366x768 screen they ran
+    // into each other and into the sign-in)
+    property <length> room: login-y - 24px - cards-y;
+    property <length> shelf-h: LockData.note-count > 0 ? 48px : 0px;
+    property <length> card-h: LockData.cards.length * 74px;
+    property <length> player-h: LockData.has-player ? 84px + 24px : 0px;
+    property <bool> show-cards: split ? cards-y + 64px + 24px <= login-y : room >= shelf-h + card-h + player-h;
+    property <bool> show-player: LockData.has-player && (split ? header-y + 84px + 24px <= login-y : room >= shelf-h + player-h);
+    property <bool> show-shelf: room >= shelf-h + (show-player ? player-h : 0px);
+    if show-player: Plate {
         x: cards-x;
         y: split ? header-y : login-y - 84px - 24px;
         width: cards-w;
@@ -1301,7 +1311,7 @@ component GlassLock inherits Rectangle {
         spacing: 10px;
         opacity: reveal;
         // Who sent them, as a row of app icons (shelf, icons)
-        if !split && LockData.note-count > 0: HorizontalLayout {
+        if !split && LockData.note-count > 0 && show-shelf: HorizontalLayout {
             alignment: center;
             Plate {
                 width: shelf.preferred-width + 20px;
@@ -1337,7 +1347,9 @@ component GlassLock inherits Rectangle {
             }
         }
         // The newest (shelf) or the latest three (column): LockData.cards
-        for n in LockData.cards: Plate {
+        // (beside the clock: as many as reach no lower than the sign-in)
+        for n[i] in LockData.cards: Plate {
+            visible: show-cards && (!split || cards-y + i * 74px + 64px + 24px <= login-y);
             height: 64px;
             radius: 18px;
             win-w: W;
@@ -1374,10 +1386,10 @@ component GlassLock inherits Rectangle {
                 }
             }
         }
-        if split && LockData.note-count > 3: Text {
+        if split && LockData.note-count > 3 && show-cards: Text {
             horizontal-alignment: center;
             text: (LockData.note-count - 3) + " more";
-            color: ink2;
+            color: ink-side;
             font-size: Theme.small;
             font-weight: 500;
         }
@@ -1420,14 +1432,18 @@ component GlassLock inherits Rectangle {
     }
     // (as wide as the lockout message, up to the screen less 24 px each side; longer, it wraps)
     property <length> login-w: min(max(360px, LockData.error != "" ? err-probe.preferred-width : 0px), max(360px, min(W - 48px, 520px)));
+    // (the on-screen keyboard up here: the sign-in sits just above it, #763)
+    property <length> lift: LockData.osk-up ? LockData.osk-covers + 16px : H * (ios ? 0.06 : 0.1);
+    animate lift { duration: Theme.motion(250ms); easing: ease-out; }
     login := VerticalLayout {
         x: round((W - login-w) / 2 / 1px) * 1px;
-        y: H - H * (ios ? 0.06 : 0.1) - self.preferred-height;
+        y: H - lift - self.preferred-height;
         width: login-w;
         height: self.preferred-height;
         spacing: 10px;
         opacity: reveal;
-        HorizontalLayout {
+        // (your picture gives its room to the keyboard while it's up)
+        if !LockData.osk-up: HorizontalLayout {
             alignment: center;
             // (glass, as the field and the cards: the user, 17 Nov)
             GlassField {
@@ -1437,7 +1453,7 @@ component GlassLock inherits Rectangle {
                 win-h: H;
                 accessible-role: text;
                 accessible-label: LockData.name;
-                if !LockData.has-avatar: Icon { text: "\u{e4c2}"; fill: true; font-size: 32px; color: ink; }
+                if !LockData.has-avatar: Icon { text: "\u{e4c2}"; fill: true; font-size: 32px; color: ink-low; }
                 if LockData.has-avatar: Image { width: 100%; height: 100%; source: LockData.avatar; image-fit: cover; }
             }
         }
@@ -1446,7 +1462,7 @@ component GlassLock inherits Rectangle {
             horizontal-alignment: center;
             text: LockData.name;
             overflow: elide;
-            color: ink;
+            color: ink-low;
             font-size: Theme.title;
             font-weight: 600;
         }
@@ -1506,8 +1522,8 @@ component GlassLock inherits Rectangle {
                         kind: LockData.island-kind;
                         phase: LockData.island-phase;
                         hint: LockData.island-hint;
-                        ink: root.ink;
-                        hint-ink: root.ink;
+                        ink: root.ink-low;
+                        hint-ink: root.ink-low;
                         opacity: island.t;
                         transform-scale: 0.6 + 0.4 * island.t;
                         transform-origin: { x: self.width / 2, y: 32px };
@@ -1521,21 +1537,39 @@ component GlassLock inherits Rectangle {
                         win-h: H;
                         bad: LockData.error != "";
                         focused: input.has-focus && !LockData.busy;
-                        input := TextInput {
+                        // (#760: the dots scroll with the caret: the input in a
+                        // clipping box, shifted left by what doesn't fit, so the
+                        // newest dots and the caret stay in sight; Slint's
+                        // TextInput doesn't scroll by itself, and a long
+                        // password ran under the unlock arrow)
+                        box := Rectangle {
                             x: 16px;
-                            width: parent.width - 32px - 24px;
+                            width: parent.width - 16px - 36px;
                             height: parent.height;
-                            vertical-alignment: center;
-                            input-type: password;
-                            enabled: !LockData.busy;
-                            color: ink;
-                            font-size: Theme.title;
-                            letter-spacing: 1px;
-                            single-line: true;
-                            text <=> LockData.password;
-                            accessible-label: "Password";
-                            edited => { LockData.edited(self.text); }
-                            accepted => { LockData.submit(); }
+                            clip: true;
+                            dots := Text {
+                                visible: false;
+                                text: LockData.mask(input.text);
+                                font-size: Theme.title;
+                                letter-spacing: 1px;
+                                accessible-role: none;
+                            }
+                            input := TextInput {
+                                x: min(0px, box.width - dots.preferred-width - 4px);
+                                width: max(box.width, dots.preferred-width + 4px);
+                                height: parent.height;
+                                vertical-alignment: center;
+                                input-type: password;
+                                enabled: !LockData.busy;
+                                color: ink-low;
+                                font-size: Theme.title;
+                                letter-spacing: 1px;
+                                single-line: true;
+                                text <=> LockData.password;
+                                accessible-label: "Password";
+                                edited => { LockData.edited(self.text); }
+                                accepted => { LockData.submit(); }
+                            }
                         }
                         if LockData.password == "": Text {
                             // (2px past the input's x: the caret stays off the first letter)
@@ -1544,19 +1578,21 @@ component GlassLock inherits Rectangle {
                             vertical-alignment: center;
                             text: LockData.finger-state != "" ? "Fingerprint or password" : LockData.island-kind == "face" ? "Face or password" : "Enter password";
                             // (stronger than ink2: it sits on glass, 4.5:1 with the field's tint)
-                            color: ink.with-alpha(0.82);
+                            color: ink-low.with-alpha(0.82);
                             font-size: Theme.body;
                             accessible-role: none;
                         }
+                        // (the arrow drawn small, the whole end of the field
+                        // its target: 36 px, for a finger, #763; 24 px before)
                         if !LockData.busy: Rectangle {
-                            x: parent.width - 30px;
-                            y: 6px;
-                            width: 24px;
-                            height: 24px;
+                            x: parent.width - 36px;
+                            y: 0;
+                            width: 36px;
+                            height: 36px;
                             accessible-role: button;
                             accessible-label: "Unlock";
                             accessible-action-default => { LockData.submit(); }
-                            Icon { text: "\u{e02e}"; fill: true; font-size: 22px; color: ink; opacity: LockData.password == "" ? 0.4 : 1; }
+                            Icon { text: "\u{e02e}"; fill: true; font-size: 22px; color: ink-low; opacity: LockData.password == "" ? 0.4 : 1; }
                             TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => { LockData.submit(); }
@@ -1566,17 +1602,35 @@ component GlassLock inherits Rectangle {
                             x: parent.width - 30px;
                             y: 6px;
                             size: 22px;
-                            ink: root.ink;
+                            ink: root.ink-low;
                         }
                     }
                 }
+                // The on-screen keyboard's button, beside the field (#763;
+                // Settings → Accessibility → On-screen keyboard button)
+                if LockData.osk-button: OskButton {
+                    x: island.width + 8px;
+                    y: island.height - 38px - 16px * island.t;
+                    ink: root.ink-low;
+                    active: LockData.osk-up;
+                    opacity: LockData.leaving ? 0 : 1;
+                    clicked => { LockData.osk(); }
+                }
             }
+        }
+        // Caps Lock, and the layout when several are set up (#761)
+        if LockData.caps || LockData.layout != "": CapsHint {
+            caps: LockData.caps;
+            layout: LockData.layout;
+            ink: root.ink2-low;
+            warn: root.ink-low;
+            font-size: Theme.small;
         }
         if LockData.error != "": Text {
             horizontal-alignment: center;
             text: LockData.error;
             wrap: word-wrap;
-            color: ink;
+            color: ink-low;
             font-size: Theme.small;
             font-weight: 500;
         }
@@ -1984,9 +2038,21 @@ component MaterialLock inherits Rectangle {
         }
 
         // ── Now Playing: beside the clock (column), or over the account pill
-        property <length> cards-w: split ? min(380px, W * 0.3) : 380px;
+        property <length> cards-w: split ? min(380px, W * 0.3) : min(380px, W - 48px);
         property <length> cards-x: split ? round((W * 0.72 - cards-w / 2) / 1px) * 1px : round((W - cards-w) / 2 / 1px) * 1px;
-        if LockData.has-player: Rectangle {
+        property <length> cards-y: split ? header.y + (LockData.has-player ? 92px : 0px) : header.y + header.height + 32px;
+        // (#766: one flow between the clock and the unlock pill, each piece
+        // only where there's room, the least needed going first: the newest
+        // card, then Now Playing, then the shelf. On a 768 px screen the
+        // grown reader island pushed the player into the card)
+        property <length> room: unlock.y - 20px - cards-y;
+        property <length> shelf-h: LockData.note-count > 0 ? 52px + 12px : 0px;
+        property <length> card-h: LockData.cards.length * 74px;
+        property <length> player-h: LockData.has-player ? 80px + 20px : 0px;
+        property <bool> show-cards: split ? cards-y + 72px + 20px <= unlock.y : room >= shelf-h + card-h + player-h;
+        property <bool> show-player: LockData.has-player && (split ? header.y + 80px + 20px <= unlock.y : room >= shelf-h + player-h);
+        property <bool> show-shelf: room >= shelf-h + (show-player ? player-h : 0px);
+        if show-player: Rectangle {
             x: cards-x;
             y: split ? header.y : unlock.y - 80px - 20px;
             width: cards-w;
@@ -2070,12 +2136,12 @@ component MaterialLock inherits Rectangle {
         // ── Notifications: a shelf of app icons, compact cards in a segmented group
         VerticalLayout {
             x: cards-x;
-            y: split ? header.y + (LockData.has-player ? 92px : 0px) : header.y + header.height + 32px;
+            y: cards-y;
             width: cards-w;
             height: self.preferred-height;
             spacing: 12px;
             opacity: reveal;
-            if !split && LockData.note-count > 0: HorizontalLayout {
+            if !split && LockData.note-count > 0 && show-shelf: HorizontalLayout {
                 alignment: center;
                 Rectangle {
                     width: mshelf.preferred-width + 16px;
@@ -2112,10 +2178,12 @@ component MaterialLock inherits Rectangle {
             }
             // (newest first: the newest, or the latest four beside the clock;
             // Rust picks them: LockData.cards)
-            if LockData.cards.length > 0: VerticalLayout {
+            if LockData.cards.length > 0 && show-cards: VerticalLayout {
                 spacing: 2px;
                 property <int> count: LockData.cards.length;
                 for n[i] in LockData.cards: Rectangle {
+                    // (beside the clock: as many as reach no lower than the pill)
+                    visible: !split || cards-y + i * 74px + 72px + 20px <= unlock.y;
                     height: 72px;
                     background: Theme.m3-surface-container-high;
                     border-top-left-radius: i == 0 ? 24px : 6px;
@@ -2157,11 +2225,11 @@ component MaterialLock inherits Rectangle {
                     }
                 }
             }
-            if split && LockData.note-count > 4: HorizontalLayout {
+            if split && LockData.note-count > 4 && show-cards: HorizontalLayout {
                 padding-left: 8px;
                 Text {
                     text: (LockData.note-count - 4) + " more";
-                    color: ink;
+                    color: LockData.m-ink-side;
                     font-size: 14px;
                     font-weight: 500;
                 }
@@ -2189,10 +2257,16 @@ component MaterialLock inherits Rectangle {
         property <length> grow-h: 116px * gt;
         // (the line under the pill gives its room to the grown island: the
         // hint is inside then, and the pill stays where it is)
-        property <length> unlock-h: error-h + 56px + grow-h + (hint-row ? (12px + 20px) * (1 - min(1, gt)) : 0px);
+        property <length> hint-h: hint-row ? (12px + 20px) * (1 - min(1, gt)) : 0px;
+        // (Caps Lock, and the layout when several are set up: a line under them, #761)
+        property <bool> caps-row: LockData.caps || LockData.layout != "";
+        property <length> unlock-h: error-h + 56px + grow-h + hint-h + (caps-row ? 12px + 18px : 0px);
+        // (the on-screen keyboard up here: the pill sits just above it, #763)
+        property <length> lift: LockData.osk-up ? LockData.osk-covers + 16px : round(H * 0.06 / 1px) * 1px;
+        animate lift { duration: Theme.motion(250ms); easing: ease-out; }
         unlock := Rectangle {
             x: (W - 460px) / 2;
-            y: H - unlock-h - round(H * 0.06 / 1px) * 1px + part;
+            y: H - unlock-h - lift + part;
             width: 460px;
             height: unlock-h;
             opacity: reveal;
@@ -2302,14 +2376,24 @@ component MaterialLock inherits Rectangle {
                     font-size: 16px;
                     font-weight: 500;
                 }
-                Rectangle {
+                // (#760: the dots scroll with the caret, as Glass's do: the
+                // newest ones and the caret stay in sight past the send button)
+                mbox := Rectangle {
                     x: 60px;
                     width: max(0px, (send.visible ? send.x : finger.x) - 60px - 8px);
                     height: parent.height;
                     clip: true;
                     opacity: open-t;
+                    mdots := Text {
+                        visible: false;
+                        text: LockData.mask(input.text);
+                        font-size: 18px;
+                        letter-spacing: 2px;
+                        accessible-role: none;
+                    }
                     input := TextInput {
-                        width: 100%;
+                        x: min(0px, mbox.width - mdots.preferred-width - 4px);
+                        width: max(mbox.width, mdots.preferred-width + 4px);
                         height: 100%;
                         vertical-alignment: center;
                         input-type: password;
@@ -2450,8 +2534,33 @@ component MaterialLock inherits Rectangle {
                 spacing: 6px;
                 opacity: parent.has-text ? 1 : 0;
                 animate opacity { duration: Theme.hover; }
-                SymIcon { text: LockData.face-text != "" && LockData.finger-text == "" ? "\u{e436}" : "\u{e23e}"; font-size: 16px; color: ink; }
-                Text { vertical-alignment: center; text: LockData.finger-text != "" ? LockData.finger-text : LockData.face-text; color: ink; font-size: 14px; font-weight: 500; }
+                SymIcon { text: LockData.face-text != "" && LockData.finger-text == "" ? "\u{e436}" : "\u{e23e}"; font-size: 16px; color: LockData.m-ink-low; }
+                Text { vertical-alignment: center; text: LockData.finger-text != "" ? LockData.finger-text : LockData.face-text; color: LockData.m-ink-low; font-size: 14px; font-weight: 500; }
+            }
+            // Caps Lock, and the layout when several are set up (#761)
+            if caps-row: CapsHint {
+                x: 0;
+                y: error-h + 56px + grow-h + hint-h + 12px;
+                width: parent.width;
+                height: 18px;
+                caps: LockData.caps;
+                layout: LockData.layout;
+                ink: LockData.m-ink-low;
+                warn: LockData.m-ink-low;
+                font-size: 13px;
+            }
+            // The on-screen keyboard's button, beside the pill (#763)
+            if LockData.osk-button: OskButton {
+                x: (parent.width + pill.width) / 2 + 8px;
+                y: error-h + grow-h + 8px;
+                ink: LockData.m-ink-low;
+                active: LockData.osk-up;
+                opacity: LockData.leaving ? 0 : 1;
+                clicked => {
+                    root.wake();
+                    input.focus();
+                    LockData.osk();
+                }
             }
         }
     }
@@ -2655,8 +2764,8 @@ component Bedside inherits Rectangle {
                 border-radius: Theme.material ? 48px : 28px;
                 background: Theme.material ? Theme.m3-surface-container : #1C1C1E;
                 BedCalendar {
-                    x: Theme.material ? 28px : 20px;
-                    y: Theme.material ? 28px : 20px;
+                    x: Theme.material ? max(18px, min(28px, round(parent.width * 0.07 / 1px) * 1px)) : 20px;
+                    y: self.x;
                     width: parent.width - 2 * self.x;
                     height: parent.height - 2 * self.y;
                     ink: Theme.material ? Theme.m3-on-surface : #F5F5F7;
@@ -2816,8 +2925,10 @@ export component LockScreen inherits Window {
     // ── The morph's flying clock (Glass): from the lock's clock to Bedside
     // Mode's, the bold copy handing over to one in its weight
     if morphing && !Theme.material: Rectangle {
-        property <length> px: LockData.ios ? 168px : 150px;
-        property <length> from-y: H * (LockData.ios ? 0.07 : 0.1) + 24px * 1.21 + px * 1.21 / 2;
+        // (GlassLock's sizes from the screen, #757)
+        property <float> k: clamp(H / 1080px, 0.68, 1);
+        property <length> px: round((LockData.ios ? 168px : 150px) * k / 1px) * 1px;
+        property <length> from-y: H * (LockData.ios ? 0.07 : 0.1) + round(24px * max(k, 0.8) / 1px) * 1px * 1.21 + px * 1.21 / 2;
         property <length> size: bedside.clock-size;
         property <length> date-px: max(16px, round(size * 0.14 / 1px) * 1px);
         property <length> to-y: H / 2 + LockData.sb-dy - (size * 1.21 + date-px * 1.21 - size * 0.06) / 2 + size * 1.21 / 2;
@@ -2830,7 +2941,7 @@ export component LockScreen inherits Window {
             color: LockData.dark-ink ? rgba(23, 23, 28, 0.85) : rgba(255, 255, 255, 0.85);
             font-size: parent.px;
             font-weight: 700;
-            letter-spacing: -5px;
+            letter-spacing: -5px * parent.k;
             transform-scale: 1 + (parent.ratio - 1) * sb;
             transform-origin: { x: self.width / 2, y: self.height / 2 };
             opacity: 1 - ramp(0.3, 0.8);

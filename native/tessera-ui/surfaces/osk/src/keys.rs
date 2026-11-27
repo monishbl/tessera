@@ -243,12 +243,13 @@ pub fn repeats(key: &Key) -> bool {
 
 /// The keyboard's size for a screen width (logical px): the key unit, then
 /// the window's width and height with the shadow's room `m` (Keyboard.qml)
+/// (core's: the lock and the login screen lift their field above it, so the
+/// formula is kept in one place, surfaces::kit::osk_window)
 pub fn unit(screen_w: f32) -> f32 {
-    58f32.min((screen_w - 120.0) / 15.6)
+    tessera_core::surfaces::kit::osk_unit(screen_w)
 }
 pub fn window_size(screen_w: f32, m: f32) -> (u32, u32) {
-    let u = unit(screen_w);
-    ((u * 15.6 + 24.0 + 2.0 * m).round() as u32, (u * 5.0 + 4.0 * 6.0 + 24.0 + 2.0 * m).round() as u32)
+    tessera_core::surfaces::kit::osk_window(screen_w, m)
 }
 
 #[cfg(test)]

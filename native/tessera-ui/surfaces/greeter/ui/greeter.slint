@@ -10,6 +10,7 @@
 
 import { Theme } from "@tessera/theme.slint";
 import { Busy } from "@tessera/widgets.slint";
+import { CapsHint, OskButton } from "@tessera/password.slint";
 
 // Phosphor glyphs (Glass, plain, text)
 export struct GrIcons {
@@ -98,6 +99,20 @@ export global Greet {
     in property <bool> finger-match;
     // appearance.reduceMotion: the fingerprint holds still
     in property <bool> reduce-motion;
+    // Caps Lock, and the keyboard layout's name when several are set up,
+    // under the field (tessera_core::keystate, #761); the on-screen
+    // keyboard's button beside it (keyboard.oskButton), whether it's up,
+    // and how much of the screen's bottom it takes (#763)
+    in property <bool> caps;
+    in property <string> layout;
+    in property <bool> osk-button;
+    in-out property <bool> osk-up;
+    in property <length> osk-covers: 360px;
+    callback osk();
+    public function toggle-osk() {
+        osk-up = !osk-up;
+        osk();
+    }
     // the fingerprint's phase, as the lock's: "" | waiting | miss | match
     pure public function finger-phase() -> string {
         finger-match ? "match" : finger-miss ? "miss" : finger-on ? "waiting" : ""
@@ -705,6 +720,14 @@ component GlassStyle inherits Rectangle {
                 width: 240px;
                 height: 34px;
             }
+            // Caps Lock, and the layout when several are set up (#761)
+            if Greet.caps || Greet.layout != "": CapsHint {
+                caps: Greet.caps;
+                layout: Greet.layout;
+                ink: rgba(255, 255, 255, 0.75);
+                warn: white;
+                font-size: 12px;
+            }
             if Greet.say != "": Text {
                 width: 320px;
                 horizontal-alignment: center;
@@ -775,6 +798,21 @@ component GlassStyle inherits Rectangle {
             font-family: "Inter";
             font-size: 13px;
             accessible-role: none;
+        }
+    }
+
+    // The on-screen keyboard's button beside the field (#763); the field's
+    // bottom (with the line under it), which the keyboard lifts the screen
+    // above while it's up
+    out property <length> field-bottom: col.y + names.y + names.height + 10px + 34px + 28px;
+    if Greet.primary && Greet.osk-button: OskButton {
+        x: (root.width + 240px) / 2 + 8px;
+        y: col.y + names.y + names.height + 10px - 3px;
+        ink: white;
+        active: Greet.osk-up;
+        clicked => {
+            Greet.toggle-osk();
+            root.focus-password();
         }
     }
 
@@ -1045,6 +1083,14 @@ component PlainStyle inherits Rectangle {
                 width: 300px;
                 height: 44px;
             }
+            // Caps Lock, and the layout when several are set up (#761)
+            if Greet.caps || Greet.layout != "": CapsHint {
+                caps: Greet.caps;
+                layout: Greet.layout;
+                ink: root.dim;
+                warn: root.fg;
+                font-size: 13px;
+            }
             // Errors, the reader's words, a power choice to confirm
             Text {
                 width: 320px;
@@ -1115,6 +1161,20 @@ component PlainStyle inherits Rectangle {
             font-family: "Inter";
             font-size: 15px;
             accessible-role: none;
+        }
+    }
+
+    // The on-screen keyboard's button beside the field (#763), and the
+    // field's bottom for the keyboard to lift the screen above
+    out property <length> field-bottom: col.y + names.y + names.height + 16px + 44px + 30px;
+    if Greet.primary && Greet.osk-button: OskButton {
+        x: (root.width + 300px) / 2 + 8px;
+        y: col.y + names.y + names.height + 16px + 2px;
+        ink: root.fg;
+        active: Greet.osk-up;
+        clicked => {
+            Greet.toggle-osk();
+            root.focus-password();
         }
     }
 
@@ -1363,6 +1423,20 @@ component TextStyle inherits Rectangle {
         font-size: 14px;
     }
 
+    // The on-screen keyboard's button under the box's corner (#763), and
+    // the box's bottom for the keyboard to lift the screen above
+    out property <length> field-bottom: box.y + box.height + 56px;
+    if Greet.primary && Greet.osk-button: OskButton {
+        x: box.x + box.width - self.width;
+        y: box.y + box.height + 8px;
+        ink: root.dim;
+        active: Greet.osk-up;
+        clicked => {
+            Greet.toggle-osk();
+            root.focus-password();
+        }
+    }
+
     // The box
     box := Rectangle {
         visible: Greet.primary;
@@ -1518,6 +1592,13 @@ component TextStyle inherits Rectangle {
             }
             Rectangle {
                 height: 14px - 6px;
+            }
+            // Caps Lock, and the layout when several are set up (#761)
+            if Greet.caps || Greet.layout != "": Text {
+                text: (Greet.caps ? "caps lock is on" : "") + (Greet.caps && Greet.layout != "" ? " · " : "") + Greet.layout;
+                color: Greet.caps ? root.fg : root.dim;
+                font-family: "monospace";
+                font-size: 13px;
             }
             // What's happening: a power choice to confirm, an error, the
             // fingerprint reader, signing in
@@ -1951,6 +2032,33 @@ component MaterialStyle inherits Rectangle {
         }
     }
 
+    // The on-screen keyboard's button in the row's empty first place (#763),
+    // Caps Lock and the layout under the row (#761), and the row's bottom
+    // for the keyboard to lift the screen above
+    out property <length> field-bottom: root.row-y + 56px + 28px;
+    if Greet.primary && Greet.osk-button: OskButton {
+        x: root.row-x + 2px;
+        y: root.row-y + 8px;
+        ink: Greet.m.on-surface;
+        active: Greet.osk-up;
+        clicked => {
+            root.wake();
+            Greet.toggle-osk();
+            root.focus-password();
+        }
+    }
+    if Greet.primary && (Greet.caps || Greet.layout != ""): CapsHint {
+        x: 0;
+        y: root.row-y + 56px + 6px;
+        width: root.width;
+        height: 18px;
+        caps: Greet.caps;
+        layout: Greet.layout;
+        ink: Greet.m.on-surface-variant;
+        warn: Greet.m.on-surface;
+        font-size: 13px;
+    }
+
     // The row: Previous, the pill, Next, Switch user
     if Greet.primary && root.arrows: Round {
         x: root.row-x + 44px + 8px;
@@ -2228,22 +2336,31 @@ export component Greeter inherits Window {
     // glass | material | plain | text
     in property <string> style: "glass";
     background: style == "text" ? #0B0C0E : style == "plain" ? #000000 : style == "material" ? Greet.m.bg : #0E0E10;
+    // (the on-screen keyboard up: the screen moves up until the field and
+    // the line under it are just above it, #763)
+    property <length> field-bottom: root.style == "material" ? m.field-bottom : root.style == "plain" ? p.field-bottom : root.style == "text" ? t.field-bottom : g.field-bottom;
+    property <length> osk-lift: Greet.osk-up ? max(0px, root.field-bottom + 16px - (root.height - Greet.osk-covers)) : 0px;
+    animate osk-lift { duration: Theme.motion(250ms); easing: ease-out; }
     g := GlassStyle {
+        y: -root.osk-lift;
         width: root.width;
         height: root.height;
         visible: root.style == "glass";
     }
     m := MaterialStyle {
+        y: -root.osk-lift;
         width: root.width;
         height: root.height;
         visible: root.style == "material";
     }
     p := PlainStyle {
+        y: -root.osk-lift;
         width: root.width;
         height: root.height;
         visible: root.style == "plain";
     }
     t := TextStyle {
+        y: -root.osk-lift;
         width: root.width;
         height: root.height;
         visible: root.style == "text";

@@ -2080,7 +2080,8 @@ LOOK_CHOICES = {
 }
 LOOK_RANGES = {"clockWeight": (100, 1000), "clockWidth": (25, 151)}
 LOOK_KEYS = set(LOOK_CHOICES) | set(LOOK_RANGES) | {"seed", "clockRound"}
-LOOK_OPTIONAL = {"clock24"}  # (true or false; a shell from before it sends none)
+LOOK_OPTIONAL = {"clock24", "oskButton"}  # (a shell from before them sends neither)
+OSK_BUTTON = ("always", "touch", "off")  # (the on-screen keyboard's button beside the field, #763)
 SEED = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
@@ -2093,7 +2094,7 @@ def check_login_look(text):
     except ValueError:
         raise Refused("that isn't JSON") from None
     if not isinstance(d, dict) or not LOOK_KEYS <= set(d) <= LOOK_KEYS | LOOK_OPTIONAL:
-        raise Refused("give exactly: " + ", ".join(sorted(LOOK_KEYS)) + " (and clock24)")
+        raise Refused("give exactly: " + ", ".join(sorted(LOOK_KEYS)) + " (and clock24, oskButton)")
     for k, values in LOOK_CHOICES.items():
         if not isinstance(d[k], str) or d[k] not in values:
             raise Refused(f"{k} is one of: " + ", ".join(values))
@@ -2105,6 +2106,8 @@ def check_login_look(text):
     for k in ("clockRound", "clock24"):
         if k in d and type(d[k]) is not bool:
             raise Refused(f"{k} is true or false")
+    if "oskButton" in d and (not isinstance(d["oskButton"], str) or d["oskButton"] not in OSK_BUTTON):
+        raise Refused("oskButton is one of: " + ", ".join(OSK_BUTTON))
     return d
 
 

@@ -278,6 +278,9 @@ pub trait Part {
     fn command(&mut self, st: &mut State, cmd: &Command) {}
     /// One of its surfaces lost the keyboard (another window was clicked)
     fn keyboard_left(&mut self, st: &mut State, surface: &Rc<Surface>) {}
+    /// Caps Lock or the keyboard layout changed (crate::keystate::now()):
+    /// a password field's hint follows
+    fn keys_changed(&mut self, st: &mut State) {}
     /// A button went down on one of the shell's surfaces (any part's), just
     /// before that surface hears it: a part's own popup closes on a press
     /// elsewhere without leaning on the compositor's popup grab (Hyprland's

@@ -211,6 +211,15 @@ class LoginLook(unittest.TestCase):
                 R.login_look(b, dest=str(self.dest))
         self.assertFalse(self.dest.exists())
 
+    def test_the_keyboard_button_is_optional_and_checked(self):
+        # (#763: the on-screen keyboard's button beside the login field)
+        for v in ("always", "touch", "off"):
+            R.login_look(json.dumps({**self.GOOD, "oskButton": v}), dest=str(self.dest))
+            self.assertEqual(json.loads(self.dest.read_text())["oskButton"], v)
+        for bad in ("yes", True, 1, "", "$(reboot)"):
+            with self.assertRaises(R.Refused, msg=repr(bad)):
+                R.check_login_look(json.dumps({**self.GOOD, "oskButton": bad}))
+
     def test_24_hour_time_is_optional(self):
         R.login_look(json.dumps({**self.GOOD, "clock24": True}), dest=str(self.dest))
         self.assertTrue(json.loads(self.dest.read_text())["clock24"])

@@ -391,6 +391,19 @@ pub fn came_back(idle: bool, now_ms: i64, last_touch_ms: i64) -> bool {
     idle || now_ms - last_touch_ms > 30_000
 }
 
+/// Where the sign-in block sits (#307): your name, the field, the island,
+/// the error and the hints, the bottom middle of the screen; its ink is
+/// measured there, not under the clock (a light sky over dark land wrote
+/// dark text on the land)
+pub fn signin_region(screen: (f32, f32)) -> (f32, f32, f32, f32) {
+    (screen.0 * 0.3, screen.1 * 0.62, screen.0 * 0.4, screen.1 * 0.34)
+}
+
+/// The cards' column beside the clock on a wide screen ("N more"), #307
+pub fn side_region(screen: (f32, f32)) -> (f32, f32, f32, f32) {
+    (screen.0 * 0.55, screen.1 * 0.1, screen.0 * 0.4, screen.1 * 0.7)
+}
+
 /// Where the clock and date sit on a screen of `screen` px, as (x, y, w,
 /// h): the top 6..44 % of its middle 88 %, both the centred and the split
 /// layout's clock. Their ink follows the wallpaper under it
@@ -472,6 +485,19 @@ mod tests {
         let strip = WallTop::from_grid("/c.jpg", 16.0 / 9.0, strip);
         assert!(strip.light);
         assert_eq!(strip.dark_ink_under(screen, clock_region(screen)), Some(false));
+        // (#307) a light sky over dark land: dark ink on the clock, light
+        // ink on the sign-in at the bottom
+        let mut sky = vec![0.1f32; GRID * GRID];
+        for v in sky.iter_mut().take(GRID * GRID / 2) {
+            *v = 0.9;
+        }
+        let sky = WallTop::from_grid("/s.jpg", 16.0 / 9.0, sky);
+        assert_eq!(sky.dark_ink_under(screen, clock_region(screen)), Some(true));
+        assert_eq!(sky.dark_ink_under(screen, signin_region(screen)), Some(false));
+        let (x, y, w, h) = signin_region(screen);
+        assert!(x > 0.0 && y > screen.1 * 0.5 && x + w < screen.0 && y + h < screen.1);
+        let (x, y, w, h) = side_region(screen);
+        assert!(x >= screen.0 * 0.5 && x + w <= screen.0 && y + h <= screen.1);
     }
 
     #[test]

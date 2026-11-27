@@ -40,6 +40,11 @@
 //!   faillock --user (read-only): only when real, after a wrong password.
 //!   Idle inhibitor (zwp_idle_inhibit_v1) on a lock surface while Bedside
 //!     Mode shows: whenever it shows (demo too: the arena's compositor).
+//!   The on-screen keyboard (#763): the field's keyboard button asks Panels
+//!     for it (panels.toggle); it shows over the lock through Hyprland's
+//!     above_lock layer rule for "tessera:keyboard" only (rules.lua) and
+//!     types into the lock as a virtual keyboard; the sign-in lifts above it.
+//!     Under the field: Caps Lock and the layout (core::keystate, #761).
 //!
 //! ── With the shell (Lock.qml, LoginIntro.qml; JSON lines) ─────────────────
 //!   stdin  {"to":"lock","held":…,"leaving":…,"finger":…,"face":…}
@@ -236,6 +241,8 @@ enum M {
     Retake,
     /// the wallpaper is late: play the entrance without it
     RevealNow,
+    /// the on-screen keyboard's button on this screen (#763)
+    Osk(String),
 }
 
 struct Win {
@@ -907,6 +914,12 @@ impl Lock {
         }
         on!(on_submit, | | M::Submit);
         on!(on_woke, | | M::Woke);
+        d.on_mask(|t| tessera_core::keystate::dots(&t).into());
+        {
+            let to = to.clone();
+            let on = name.to_string();
+            d.on_osk(move || to(Box::new(M::Osk(on.clone()))));
+        }
         on!(on_step, |i| M::Step(i));
         on!(on_player, |a| M::Player(a.to_string()));
         // (the lists, handed over once: every refresh after changes them in place)
@@ -932,6 +945,8 @@ impl Lock {
         self.notes_push(st);
         self.player(st);
         self.field();
+        self.keys();
+        self.osk_state(st);
         self.bedside(st);
         if let Some((round, cookie)) = &self.avatar {
             let d = self.wins[i].ui.global::<ui::LockData>();
@@ -972,21 +987,32 @@ impl Lock {
         let r = |k: &str| roles.get(k).map(|v| hex(v)).unwrap_or(slint::Color::from_rgb_u8(255, 255, 255));
         let name = account_name();
         let h24 = tessera_core::locale::clock24(&st.shell.cfg);
+        // (#763: Settings → Accessibility → On-screen keyboard button)
+        let osk_button = tessera_core::settings::OskButton::from_cfg(&st.shell.cfg).shown(tessera_core::touch::has_touch());
         for w in &self.wins {
             // lock.text "auto": dark ink where the wallpaper is light behind
             // the clock and date (this screen's top 6..44 %, both layouts'
             // clocks), light ink on a dark one; "dark" / "light" as set
             let screen = crate::surfaces::kit::screen_named(st, &w.output).unwrap_or((1920.0, 1080.0));
-            let dark_ink = match text.as_str() {
+            // (#307: each bare text's ink from the wallpaper where it sits:
+            // the clock's, the sign-in block's, the cards' column's)
+            let ink_at = |region: (f32, f32, f32, f32)| match text.as_str() {
                 "dark" => true,
-                "auto" => wall.as_ref().is_some_and(|t| t.dark_ink_under(screen, logic::clock_region(screen)).unwrap_or(false)),
+                "auto" => wall.as_ref().is_some_and(|t| t.dark_ink_under(screen, region).unwrap_or(false)),
                 _ => false,
             };
+            let dark_ink = ink_at(logic::clock_region(screen));
+            let dark_low = ink_at(logic::signin_region(screen));
+            let dark_side = ink_at(logic::side_region(screen));
             st.shell.apply_theme(&w.ui.global::<ui::Theme>());
             let d = w.ui.global::<ui::LockData>();
             d.set_ios(s(&c, "layout", "ios") != "macos");
             d.set_plate(plate.clone().into());
             d.set_dark_ink(dark_ink);
+            d.set_dark_ink_low(dark_low);
+            d.set_dark_ink_side(dark_side);
+            d.set_osk_button(osk_button);
+            d.set_osk_covers(crate::surfaces::kit::osk_covers(screen.0));
             d.set_note_style(s(&c, "notifications", "shelf").into());
             d.set_previews(b(&c, "previews", false));
             d.set_lock_fx(s(&c, "lockTransition", "zoom").into());
@@ -1012,6 +1038,8 @@ impl Lock {
                 d.set_m_clock_ink3(if dark_ink { r("onTertiaryFixed") } else { r("tertiaryFixed") });
                 d.set_m_ink(if dark_ink { r("onSecondaryFixed") } else { r("secondaryFixed") });
                 d.set_m_ink2(if dark_ink { r("onSecondaryFixedVariant") } else { r("secondaryFixedDim") });
+                d.set_m_ink_low(if dark_low { r("onSecondaryFixed") } else { r("secondaryFixed") });
+                d.set_m_ink_side(if dark_side { r("onSecondaryFixed") } else { r("secondaryFixed") });
                 d.set_sb_m_ink(r("primaryFixed"));
                 d.set_sb_m_ink2(r("primaryFixedDim"));
                 d.set_sb_m_ink3(r("secondaryFixedDim"));
@@ -1346,6 +1374,26 @@ impl Lock {
             let hint = if island.kind == "finger" && island.phase == "miss" && self.finger.text == reader::AGAIN_TEXT { reader::AGAIN_TEXT } else { island.hint };
             d.set_island_hint(hint.into());
         });
+    }
+
+    /// Caps Lock and the layout under the field (#761)
+    fn keys(&self) {
+        let k = tessera_core::keystate::now();
+        let layout = k.layout();
+        self.each(|d| {
+            d.set_caps(k.caps);
+            d.set_layout(layout.clone().into());
+        });
+    }
+
+    /// The on-screen keyboard is up on which screen (Panels, by the shell's
+    /// state): the sign-in lifts above it there (#763)
+    fn osk_state(&self, st: &State) {
+        let (open, screen) = st.shell.get::<crate::services::bridge::ShellState>().map(|s| s.keyboard()).unwrap_or_default();
+        for w in &self.wins {
+            let up = open == "keyboard" && (screen.is_empty() || screen == w.output);
+            w.ui.global::<ui::LockData>().set_osk_up(up);
+        }
     }
 
     /// The camera's phase for the island: a match, a miss showing, looking
@@ -2214,7 +2262,13 @@ impl Part for Lock {
             self.player(st);
         } else if what == TypeId::of::<crate::services::wallpaper::WallTop>() {
             self.settings(st);
+        } else if what == TypeId::of::<crate::services::bridge::ShellState>() {
+            self.osk_state(st);
         }
+    }
+
+    fn keys_changed(&mut self, _st: &mut State) {
+        self.keys();
     }
 
     fn message(&mut self, st: &mut State, msg: Box<dyn Any + Send>) {
@@ -2656,6 +2710,13 @@ impl Part for Lock {
                 }
             }
             M::RevealNow => self.wins.iter_mut().for_each(reveal),
+            // (Panels brings it up or puts it away; over the lock it shows
+            // through Hyprland's above_lock layer rule, hypr/tessera/rules.lua)
+            M::Osk(on) => {
+                if self.held && !self.leaving {
+                    crate::shell::ask("panels.toggle", serde_json::json!(["keyboard", on]));
+                }
+            }
             M::Retake => {
                 if self.held && self.lock.is_none() && !self.demo {
                     eprintln!("tessera-ui: lock: taking the session lock again (try {})", self.retakes);

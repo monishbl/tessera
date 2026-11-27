@@ -26,6 +26,29 @@ pub fn screen_named(st: &State, name: &str) -> Option<(f32, f32)> {
     Some(screen_size(st, &o))
 }
 
+/// The on-screen keyboard (surfaces/osk, Keyboard.qml): its key unit on a
+/// screen this wide (logical px)
+pub fn osk_unit(screen_w: f32) -> f32 {
+    58f32.min((screen_w - 120.0) / 15.6)
+}
+
+/// The on-screen keyboard's window: its width and height with the shadow's
+/// room `m` round it
+pub fn osk_window(screen_w: f32, m: f32) -> (u32, u32) {
+    let u = osk_unit(screen_w);
+    ((u * 15.6 + 24.0 + 2.0 * m).round() as u32, (u * 5.0 + 4.0 * 6.0 + 24.0 + 2.0 * m).round() as u32)
+}
+
+/// The room round the on-screen keyboard for its shadow
+pub const OSK_SHADOW: f32 = 20.0;
+
+/// How much of the screen's bottom the on-screen keyboard takes (its
+/// exclusive zone): the lock and the login screen lift their field above
+/// it while it's up (#763)
+pub fn osk_covers(screen_w: f32) -> f32 {
+    osk_window(screen_w, OSK_SHADOW).1 as f32 - OSK_SHADOW
+}
+
 /// A regular window's size on a screen of `screen` logical px: as asked,
 /// made smaller to stay whole on a small or portrait screen (below the menu
 /// bar, clear of the edges), never under 480×360
@@ -106,6 +129,14 @@ pub fn mem_detail(info: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_on_screen_keyboard_covers_the_bottom_of_the_screen() {
+        assert_eq!(osk_window(1920.0, 20.0), ((58.0f32 * 15.6 + 64.0).round() as u32, 58 * 5 + 24 + 24 + 40));
+        // (its exclusive zone: the window less the shadow's room at its top)
+        assert_eq!(osk_covers(1920.0), (58 * 5 + 24 + 24 + 20) as f32);
+        assert!(osk_covers(800.0) < osk_covers(1920.0));
+    }
 
     #[test]
     fn colours_from_hex() {
