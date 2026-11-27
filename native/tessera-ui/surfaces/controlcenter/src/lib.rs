@@ -1439,6 +1439,7 @@ fn block(b: &Block, first: bool, last: bool, material: bool, (caption, small): (
         cur: b.current,
         flag: b.flag,
         gap,
+        tw: width,
         first,
         last,
         graph: b.graph.as_str().into(),

@@ -69,6 +69,9 @@ export struct CcBlock {
     cur: int,
     flag: bool,
     gap: length,
+    // a note's or notice's text width: Slint measures its wrapped height
+    // against it (it was guessed from the characters; #349)
+    tw: length,
     first: bool,
     last: bool,
 }
@@ -1491,9 +1494,9 @@ export component Block inherits VerticalLayout {
       padding-top: b.center ? 12px : 0;
       padding-bottom: b.center ? 12px : 0;
       Text {
-        // (Slint measures wrapped text in a layout as one line: the part
-        // estimates its lines)
-        min-height: b.gap;
+        // (its own width: Slint measures a wrapped text's height against it,
+        // the layout's comes too late for that; no guess of its lines)
+        width: b.tw;
         wrap: word-wrap;
         horizontal-alignment: b.center ? center : left;
         text: b.title;
@@ -1752,7 +1755,7 @@ export component Block inherits VerticalLayout {
             font-weight: 600;
         }
         if b.status != "": Text {
-            min-height: b.gap;
+            width: b.tw;
             horizontal-alignment: center;
             wrap: word-wrap;
             text: b.status;

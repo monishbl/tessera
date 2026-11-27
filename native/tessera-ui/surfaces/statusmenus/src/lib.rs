@@ -245,6 +245,7 @@ fn block(b: &Block, first: bool, last: bool, material: bool, (caption, small): (
         cur: b.current,
         flag: b.flag,
         gap,
+        tw: width - 12.0,
         first,
         last,
         graph: b.graph.as_str().into(),
