@@ -276,15 +276,18 @@ impl Network {
     }
 
     /// The list holds still while the pointer is over the menu, its menu is
-    /// open or a password is typed (the shell's snapshot); the menu closes
-    /// itself 5 s after the pointer left, unless one of those holds it
+    /// open, the keyboard is on it (audit #386) or a password is typed (the
+    /// shell's snapshot); the menu closes itself 5 s after the pointer left,
+    /// unless the pointer, the menu or a password holds it (keys restart the
+    /// 5 s themselves, audit #33)
     fn hold(&mut self) {
-        let now = (self.open && (self.hovered || self.menu.is_some()), self.open && self.asking.is_some());
+        let pointer = self.hovered || self.menu.is_some();
+        let now = (self.open && (pointer || self.kbd >= 0), self.open && self.asking.is_some());
         if self.hold_sent != Some(now) {
             self.hold_sent = Some(now);
             shell::ask("network", json!(["hold", now.0, now.1]));
         }
-        if self.open && !now.0 && !now.1 {
+        if self.open && !pointer && !now.1 {
             if let (false, Some(tx)) = (self.timer.running(), self.sender.clone()) {
                 self.timer.start(slint::TimerMode::SingleShot, Duration::from_millis(AUTO_CLOSE_MS), move || tx(Box::new(M::AutoClose)));
             }
@@ -298,6 +301,14 @@ impl Network {
     fn focusables(&self) -> i32 {
         let rows = if self.wifi.unmanaged || !self.wifi.enabled { 0 } else { self.wifi.networks.len() as i32 };
         rows + self.show_join() as i32 + 2
+    }
+
+    /// The networks the menu shows, in its order (none while Wi-Fi is off or unmanaged)
+    fn shown_names(&self) -> Vec<&str> {
+        if self.wifi.unmanaged || !self.wifi.enabled {
+            return Vec::new();
+        }
+        self.wifi.networks.iter().map(|n| n.name.as_str()).collect()
     }
 
     fn show_join(&self) -> bool {
@@ -545,6 +556,7 @@ impl Network {
             return;
         }
         self.push_wifi();
+        self.hold();
     }
 }
 
@@ -560,6 +572,8 @@ fn glyphs() -> ui::NetGlyphs {
         plus: g("plus"),
         check: g("check"),
         wifi_slash: g("wifi-slash"),
+        eye: g("eye"),
+        eye_slash: g("eye-slash"),
     }
 }
 
@@ -617,7 +631,14 @@ impl Part for Network {
             Ok(v) => {
                 if v.get("wifi").is_some() {
                     let before = self.wifi.networks.len();
+                    // (the keyboard stays on the network it was on, wherever
+                    // the new list puts it: audit #386)
+                    let old_names: Vec<String> = self.shown_names().into_iter().map(str::to_owned).collect();
+                    let old_join = self.show_join();
                     self.wifi = model::wifi_from(&v["wifi"]);
+                    let old_refs: Vec<&str> = old_names.iter().map(String::as_str).collect();
+                    let kbd = model::refocus(self.kbd, &old_refs, old_join, &self.shown_names(), self.show_join());
+                    self.kbd = kbd;
                     if crate::env::is_set("DEBUG") && before != self.wifi.networks.len() {
                         // (how many, never their names)
                         eprintln!("debug: network: {} networks listed", self.wifi.networks.len());
@@ -627,6 +648,7 @@ impl Part for Network {
                         self.kbd = n - 1;
                     }
                     self.push_wifi();
+                    self.hold();
                 }
                 if v.get("speed").is_some() {
                     self.speed = model::speed_from(&v["speed"]);

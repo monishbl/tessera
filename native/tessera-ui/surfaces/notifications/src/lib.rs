@@ -20,7 +20,11 @@
 //! part's list instead of running its own server:
 //!   - out, on stdout (RustUi.qml passes it on), whenever the list changes,
 //!     once the shell said hello:
-//!       {"src":"ui","kind":"notifications","list":[Note…]}
+//!       {"src":"ui","kind":"notifications","list":[Note…],"dismissed":[N…]}
+//!     `dismissed`: the ids that left the list since the last one because
+//!     the user closed them (Clear All, a close button, an action that
+//!     ends it), not the app nor their time (a call's card: declined, not
+//!     missed; audit #481);
 //!     each Note with Quickshell's names (model.rs) and `route`, where it went
 //!     as it arrived: "banner" (drawn here; the shell plays its sound),
 //!     "island" (the shell posts the island's card), "call" (the island's
@@ -202,6 +206,8 @@ pub struct Notifications {
     banners: Vec<Shown>,
     expanded: bool,
     hovered: bool,
+    /// the ids the user closed since the list was last told (`dismissed`)
+    gone_dismissed: Vec<u32>,
     heights: HashMap<u32, f32>,
     moved: HashMap<u32, [f32; 5]>,
     drafts: HashMap<u32, String>,
@@ -538,11 +544,12 @@ impl Notifications {
         BUS_ID.with(|b| b.borrow().clone())
     }
 
-    fn publish(&self) {
+    fn publish(&mut self) {
+        let dismissed = std::mem::take(&mut self.gone_dismissed);
         if !self.shell {
             return;
         }
-        crate::shell::tell("notifications", serde_json::json!({"list": self.store.list}));
+        crate::shell::tell("notifications", serde_json::json!({"list": self.store.list, "dismissed": dismissed}));
     }
 
     fn arrived(&mut self, st: &mut State, mut n: Note) {
@@ -585,6 +592,10 @@ impl Notifications {
     fn forget(&mut self, id: u32, reason: u32) {
         if let Some(b) = notify::bus() {
             b.closed(id, reason);
+        }
+        // (the shell tells a declined call from a missed one by this)
+        if reason == notify::DISMISSED && !self.gone_dismissed.contains(&id) {
+            self.gone_dismissed.push(id);
         }
         self.drafts.remove(&id);
         for s in self.banners.iter_mut().filter(|s| s.id == id) {
@@ -666,7 +677,12 @@ impl Notifications {
     /// Timers: running for each banner that may leave on its own now, from
     /// its full time again (as the QML Timer, restarted when it may run)
     fn timers(&mut self, st: &State) {
-        let held = self.hovered || self.expanded;
+        // (the pointer on the banners: Slint's has-hover and the compositor's
+        // pointer on their window, so a leave never heard can't hold every
+        // banner up for good; audit #400)
+        let on = st.pointer_surface();
+        let pointer = self.hovered && self.win.as_ref().is_some_and(|w| w.shown && on.as_ref().is_some_and(|p| Rc::ptr_eq(p, &w.surface)));
+        let held = pointer || self.expanded;
         let now = Instant::now();
         let mut next: Option<Instant> = None;
         for s in &mut self.banners {
@@ -833,6 +849,7 @@ impl Notifications {
         let banners = std::mem::take(&mut self.banners);
         let rows: Vec<ui::Banner> = banners.iter().enumerate().map(|(i, s)| self.row(st, s, places[i], i)).rev().collect();
         self.banners = banners;
+        let mut unhover = false;
         let Some(w) = self.win.as_mut() else { return };
         // the cards, back to front: kept, added and removed by id (a card
         // that stays keeps its animations)
@@ -895,9 +912,18 @@ impl Notifications {
             }
         } else if w.shown {
             w.shown = false;
+            // (hidden under the pointer, it never hears the pointer leave:
+            // the next banner's time would stay held; audit #400)
+            if w.ui.get_hovered() {
+                w.surface.window().dispatch_event(slint::platform::WindowEvent::PointerExited);
+            }
             w.surface.hide();
             st.shell.glass.set(&w.output, NS, &[]);
             w.glass_sent.clear();
+            unhover = true;
+        }
+        if unhover {
+            self.hovered = false;
         }
         self.timers(st);
         // (only when what it lists changed: a banner measured or entering
@@ -1313,7 +1339,14 @@ impl Part for Notifications {
     fn after_frame(&mut self, st: &mut State) {
         self.nc_after_frame(st);
         let Some(w) = self.win.as_mut() else { return };
-        let hovered = w.ui.get_hovered();
+        // (has-hover alone isn't trusted: the compositor's pointer must be on
+        // this window too, as the menu bar's sweep; audit #400)
+        let on = st.pointer_surface();
+        let here = on.as_ref().is_some_and(|p| Rc::ptr_eq(p, &w.surface));
+        if w.ui.get_hovered() && !here {
+            w.surface.window().dispatch_event(slint::platform::WindowEvent::PointerExited);
+        }
+        let hovered = w.ui.get_hovered() && here;
         let kbd = st.keyboard_surface();
         let f = kbd.as_ref().is_some_and(|k| Rc::ptr_eq(k, &w.surface));
         if let Some(a) = w.a11y.as_mut() {

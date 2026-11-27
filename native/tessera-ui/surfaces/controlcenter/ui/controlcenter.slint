@@ -121,6 +121,8 @@ export struct CcGlyphs {
     battery-low: CcIc,
     speaker-x: CcIc,
     bolt: CcIc,
+    eye: CcIc,
+    eye-slash: CcIc,
 }
 
 component Ic {
@@ -1596,7 +1598,9 @@ export component Block inherits VerticalLayout {
             spacing: 8px;
             height: m3 ? 48px : 40px;
             alignment: start;
-            Rectangle {
+            pwf := Rectangle {
+                // (the password as typed, while the eye is on)
+                property <bool> show-pw: false;
                 width: 180px;
                 height: m3 ? 40px : 30px;
                 y: (parent.height - self.height) / 2;
@@ -1614,10 +1618,10 @@ export component Block inherits VerticalLayout {
                 }
                 pw := TextInput {
                     x: 12px;
-                    width: parent.width - 24px;
+                    width: parent.width - 12px - 32px;
                     height: parent.height;
                     vertical-alignment: center;
-                    input-type: password;
+                    input-type: pwf.show-pw ? InputType.text : InputType.password;
                     color: Theme.label;
                     font-size: Theme.body;
                     single-line: true;
@@ -1631,6 +1635,29 @@ export component Block inherits VerticalLayout {
                             return accept;
                         }
                         return reject;
+                    }
+                }
+                // (the eye: what was typed, shown or hidden; audit #388)
+                Rectangle {
+                    x: parent.width - self.width - 4px;
+                    y: (parent.height - self.height) / 2;
+                    width: 24px;
+                    height: 24px;
+                    border-radius: m3 ? 12px : Theme.radius-control - 4px;
+                    background: eye.has-hover ? (m3 ? Theme.m3-on-surface-variant.with-alpha(0.08) : Theme.fill) : transparent;
+                    accessible-role: button;
+                    accessible-label: pwf.show-pw ? "Hide password" : "Show password";
+                    accessible-action-default => { pwf.show-pw = !pwf.show-pw; pw.focus(); }
+                    Ic {
+                        width: 24px;
+                        height: 24px;
+                        icon: pwf.show-pw ? g.eye-slash : g.eye;
+                        size: 14px;
+                        color: Theme.secondary;
+                    }
+                    eye := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { pwf.show-pw = !pwf.show-pw; pw.focus(); }
                     }
                 }
             }
