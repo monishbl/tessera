@@ -19,6 +19,7 @@
 // bottom. Exit: everything fades, a third faster, ease-in.
 
 import { Theme } from "@tessera/theme.slint";
+import { ScrollIndicator } from "@tessera/widgets.slint";
 import { StIc, StIcon, StSpin } from "screentools.slint";
 
 export struct CsChip {
@@ -915,7 +916,7 @@ export component CircleSearch inherits Window {
                         color: Theme.material ? Theme.m3-on-surface-variant : Theme.secondary;
                     }
                 }
-                if answer-state == 1 || answer-state == 2: Flickable {
+                if answer-state == 1 || answer-state == 2: sb-list918 := Flickable {
                     // (a long answer scrolls; the newest line in view while it streams)
                     height: min(answer-text.preferred-height, 320px);
                     content-height: answer-text.preferred-height;
@@ -930,6 +931,16 @@ export component CircleSearch inherits Window {
                         wrap: word-wrap;
                         font-size: Theme.material ? 15px : 14px;
                         color: Theme.material ? Theme.m3-on-surface : Theme.label;
+                    }
+                    // (the kit's scroll indicator, held still over the list's right
+                    // edge while the content moves under it, #358 #1037)
+                    ScrollIndicator {
+                        x: sb-list918.width - self.width;
+                        y: -sb-list918.content-y;
+                        height: sb-list918.height;
+                        content-y: sb-list918.content-y;
+                        content-height: sb-list918.content-height;
+                        view-height: sb-list918.height;
                     }
                 }
                 if answer-state == 3: Text {
