@@ -3147,13 +3147,21 @@ RESCUE_STAGE = "/run/tessera/login-rescue"
 TEXT_GREETER = "/etc/greetd/tessera-text-greeter.toml"
 TEXT_DROPIN = "/etc/systemd/system/greetd.service.d/zz-tessera-text-greeter.conf"
 LOGIN_PAMS = {"greetd": "greetd", "ly": "ly", "sddm": "sddm", "lightdm": "lightdm", "lxdm": "lxdm"}
-# greetd.service fails for good (its start limit): the rescue, as root
+# greetd.service fails for good (its start limit): the rescue, as root.
+# The limit: 6 starts in 5 minutes (audit #804). 5 in 30 s caught only a
+# login screen that failed at once; one that fails slowly (the compositor
+# comes up, shows nothing and exits; a greeter that hangs and is killed)
+# took more than 6 s a try and cycled for ever. A working greetd starts
+# once a boot (its greeter restarts inside it, not the unit), so 6 in 5
+# minutes is never a working login. setup rewrites the drop-in on update.
+RESCUE_LIMIT = (300, 6)  # (StartLimitIntervalSec, StartLimitBurst)
 RESCUE_UNITS = {
     "/etc/systemd/system/greetd.service.d/tessera-rescue.conf":
         "# Tessera: when greetd keeps failing, the login rescue (tessera-root login-rescue)\n"
         "# brings a way in back: Tessera's PAM lines out, then greetd's text login, then a\n"
         "# console login on tty1. Delete this file to undo (uninstall.sh does).\n"
-        "[Unit]\nOnFailure=tessera-login-rescue.service\nStartLimitIntervalSec=30\nStartLimitBurst=5\n",
+        "[Unit]\nOnFailure=tessera-login-rescue.service\n"
+        f"StartLimitIntervalSec={RESCUE_LIMIT[0]}\nStartLimitBurst={RESCUE_LIMIT[1]}\n",
     "/etc/systemd/system/tessera-login-rescue.service":
         "# Tessera: started only by greetd.service failing (its drop-in tessera-rescue.conf)\n"
         "[Unit]\nDescription=Tessera: bring a login back when the login screen keeps failing\n"

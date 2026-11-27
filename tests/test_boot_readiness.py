@@ -294,6 +294,18 @@ class AfterEveryUpdate(unittest.TestCase):
         self.assertEqual(sorted(R.rescue_units(root, Recorder())), sorted(R.RESCUE_UNITS))
         self.assertFalse(any(Path(root, p.lstrip("/")).exists() for p in R.RESCUE_UNITS))
 
+    def test_an_update_widens_the_old_start_limit(self):
+        # (an install from before has 5 in 30 s: setup writes the new one)
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root)
+        Path(root, "usr/lib/systemd/system").mkdir(parents=True)
+        Path(root, "usr/lib/systemd/system/greetd.service").write_text("")
+        R.rescue_units(root, Recorder())
+        dropin = Path(root, "etc/systemd/system/greetd.service.d/tessera-rescue.conf")
+        dropin.write_text(dropin.read_text().replace("StartLimitIntervalSec=300\nStartLimitBurst=6", "StartLimitIntervalSec=30\nStartLimitBurst=5"))
+        self.assertEqual(R.rescue_units(root, Recorder()), ["/etc/systemd/system/greetd.service.d/tessera-rescue.conf"])
+        self.assertIn("StartLimitBurst=6", dropin.read_text())
+
 
 class SoftwareUpdateSaysIt(unittest.TestCase):
     def setUp(self):
@@ -449,6 +461,9 @@ class LoginRescue(Machine):
         self.assertNotIn("[Install]", unit)  # (only greetd failing starts it)
         dropin = R.RESCUE_UNITS["/etc/systemd/system/greetd.service.d/tessera-rescue.conf"]
         self.assertIn("OnFailure=tessera-login-rescue.service", dropin)
+        # (6 starts in 5 minutes: slow failure loops end in the rescue too, audit #804)
+        self.assertIn("\nStartLimitIntervalSec=300\nStartLimitBurst=6\n", dropin)
+        self.assertLess(dropin.index("[Unit]"), dropin.index("StartLimitBurst"))
         if shutil.which("systemd-analyze"):
             d = tempfile.mkdtemp()
             self.addCleanup(shutil.rmtree, d)
