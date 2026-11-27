@@ -10,7 +10,7 @@
 
 import { Theme, Icon } from "@tessera/theme.slint";
 import { SymIcon, Symbols } from "@tessera/symbols.slint";
-import { Spinner } from "@tessera/widgets.slint";
+import { Spinner, ScrollIndicator } from "@tessera/widgets.slint";
 
 // The glyphs drawn here (Phosphor; Material draws their symbols), from Rust
 export struct AsGlyphs {
@@ -920,7 +920,7 @@ export component AppStoreWindow inherits Window {
 
         // (scrolls when the window is shorter than the places: Installed,
         // last, was cut off with no way to it)
-        Flickable {
+        sb-list923 := Flickable {
             x: 0;
             y: Theme.material ? 16px + 56px + 12px : 14px + 28px + 14px;
             width: parent.width;
@@ -959,6 +959,16 @@ export component AppStoreWindow inherits Window {
                 activated => { root.pick(10); }
             }
         }
+            // (the kit's scroll indicator, held still over the list's right
+            // edge while the content moves under it, #358 #1037)
+            ScrollIndicator {
+                x: sb-list923.width - self.width;
+                y: -sb-list923.content-y;
+                height: sb-list923.height;
+                content-y: sb-list923.content-y;
+                content-height: sb-list923.content-height;
+                view-height: sb-list923.height;
+            }
         }
     }
 
@@ -1134,6 +1144,16 @@ export component AppStoreWindow inherits Window {
                     opened(i) => { root.open-app(-1, i); }
                     act(i) => { root.act(-1, i); }
                 }
+            }
+            // (the kit's scroll indicator, held still over the list's right
+            // edge while the content moves under it, #358 #1037)
+            ScrollIndicator {
+                x: list.width - self.width;
+                y: -list.content-y;
+                height: list.height;
+                content-y: list.content-y;
+                content-height: list.content-height;
+                view-height: list.height;
             }
         }
 
@@ -1394,6 +1414,16 @@ export component AppStoreWindow inherits Window {
                         }
                     }
                 }
+            }
+            // (the kit's scroll indicator, held still over the list's right
+            // edge while the content moves under it, #358 #1037)
+            ScrollIndicator {
+                x: page.width - self.width;
+                y: -page.content-y;
+                height: page.height;
+                content-y: page.content-y;
+                content-height: page.content-height;
+                view-height: page.height;
             }
         }
     }
