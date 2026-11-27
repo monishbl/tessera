@@ -93,8 +93,11 @@ SHOWN = {"btpairing": sharing.PAIRING_SHOWN, "networkmanager": sharing.tessera_r
 # auth_admin, not the fixed passwordless `fix`): the login rescue's Restore,
 # Settings → Health → Login screen's "Restore the login screen" (audit #805:
 # only when you press it; nothing switches back by itself)
-PASSWORD_FIXES = {"loginrestore": [sharing.HELPER, "rescue", "undo"]}
-FIX_LABELS = {"loginrestore": "Restore the login screen"}
+PASSWORD_FIXES = {"loginrestore": [sharing.HELPER, "rescue", "undo"],
+                  # (a tessera-ui built here, approved once for the login
+                  # screen in root's own list: audit #802)
+                  "loginui": [sharing.HELPER, "login-ui-trust"]}
+FIX_LABELS = {"loginrestore": "Restore the login screen", "loginui": "Use it at the login screen"}
 SYSTEM = os.environ.get("TESSERA_SYSTEM_ROOT", "/")  # where /usr is looked for (tests)
 
 _local = threading.local() # per check: whether something it asked hung
@@ -456,6 +459,31 @@ def read_json(path):
         return None
 
 
+APPROVE_STEPS = ["Only if you built it yourself: press Use it at the login screen and give your password. "
+                 "The login screen sees every password typed there, so root keeps its own list of the builds you approved",
+                 "Or in a terminal, run: sudo /usr/lib/tessera/tessera-root login-ui-trust",
+                 "Or leave it: the login screen keeps working as it is"]
+
+
+def unapproved_build(home=None):
+    """The sha256 your tessera-ui's record gives when it was built on this
+    computer, Tessera's login screen runs a tessera-ui (its bin/ folder),
+    and root's own list (tessera-root.py LOGIN_UI_TRUST) doesn't have it:
+    the login screen then keeps the one it had, or the QML one, until you
+    approve it (audit #802). "" otherwise. Read only; root checks the
+    program itself when asked."""
+    tr = sharing.tessera_root
+    at = lambda p: os.path.join(SYSTEM, p.lstrip("/"))
+    if not os.path.isdir(at(tr.LOGIN_SHARE + "/bin")):
+        return ""
+    rec = read_json(os.path.join(home or os.path.expanduser("~"), tr.LOGIN_UI_RECORD)) or {}
+    sha = rec.get("sha256")
+    if rec.get("source") not in ("built", "built-tuned", "bundle-built") or not isinstance(sha, str) or not tr.SHA_HEX.match(sha):
+        return ""
+    built = (read_json(at(tr.LOGIN_UI_TRUST)) or {}).get("built")
+    return "" if isinstance(built, list) and sha in built else sha
+
+
 def check_login(_):
     """Will the next login work? What can be read without root, now (the
     login screen's config, its PAM files' password path), with the root
@@ -484,6 +512,11 @@ def check_login(_):
                       page="lock", steps=RESTORE_STEPS)
     if live.get("error"):
         return result("login", name, "Tessera itself", "warn", "Couldn't check: " + live["error"], page="about/bugreport", steps=UNANSWERED)
+    if unapproved_build():
+        # (asked once for each new build; the login screen works meanwhile)
+        return result("loginui", name, "Tessera itself", "warn",
+                      "Will start, with the tessera-ui it had or the standard one: the tessera-ui built on this "
+                      "computer isn't approved for the login screen yet", page="lock", steps=APPROVE_STEPS)
     return result("login", name, "Tessera itself", "ok", "Will start" + (" (checked after the last update too)" if last.get("ok") else ""))
 
 

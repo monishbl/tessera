@@ -155,7 +155,8 @@ class FromYourHome(unittest.TestCase):
 
     def test_a_build_of_yours(self):
         self.put()
-        self.assertEqual(R.read_login_ui(os.getuid(), str(self.home)), (PROGRAM, "built"))
+        # (vouched for by its record; root's own list is RootsRecord's)
+        self.assertEqual(R.read_login_ui(os.getuid(), str(self.home), check_root=False), (PROGRAM, "built"))
 
     @unittest.skipUnless(HAS_CRYPTO, "python-cryptography isn't installed")
     def test_a_signed_build(self):
@@ -184,7 +185,7 @@ class FromYourHome(unittest.TestCase):
 class RootsRecord(unittest.TestCase):
     """Audit #95: a build of yours reaches the login screen only when root's
     own record (/var/lib/tessera/login-ui-trust.json, written by root:
-    login-ui-trust, or once by the first root step of this version) lists
+    login-ui-trust, or the update that built it) lists
     its sha256; a refused one gives way to the one root last put there, else
     the QML login screen (bin/tessera-ui missing: greeter-start.sh starts
     the QML one). Never no login screen."""
@@ -220,11 +221,15 @@ class RootsRecord(unittest.TestCase):
         self.trust.chmod(0o644)
         self.trust.parent.chmod(0o755)
 
-    def test_no_record_yet_keeps_the_old_rule(self):
-        # (an install from before: nobody is locked out of the Rust login
-        # screen until a root step of this version writes the record)
+    def test_no_record_yet_trusts_no_build_of_yours(self):
+        # (audit #802: an install from before root's record isn't taken on
+        # the record in your home either; you're asked once, and until then
+        # the login screen keeps the last one root put there, or the QML one)
         self.put()
-        self.assertEqual(self.read(), (PROGRAM, "built"))
+        with self.assertRaisesRegex(R.Refused, "login-ui-trust"):
+            self.read()
+        self.assertFalse(self.trust.exists())
+        self.assertIsNone(R.login_ui_trusted_here(PROGRAM, "signed", str(self.prefix)))  # (signed: none needed)
 
     def test_a_listed_build_is_taken(self):
         self.put()

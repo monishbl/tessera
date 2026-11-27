@@ -2339,8 +2339,8 @@ def refresh_login(src, uid, prefix=None):
                 write_root(ui, data, 0o755)
                 written.append(ui)
                 login_ui_said(how)
-            # (root's record of it; the first root step of this version also
-            # records a build of yours taken by the old rule)
+            # (root's record of it: what the login screen's copy has now; a build
+            # of yours is only ever one root's record listed already)
             sha = hashlib.sha256(data).hexdigest()
             with contextlib.suppress(OSError, Refused):
                 write_login_trust(prefix, built=[sha] if how == "built" else [], installed={"sha256": sha, "how": how})
@@ -2716,10 +2716,14 @@ def login_ui_said(how):
 # the program root last put in the login screen's copy and how it was
 # vouched for, so a refused one gives way to that one (else the QML login
 # screen: greeter-start.sh starts it whenever bin/tessera-ui is missing).
-# Migration: an install from before has no record at all; until a root step
-# of this version writes one, a build of yours is taken as before (its own
-# record's sha256), and that root step records it. setup (every update's
-# root step) writes the record, so the old rule lasts until the next update.
+# No record at all (an install from before it) trusts no build of yours
+# (audit #802, 27 Nov: before, it took one on its own record's word until
+# the next update). You're asked once for each new build: an update that
+# built it here (its own password), install.sh after its build, or Settings
+# → Health → Login screen's "Use it at the login screen" (login-ui-trust,
+# always the password). Until then the login screen keeps the program root
+# last put there while it's still that one, else the QML login screen: a
+# login always starts. setup writes an empty record where there's none.
 LOGIN_UI_TRUST = "/var/lib/tessera/login-ui-trust.json"
 LOGIN_UI_TRUST_KEEP = 3  # (builds of yours remembered: the newest few)
 SHA_HEX = re.compile(r"^[0-9a-f]{64}$")
@@ -2787,13 +2791,15 @@ def write_login_trust(prefix=None, built=None, installed=""):
 
 def login_ui_trusted_here(data, how, prefix=None):
     """A build of yours (HOW "built", its own record already checked) only
-    when root's record lists its sha256; with no record yet (an install
-    from before), as before. Refused otherwise, and when root's record
-    isn't root's own."""
+    when root's record lists its sha256. No record yet (an install from
+    before it) lists nothing (audit #802: the old rule, the record in your
+    home alone, is gone). Refused otherwise, and when root's record isn't
+    root's own; the login screen then keeps the program root last put
+    there, or uses the QML one."""
     if how != "built":
         return
     rec = read_login_trust(prefix)
-    if rec is not None and hashlib.sha256(data).hexdigest() not in rec["built"]:
+    if rec is None or hashlib.sha256(data).hexdigest() not in rec["built"]:
         raise Refused("tessera-ui was built here since an administrator last trusted a build for the login screen: "
                       "run sudo /usr/lib/tessera/tessera-root login-ui-trust to use it there")
 

@@ -323,15 +323,21 @@ class LoginCopy(unittest.TestCase):
         real = R.caller_home
         R.caller_home = lambda uid: str(home)
         ui = self.share / "bin/tessera-ui"
+        new_sha = hashlib.sha256(b"\x7fELF new").hexdigest()
         try:
+            # no record of root's yet (an install from before it): a build of
+            # yours isn't taken on its own record's word (audit #802); the
+            # QML login screen, its bin/ kept for one that's accepted later
+            self.assertIn(str(ui), self.refresh())
+            self.assertFalse(ui.exists())
+            self.assertTrue((self.share / "bin").is_dir())
+            # approved once (login-ui-trust, or the update that built it)
+            R.write_login_trust(str(self.d / "root"), built=[new_sha])
             self.assertIn(str(ui), self.refresh())
             self.assertEqual(ui.read_bytes(), b"\x7fELF new")
             self.assertEqual(stat.S_IMODE(ui.stat().st_mode), 0o755)
             self.assertNotIn(str(ui), self.refresh())  # (unchanged)
-            # (the first root step of this version recorded it in root's own
-            # record: a build of yours taken by the old rule, once; audit #95)
             trust = json.loads((self.d / "root" / R.LOGIN_UI_TRUST.lstrip("/")).read_text())
-            new_sha = hashlib.sha256(b"\x7fELF new").hexdigest()
             self.assertEqual(trust["built"], [new_sha])
             self.assertEqual(trust["installed"], {"sha256": new_sha, "how": "built"})
             # one another account could have written: refused, and the login

@@ -382,6 +382,35 @@ class HealthRow(Machine):
         self.assertTrue(r["canFix"] and r["fixRoot"] and r["fixPassword"])
         self.assertTrue(r["fixCommand"].startswith("pkexec ") and r["fixCommand"].endswith(" rescue undo"), r["fixCommand"])
 
+    def test_a_build_of_yours_root_hasnt_approved_is_asked_about(self):
+        # (audit #802: once for each new build, with the password; the login
+        # screen keeps working meanwhile)
+        os.environ["TESSERA_SYSTEM_ROOT"] = self.root
+        self.addCleanup(os.environ.pop, "TESSERA_SYSTEM_ROOT", None)
+        h = load(SCRIPTS / "health-check.py", "health_approve")
+        home = Path(self.root, "home")
+        rec = home / R.LOGIN_UI_RECORD
+        rec.parent.mkdir(parents=True)
+        rec.write_text(json.dumps({"source": "built", "sha256": "a" * 64}))
+        self.assertEqual(h.unapproved_build(str(home)), "")  # (no Rust login screen: nothing to ask)
+        Path(self.p(R.LOGIN_SHARE), "bin").mkdir(parents=True, exist_ok=True)
+        self.assertEqual(h.unapproved_build(str(home)), "a" * 64)
+        trust = Path(self.p(R.LOGIN_UI_TRUST))
+        trust.parent.mkdir(parents=True, exist_ok=True)
+        trust.write_text(json.dumps({"built": ["b" * 64]}))
+        self.assertEqual(h.unapproved_build(str(home)), "a" * 64)
+        trust.write_text(json.dumps({"built": ["a" * 64]}))
+        self.assertEqual(h.unapproved_build(str(home)), "")
+        rec.write_text(json.dumps({"source": "ready-made", "sha256": "c" * 64}))
+        self.assertEqual(h.unapproved_build(str(home)), "")  # (signed: root checks its signature)
+        rec.write_text(json.dumps({"source": "built", "sha256": "c" * 64}))
+        h.unapproved_build = lambda home=None: "c" * 64
+        r = h.check_login(None)
+        self.assertEqual((r["id"], r["status"], r["fixLabel"]), ("loginui", "warn", "Use it at the login screen"))
+        self.assertTrue(r["fixPassword"])
+        self.assertTrue(r["fixCommand"].endswith("tessera-root login-ui-trust"), r["fixCommand"])
+        self.assertIn("Will start", r["detail"])
+
     def test_restore_runs_the_rescue_undo_with_the_password_and_nothing_else(self):
         os.environ["TESSERA_SYSTEM_ROOT"] = self.root
         self.addCleanup(os.environ.pop, "TESSERA_SYSTEM_ROOT", None)
