@@ -417,6 +417,9 @@ pub struct Lock {
     tick_ms: i64,
     minute: (i32, i32),
     sleeping: bool,
+    /// the computer slept (or the clock jumped) during this lock: a regular
+    /// camera's face unlock rests until the password (logic::face_rests)
+    slept: bool,
     sleep_watch: bool,
     /// logind's sleep delay inhibitor while a scan can run (reader.rs), and
     /// whether it's being taken
@@ -501,6 +504,7 @@ impl Default for Lock {
             tick_ms: 0,
             minute: (-1, -1),
             sleeping: false,
+            slept: false,
             sleep_watch: false,
             sleep_fd: None,
             sleep_fd_asked: false,
@@ -767,6 +771,7 @@ impl Lock {
         let now = crate::util::now_ms();
         self.held_at = now;
         self.last_touch = now;
+        self.slept = false;
         self.face = FaceCam::default();
         // (an unlock, or a new lock: the misses count from zero)
         self.finger.tries = 0;
@@ -1592,6 +1597,7 @@ impl Lock {
     fn face_wanted(&self, st: &State) -> bool {
         self.real && self.held && !self.leaving && !self.standby(st) && self.face_on && self.face.armed && !self.face.broken && self.face.tries < 3
             && self.face.misses < FACE_MAX_MISSES
+            && !logic::face_rests(auth::face_is_rgb(), self.slept, crate::util::now_ms() - self.held_at)
     }
 
     /// After anything changed: start or stop the reader, the camera, the
@@ -2316,6 +2322,14 @@ impl Part for Lock {
             }
             M::Second => {
                 let now = crate::util::now_ms();
+                // (a jump in the clock while locked: a sleep the signal missed)
+                if self.held && now - self.tick_ms > 10_000 {
+                    self.slept = true;
+                }
+                // (a regular camera's 30 minutes are up while it looks: it stops)
+                if self.face.conv.is_some() && !self.face_wanted(st) {
+                    self.rules(st);
+                }
                 // a jump in the clock while locked (a sleep missed): a fresh reader
                 if now - self.tick_ms > 10_000 && self.finger_on && self.real {
                     self.finger.tries = 0;
@@ -2504,6 +2518,9 @@ impl Part for Lock {
                 self.finger.probing = false;
                 if going {
                     self.sleeping = true;
+                    if self.held {
+                        self.slept = true;
+                    }
                     // (nothing typed before a sleep is waiting in the field after it)
                     if self.held {
                         self.drop_typed();

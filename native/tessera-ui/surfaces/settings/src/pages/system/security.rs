@@ -215,6 +215,8 @@ pub fn face_footer(rgb: bool, installed: bool) -> String {
         } else {
             "Look at the screen to unlock it. It's less secure than a password or a fingerprint: someone who looks very like you might get in."
         }
+    } else if rgb {
+        "Face unlock is for the lock screen; the first login after a restart always needs your password. A regular camera can be fooled by a video of you blinking, so after the computer sleeps, or once it has been locked 30 minutes, the lock screen asks for your password. Each change asks for your password."
     } else {
         "Face unlock is for the lock screen; the first login after a restart always needs your password. Each change asks for your password."
     };
@@ -239,9 +241,9 @@ pub fn admin_detail(allowed: bool, changing: bool) -> &'static str {
 pub fn camera_detail(rgb: bool, both: bool) -> &'static str {
     match (rgb, both) {
         (false, false) => "Infrared camera: a photo can't fool it",
-        (true, false) => "Regular camera: you blink to unlock, so a photo won't work",
+        (true, false) => "Regular camera: you blink to unlock. A video of you blinking can fool it",
         (false, true) => "Infrared is used: a photo can't fool it. Recommended",
-        (true, true) => "Regular is used: you blink to unlock. Infrared is safer",
+        (true, true) => "Regular is used: a video of you blinking can fool it. Infrared is safer",
     }
 }
 
@@ -694,6 +696,10 @@ mod tests {
         }
         assert!(face_footer(true, false).contains("video of you"));
         assert!(face_footer(false, true).contains("first login after a restart"));
+        // (#785: a regular camera says plainly what can fool it, and what the lock does about it)
+        assert!(camera_detail(true, false).contains("video of you blinking"));
+        assert!(face_footer(true, true).contains("video of you blinking") && face_footer(true, true).contains("30 minutes"));
+        assert!(!face_footer(false, true).contains("video"));
     }
 
     #[test]

@@ -373,6 +373,18 @@ pub fn lead(first_wday: i32, start: u32) -> i32 {
     locale::column(first_wday.rem_euclid(7) as u32, start) as i32
 }
 
+/// How long a lock with a regular camera lets your face unlock it (#785)
+pub const FACE_RGB_MAX_MS: i64 = 30 * 60_000;
+
+/// Face unlock rests until the password (#785): with a regular (colour)
+/// camera a video of you blinking can fool it, so it isn't offered after
+/// the computer slept during this lock, or once the lock has been up 30
+/// minutes (the worst case: a computer left locked, someone with a video).
+/// An infrared camera isn't fooled by a picture: it always may
+pub fn face_rests(rgb: bool, slept: bool, locked_ms: i64) -> bool {
+    rgb && (slept || locked_ms >= FACE_RGB_MAX_MS)
+}
+
 /// Whether to treat the face camera's or the reader's tries as given back
 /// (Lock.qml's woke): someone came back after 30 s away or from Bedside Mode
 pub fn came_back(idle: bool, now_ms: i64, last_touch_ms: i64) -> bool {
@@ -616,6 +628,11 @@ mod tests {
         assert_eq!(lead(0, 1), 6);
         assert_eq!(lead(1, 1), 0);
         assert_eq!(lead(6, 1), 5);
+        // a regular camera: not after a sleep, nor past 30 minutes; infrared always
+        assert!(!face_rests(true, false, 29 * 60_000));
+        assert!(face_rests(true, false, 30 * 60_000));
+        assert!(face_rests(true, true, 0));
+        assert!(!face_rests(false, true, 5 * 3_600_000));
         // weeks from Sunday: none; from Saturday: one
         assert_eq!(lead(0, 0), 0);
         assert_eq!(lead(0, 6), 1);
