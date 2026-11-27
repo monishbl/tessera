@@ -52,6 +52,7 @@
 
 import { Theme, Ease, Icon } from "theme.slint";
 import { IconButton } from "widgets.slint";
+import { FocusRing } from "focus.slint";
 
 export struct NcItem {
     event: bool,
@@ -139,9 +140,12 @@ export component Segmented inherits Rectangle {
     keys := FocusScope {
         // (a click goes to what's under it: keys only; it covered link rows and choices, which then took two clicks or none)
         focus-on-click: false;
+        // (the ring shows which one the arrows change: keyboard focus only)
+        property <bool> keyed;
+        focus-gained(r) => { self.keyed = r == FocusReason.tab-navigation; }
         key-pressed(e) => {
-            if e.text == Key.LeftArrow && current > 0 { selected(current - 1); return accept; }
-            if e.text == Key.RightArrow && current < options.length - 1 { selected(current + 1); return accept; }
+            if e.text == Key.LeftArrow && current > 0 { self.keyed = true; selected(current - 1); return accept; }
+            if e.text == Key.RightArrow && current < options.length - 1 { self.keyed = true; selected(current + 1); return accept; }
             reject
         }
     }
@@ -196,10 +200,14 @@ export component Segmented inherits Rectangle {
         }
         touch := TouchArea {
             mouse-cursor: pointer;
-            clicked => { root.selected(i); }
+            clicked => {
+                keys.keyed = false;
+                root.selected(i);
+            }
         }
     }
     }
+    FocusRing { shown: keys.has-focus && keys.keyed; radius: root.border-radius; }
 }
 
 // A tick box: Glass a circle (accent when done), Material MaterialCheck.qml
@@ -221,6 +229,24 @@ export component Tick inherits Rectangle {
     accessible-checked: checked;
     accessible-label: label;
     accessible-action-default => { toggled(); }
+    // (Tab reaches it, Space or Enter ticks it; off: a list whose own keys
+    // tick the current row)
+    in property <bool> focusable: true;
+    forward-focus: keys;
+    keys := FocusScope {
+        focus-on-click: false;
+        focus-on-tab-navigation: root.focusable;
+        property <bool> keyed;
+        focus-gained(r) => { self.keyed = r == FocusReason.tab-navigation; }
+        key-pressed(e) => {
+            if !e.repeat && (e.text == " " || e.text == Key.Return) {
+                self.keyed = true;
+                root.toggled();
+                return accept;
+            }
+            reject
+        }
+    }
     if checked: Icon {
         text: "\u{e182}"; // check
         bold: true;
@@ -233,8 +259,12 @@ export component Tick inherits Rectangle {
         width: parent.width + 12px;
         height: parent.height + 12px;
         mouse-cursor: pointer;
-        clicked => { root.toggled(); }
+        clicked => {
+            keys.keyed = false;
+            root.toggled();
+        }
     }
+    FocusRing { shown: keys.has-focus && keys.keyed; radius: root.border-radius; }
 }
 
 // TextField.qml in the editor: Glass a fill outlined in the accent while
@@ -296,6 +326,23 @@ component CalSwitch inherits Rectangle {
     accessible-checked: checked;
     accessible-label: label;
     accessible-action-default => { if enabled { toggled(); } }
+    accessible-enabled: enabled;
+    // (Tab reaches it, Space or Enter flips it)
+    forward-focus: keys;
+    keys := FocusScope {
+        focus-on-click: false;
+        enabled: root.enabled;
+        property <bool> keyed;
+        focus-gained(r) => { self.keyed = r == FocusReason.tab-navigation; }
+        key-pressed(e) => {
+            if !e.repeat && (e.text == " " || e.text == Key.Return) {
+                self.keyed = true;
+                root.toggled();
+                return accept;
+            }
+            reject
+        }
+    }
     if !Theme.material: Rectangle {
         width: parent.height - 4px;
         height: self.width;
@@ -312,7 +359,7 @@ component CalSwitch inherits Rectangle {
         y: (parent.height - size) / 2;
         x: checked ? parent.width - 16px - size / 2 : 16px - size / 2;
         border-radius: size / 2;
-        background: checked ? Theme.m3-on-primary : t.has-hover || t.pressed ? Theme.m3-on-surface-variant : Theme.m3-outline;
+        background: checked ? Theme.m3-on-primary : root.enabled && (t.has-hover || t.pressed) ? Theme.m3-on-surface-variant : Theme.m3-outline;
         animate x, width, height, y { duration: Theme.motion(300ms); easing: spring(0.54); }
         animate background { duration: Theme.hover; }
         if checked: Icon {
@@ -323,9 +370,15 @@ component CalSwitch inherits Rectangle {
         }
     }
     t := TouchArea {
+        // (off: no pointer hand, no hover look, not pressable)
+        enabled: root.enabled;
         mouse-cursor: pointer;
-        clicked => { if enabled { root.toggled(); } }
+        clicked => {
+            keys.keyed = false;
+            root.toggled();
+        }
     }
+    FocusRing { shown: keys.has-focus && keys.keyed; radius: root.height / 2; }
 }
 
 // Dropdown.qml's button (its list is the editor's: drawn over the card)
@@ -348,10 +401,12 @@ component CalChoice inherits Rectangle {
     keys := FocusScope {
         // (a click goes to what's under it: keys only; it covered link rows and choices, which then took two clicks or none)
         focus-on-click: false;
+        property <bool> keyed;
+        focus-gained(r) => { self.keyed = r == FocusReason.tab-navigation; }
         key-pressed(e) => {
-            if e.text == " " || e.text == Key.Return { root.clicked(); return accept; }
-            if e.text == Key.UpArrow { root.step(-1); return accept; }
-            if e.text == Key.DownArrow { root.step(1); return accept; }
+            if e.text == " " || e.text == Key.Return { self.keyed = true; root.clicked(); return accept; }
+            if e.text == Key.UpArrow { self.keyed = true; root.step(-1); return accept; }
+            if e.text == Key.DownArrow { self.keyed = true; root.step(1); return accept; }
             reject
         }
     }
@@ -378,9 +433,11 @@ component CalChoice inherits Rectangle {
         mouse-cursor: pointer;
         clicked => {
             keys.focus();
+            keys.keyed = false;
             root.clicked();
         }
     }
+    FocusRing { shown: keys.has-focus && keys.keyed; radius: root.border-radius; }
 }
 
 // The editor's buttons: 0 Cancel (tonal; Material a text button), 1 Save
@@ -388,7 +445,10 @@ component CalChoice inherits Rectangle {
 component CalButton inherits Rectangle {
     in property <string> text;
     in property <int> kind;
+    // (off: greyed, no hover or press look, not pressable)
+    in property <bool> enabled: true;
     callback clicked();
+    opacity: enabled ? 1 : Theme.material ? 0.38 : 0.4;
     width: label.preferred-width + (kind == 1 && Theme.material ? 32px : 24px);
     height: Theme.material ? 40px : 32px;
     border-radius: Theme.material ? self.height / 2 : Theme.radius-control;
@@ -399,7 +459,24 @@ component CalButton inherits Rectangle {
     animate background { duration: Theme.hover; }
     accessible-role: button;
     accessible-label: text;
-    accessible-action-default => { clicked(); }
+    accessible-enabled: enabled;
+    accessible-action-default => { if enabled { clicked(); } }
+    // (Tab reaches it, Enter or Space presses it)
+    forward-focus: keys;
+    keys := FocusScope {
+        focus-on-click: false;
+        enabled: root.enabled;
+        property <bool> keyed;
+        focus-gained(r) => { self.keyed = r == FocusReason.tab-navigation; }
+        key-pressed(e) => {
+            if !e.repeat && (e.text == " " || e.text == Key.Return) {
+                self.keyed = true;
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
     label := Text {
         text: root.text;
         color: kind == 2 ? Theme.danger : kind == 1 ? (Theme.material ? Theme.m3-on-primary : Theme.on-accent) : Theme.material ? Theme.m3-primary : Theme.label;
@@ -410,9 +487,14 @@ component CalButton inherits Rectangle {
         accessible-role: none;
     }
     t := TouchArea {
+        enabled: root.enabled;
         mouse-cursor: pointer;
-        clicked => { root.clicked(); }
+        clicked => {
+            keys.keyed = false;
+            root.clicked();
+        }
     }
+    FocusRing { shown: keys.has-focus && keys.keyed; radius: root.border-radius; }
 }
 
 // ── The calendar (CalendarWidget.qml) ───────────────────────────────────────
@@ -460,6 +542,38 @@ export component CalendarTab {
     }
     property <length> cell: (self.width - 24px) / 7;
     property <length> btn: Theme.material ? 32px : 24px;
+
+    // ── The keyboard (#876): Tab reaches the dates; the arrows move the
+    // chosen day (a week up and down in the month), Page Up/Down the month,
+    // Enter or N adds to the day; Tab on into its items (Enter edits, Delete
+    // removes, Space ticks a to-do) and Undo
+    property <int> sel-index: -1; // the chosen day's place in `days`
+    property <bool> grid-focused;
+    property <bool> grid-keyed;
+    function grid-key(e: KeyEvent) -> bool {
+        let up-down = week ? 1 : 7;
+        let d = e.text == Key.LeftArrow ? -1 : e.text == Key.RightArrow ? 1 : e.text == Key.UpArrow ? -up-down : e.text == Key.DownArrow ? up-down : 0;
+        if d != 0 {
+            grid-keyed = true;
+            let n = sel-index + d;
+            if sel-index >= 0 && n >= 0 && n < days.length {
+                pick(days[n].key);
+            } else {
+                step(d > 0 ? 1 : -1);
+            }
+            return true;
+        }
+        if e.text == Key.PageUp || e.text == Key.PageDown {
+            grid-keyed = true;
+            step(e.text == Key.PageUp ? -1 : 1);
+            return true;
+        }
+        if !e.repeat && (e.text == Key.Return || e.text == "n" || e.text == "N") && !e.modifiers.control && !e.modifiers.alt {
+            root.create(day-key, day-short);
+            return true;
+        }
+        false
+    }
 
     // ── Dragging an item to another date (a ghost follows the pointer;
     // the date under it lights up) ──
@@ -663,6 +777,19 @@ export component CalendarTab {
         // The month: weekdays, then six weeks of dates (the wheel turns months)
         if !week: Rectangle {
             height: 16px + 6 * 32px;
+            FocusScope {
+                focus-on-click: false;
+                accessible-role: AccessibleRole.none;
+                focus-gained(r) => {
+                    root.grid-focused = true;
+                    root.grid-keyed = r == FocusReason.tab-navigation;
+                }
+                focus-lost(r) => { root.grid-focused = false; }
+                key-pressed(e) => {
+                    if root.grid-key(e) { return accept; }
+                    reject
+                }
+            }
             TouchArea {
                 scroll-event(e) => {
                     if e.delta-y == 0 { return reject; }
@@ -690,6 +817,9 @@ export component CalendarTab {
                 accessible-role: button;
                 accessible-label: d.key;
                 accessible-action-default => { pick(d.key); }
+                property <bool> chosen: d.selected;
+                init => { if d.selected { root.sel-index = i; } }
+                changed chosen => { if self.chosen { root.sel-index = i; } }
                 // (the date under a dragged item)
                 property <bool> drop-here: root.dragging && root.drag-gx >= self.absolute-position.x && root.drag-gx < self.absolute-position.x + self.width
                     && root.drag-gy >= self.absolute-position.y && root.drag-gy < self.absolute-position.y + self.height;
@@ -748,15 +878,45 @@ export component CalendarTab {
                     }
                 }
                 touch := TouchArea {
-                    clicked => { pick(d.key); }
+                    clicked => {
+                        root.grid-keyed = false;
+                        pick(d.key);
+                    }
                     double-clicked => { root.create(d.key, d.long); }
+                }
+                FocusRing {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2 - 3px;
+                    width: Theme.material ? 28px : 26px;
+                    height: self.width;
+                    shown: d.selected && root.grid-focused && root.grid-keyed;
+                    radius: self.width / 2;
                 }
             }
         }
         // The week: a row a day, with what's on
         if week: VerticalLayout {
             spacing: 2px;
-            for d in days: Rectangle {
+            for d[i] in days: Rectangle {
+                property <bool> chosen: d.selected;
+                init => { if d.selected { root.sel-index = i; } }
+                changed chosen => { if self.chosen { root.sel-index = i; } }
+                // (the week's keys: one scope, in the first row)
+                if i == 0: FocusScope {
+                    width: 0;
+                    height: 0;
+                    focus-on-click: false;
+                    accessible-role: AccessibleRole.none;
+                    focus-gained(r) => {
+                        root.grid-focused = true;
+                        root.grid-keyed = r == FocusReason.tab-navigation;
+                    }
+                    focus-lost(r) => { root.grid-focused = false; }
+                    key-pressed(e) => {
+                        if root.grid-key(e) { return accept; }
+                        reject
+                    }
+                }
                 property <bool> drop-here: root.dragging && root.drag-gx >= self.absolute-position.x && root.drag-gx < self.absolute-position.x + self.width
                     && root.drag-gy >= self.absolute-position.y && root.drag-gy < self.absolute-position.y + self.height;
                 changed drop-here => {
@@ -768,7 +928,10 @@ export component CalendarTab {
                     : Theme.material ? (d.selected ? Theme.m3-secondary-container : wtouch.has-hover ? Theme.m3-on-surface.with-alpha(0.08) : transparent)
                     : d.selected ? Theme.fill : wtouch.has-hover ? Theme.fill.with-alpha(0.5) : transparent;
                 wtouch := TouchArea {
-                    clicked => { pick(d.key); }
+                    clicked => {
+                        root.grid-keyed = false;
+                        pick(d.key);
+                    }
                     double-clicked => { root.create(d.key, d.long); }
                     scroll-event(e) => {
                         if e.delta-y == 0 { return reject; }
@@ -825,6 +988,10 @@ export component CalendarTab {
                         font-size: Theme.small;
                     }
                 }
+                FocusRing {
+                    shown: d.selected && root.grid-focused && root.grid-keyed;
+                    radius: parent.border-radius;
+                }
             }
         }
         if every-day != "": HorizontalLayout {
@@ -876,6 +1043,34 @@ export component CalendarTab {
                 border-radius: Theme.material ? 12px : 8px;
                 background: Theme.material ? (rt.has-hover ? Theme.fill-hover : Theme.fill) : rt.pressed ? Theme.fill-pressed : rt.has-hover ? Theme.fill : transparent;
                 opacity: lifted ? 0.5 : 1;
+                accessible-role: AccessibleRole.list-item;
+                accessible-label: it.title;
+                // Tab: Enter edits (opens it), Delete removes (a repeating
+                // event opens, to ask which), Space ticks a to-do
+                ikeys := FocusScope {
+                    focus-on-click: false;
+                    property <bool> keyed;
+                    focus-gained(r) => { self.keyed = r == FocusReason.tab-navigation; }
+                    key-pressed(e) => {
+                        if e.repeat { return reject; }
+                        if e.text == Key.Return {
+                            self.keyed = true;
+                            root.edit(it);
+                            return accept;
+                        }
+                        if e.text == " " && !it.event {
+                            self.keyed = true;
+                            todo-toggle(it.key);
+                            return accept;
+                        }
+                        if (e.text == Key.Delete || e.text == Key.Backspace) && (!it.event || it.editable) {
+                            self.keyed = true;
+                            if it.recurring { root.edit(it); } else { root.remove(it.key, -1); }
+                            return accept;
+                        }
+                        reject
+                    }
+                }
                 // click: edit; drag (the movable ones): to another date
                 rt := TouchArea {
                     x: it.event ? 0 : Theme.material ? 34px : 24px;
@@ -921,10 +1116,12 @@ export component CalendarTab {
                         }
                     }
                     clicked => {
+                        ikeys.keyed = false;
                         if root.drag-moved { root.drag-moved = false; return; }
                         root.edit(it);
                     }
                 }
+                FocusRing { shown: ikeys.has-focus && ikeys.keyed; radius: parent.border-radius; }
                 if it.event: Rectangle {
                     x: Theme.material ? 10px : 6px;
                     y: Theme.material ? 10px : 5px;
@@ -940,6 +1137,8 @@ export component CalendarTab {
                     tint: Theme.material ? Theme.m3-tertiary : Theme.warning;
                     ring: Theme.material ? Theme.m3-tertiary : Theme.warning;
                     label: it.title;
+                    // (the row's Space ticks it)
+                    focusable: false;
                     toggled => { todo-toggle(it.key); }
                 }
                 VerticalLayout {
@@ -988,10 +1187,27 @@ export component CalendarTab {
                 accessible-role: button;
                 accessible-label: "Undo";
                 accessible-action-default => { restore(); }
+                // (a real button: Tab reaches it, Enter or Space undoes)
+                ukeys := FocusScope {
+                    focus-on-click: false;
+                    property <bool> keyed;
+                    focus-gained(r) => { self.keyed = r == FocusReason.tab-navigation; }
+                    key-pressed(e) => {
+                        if !e.repeat && (e.text == " " || e.text == Key.Return) {
+                            restore();
+                            return accept;
+                        }
+                        reject
+                    }
+                }
                 TouchArea {
                     mouse-cursor: pointer;
-                    clicked => { restore(); }
+                    clicked => {
+                        ukeys.keyed = false;
+                        restore();
+                    }
                 }
+                FocusRing { shown: ukeys.has-focus && ukeys.keyed; radius: 4px; }
             }
         }
     }
@@ -1475,10 +1691,27 @@ export component TodoTab {
                 accessible-role: button;
                 accessible-label: "Undo";
                 accessible-action-default => { restore(); }
+                // (a real button: Tab reaches it, Enter or Space undoes)
+                ukeys := FocusScope {
+                    focus-on-click: false;
+                    property <bool> keyed;
+                    focus-gained(r) => { self.keyed = r == FocusReason.tab-navigation; }
+                    key-pressed(e) => {
+                        if !e.repeat && (e.text == " " || e.text == Key.Return) {
+                            restore();
+                            return accept;
+                        }
+                        reject
+                    }
+                }
                 TouchArea {
                     mouse-cursor: pointer;
-                    clicked => { restore(); }
+                    clicked => {
+                        ukeys.keyed = false;
+                        restore();
+                    }
                 }
+                FocusRing { shown: ukeys.has-focus && ukeys.keyed; radius: 4px; }
             }
         }
     }

@@ -656,6 +656,7 @@ component ClockFaces inherits Rectangle {
         pointer-event(e) => {
             if e.button != PointerEventButton.left { return; }
             if e.kind == PointerEventKind.down {
+                SBus.by-keys = false;
                 fs.focus();
                 root.grab-x = self.mouse-x;
                 root.drag = 0;
@@ -823,6 +824,7 @@ component BootCards inherits Rectangle {
             enabled: usable;
             mouse-cursor: usable ? MouseCursor.pointer : MouseCursor.default;
             clicked => {
+                SBus.by-keys = false;
                 cfs.focus();
                 SBus.act(r.id, i, 0, "");
             }

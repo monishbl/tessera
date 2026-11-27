@@ -881,6 +881,12 @@ export component SettingsWindow inherits Window {
 
     forward-focus: side-keys;
     keys := FocusScope {
+        // (any key: the focus rings show again; a click that focuses a
+        // control hides them, audit #932)
+        capture-key-pressed(e) => {
+            SBus.by-keys = true;
+            reject
+        }
         key-pressed(e) => {
             if menu-open && (e.text == Key.Escape || e.text == Key.UpArrow || e.text == Key.DownArrow || e.text == Key.Return || e.text == " " || e.text == Key.Home || e.text == Key.End) {
                 root.menu-key(e.text);

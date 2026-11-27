@@ -176,6 +176,7 @@ component BindRow inherits Tile {
     ta := TouchArea {
         mouse-cursor: pointer;
         clicked => {
+            SBus.by-keys = false;
             fs.focus();
             dots.open();
         }
@@ -478,6 +479,7 @@ component AppRow inherits Tile {
     ta := TouchArea {
         mouse-cursor: pointer;
         clicked => {
+            SBus.by-keys = false;
             afs.focus();
             SBus.act(r.id, 0, 0, "");
         }

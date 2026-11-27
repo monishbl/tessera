@@ -7,6 +7,7 @@
 
 import { Theme } from "@tessera/theme.slint";
 import { Busy } from "@tessera/widgets.slint";
+import { FocusRing } from "@tessera/focus.slint";
 
 // An icon: its Phosphor glyph, and the Material Symbols one Material draws
 // in its place ("" when there's none: Phosphor stays), as Icon.qml
@@ -144,6 +145,11 @@ export global SBus {
     // sheet's) get it back, so Esc, Alt+arrows, Ctrl+F and Ctrl+Z still
     // work; nothing had focus, and they did nothing (audit #196)
     in-out property <int> refocus-seq;
+    // the focus came from the keyboard: the window's keys set it on any key
+    // (capture-key-pressed), a click that focuses a control clears it, so a
+    // ring shows only while moving with the keyboard (audit #932); true
+    // where nothing sets it
+    in-out property <bool> by-keys: true;
     // the window's width for the page (custom views size from it)
     in-out property <length> page-width: 600px;
     // the shown page's height (the kept pages sit on top of each other;
@@ -224,30 +230,23 @@ export component SIcon {
 }
 
 // A focus ring (FocusRing.qml): the accent, 2 px outside, keyboard focus only
-// (it fills what it's in; the ring is drawn 3 px outside that)
+// (it fills what it's in; the ring is drawn outside that). The shell's one
+// ring (@tessera/focus.slint), shown only while the keyboard moves focus
+// (SBus.by-keys: a control focused by a click shows none, audit #932)
 export component SFocusRing inherits Rectangle {
     in property <bool> shown;
     in property <length> radius: 8px;
     background: transparent;
-    property <length> out: Theme.material ? 5px : 4px;
-    changed shown => {
-        if root.shown {
+    property <bool> lit: shown && SBus.by-keys;
+    changed lit => {
+        if root.lit {
             SBus.focus-x = root.absolute-position.x;
             SBus.focus-y = root.absolute-position.y - 12px;
             SBus.focus-h = root.height + 24px;
             SBus.focus-seq += 1;
         }
     }
-    Rectangle {
-        x: -root.out;
-        y: -root.out;
-        width: root.width + 2 * root.out;
-        height: root.height + 2 * root.out;
-        border-radius: root.radius + root.out;
-        border-width: root.shown ? (Theme.material ? 3px : 2px) : 0;
-        border-color: Theme.material ? Theme.m3-secondary : Theme.accent;
-        background: transparent;
-    }
+    FocusRing { shown: root.lit; radius: root.radius; }
 }
 
 // ── Switch (Switch.qml) ─────────────────────────────────────────────────
@@ -459,6 +458,8 @@ export component SSlider {
         }
         pointer-event(e) => {
             if e.kind == PointerEventKind.down {
+                // (the keys work after a drag; no ring for a click)
+                SBus.by-keys = false;
                 fs.focus();
                 root.drag-value = at(self.mouse-x);
                 root.moved(root.drag-value);
@@ -723,6 +724,7 @@ export component SChoice {
         enabled: root.enabled;
         mouse-cursor: pointer;
         clicked => {
+            SBus.by-keys = false;
             fs.focus();
             show();
         }

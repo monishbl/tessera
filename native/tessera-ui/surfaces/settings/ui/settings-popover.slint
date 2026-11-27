@@ -18,6 +18,11 @@ export component SettingsPopover inherits Window {
     default-font-size: Theme.body;
     forward-focus: keys;
     keys := FocusScope {
+        // (any key: the focus rings show again, audit #932)
+        capture-key-pressed(e) => {
+            SBus.by-keys = true;
+            reject
+        }
         key-pressed(e) => {
             if e.text == Key.Escape { root.dismiss(); return accept; }
             reject

@@ -1,0 +1,40 @@
+// The one focus look every surface shares (FocusRing.qml; Settings' SFocusRing
+// draws this one too): the accent, 2 px (Material: secondary, 3 px), just
+// outside what it's laid over. Keyboard focus only: a control shows it with
+// `has-focus && keyed`, `keyed` set when focus came by Tab
+// (FocusReason.tab-navigation) or a key moved it, and cleared by a click
+// (#226, #932).
+
+import { Theme } from "theme.slint";
+
+// It fills what it's in (lay it last, so it's drawn over the content); the
+// ring sits `out` outside that
+export component FocusRing inherits Rectangle {
+    in property <bool> shown;
+    // the corner radius of what it rings
+    in property <length> radius: 8px;
+    background: transparent;
+    property <length> out: Theme.material ? 5px : 4px;
+    Rectangle {
+        x: -root.out;
+        y: -root.out;
+        width: root.width + 2 * root.out;
+        height: root.height + 2 * root.out;
+        border-radius: root.radius + root.out;
+        border-width: root.shown ? (Theme.material ? 3px : 2px) : 0;
+        border-color: Theme.material ? Theme.m3-secondary : Theme.accent;
+        background: transparent;
+    }
+}
+
+// A highlight for the current row of a list driven by the arrow keys (a
+// menu's, a panel's): the ring drawn on the row's own edge, inside it,
+// where a list clips what's outside
+export component RowRing inherits Rectangle {
+    in property <bool> shown;
+    in property <length> radius: 8px;
+    background: transparent;
+    border-radius: radius;
+    border-width: shown ? (Theme.material ? 3px : 2px) : 0;
+    border-color: Theme.material ? Theme.m3-secondary : Theme.accent;
+}

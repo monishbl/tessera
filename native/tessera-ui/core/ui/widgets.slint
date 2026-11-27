@@ -3,6 +3,7 @@
 // and the search fields of the emoji picker and clipboard panel).
 
 import { Theme, Ease, Icon } from "theme.slint";
+import { FocusRing } from "focus.slint";
 
 // A ghost icon button (IconButton.qml): transparent, a fill on hover, darker
 // pressed. Material: round, a state layer in the icon's colour, squaring off
@@ -29,6 +30,26 @@ export component IconButton inherits Rectangle {
     accessible-label: label;
     accessible-enabled: enabled;
     accessible-action-default => { if enabled { clicked(); } }
+    // (Tab reaches it, Enter or Space presses it; off: a list whose own keys
+    // reach the button, so Tab doesn't stop on every row's)
+    in property <bool> focusable: true;
+    forward-focus: keys;
+    keys := FocusScope {
+        // (a click goes to what's under it; the ring is the keyboard's)
+        focus-on-click: false;
+        enabled: root.enabled;
+        focus-on-tab-navigation: root.focusable;
+        property <bool> keyed;
+        focus-gained(r) => { self.keyed = r == FocusReason.tab-navigation; }
+        key-pressed(e) => {
+            if !e.repeat && (e.text == " " || e.text == Key.Return) {
+                self.keyed = true;
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
     Icon {
         text: icon;
         fill: root.fill;
@@ -38,8 +59,12 @@ export component IconButton inherits Rectangle {
     touch := TouchArea {
         enabled: root.enabled;
         mouse-cursor: pointer;
-        clicked => { root.clicked(); }
+        clicked => {
+            keys.keyed = false;
+            root.clicked();
+        }
     }
+    FocusRing { shown: keys.has-focus && keys.keyed; radius: root.border-radius; }
 }
 
 // A search field: magnifier, the text, a placeholder, and (clearable) a
@@ -78,7 +103,7 @@ export component SearchField inherits Rectangle {
     }
     Rectangle {
         x: Theme.material ? 40px : 34px;
-        width: parent.width - self.x - (clear.visible ? 36px : Theme.material ? 16px : 10px);
+        width: parent.width - self.x - (clear-keys.visible ? 36px : Theme.material ? 16px : 10px);
         clip: true;
         input := TextInput {
             width: 100%;
@@ -110,18 +135,32 @@ export component SearchField inherits Rectangle {
             accessible-role: none;
         }
     }
-    clear := IconButton {
+    // (Tab reaches the clear button; the keys it doesn't use still reach the
+    // panel's `key`: Escape, the arrows)
+    clear-keys := FocusScope {
         visible: clearable && input.text != "";
+        width: 28px;
+        height: 28px;
         x: parent.width - self.width - 4px;
         y: (parent.height - self.height) / 2;
-        icon: "\u{e4f8}";
-        fill: true;
-        icon-color: Theme.tertiary;
-        label: "Clear search";
-        clicked => {
-            input.text = "";
-            root.edited("");
-            input.focus();
+        focus-on-click: false;
+        focus-on-tab-navigation: false;
+        key-pressed(e) => {
+            if root.key(e) { return accept; }
+            reject
+        }
+        clear := IconButton {
+            x: 0;
+            y: 0;
+            icon: "\u{e4f8}";
+            fill: true;
+            icon-color: Theme.tertiary;
+            label: "Clear search";
+            clicked => {
+                input.text = "";
+                root.edited("");
+                input.focus();
+            }
         }
     }
 }
@@ -249,6 +288,22 @@ export component TextButton inherits Rectangle {
     accessible-label: text;
     accessible-enabled: enabled;
     accessible-action-default => { if enabled { clicked(); } }
+    // (Tab reaches it, Enter or Space presses it)
+    forward-focus: keys;
+    keys := FocusScope {
+        focus-on-click: false;
+        enabled: root.enabled;
+        property <bool> keyed;
+        focus-gained(r) => { self.keyed = r == FocusReason.tab-navigation; }
+        key-pressed(e) => {
+            if !e.repeat && (e.text == " " || e.text == Key.Return) {
+                self.keyed = true;
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
     label := Text {
         width: max(0px, parent.width - pad);
         text: root.text;
@@ -262,8 +317,12 @@ export component TextButton inherits Rectangle {
     touch := TouchArea {
         enabled: root.enabled;
         mouse-cursor: pointer;
-        clicked => { root.clicked(); }
+        clicked => {
+            keys.keyed = false;
+            root.clicked();
+        }
     }
+    FocusRing { shown: keys.has-focus && keys.keyed; radius: root.border-radius; }
 }
 
 // The one scroll indicator (ScrollIndicator.qml): a thin bar over a list's
