@@ -319,11 +319,21 @@ export component CircleSearch inherits Window {
     in property <length> web-y;
     in property <length> web-w;
     in property <length> web-h;
-    in property <length> web-bar-h: 52px;
+    // (tessera-web's bar, from tessera_core::weblink::bar through circle.rs:
+    // its height, the buttons' left edge, size and step, the address pill)
+    in property <length> web-bar-h: 50px;
+    in property <length> web-btn-x: 10px;
+    in property <length> web-btn-w: 30px;
+    in property <length> web-btn-step: 34px;
+    in property <length> web-pill-x: 118px;
+    in property <length> web-pill-y: 8px;
+    in property <length> web-pill-h: 34px;
+    in property <length> web-pill-gap: 8px;
     in property <length> slot-x;
     in property <length> slot-y;
     in property <length> slot-w;
     in property <length> slot-h;
+    in property <length> slot-r: 6px;
     in property <StIc> ic-back;
     in property <StIc> ic-forward;
     in property <StIc> ic-reload;
@@ -431,7 +441,7 @@ export component CircleSearch inherits Window {
     property <length> wl-w: sel-w + (slot-w - sel-w) * web-go;
     property <length> wl-h: sel-h + (slot-h - sel-h) * web-go;
     property <float> wl-scale: 1 + (0.03 + 0.02 * web-up) * (1 - web-go);
-    property <length> wl-r: 14px + ((Theme.material ? 8px : 6px) - 14px) * web-go;
+    property <length> wl-r: 14px + (slot-r - 14px) * web-go;
     // the window: from the circled area's outline to tessera-web's rectangle
     property <length> wo-x: sel-x + (web-x - sel-x) * web-go;
     property <length> wo-y: sel-y + (web-y - sel-y) * web-go;
@@ -667,38 +677,32 @@ export component CircleSearch inherits Window {
             border-top-right-radius: wo-r;
             background: Theme.material ? Theme.m3-surface-container : transparent;
             for g[i] in [ic-back, ic-forward, ic-reload]: StIcon {
-                x: 12px + i * 36px + (36px - 18px) / 2;
-                y: (web-bar-h - 18px) / 2;
-                width: 18px;
-                height: 18px;
+                x: web-btn-x + i * web-btn-step + (web-btn-w - 16px) / 2;
+                y: (web-bar-h - 16px) / 2;
+                width: 16px;
+                height: 16px;
                 icon: g;
-                size: 18px;
+                size: 16px;
                 color: Theme.material ? Theme.m3-on-surface-variant : Theme.secondary;
             }
-            // (the pill: a magnifier, the picture's place (slot-*, circle.rs
-            // web_slot: the same sums), then "Search by picture")
+            // (the pill as tessera-web draws it for a picture: the picture's
+            // place (slot-*, circle.rs web_slot) where its magnifier would
+            // be, then "Search by picture")
             pill := Rectangle {
-                x: 12px + 3 * 36px + 4px;
-                y: (web-bar-h - 36px) / 2;
-                width: max(0px, parent.width - self.x - 12px);
-                height: 36px;
-                border-radius: 18px;
+                x: web-pill-x;
+                y: web-pill-y;
+                // (the bar is symmetrical: reading mode, your browser and the
+                // menu take as much on the right)
+                width: max(0px, parent.width - 2 * web-pill-x);
+                height: web-pill-h;
+                border-radius: web-pill-h / 2;
                 background: Theme.material ? Theme.m3-surface-container-highest : Theme.field-bg;
-                StIcon {
-                    x: 12px;
-                    y: (pill.height - 16px) / 2;
-                    width: 16px;
-                    height: 16px;
-                    icon: ic-search;
-                    size: 16px;
-                    color: Theme.material ? Theme.m3-on-surface-variant : Theme.tertiary;
-                }
                 Text {
-                    x: slot-x - web-x - pill.x + slot-w + 10px;
+                    x: slot-x - web-x - pill.x + slot-w + web-pill-gap;
                     height: parent.height;
                     vertical-alignment: center;
                     text: "Search by picture";
-                    font-size: Theme.material ? 15px : 14px;
+                    font-size: 13px;
                     color: Theme.material ? Theme.m3-on-surface : Theme.label;
                 }
             }

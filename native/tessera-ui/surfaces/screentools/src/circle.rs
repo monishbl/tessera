@@ -111,20 +111,18 @@ pub fn web_window(sw: f32, sh: f32) -> Rect {
     Rect::new(((sw - w) / 2.0).round(), ((sh - h) / 2.0).round(), w, h)
 }
 
-/// tessera-web's bar height (the film's), and its address pill's picture:
-/// back, forward and reload (36 px each after a 12 px margin), the pill 4 px
-/// on, its magnifier, then the thumbnail 34 px into it, 28 px high
-/// (circle.slint draws the pill with the same sums)
-pub const WEB_BAR_H: f32 = 52.0;
-const WEB_THUMB_X: f32 = 12.0 + 3.0 * 36.0 + 4.0 + 34.0;
-const WEB_THUMB_H: f32 = 28.0;
+/// tessera-web's bar, as tessera-web lays it out (tessera_core::weblink::bar,
+/// the one set of numbers both use): its height, and the address pill's
+/// picture, a 22 px square at x 130, y 14 from the window's top-left
+/// (circle.slint draws the bar with the same numbers, set from here)
+use crate::weblink::bar as web_bar;
+pub const WEB_BAR_H: f32 = web_bar::H as f32;
 
-/// Where the circled picture settles: the pill's thumbnail, the picture's
-/// own shape kept within 3:4 to 8:5
-pub fn web_slot(win: Rect, sel: Rect) -> Rect {
-    let aspect = if sel.h > 0.0 { sel.w / sel.h } else { 1.0 };
-    let w = (WEB_THUMB_H * aspect).clamp(WEB_THUMB_H * 0.75, WEB_THUMB_H * 1.6);
-    Rect::new(win.x + WEB_THUMB_X, win.y + (WEB_BAR_H - WEB_THUMB_H) / 2.0, w, WEB_THUMB_H)
+/// Where the circled picture settles: exactly on the pill's thumbnail
+/// (covered, as tessera-web shows it), so the hand-off doesn't jump
+pub fn web_slot(win: Rect) -> Rect {
+    let t = web_bar::THUMB as f32;
+    Rect::new(win.x + web_bar::THUMB_X as f32, win.y + web_bar::THUMB_Y as f32, t, t)
 }
 
 /// The screen's place in Hyprland's layout (logical pixels): --at is given
@@ -917,14 +915,21 @@ impl Circle {
             let d = self.drag.borrow();
             (d.w, d.h)
         };
-        let sel = Rect::new(ui.get_sel_x(), ui.get_sel_y(), ui.get_sel_w(), ui.get_sel_h());
         let win = web_window(sw, sh);
-        let slot = web_slot(win, sel);
+        let slot = web_slot(win);
         ui.set_web_x(win.x);
         ui.set_web_y(win.y);
         ui.set_web_w(win.w);
         ui.set_web_h(win.h);
         ui.set_web_bar_h(WEB_BAR_H);
+        ui.set_web_btn_x(web_bar::PAD_X as f32);
+        ui.set_web_btn_w(web_bar::BUTTON as f32);
+        ui.set_web_btn_step((web_bar::BUTTON + web_bar::SPACING) as f32);
+        ui.set_web_pill_x(web_bar::PILL_X as f32);
+        ui.set_web_pill_y(web_bar::PILL_Y as f32);
+        ui.set_web_pill_h(web_bar::PILL_H as f32);
+        ui.set_web_pill_gap(web_bar::PILL_GAP as f32);
+        ui.set_slot_r(web_bar::THUMB_RADIUS as f32);
         ui.set_slot_x(slot.x);
         ui.set_slot_y(slot.y);
         ui.set_slot_w(slot.w);
@@ -1549,16 +1554,11 @@ mod tests {
         let win = web_window(1920.0, 1080.0);
         assert_eq!(win, Rect::new(327.0, 162.0, 1267.0, 756.0));
         assert!((win.x * 2.0 + win.w - 1920.0).abs() <= 1.0 && (win.y * 2.0 + win.h - 1080.0).abs() <= 1.0);
-        // (the picture settles in the bar, at the pill's thumbnail: inside
-        // the window, 28 px high, its own shape kept within bounds)
-        let wide = web_slot(win, Rect::new(800.0, 400.0, 400.0, 100.0));
-        assert_eq!((wide.x, wide.y, wide.h), (win.x + 158.0, win.y + 12.0, 28.0));
-        assert!((wide.w - 28.0 * 1.6).abs() < 0.01);
-        let tall = web_slot(win, Rect::new(800.0, 400.0, 100.0, 400.0));
-        assert!((tall.w - 21.0).abs() < 0.01);
-        let square = web_slot(win, Rect::new(0.0, 0.0, 50.0, 50.0));
-        assert_eq!(square.w, 28.0);
-        assert!(square.y + square.h <= win.y + WEB_BAR_H && square.x + square.w < win.x + win.w);
+        // (the picture settles exactly on tessera-web's thumbnail: x 130,
+        // y 14 from the window's corner, 22 × 22, whatever its shape)
+        assert_eq!(web_slot(win), Rect::new(win.x + 130.0, win.y + 14.0, 22.0, 22.0));
+        assert_eq!(WEB_BAR_H, 50.0);
+        assert_eq!(web_bar::THUMB_RADIUS, 6);
         // (the lift and the growth, then the fade; Reduce motion: no growth)
         assert_eq!(web_anim_ms(false), 1050);
         assert_eq!(web_anim_ms(true), 150);

@@ -29,6 +29,36 @@ use std::time::{Duration, Instant};
 pub const BIN: &str = "tessera-web";
 pub const CLASS: &str = "tessera-web";
 
+/// tessera-web's bar, in logical px from the window's top-left: the one
+/// set of numbers both sides use. tessera-web lays its bar out with them
+/// (web/src/main.rs, theme.rs) and Circle to Search lands the circled
+/// picture on the address pill's thumbnail with them (screentools circle.rs
+/// and circle.slint), so the hand-off has no jump.
+pub mod bar {
+    /// the bar's padding, left/right and top/bottom
+    pub const PAD_X: i32 = 10;
+    pub const PAD_Y: i32 = 8;
+    /// back, forward and reload: square buttons, this far apart
+    pub const BUTTON: i32 = 30;
+    pub const SPACING: i32 = 4;
+    /// the address pill: its margin either side, its inner padding, its height
+    pub const PILL_MARGIN: i32 = 6;
+    pub const PILL_PAD: i32 = 12;
+    pub const PILL_H: i32 = 34;
+    /// the gap between the pill's thumbnail (or glyph) and its words
+    pub const PILL_GAP: i32 = 8;
+    /// the bar's height (its progress line, 2 px, comes under it)
+    pub const H: i32 = PAD_Y + PILL_H + PAD_Y;
+    /// where the pill starts
+    pub const PILL_X: i32 = PAD_X + 3 * BUTTON + 3 * SPACING + PILL_MARGIN;
+    pub const PILL_Y: i32 = PAD_Y;
+    /// the address pill's picture (--lens): a square, its corners rounded
+    pub const THUMB: i32 = 22;
+    pub const THUMB_RADIUS: i32 = 6;
+    pub const THUMB_X: i32 = PILL_X + PILL_PAD;
+    pub const THUMB_Y: i32 = PILL_Y + (PILL_H - THUMB) / 2;
+}
+
 /// A start that ends with an error this soon failed to start (no WebKitGTK,
 /// no display): the default browser opens the link instead
 pub const FAIL_WITHIN: Duration = Duration::from_secs(5);
@@ -42,7 +72,8 @@ pub const PROBE_URL: &str = "http://nmcheck.gnome.org/check_network_status.txt";
 
 /// "Open links from Tessera in": the quick-look browser (the default) or yours
 pub fn links_in_tessera(cfg: &Value) -> bool {
-    cfg["apps"]["webLinks"].as_str() != Some("browser")
+    // (read with its default, so tools/rust-defaults.json carries it)
+    cfg["apps"]["webLinks"].as_str().unwrap_or("tessera") != "browser"
 }
 
 /// "Open Wi-Fi sign-in pages automatically" (on unless turned off)
@@ -422,6 +453,12 @@ mod tests {
         assert_eq!(probe_url("http://ping.archlinux.org/nm-check.txt"), "http://ping.archlinux.org/nm-check.txt");
         assert_eq!(probe_url(""), PROBE_URL);
         assert_eq!(probe_url("not a url"), PROBE_URL);
+    }
+
+    #[test]
+    fn the_bars_thumbnail() {
+        assert_eq!((bar::THUMB_X, bar::THUMB_Y, bar::THUMB, bar::THUMB_RADIUS), (130, 14, 22, 6));
+        assert_eq!(bar::H, 50);
     }
 
     #[test]

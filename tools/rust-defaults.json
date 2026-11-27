@@ -1,7 +1,6 @@
 {
  "ai.model": "",
  "appearance.appTheme": "off",
- "appearance.clock24": false,
  "appearance.cursor": "bibata",
  "appearance.decorations": "none",
  "appearance.gaps": "compact",
@@ -29,6 +28,7 @@
  "appearance.windowOpacityInactive": 0.93,
  "appearance.windowRadius": 20,
  "appearance.windowTabs": "hyprland",
+ "apps.webLinks": "tessera",
  "captions.barX": -1,
  "captions.barY": -1,
  "captions.enabled": false,
@@ -98,6 +98,7 @@
  "menubar.weather": true,
  "menubar.workspaceCount": 5,
  "network.ooklaAccepted": false,
+ "network.portalAuto": true,
  "notificationCenter.background": false,
  "overlays.gaming": false,
  "overview.wallpapers": false,

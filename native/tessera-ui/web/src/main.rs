@@ -121,6 +121,21 @@ fn download_path(name: &str) -> PathBuf {
     (2..1000).map(|i| dir.join(format!("{stem} ({i}){ext}"))).find(|p| !p.exists()).unwrap_or(first)
 }
 
+/// The Lens picture as the pill's thumbnail: its middle square (it's
+/// covered, as Circle to Search's picture lands), `px` across
+fn thumb_texture(p: &std::path::Path, px: i32) -> Option<gdk::Texture> {
+    use gtk::gdk_pixbuf::Pixbuf;
+    let (_, w, h) = Pixbuf::file_info(p)?;
+    if w <= 0 || h <= 0 || px <= 0 {
+        return None;
+    }
+    let k = px as f64 / w.min(h) as f64;
+    let (sw, sh) = (((w as f64 * k).round() as i32).max(px), ((h as f64 * k).round() as i32).max(px));
+    let full = Pixbuf::from_file_at_scale(p, sw, sh, false).ok()?;
+    let square = full.new_subpixbuf((sw - px) / 2, (sh - px) / 2, px, px);
+    Some(gdk::Texture::for_pixbuf(&square))
+}
+
 fn icon(names: &[&str]) -> gtk::Image {
     gtk::Image::from_gicon(&gio::ThemedIcon::from_names(names))
 }
@@ -156,7 +171,7 @@ struct App {
     forward: gtk::Button,
     reload: gtk::Button,
     glyph: gtk::Image,
-    thumb: Option<gtk::Picture>,
+    thumb: Option<gtk::Image>,
     stack: gtk::Stack,
     label: gtk::Label,
     entry: gtk::Entry,
@@ -642,25 +657,32 @@ fn build(args: Args, main_loop: glib::MainLoop) -> Rc<App> {
     view.set_background_color(&gdk::RGBA::new(pg[0] as f32 / 255.0, pg[1] as f32 / 255.0, pg[2] as f32 / 255.0, 1.0));
 
     // The bar: back, forward, reload, the pill, reading mode, your browser, the menu
-    let bar = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    // (laid out with tessera_core::weblink::bar: Circle to Search lands its
+    // picture on the thumbnail with the same numbers)
+    use tessera_core::weblink::bar as dims;
+    let bar = gtk::Box::new(gtk::Orientation::Horizontal, dims::SPACING);
     bar.add_css_class("bar");
     let back = icon_button(BACK, "Back");
     let forward = icon_button(FORWARD, "Forward");
     let reload = icon_button(RELOAD, "Reload");
-    let pill = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let pill = gtk::Box::new(gtk::Orientation::Horizontal, dims::PILL_GAP);
     pill.add_css_class("pill");
     pill.set_hexpand(true);
     pill.set_valign(gtk::Align::Center);
-    pill.set_margin_start(6);
-    pill.set_margin_end(6);
+    pill.set_margin_start(dims::PILL_MARGIN);
+    pill.set_margin_end(dims::PILL_MARGIN);
     let glyph = icon(SEARCH);
     glyph.add_css_class("glyph");
     let thumb = match &args.mode {
         Mode::Lens(p) => {
-            let t = gtk::Picture::for_filename(p);
-            t.set_content_fit(gtk::ContentFit::Cover);
-            t.set_can_shrink(true);
-            t.set_size_request(22, 22);
+            // (a gtk::Image at a fixed pixel size, not a gtk::Picture: a
+            // Picture asks for the picture's own width and would be as wide)
+            let t = gtk::Image::new();
+            if let Some(tex) = thumb_texture(p, dims::THUMB * 3) {
+                t.set_paintable(Some(&tex));
+            }
+            t.set_pixel_size(dims::THUMB);
+            t.set_size_request(dims::THUMB, dims::THUMB);
             t.set_valign(gtk::Align::Center);
             t.set_overflow(gtk::Overflow::Hidden);
             t.add_css_class("thumb");

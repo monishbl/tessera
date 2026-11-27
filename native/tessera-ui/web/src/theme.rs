@@ -86,6 +86,9 @@ pub fn css_color(c: Rgba) -> String {
 
 /// The window's GTK style sheet
 pub fn css(p: &Palette) -> String {
+    // (the bar's numbers: tessera_core::weblink::bar, which Circle to Search
+    // lands the picture with)
+    use tessera_core::weblink::bar;
     let k = css_color;
     let font = p.font.replace(['"', '\\', ';', '{', '}'], "");
     let pill_radius = if p.material { 28 } else { 999 };
@@ -93,18 +96,18 @@ pub fn css(p: &Palette) -> String {
         r#"window.tessera-web {{ background: transparent; }}
 window.tessera-web .root {{ transition: opacity 260ms ease-out; }}
 window.tessera-web .root.entering {{ opacity: 0; }}
-.bar {{ background-color: {bar}; color: {text}; padding: 8px 10px; font-family: "{font}", "Inter", sans-serif; font-size: 13px; }}
-.bar button {{ background: none; border: none; box-shadow: none; outline: none; min-width: 30px; min-height: 30px; padding: 0; border-radius: 999px; color: {text}; }}
+.bar {{ background-color: {bar}; color: {text}; padding: {pad_y}px {pad_x}px; font-family: "{font}", "Inter", sans-serif; font-size: 13px; }}
+.bar button {{ background: none; border: none; box-shadow: none; outline: none; min-width: {button}px; min-height: {button}px; padding: 0; border-radius: 999px; color: {text}; }}
 .bar button:hover {{ background-color: {hover}; }}
 .bar button:checked {{ color: {accent}; }}
 .bar button:disabled {{ color: {dim}; opacity: 0.45; }}
-.pill {{ background-color: {field}; border-radius: {pill_radius}px; min-height: 34px; padding: 0 12px; }}
+.pill {{ background-color: {field}; border-radius: {pill_radius}px; min-height: {pill_h}px; padding: 0 {pill_pad}px; }}
 .pill:focus-within {{ box-shadow: inset 0 0 0 2px {focus}; }}
 .pill entry, .pill text {{ background: none; border: none; box-shadow: none; outline: none; color: {text}; caret-color: {accent}; min-height: 30px; padding: 0; }}
 .pill .where {{ color: {text}; }}
 .pill .glyph {{ color: {dim}; }}
 .pill .note {{ color: {dim}; }}
-.pill .thumb {{ border-radius: 6px; }}
+.pill .thumb {{ border-radius: {thumb_radius}px; min-width: {thumb}px; min-height: {thumb}px; }}
 .progress {{ min-height: 2px; background: none; }}
 .progress trough {{ min-height: 2px; background: none; border: none; }}
 .progress progress {{ min-height: 2px; background-color: {accent}; border: none; border-radius: 0; }}
@@ -128,6 +131,13 @@ popover modelbutton:hover {{ background-color: {selected}; color: {on_selected};
         selected = k(p.selected),
         on_selected = k(p.on_selected),
         page = k(p.page),
+        pad_x = bar::PAD_X,
+        pad_y = bar::PAD_Y,
+        button = bar::BUTTON,
+        pill_h = bar::PILL_H,
+        pill_pad = bar::PILL_PAD,
+        thumb = bar::THUMB,
+        thumb_radius = bar::THUMB_RADIUS,
     )
 }
 
@@ -215,6 +225,12 @@ mod tests {
         assert!(s.contains("border-radius: 999px; min-height: 34px"));
         let m = css(&pal(json!({"appearance": {"look": "material", "mode": "light"}})));
         assert!(m.contains("border-radius: 28px; min-height: 34px"));
+        // (the bar's numbers, tessera_core::weblink::bar: Circle to Search's
+        // picture lands at x 130, y 14, 22 × 22, its corners 6 px)
+        assert!(s.contains("padding: 8px 10px;"));
+        assert!(s.contains("min-width: 30px; min-height: 30px;"));
+        assert!(s.contains("padding: 0 12px; }"));
+        assert!(s.contains(".pill .thumb { border-radius: 6px; min-width: 22px; min-height: 22px; }"));
         assert_eq!(css_color([1, 2, 3, 255]), "#010203");
         assert_eq!(css_color([255, 0, 0, 128]), "rgba(255, 0, 0, 0.502)");
         // (a font name can't break out of its quotes)
