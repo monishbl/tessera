@@ -595,6 +595,111 @@ mod tests {
         assert_eq!(t.number_of(102), 3);
     }
 
+    /// What Hyprland does with the steps (as 0.57's ConfigActions.cpp: a
+    /// taken id refuses change_id; a space left empty and off screen goes)
+    fn run(w: &World, steps: &[Step]) -> World {
+        let mut w = w.clone();
+        let f = w.focused_idx().unwrap();
+        let drop_left = |w: &mut World, id: i32| {
+            if !w.on_screen(id) && !w.windows.iter().any(|x| x.ws == id) {
+                w.workspaces.retain(|i| *i != id);
+            }
+        };
+        for s in steps {
+            match s {
+                Rename { from, to } => {
+                    if w.workspaces.contains(from) && !w.workspaces.contains(to) {
+                        w.rename(*from, *to);
+                    }
+                }
+                Window { address, to, follow } => {
+                    let Some(i) = w.windows.iter().position(|x| x.address == *address) else { continue };
+                    let old = w.windows[i].ws;
+                    w.windows[i].ws = *to;
+                    if !w.workspaces.contains(to) {
+                        w.workspaces.push(*to);
+                    }
+                    if *follow {
+                        let was = w.displays[f].active;
+                        w.displays[f].active = *to;
+                        drop_left(&mut w, was);
+                    }
+                    drop_left(&mut w, old);
+                }
+                Focus(id) => {
+                    let was = w.displays[f].active;
+                    w.displays[f].active = *id;
+                    if !w.workspaces.contains(id) {
+                        w.workspaces.push(*id);
+                    }
+                    drop_left(&mut w, was);
+                }
+                Monitor(_) | Place { .. } => {}
+            }
+        }
+        w.workspaces.sort();
+        w
+    }
+    /// The key, then the closing up that follows its events (spaces.rs's
+    /// tick_tidy): the key's steps, the closing up's, and the world after both
+    fn press(w: &World, act: Act) -> (Vec<Step>, Vec<Step>, World) {
+        let steps = plan(w, &act);
+        let after = run(w, &steps);
+        let more = plan(&after, &Act::Tidy);
+        let settled = run(&after, &more);
+        assert_eq!(plan(&settled, &Act::Tidy), vec![], "settled after {act:?}");
+        (steps, more, settled)
+    }
+    fn where_(w: &World, a: &str) -> i32 {
+        w.windows.iter().find(|x| x.address == a).unwrap().ws
+    }
+
+    #[test]
+    fn a_new_space_past_the_end_from_a_space_with_a_window() {
+        // the laptop (eDP-1 alone, base 0 as spacemap::assign gives the
+        // built-in): yours on 1, 2, 3; A on 4, which you're on
+        let w = World { window: "A".into(), ..one(4, &[("A", 4), ("u1", 1), ("u2", 2), ("u3", 3)]) };
+        assert_eq!(w.spaces(0), vec![1, 2, 3, 4]);
+        // Super+Shift+7: a new empty space after the last (5), and go there; A stays on 4
+        let (steps, more, after) = press(&w, Act::At(Op::New, 7));
+        eprintln!("case 1 plan: {steps:?} then {more:?}");
+        assert_eq!((steps, more), (vec![Focus(5)], vec![]));
+        assert_eq!((where_(&after, "A"), after.displays[0].active), (4, 5));
+        // then B on 4 (back there), A on 5: Super+Shift+9 is a new 6
+        let w2 = World { window: "B".into(), ..one(4, &[("B", 4), ("A", 5), ("u1", 1), ("u2", 2), ("u3", 3)]) };
+        let (steps, more, after) = press(&w2, Act::At(Op::New, 9));
+        eprintln!("case 2 plan: {steps:?} then {more:?}");
+        assert_eq!((steps, more), (vec![Focus(6)], vec![]));
+        assert_eq!((where_(&after, "B"), where_(&after, "A"), after.displays[0].active), (4, 5, 6));
+    }
+
+    #[test]
+    fn the_keys_past_the_end_and_in_the_middle() {
+        let w = World { window: "A".into(), ..one(4, &[("A", 4), ("x", 4), ("u1", 1), ("u2", 2), ("u3", 3)]) };
+        // Super+Alt+N past the end: the window to a new space after the last, and you go with it
+        let (steps, more, after) = press(&w, Act::At(Op::Send, 8));
+        assert_eq!((steps, more), (vec![mv("A", 5, true)], vec![]));
+        assert_eq!((where_(&after, "A"), where_(&after, "x"), after.displays[0].active), (5, 4, 5));
+        // Super+Shift+2 in the middle: 2.. move one along, you're on a new empty 2
+        let (steps, more, after) = press(&w, Act::At(Op::New, 2));
+        assert_eq!((steps, more), (vec![rn(4, 5), rn(3, 4), rn(2, 3), Focus(2)], vec![]));
+        assert_eq!((where_(&after, "u2"), where_(&after, "u3"), where_(&after, "A"), after.displays[0].active), (3, 4, 5, 2));
+        assert_eq!(after.spaces(0), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn an_emptied_space_stays_while_you_are_on_it_and_closes_up_when_you_leave() {
+        // A was alone on 2 (you're there) and went to 4: 2 stays, blank
+        let w = one(2, &[("u1", 1), ("A", 4), ("u3", 3)]);
+        let (steps, more, after) = press(&w, Act::Tidy);
+        assert_eq!((steps, more), (vec![], vec![]));
+        assert_eq!(after.spaces(0), vec![1, 2, 3, 4]);
+        // leaving it for 4 (A's): Hyprland drops 2, and 3, 4 close up to 2, 3
+        let (steps, more, closed) = press(&after, Act::At(Op::Focus, 4));
+        assert_eq!((steps, more), (vec![Focus(4)], vec![rn(3, 2), rn(4, 3)]));
+        assert_eq!((where_(&closed, "u3"), where_(&closed, "A"), closed.displays[0].active), (2, 3, 3));
+    }
+
     #[test]
     fn the_steps_as_lua() {
         let q = |s: &str| format!("\"{s}\"");
