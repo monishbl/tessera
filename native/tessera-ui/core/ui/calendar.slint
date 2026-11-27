@@ -781,10 +781,13 @@ export component CalendarTab {
                 color: Theme.material ? Theme.m3-primary : root.ink;
                 font-size: Theme.small;
                 font-weight: 600;
+                // (a link's hover and pressed look, #438)
+                opacity: undo-t.pressed ? 0.55 : undo-t.has-hover ? 0.75 : 1;
+                animate opacity { duration: Theme.hover; }
                 accessible-role: button;
                 accessible-label: "Undo";
                 accessible-action-default => { restore(); }
-                TouchArea {
+                undo-t := TouchArea {
                     mouse-cursor: pointer;
                     clicked => { restore(); }
                 }
@@ -1273,10 +1276,13 @@ export component TodoTab {
                 color: Theme.material ? Theme.m3-primary : root.ink;
                 font-size: Theme.small;
                 font-weight: 600;
+                // (a link's hover and pressed look, #438)
+                opacity: undo-t.pressed ? 0.55 : undo-t.has-hover ? 0.75 : 1;
+                animate opacity { duration: Theme.hover; }
                 accessible-role: button;
                 accessible-label: "Undo";
                 accessible-action-default => { restore(); }
-                TouchArea {
+                undo-t := TouchArea {
                     mouse-cursor: pointer;
                     clicked => { restore(); }
                 }
