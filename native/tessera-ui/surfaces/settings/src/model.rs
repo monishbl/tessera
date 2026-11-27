@@ -109,6 +109,26 @@ impl MenuItem {
 /// from a command): kept while Settings is open, by key
 pub type Local = HashMap<String, Value>;
 
+thread_local! {
+    /// Every page being built for the search list (index.rs, #887): what a
+    /// page asks for while it's built does nothing then (no helper run, no
+    /// request to the shell, no thread), only its rows are read
+    static INDEXING: std::cell::Cell<bool> = std::cell::Cell::new(false);
+}
+
+/// The pages being built for the search list (on this thread)
+pub fn indexing() -> bool {
+    INDEXING.with(|i| i.get())
+}
+
+/// Runs `f` with the pages built for the search list only
+pub fn while_indexing<T>(f: impl FnOnce() -> T) -> T {
+    INDEXING.with(|i| i.set(true));
+    let out = f();
+    INDEXING.with(|i| i.set(false));
+    out
+}
+
 /// What a page builder and an action see
 pub struct Ctx<'a> {
     /// the look, the services' data (`shell.get::<T>()`), the plugin
@@ -280,6 +300,9 @@ impl<'a> Ctx<'a> {
     /// Something only the QML shell does (its RustBridge.qml's
     /// `settings.act`, by page group): `cx.ask("look", "repairShell", json!([]))`
     pub fn ask(&self, group: &str, what: &str, args: Value) {
+        if indexing() {
+            return;
+        }
         let mut a = vec![Value::from("act"), Value::from(group), Value::from(what)];
         if let Value::Array(x) = args {
             a.extend(x);
@@ -293,6 +316,9 @@ impl<'a> Ctx<'a> {
     /// in `local[key]` and the page is built again. Once per key while it
     /// runs (`local[key + ".busy"]`)
     pub fn spawn(&mut self, key: &str, f: impl FnOnce() -> Value + Send + 'static) {
+        if indexing() {
+            return;
+        }
         let busy = format!("{key}.busy");
         if self.local_b(&busy) {
             return;
@@ -308,6 +334,9 @@ impl<'a> Ctx<'a> {
     /// `spawn`, telling how it goes: each value `f` passes to its `say` lands
     /// in `local[progress]` (the page is built again), its result in `local[key]`
     pub fn spawn_progress(&mut self, key: &str, progress: &str, f: impl FnOnce(&dyn Fn(Value)) -> Value + Send + 'static) {
+        if indexing() {
+            return;
+        }
         let busy = format!("{key}.busy");
         if self.local_b(&busy) {
             return;
@@ -328,6 +357,9 @@ impl<'a> Ctx<'a> {
     pub fn once(&mut self, key: &str, f: impl FnOnce() -> Value + Send + 'static) -> Value {
         if let Some(v) = self.local.get(key) {
             return v.clone();
+        }
+        if indexing() {
+            return Value::Null;
         }
         // (noted, so opening Settings again reads it afresh: it was kept for
         // the whole shell session, a new wallpaper or icon theme never
@@ -383,6 +415,9 @@ impl<'a> Ctx<'a> {
 
     /// A program's output (stdout, trimmed); "" when it failed
     pub fn run(cmd: &[&str]) -> String {
+        if indexing() {
+            return String::new();
+        }
         std::process::Command::new(cmd[0])
             .args(&cmd[1..])
             .stdin(std::process::Stdio::null())
@@ -395,6 +430,9 @@ impl<'a> Ctx<'a> {
     }
     /// Run something and forget it (off the UI thread)
     pub fn detach(cmd: Vec<String>) {
+        if indexing() {
+            return;
+        }
         std::thread::spawn(move || {
             let _ = std::process::Command::new(&cmd[0]).args(&cmd[1..]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
         });
