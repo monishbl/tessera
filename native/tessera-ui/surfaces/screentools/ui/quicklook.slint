@@ -7,6 +7,7 @@
 // screen, as the QML's.
 
 import { Theme } from "@tessera/theme.slint";
+import { ScrollIndicator } from "@tessera/widgets.slint";
 import { StIc, StIcon } from "screentools.slint";
 import { LtBox, LtBar, LiveTextLayer, LiveTextBar } from "shoteditor.slint";
 
@@ -420,7 +421,7 @@ export component QuickLook inherits Window {
                     if root.key(e.text, e.modifiers.control) { return accept; }
                     reject
                 }
-                Flickable {
+                sb-list423 := Flickable {
                     content-height: text-view.preferred-height;
                     text-view := TextInput {
                         width: parent.width;
@@ -433,11 +434,21 @@ export component QuickLook inherits Window {
                         font-family: Theme.mono;
                         font-size: 12px;
                     }
+                    // (the kit's scroll indicator, held still over the list's right
+                    // edge while the content moves under it, #358 #1037)
+                    ScrollIndicator {
+                        x: sb-list423.width - self.width;
+                        y: -sb-list423.content-y;
+                        height: sb-list423.height;
+                        content-y: sb-list423.content-y;
+                        content-height: sb-list423.content-height;
+                        view-height: sb-list423.height;
+                    }
                 }
             }
 
             // A folder: what's inside
-            if kind == "folder" && rows.length > 0: Flickable {
+            if kind == "folder" && rows.length > 0: sb-list440 := Flickable {
                 content-height: rows.length * 32px;
                 for r[i] in rows: Rectangle {
                     y: i * 32px;
@@ -459,6 +470,16 @@ export component QuickLook inherits Window {
                             overflow: elide;
                         }
                     }
+                }
+                // (the kit's scroll indicator, held still over the list's right
+                // edge while the content moves under it, #358 #1037)
+                ScrollIndicator {
+                    x: sb-list440.width - self.width;
+                    y: -sb-list440.content-y;
+                    height: sb-list440.height;
+                    content-y: sb-list440.content-y;
+                    content-height: sb-list440.content-height;
+                    view-height: sb-list440.height;
                 }
             }
         }
