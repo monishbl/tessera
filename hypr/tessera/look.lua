@@ -49,14 +49,32 @@ if exists("/etc/xdg/menus/plasma-applications.menu") then
 elseif exists("/etc/xdg/menus/arch-applications.menu") then
     default_env("XDG_MENU_PREFIX", "arch-")
 end
--- Claude Desktop keeps its sign-in in its own file instead of a keyring
--- ("basic"): KWallet isn't unlocked at login here, so it asked for the wallet
--- password at every start. That file is only obscured, not locked by your
--- password, so anything running as you can read it. It works on every
--- system, so it's the default; to use a keyring instead, set it in
--- ~/.config/hypr/custom.lua (loaded after this), e.g.
--- hl.env("CLAUDE_PASSWORD_STORE", "gnome-libsecret"), or "kwallet6".
-default_env("CLAUDE_PASSWORD_STORE", "basic")
+-- Claude Desktop keeps its sign-in in the keyring (the Secret Service) when
+-- the login unlocks it: gnome-keyring's line in a login's PAM file, which the
+-- installer adds. Otherwise in its own file ("basic"): a keyring that isn't
+-- unlocked at login asked for its password at every start. That file is only
+-- obscured, not locked by your password, so anything running as you can
+-- read it (#658). To choose yourself, set it in ~/.config/hypr/custom.lua
+-- (loaded after this), e.g. hl.env("CLAUDE_PASSWORD_STORE", "kwallet6").
+-- (TESSERA_SYSTEM_ROOT: a stand-in / for the tests)
+local function keyring_at_login()
+    local root = os.getenv("TESSERA_SYSTEM_ROOT") or ""
+    if not exists(root .. "/usr/lib/security/pam_gnome_keyring.so") then return false end
+    for _, name in ipairs({ "greetd", "login", "system-login", "system-local-login", "sddm", "gdm-password", "lightdm", "ly" }) do
+        local f = io.open(root .. "/etc/pam.d/" .. name, "r")
+        if f then
+            for line in f:lines() do
+                if line:match("^%s*%-?auth%s.*pam_gnome_keyring%.so") then
+                    f:close()
+                    return true
+                end
+            end
+            f:close()
+        end
+    end
+    return false
+end
+default_env("CLAUDE_PASSWORD_STORE", keyring_at_login() and "gnome-libsecret" or "basic")
 
 hl.config({
     general = {
