@@ -42,6 +42,10 @@ export component TabBar inherits Window {
         accessible-role: tab-list;
         property <length> tab-w: (self.width - 6px - 24px - 2px) / max(1, tabs.length);
         for t[i] in tabs: Rectangle {
+            // (hovered, the app's icon gives its place to the close button,
+            // as Safari's tabs: the × sat on the icon's left edge; #549)
+            property <bool> hot: ta.has-hover || xa.has-hover;
+            property <bool> iconed: t.has-icon && strip.tab-w >= 96px;
             x: 3px + i * strip.tab-w;
             y: 3px;
             width: strip.tab-w;
@@ -53,7 +57,7 @@ export component TabBar inherits Window {
             Rectangle {
                 border-radius: Theme.material ? self.height / 2 : 7px;
                 background: Theme.material ? (t.front ? Theme.m3-secondary-container : ta.pressed ? Theme.m3-on-surface.with-alpha(0.1) : ta.has-hover ? Theme.m3-on-surface.with-alpha(0.08) : transparent)
-                    : t.front ? (Theme.dark ? #2C2C31 : #FFFFFF) : ta.has-hover ? (Theme.dark ? #ffffff.with-alpha(0.06) : #000000.with-alpha(0.05)) : transparent;
+                    : t.front ? (Theme.dark ? #2C2C31 : #FFFFFF) : ta.pressed ? (Theme.dark ? #ffffff.with-alpha(0.1) : #000000.with-alpha(0.09)) : ta.has-hover ? (Theme.dark ? #ffffff.with-alpha(0.06) : #000000.with-alpha(0.05)) : transparent;
                 animate background { duration: Theme.material ? 150ms : 0ms; }
                 border-width: t.front && !Theme.material ? 1px : 0;
                 border-color: Theme.dark ? #36363C : #E4E4E7;
@@ -64,21 +68,22 @@ export component TabBar inherits Window {
                 height: parent.height * 0.5;
                 background: Theme.separator;
             }
-            HorizontalLayout {
+            row := HorizontalLayout {
                 property <length> w: min(self.preferred-width, max(0px, parent.width - (strip.tab-w >= 96px ? 36px : 12px)));
                 x: (parent.width - w) / 2;
                 width: w;
                 spacing: 6px;
                 // (a narrow tab drops its icon, so the title keeps the room;
                 // eight tabs left two letters of it; audit #49)
-                if t.has-icon && strip.tab-w >= 96px: Image {
+                if iconed: Image {
                     width: 14px;
                     height: 14px;
+                    opacity: hot ? 0 : 1;
                     source: t.icon;
                     accessible-role: none;
                 }
                 Text {
-                    max-width: max(0px, strip.tab-w - (t.has-icon && strip.tab-w >= 96px ? 60px : 24px));
+                    max-width: max(0px, strip.tab-w - (iconed ? 60px : 24px));
                     text: t.title;
                     overflow: elide;
                     vertical-alignment: center;
@@ -99,16 +104,17 @@ export component TabBar inherits Window {
                     }
                 }
             }
-            // Close, on hover
+            // Close, on hover: where the icon is (a narrow tab, with no
+            // icon: at its left end); a 20 px target that shows its press
             Rectangle {
-                opacity: ta.has-hover || xa.has-hover ? 1 : 0;
-                x: 6px;
-                y: (parent.height - 16px) / 2;
-                width: 16px;
-                height: 16px;
-                border-radius: Theme.material ? 8px : 4px;
-                background: Theme.material ? (t.front ? Theme.m3-on-secondary-container : Theme.m3-on-surface-variant).with-alpha(xa.pressed ? 0.1 : xa.has-hover ? 0.08 : 0)
-                    : xa.has-hover ? Theme.fill-hover : transparent;
+                opacity: hot ? 1 : 0;
+                x: iconed ? row.x + 7px - self.width / 2 : 2px;
+                y: (parent.height - self.height) / 2;
+                width: 20px;
+                height: 20px;
+                border-radius: Theme.material ? 10px : 5px;
+                background: Theme.material ? (t.front ? Theme.m3-on-secondary-container : Theme.m3-on-surface-variant).with-alpha(xa.pressed ? 0.16 : xa.has-hover ? 0.08 : 0)
+                    : xa.pressed ? Theme.fill-pressed : xa.has-hover ? Theme.fill-hover : transparent;
                 accessible-role: button;
                 accessible-label: "Close tab";
                 accessible-action-default => { close-tab(i); }
@@ -129,7 +135,7 @@ export component TabBar inherits Window {
             width: 24px;
             height: 24px;
             border-radius: Theme.material ? 12px : 7px;
-            background: Theme.material ? Theme.m3-on-surface-variant.with-alpha(pa.pressed ? 0.1 : pa.has-hover ? 0.08 : 0) : pa.has-hover ? Theme.fill : transparent;
+            background: Theme.material ? Theme.m3-on-surface-variant.with-alpha(pa.pressed ? 0.1 : pa.has-hover ? 0.08 : 0) : pa.pressed ? Theme.fill-pressed : pa.has-hover ? Theme.fill : transparent;
             accessible-role: button;
             accessible-label: "New tab";
             accessible-action-default => { new-tab(); }
