@@ -428,25 +428,31 @@ tessera-ui knows exactly what it is, and says it the same way everywhere:
 
 ```sh
 $ tessera-ui --version
-tessera-ui 0.1.0 (beta, 7baa48d, 2026-11-17, x86-64-v3, signed release)
+tessera-ui 0.1.0 (beta, 7baa48d, 2026-11-17, x86-64-v3, fast build, release build)
 $ tessera-ui --version --json
 {"name":"tessera-ui","version":"0.1.0","commit":"7baa48d…","short":"7baa48d","date":"2026-11-17","dirty":false,
- "branch":"","channel":"beta","variant":"x86-64-v3","profile":"release","kind":"release","line":"tessera-ui 0.1.0 (…)"}
+ "branch":"","channel":"beta","variant":"x86-64-v3","profile":"local","kind":"release","line":"tessera-ui 0.1.0 (…)"}
 ```
 
 The parts: the channel it was built for (`stable`, `beta`, `release` for a
 `v*` tag, or `local build`), the commit it was built from (`-dirty` when
 `native/tessera-ui` had uncommitted edits), that commit's date, the variant
 (`x86-64-v3`, `generic`, or `native`: tuned for the computer that built it),
-the profile when it isn't `release` (`fast profile`, `dev profile`), and
-`signed release` (the release builder's, published signed) or `built
-locally`. A local developer build looks like `tessera-ui 0.1.0 (local build,
-7baa48d-dirty, 2026-11-17, generic, fast profile, built locally)`.
+the profile when it isn't `release` (`fast build`: Beta's thin-LTO `local`
+profile and the developer `fast` one; `dev profile`), and `release build`
+(built by the release builder) or `built locally`. The binary never says
+"signed": that is a label it was built with, not a check. Settings adds
+it (`signed release build`) only when the installer verified the
+signature of the very file that's running: its record beside the program
+(`tessera-ui.json`) says `"signature": "verified"` (a ready-made download
+or a signed bundle, checked before it was installed) and names the same
+build. A local developer build looks like `tessera-ui 0.1.0 (local build,
+7baa48d-dirty, 2026-11-17, generic, fast build, built locally)`.
 
 Where it shows:
 
 - **Settings → About → Version**: two lines (`Beta · 7baa48d · 17 November
-  2026`, `x86-64-v3 · signed release`) and **Copy** (the `--version` line,
+  2026`, `x86-64-v3 · signed release build · fast build`) and **Copy** (the `--version` line,
   for a bug report).
 - **Settings → Software Update → Channel → This build**: the same two lines,
   then, once checked, what the channel has (`Available on Beta: version

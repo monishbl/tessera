@@ -231,6 +231,8 @@ class Verify(Fixture):
         self.assertEqual(B.verify_tree(str(vdir)), [])
         rec = json.loads((vdir / "bin/tessera-ui.json").read_text())
         self.assertEqual((rec["source"], rec["commit"]), ("bundle", commit))
+        # (checked before it went in: Settings may call it signed; audit #693)
+        self.assertEqual(rec["signature"], "verified")
         # (the login screen's check: the program is the one its signed manifest names)
         data = (vdir / "bin/tessera-ui").read_bytes()
         self.assertEqual(R.login_ui_vouched(data, rec, key=self.key.pub), "signed")

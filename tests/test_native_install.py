@@ -256,6 +256,8 @@ class Fetch(Fixture):
         self.publish()
         got = self.fetch()
         self.assertEqual(got["info"]["source"], "ready-made")
+        # (its signature checked: Settings may call it signed; audit #693)
+        self.assertEqual(got["info"]["signature"], "verified")
         self.assertEqual(got["info"]["variant"], "x86-64-v3")
         self.assertEqual(got["info"]["commit"], self.commit)
         self.assertEqual(sorted(got["files"]), sorted(ni.PROGRAMS))

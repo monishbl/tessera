@@ -633,7 +633,10 @@ def _fetch_from(base, tree, commit, variant, work, tags, pubkey, repo, want=None
     # login screen, with its own copy of the release key)
     info = {"source": "ready-made", "variant": variant, "tree": tree, "commit": built_from,
             "version": manifest.get("version", ""), "channel": manifest.get("channel", ""), "tag": tag,
-            "how": how, "bytes": got, "manifest": mdata.decode("utf-8", "replace"), "minisig": _read(mpath + ".minisig")}
+            "how": how, "bytes": got, "manifest": mdata.decode("utf-8", "replace"), "minisig": _read(mpath + ".minisig"),
+            # (checked above: the manifest's minisign signature, each program's
+            # sha256 against it; Settings says "signed" only with this; #693)
+            "signature": "verified"}
     return {"files": {n: files[n] for n in want}, "info": info}
 
 

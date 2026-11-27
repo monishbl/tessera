@@ -714,6 +714,10 @@ def install_version(manifest_bytes, sig_text, tarball, variant, data=None, signe
                 said = (entry.get("programs") or {}).get(name, {}).get("version")
                 if said:
                     rec["build"] = said
+                if signed:
+                    # (verify_manifest checked it before this; Settings says
+                    # "signed" only with this; audit #693)
+                    rec["signature"] = "verified"
                 if signed and name == "tessera-ui":
                     rec["manifest"] = manifest_bytes.decode()
                     rec["minisig"] = sig_text
