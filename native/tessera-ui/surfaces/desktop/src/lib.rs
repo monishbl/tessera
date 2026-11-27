@@ -877,7 +877,9 @@ impl Desktop {
                 r.t2 = format!("{}{}", wx.temp, wx.unit).into();
                 r.t3 = s(&wx.condition);
                 r.t4 = format!("H:{}°  L:{}°", wx.high, wx.low).into();
-                r.t5 = if wx.error.is_empty() { "Loading weather…".into() } else { s(&wx.error) };
+                // (on: the medium's bottom line when no hours came, so its
+                // lower part isn't left empty; #263)
+                r.t5 = if wx.ready { weather_day_line(wx.rain_chance).into() } else if wx.error.is_empty() { "Loading weather…".into() } else { s(&wx.error) };
                 r.t6 = format!("{}°", wx.temp).into();
                 r.g1 = glyphs::glyph(if wx.icon.is_empty() { "cloud" } else { &wx.icon }).into();
                 r.shape = crate::surfaces::shapes::outline("circle").into();
@@ -1865,6 +1867,16 @@ fn sync<T: Clone + PartialEq + 'static>(m: &VecModel<T>, rows: Vec<T>) {
     }
 }
 
+/// The weather's day in a line: where the medium widget's hours go when
+/// none came (#263)
+fn weather_day_line(rain_chance: i64) -> String {
+    if rain_chance > 0 {
+        format!("{}% chance of rain today", rain_chance.min(100))
+    } else {
+        "No rain expected today".to_string()
+    }
+}
+
 /// Overview is open on this screen (or on the focused one, no screen
 /// named): its strip lies over the top of the desktop, so the widgets and
 /// files step back rather than show a slice under its edge (#170)
@@ -1945,6 +1957,13 @@ mod step_back_tests {
         assert!(!super::steps_back("overview", "HDMI-A-1", "eDP-1"));
         assert!(!super::steps_back("spotlight", "eDP-1", "eDP-1"));
         assert!(!super::steps_back("", "", "eDP-1"));
+    }
+
+    #[test]
+    fn the_weathers_day_line() {
+        assert_eq!(super::weather_day_line(40), "40% chance of rain today");
+        assert_eq!(super::weather_day_line(0), "No rain expected today");
+        assert_eq!(super::weather_day_line(250), "100% chance of rain today");
     }
 }
 

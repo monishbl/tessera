@@ -455,8 +455,21 @@ component WeatherW inherits Rectangle {
             T { text: w.t3; horizontal-alignment: right; font-weight: 500; overflow: elide; }
             T { text: w.t4; horizontal-alignment: right; color: Theme.secondary; overflow: elide; }
         }
+        // (the next hours along the bottom; none came: the day's rain in a
+        // line, so the lower part isn't left empty; #263)
+        if w.size != "s" && w.hours.length == 0: T {
+            x: 0;
+            y: root.height - self.height;
+            width: root.width;
+            height: self.preferred-height;
+            text: w.t5;
+            color: Theme.secondary;
+            overflow: elide;
+        }
         if w.size != "s": HorizontalLayout {
+            x: 0;
             y: root.height - self.preferred-height;
+            width: root.width;
             height: self.preferred-height;
             for h in w.hours: VerticalLayout {
                 spacing: 2px;
