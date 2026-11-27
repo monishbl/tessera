@@ -448,7 +448,7 @@ mod tests {
             bar: super::super::settings::bar(&json!({})),
             shell: ShellState(json!({"open": "", "screen": ""})),
             battery: Battery { present: true, percent: 64.0, charging: false, state: 2, time_to_empty: 5400, time_to_full: 0, plugged: false, limit: None },
-            wifi: Wifi { present: true, enabled: true, ssid: "Home".into(), strength: 80 },
+            wifi: Wifi { present: true, enabled: true, ssid: "Home".into(), strength: 80, ..Default::default() },
             bt: Bluetooth::default(),
             players: Players::default(),
             tray: Tray::default(),
@@ -525,7 +525,7 @@ mod tests {
         let held = Battery { state: 5, percent: 80.0, plugged: true, limit: Some(80), ..b.clone() };
         assert_eq!(battery_tip(&held), "80% · plugged in, not charging · held at 80%");
         assert_eq!(battery_tip(&Battery { state: 2, ..held.clone() }), "80% · plugged in, not charging · held at 80%");
-        let w = Wifi { present: true, enabled: true, ssid: "Home".into(), strength: 45 };
+        let w = Wifi { present: true, enabled: true, ssid: "Home".into(), strength: 45, ..Default::default() };
         assert_eq!(wifi_tip(&w, false, ""), "Home · Fair signal");
         assert_eq!(wifi_tip(&Wifi { enabled: false, ..w.clone() }, false, ""), "Wi-Fi off");
         assert_eq!(wifi_tip(&Wifi { ssid: "".into(), ..w.clone() }, false, ""), "Wi-Fi on · not connected");
@@ -547,7 +547,7 @@ mod tests {
 
     #[test]
     fn the_wifi_glyph_follows_the_menus_reading() {
-        let w = Wifi { present: true, enabled: true, ssid: "Home".into(), strength: 80 };
+        let w = Wifi { present: true, enabled: true, ssid: "Home".into(), strength: 80, ..Default::default() };
         assert_eq!(wifi_glyph(&w, false, true, false), Glyph::Wifi { on: true, connected: true, strength: 0.8 });
         // off, no adapter, not connected: slashed, or no arcs
         assert_eq!(wifi_glyph(&Wifi { enabled: false, ..w.clone() }, false, true, true), Glyph::Wifi { on: false, connected: false, strength: 0.0 });

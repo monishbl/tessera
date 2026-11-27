@@ -593,6 +593,10 @@ impl Service for Google {
                 }
                 if let Some(u) = m["authUrl"].as_str().filter(|u| u.starts_with("https://accounts.google.com/o/oauth2/v2/auth?")) {
                     self.signing_in = true;
+                    // (always your default browser, never tessera-web: Google
+                    // refuses OAuth inside embedded web views, 403
+                    // disallowed_useragent, and the user agent is never
+                    // changed to get round that; launch.open is xdg-open)
                     h.ask("launch.open", json!([u]));
                 }
                 if m["data"].is_object() || (!m["data"].is_null() && m["data"] != false) {

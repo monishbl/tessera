@@ -308,6 +308,27 @@ export component CircleSearch inherits Window {
     callback copy-answer();
     callback continue-sidebar();
 
+    // Search the web (the film's beat; circle.rs web_search): the circled
+    // area lifts off a dimmer screen, a window grows round it from its
+    // outline to where tessera-web opens (web-*), and the picture settles
+    // where the address pill's thumbnail will be (slot-*); circle.rs fades
+    // everything out once tessera-web's window is there. Reduce motion: no
+    // growth, the bar fades and the screen dims, then it all fades.
+    in property <bool> web;
+    in property <length> web-x;
+    in property <length> web-y;
+    in property <length> web-w;
+    in property <length> web-h;
+    in property <length> web-bar-h: 52px;
+    in property <length> slot-x;
+    in property <length> slot-y;
+    in property <length> slot-w;
+    in property <length> slot-h;
+    in property <StIc> ic-back;
+    in property <StIc> ic-forward;
+    in property <StIc> ic-reload;
+    in property <StIc> ic-search;
+
     // what the glass goes under (circle.rs: the plugin's shapes, the input region)
     out property <length> bar-x: col.x;
     out property <length> bar-y: col.y;
@@ -315,7 +336,7 @@ export component CircleSearch inherits Window {
     out property <length> bar-h: bar.height;
     out property <length> card-y: col.y + answer-card.y;
     out property <length> card-h: card ? answer-card.height : 0;
-    out property <float> bar-o: bar-shown;
+    out property <float> bar-o: bar-shown * (1 - web-up);
     out property <length> radius: Theme.material ? 28px : 24px;
     out property <bool> idle: reveal == 0 && !open;
 
@@ -395,6 +416,30 @@ export component CircleSearch inherits Window {
     // the circled area lifting out
     property <float> lift: chosen && !dragging && open ? 1 : 0;
     animate lift { duration: Theme.motion(open ? 280ms : 140ms); easing: open ? cubic-bezier(0.2, 0, 0, 1) : ease-in; }
+    // Search the web: up (300 ms, the area lifts and the screen dims), then
+    // go (750 ms, the window grows and the picture settles), as the film's
+    // L0 → W0 → W1 (circle.rs WEB_UP_MS, WEB_GO_MS); none when it's reset
+    property <float> web-up: web ? 1 : 0;
+    animate web-up { duration: web ? (reduce-motion ? 150ms : 300ms) : 0ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+    property <float> web-go: web && !reduce-motion ? 1 : 0;
+    animate web-go { duration: web ? 750ms : 0ms; delay: web ? 300ms : 0ms; easing: cubic-bezier(0.65, 0, 0.35, 1); }
+    // the lifted picture: from the circled area to the thumbnail's place, a
+    // little larger as it lifts (the selection's 3%, then 5%), back to its
+    // size as it lands
+    property <length> wl-x: sel-x + (slot-x - sel-x) * web-go;
+    property <length> wl-y: sel-y + (slot-y - sel-y) * web-go;
+    property <length> wl-w: sel-w + (slot-w - sel-w) * web-go;
+    property <length> wl-h: sel-h + (slot-h - sel-h) * web-go;
+    property <float> wl-scale: 1 + (0.03 + 0.02 * web-up) * (1 - web-go);
+    property <length> wl-r: 14px + ((Theme.material ? 8px : 6px) - 14px) * web-go;
+    // the window: from the circled area's outline to tessera-web's rectangle
+    property <length> wo-x: sel-x + (web-x - sel-x) * web-go;
+    property <length> wo-y: sel-y + (web-y - sel-y) * web-go;
+    property <length> wo-w: sel-w + (web-w - sel-w) * web-go;
+    property <length> wo-h: sel-h + (web-h - sel-h) * web-go;
+    property <length> wo-r: 14px + ((Theme.material ? 28px : 20px) - 14px) * web-go;
+    // its bar's controls and pill: in over the growth's last part (the film's W0 + 0.35 s)
+    property <float> wb-o: max(0, min(1, (web-go - 0.45) / 0.4));
     // (the busy shimmer over the lifted area, every 1.4 s)
     property <float> cycle: mod(t / 1ms, 1400) / 1400;
     property <brush> trail: @linear-gradient(135deg, pal[0] 0%, pal[1] 35%, pal[2] 70%, pal[3] 100%);
@@ -440,8 +485,8 @@ export component CircleSearch inherits Window {
         opacity: reveal;
         fill: dim.with-alpha((Theme.material ? 0.2 : 0.16) + (Theme.material ? 0.26 : 0.28) * lift);
         commands: "M 0 0 L " + round(root.width / 1px) + " 0 L " + round(root.width / 1px) + " " + round(root.height / 1px) + " L 0 " + round(root.height / 1px) + " Z "
-            + (bar-shown > 0 ? rr(col.x, col.y, col.width, bar.height, root.radius) : "")
-            + (bar-shown > 0 && card ? rr(col.x, col.y + answer-card.y, col.width, answer-card.height, root.radius) : "");
+            + (bar-shown > 0 && !web ? rr(col.x, col.y, col.width, bar.height, root.radius) : "")
+            + (bar-shown > 0 && card && !web ? rr(col.x, col.y + answer-card.y, col.width, answer-card.height, root.radius) : "");
     }
 
     // entry, from the pointer: a ring of light spreading out from it
@@ -526,8 +571,9 @@ export component CircleSearch inherits Window {
 
     // ── Circling ────────────────────────────────────────────────────────
     TouchArea {
-        // (nothing while it plays out: audit #15)
-        enabled: root.open;
+        // (nothing while it plays out: audit #15; nor while Search the web
+        // opens tessera-web under it)
+        enabled: root.open && !web;
         mouse-cursor: chosen ? default : crosshair;
         pointer-event(e) => {
             if e.kind == PointerEventKind.down {
@@ -541,8 +587,9 @@ export component CircleSearch inherits Window {
     }
 
     // the circled area, lifted out: the same picture, a little larger, with
-    // rounded corners, a shadow and a rim (the rest of the screen dims further)
-    if lift > 0: Rectangle {
+    // rounded corners, a shadow and a rim (the rest of the screen dims further;
+    // Search the web lifts its own copy, below)
+    if lift > 0 && !web: Rectangle {
         x: sel-x;
         y: sel-y;
         width: sel-w;
@@ -581,6 +628,121 @@ export component CircleSearch inherits Window {
             border-width: 2px;
             border-color: Theme.material ? Theme.m3-primary : #ffffffd9;
             opacity: lift;
+        }
+    }
+
+    // ── Search the web: the film's beat ─────────────────────────────────
+    // the rest of the screen dims further as the area lifts…
+    if web-up > 0: Rectangle {
+        width: root.width;
+        height: root.height;
+        opacity: reveal;
+        background: dim.with-alpha((Theme.material ? 0.3 : 0.34) * web-up);
+    }
+    // …a window grows round it from its outline to tessera-web's rectangle
+    // (Glass: the bar's frosted tint and a rim, this window isn't blurred;
+    // Material: a tonal surface), its bar coming in as it lands; the page
+    // under the bar stays plain (pages are never transparent)
+    if web-go > 0: Rectangle {
+        x: wo-x;
+        y: wo-y;
+        width: wo-w;
+        height: wo-h;
+        border-radius: wo-r;
+        opacity: reveal * min(1, web-go * 5);
+        background: Theme.material ? Theme.m3-surface : (Theme.dark ? #1c1c21f2 : #f7f7faf2);
+        border-width: Theme.material ? 0 : 1px;
+        border-color: Theme.separator;
+        drop-shadow-blur: 40px;
+        drop-shadow-offset-y: 14px;
+        drop-shadow-color: (Theme.material ? Theme.m3-shadow : #000000).with-alpha((Theme.dark ? 0.45 : 0.25) * web-go);
+        // the bar: back, forward, reload, then the address pill
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: web-bar-h;
+            opacity: wb-o;
+            border-top-left-radius: wo-r;
+            border-top-right-radius: wo-r;
+            background: Theme.material ? Theme.m3-surface-container : transparent;
+            for g[i] in [ic-back, ic-forward, ic-reload]: StIcon {
+                x: 12px + i * 36px + (36px - 18px) / 2;
+                y: (web-bar-h - 18px) / 2;
+                width: 18px;
+                height: 18px;
+                icon: g;
+                size: 18px;
+                color: Theme.material ? Theme.m3-on-surface-variant : Theme.secondary;
+            }
+            // (the pill: a magnifier, the picture's place (slot-*, circle.rs
+            // web_slot: the same sums), then "Search by picture")
+            pill := Rectangle {
+                x: 12px + 3 * 36px + 4px;
+                y: (web-bar-h - 36px) / 2;
+                width: max(0px, parent.width - self.x - 12px);
+                height: 36px;
+                border-radius: 18px;
+                background: Theme.material ? Theme.m3-surface-container-highest : Theme.field-bg;
+                StIcon {
+                    x: 12px;
+                    y: (pill.height - 16px) / 2;
+                    width: 16px;
+                    height: 16px;
+                    icon: ic-search;
+                    size: 16px;
+                    color: Theme.material ? Theme.m3-on-surface-variant : Theme.tertiary;
+                }
+                Text {
+                    x: slot-x - web-x - pill.x + slot-w + 10px;
+                    height: parent.height;
+                    vertical-alignment: center;
+                    text: "Search by picture";
+                    font-size: Theme.material ? 15px : 14px;
+                    color: Theme.material ? Theme.m3-on-surface : Theme.label;
+                }
+            }
+        }
+        Rectangle {
+            x: 0;
+            y: web-bar-h;
+            width: parent.width;
+            height: 1px;
+            opacity: wb-o;
+            background: Theme.separator;
+        }
+    }
+    // …and the picture settles where the pill's thumbnail will be
+    if web-up > 0 && !reduce-motion: Rectangle {
+        x: wl-x;
+        y: wl-y;
+        width: wl-w;
+        height: wl-h;
+        opacity: reveal;
+        transform-scale: wl-scale;
+        border-radius: wl-r;
+        background: dim;
+        drop-shadow-blur: 60px * web-up * (1 - web-go) + 4px * web-go;
+        drop-shadow-offset-y: 24px * web-up * (1 - web-go);
+        drop-shadow-color: #000000.with-alpha(0.5 * web-up * (1 - web-go));
+        Rectangle {
+            border-radius: wl-r;
+            clip: true;
+            Image {
+                width: parent.width;
+                height: parent.height;
+                source: frozen;
+                image-fit: cover;
+                source-clip-x: frozen.width > 0 ? round(sel-x / root.width * frozen.width) : 0;
+                source-clip-y: frozen.height > 0 ? round(sel-y / root.height * frozen.height) : 0;
+                source-clip-width: frozen.width > 0 ? max(1, round(sel-w / root.width * frozen.width)) : 0;
+                source-clip-height: frozen.height > 0 ? max(1, round(sel-h / root.height * frozen.height)) : 0;
+            }
+        }
+        Rectangle {
+            border-radius: wl-r;
+            border-width: 2px * (1 - web-go);
+            border-color: Theme.material ? Theme.m3-primary : #ffffffd9;
         }
     }
 
@@ -627,7 +789,7 @@ export component CircleSearch inherits Window {
         }
     }
     property <color> grip-ink: Theme.material ? Theme.m3-primary : #ffffff;
-    if lift > 0.5 && !busy: Rectangle {
+    if lift > 0.5 && !busy && !web: Rectangle {
         opacity: lift;
         for g in [
             { sides: 5, fx: 0.0, fy: 0.0 }, { sides: 6, fx: 1.0, fy: 0.0 }, { sides: 9, fx: 0.0, fy: 1.0 }, { sides: 10, fx: 1.0, fy: 1.0 },
@@ -704,8 +866,8 @@ export component CircleSearch inherits Window {
         y: sel-y + sel-h + 16px + col-h <= root.height - 24px ? sel-y + sel-h + 16px
             : sel-y - 16px - col-h >= 24px ? sel-y - 16px - col-h
             : max(24px, root.height - 24px - col-h);
-        opacity: bar-shown;
-        visible: bar-shown > 0;
+        opacity: bar-shown * (1 - web-up);
+        visible: bar-shown > 0 && web-up < 1;
         transform-scale: 0.96 + 0.04 * bar-shown;
 
         bar := Rectangle {

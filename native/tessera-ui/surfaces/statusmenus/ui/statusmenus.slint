@@ -344,6 +344,7 @@ export component StatusMenus inherits Window {
     callback mode(int);
     callback stop-sharing();
     callback power-settings(); // the battery menu's last row: Settings → Battery & Power
+    callback weather-details(); // the weather menu's last row: the full forecast (wttr.in)
     callback np-do(string);
     callback np-seek(float);
     callback np-pick(int);
@@ -773,6 +774,30 @@ export component StatusMenus inherits Window {
                                     color: Theme.label;
                                     font-size: Theme.small;
                                 }
+                            }
+                        }
+                        // (the whole forecast, on wttr.in: where Settings says
+                        // links open, tessera-web or your browser)
+                        Rectangle {
+                            height: m3 ? 40px : 26px;
+                            border-radius: m3 ? 20px : Theme.radius-control;
+                            background: wxd.pressed ? Theme.label.with-alpha(0.12) : wxd.has-hover ? Theme.label.with-alpha(0.08) : transparent;
+                            accessible-role: button;
+                            accessible-label: "Full forecast";
+                            accessible-action-default => { weather-details(); }
+                            Text {
+                                x: m3 ? 12px : 6px;
+                                height: parent.height;
+                                vertical-alignment: center;
+                                text: "Full forecast…";
+                                color: m3 ? Theme.m3-primary : Theme.label;
+                                font-size: m3 ? 14px : Theme.body;
+                                font-weight: m3 ? 500 : 400;
+                                accessible-role: none;
+                            }
+                            wxd := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { weather-details(); }
                             }
                         }
                     }

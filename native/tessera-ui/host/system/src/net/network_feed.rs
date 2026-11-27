@@ -383,6 +383,8 @@ impl NetworkFeed {
             "adapter": st.present, "enabled": st.enabled, "unmanaged": unmanaged,
             "notice": notice(unmanaged, &shown_backends(&h.state("backends"), &crate::bus::get("SpeedTest")["link"])),
             "networks": nets,
+            // (a Wi-Fi sign-in page in the way: the menu's "Sign in to network", CaptivePortal)
+            "portal": crate::bus::get("CaptivePortal")["portal"].as_bool().unwrap_or(false),
         })
     }
 
@@ -501,6 +503,8 @@ impl Service for NetworkFeed {
                 }
             }
             "settings" => h.ask("panels.openSettings", json!(["network"])),
+            // (the menu's "Sign in to network": the sign-in page, in tessera-web --portal)
+            "signIn" => h.ask("portal.open", Value::Null),
             // (the notice's button: start NetworkManager, or open iwd's,
             // ConnMan's… own Wi-Fi app, as WifiList.qml)
             "fix" => {

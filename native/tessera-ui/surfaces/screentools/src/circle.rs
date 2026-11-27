@@ -18,7 +18,9 @@
 //!    from Settings → AI, through core's ai: models, keys, stream), the glow
 //!    quickening while it thinks; "Continue in sidebar" hands the picture,
 //!    question and answer to the sidebar's chat (`ai.continueCircle`).
-//!    Search the web: the shell's lens-upload.py (the browser uploads it);
+//!    Search the web: tessera-web, Tessera's quick-look browser, grows out
+//!    of the circled area as the film shows it (web_search), else the
+//!    shell's lens-upload.py (the browser uploads it);
 //!    Copy text: tesseract on the area, if installed; Translate: the model,
 //!    else tesseract and translate-shell.
 //! 4. Esc, a right click or the card's close: it plays back out, hides, and
@@ -81,6 +83,59 @@ pub fn lens_accepted(cfg: &Value) -> bool {
 
 /// What's asked before the first upload
 pub const LENS_NOTICE: &str = "The circled picture will be sent to Google to search with it.";
+
+/// Search the web in tessera-web (the film's beat): the area lifts (up),
+/// then the window grows round it and the picture settles (go): circle.slint's
+/// web-up and web-go. Reduce motion: the bar's fade alone
+pub const WEB_UP_MS: u64 = 300;
+pub const WEB_GO_MS: u64 = 750;
+
+/// How long the lift and growth take before the overlay may fade (Reduce
+/// motion: no growth, only the bar's 150 ms fade)
+pub fn web_anim_ms(reduce: bool) -> u64 {
+    if reduce {
+        150
+    } else {
+        WEB_UP_MS + WEB_GO_MS
+    }
+}
+
+/// How long tessera-web's window is waited for before the browser opens
+/// Lens instead (WebKit's first start can take a few seconds)
+const WEB_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// tessera-web's window for Search the web: about 66% × 70% of the screen,
+/// centred (its window rules' size), in this screen's logical pixels
+pub fn web_window(sw: f32, sh: f32) -> Rect {
+    let (w, h) = ((sw * 0.66).round(), (sh * 0.70).round());
+    Rect::new(((sw - w) / 2.0).round(), ((sh - h) / 2.0).round(), w, h)
+}
+
+/// tessera-web's bar height (the film's), and its address pill's picture:
+/// back, forward and reload (36 px each after a 12 px margin), the pill 4 px
+/// on, its magnifier, then the thumbnail 34 px into it, 28 px high
+/// (circle.slint draws the pill with the same sums)
+pub const WEB_BAR_H: f32 = 52.0;
+const WEB_THUMB_X: f32 = 12.0 + 3.0 * 36.0 + 4.0 + 34.0;
+const WEB_THUMB_H: f32 = 28.0;
+
+/// Where the circled picture settles: the pill's thumbnail, the picture's
+/// own shape kept within 3:4 to 8:5
+pub fn web_slot(win: Rect, sel: Rect) -> Rect {
+    let aspect = if sel.h > 0.0 { sel.w / sel.h } else { 1.0 };
+    let w = (WEB_THUMB_H * aspect).clamp(WEB_THUMB_H * 0.75, WEB_THUMB_H * 1.6);
+    Rect::new(win.x + WEB_THUMB_X, win.y + (WEB_BAR_H - WEB_THUMB_H) / 2.0, w, WEB_THUMB_H)
+}
+
+/// The screen's place in Hyprland's layout (logical pixels): --at is given
+/// in the layout's coordinates, as a window's position is
+fn monitor_origin(output: &str) -> (f32, f32) {
+    let mons = crate::services::hypr::request("j/monitors").ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).unwrap_or_default();
+    mons.as_array()
+        .and_then(|a| a.iter().find(|m| m["name"].as_str() == Some(output)))
+        .map(|m| (m["x"].as_f64().unwrap_or(0.0) as f32, m["y"].as_f64().unwrap_or(0.0) as f32))
+        .unwrap_or((0.0, 0.0))
+}
 
 /// The circled area, cut out: the JPEG's path, it in base64, the thumbnail (w, h, RGBA)
 pub struct Crop {
@@ -147,6 +202,11 @@ pub enum Cm {
     /// the request never started: why, and the way to fix it
     AiFailed(u64, String, Fix),
     Lens(u64, Value),
+    /// Search the web: tessera-web's window opened (true), or it couldn't
+    /// start or never showed (false: the browser opens Lens instead)
+    Web(u64, bool),
+    /// Search the web: the lift and the growth have played
+    WebPlayed(u64),
     /// tesseract's text, or why there's none
     Text(u64, Result<String, String>),
     /// the translation (tesseract, then translate-shell)
@@ -258,6 +318,11 @@ pub struct Circle {
     no_web: bool,
     /// said yes to Google this session (the settings file may not have caught up)
     lens_ok: bool,
+    /// Search the web in tessera-web: playing (its window waited for), its
+    /// window there, and the animation played (the overlay fades when both)
+    web: bool,
+    web_open: bool,
+    web_played: bool,
     asked: Asked,
     answer: String,
     /// the answer as the model wrote it (Markdown: for the sidebar)
@@ -544,6 +609,11 @@ impl Circle {
         ui.set_ic_sidebar(ic("sidebar-simple", m));
         ui.set_ic_sparkle(ic("sparkle", m));
         ui.set_ic_gear(ic("gear", m));
+        // (Search the web's window: tessera-web's bar)
+        ui.set_ic_back(ic("arrow-left", m));
+        ui.set_ic_forward(ic("arrow-right", m));
+        ui.set_ic_reload(ic("arrow-clockwise", m));
+        ui.set_ic_search(ic("magnifying-glass", m));
     }
 
     fn sync_chips(&self) {
@@ -595,6 +665,7 @@ impl Circle {
         self.answer.clear();
         self.status_fix = Fix::None;
         self.answer_fix = Fix::None;
+        self.web_reset();
         let (w, h) = super::output_size(st, &output);
         *self.drag.borrow_mut() = Drag { w, h, ..Default::default() };
         let pointer = b.select_from == "pointer";
@@ -803,10 +874,12 @@ impl Circle {
         }
     }
 
-    /// Search the web: the browser uploads the picture to Lens (lens-upload.py)
+    /// Search the web: in tessera-web, Tessera's quick-look browser, as the
+    /// film shows it (web_search), while links open there (Settings →
+    /// Default apps) and it's installed; else the browser uploads the
+    /// picture to Lens (lens-upload.py), as before
     fn lens(&mut self, st: &mut State) {
-        let Some(crop) = &self.crop else { return };
-        if self.chips[1].0 {
+        if self.crop.is_none() || self.chips[1].0 || self.web {
             return;
         }
         // (the picture leaves the computer: asked once, remembered)
@@ -819,6 +892,119 @@ impl Circle {
         self.sync_chips();
         self.status_fix = Fix::None;
         self.set_status("", false);
+        if crate::weblink::links_in_tessera(&st.shell.cfg) && crate::weblink::bin().is_some() {
+            return self.web_search(st);
+        }
+        self.lens_upload(st);
+    }
+
+    /// Search the web in tessera-web: the circled area lifts off a dimmer
+    /// screen, a window grows round it to where tessera-web opens (about
+    /// 66% × 70% of the screen, centred), and the picture settles where the
+    /// address pill's thumbnail will be (circle.slint). Meanwhile
+    /// `tessera-web --at X,Y,W,H --lens PICTURE` starts under the overlay
+    /// (it does Lens's upload in its own session), and once its window has
+    /// opened (Hyprland's openwindow, class tessera-web) and the animation
+    /// has played, the overlay fades out onto it. Started at once, not at
+    /// the animation's end: WebKit's start then overlaps it, and nothing of
+    /// it shows until the overlay goes. Not started, or no window within
+    /// WEB_TIMEOUT: the browser opens Lens instead (lens_upload)
+    fn web_search(&mut self, st: &mut State) {
+        let Some(crop) = &self.crop else { return };
+        let Some(w) = &self.win else { return };
+        let ui = &w.ui;
+        let (sw, sh) = {
+            let d = self.drag.borrow();
+            (d.w, d.h)
+        };
+        let sel = Rect::new(ui.get_sel_x(), ui.get_sel_y(), ui.get_sel_w(), ui.get_sel_h());
+        let win = web_window(sw, sh);
+        let slot = web_slot(win, sel);
+        ui.set_web_x(win.x);
+        ui.set_web_y(win.y);
+        ui.set_web_w(win.w);
+        ui.set_web_h(win.h);
+        ui.set_web_bar_h(WEB_BAR_H);
+        ui.set_slot_x(slot.x);
+        ui.set_slot_y(slot.y);
+        ui.set_slot_w(slot.w);
+        ui.set_slot_h(slot.h);
+        ui.set_web(true);
+        self.web = true;
+        self.web_open = false;
+        self.web_played = false;
+        let gen = self.gen;
+        {
+            let to = to_part(st);
+            self.later.start(slint::TimerMode::SingleShot, Duration::from_millis(web_anim_ms(st.shell.look.reduce_motion)), move || to(Cm::WebPlayed(gen)));
+        }
+        // (a copy of the picture for tessera-web: the circle's own goes when
+        // it closes; this one when tessera-web ends. "shot-circle-…": a day
+        // on, a copy left by a crash goes with the others, cut's prune_old)
+        let (to, src, output) = (to_part(st), crop.path.clone(), self.screen.clone());
+        std::thread::spawn(move || {
+            let pic = std::path::Path::new(&src).with_file_name(format!("shot-circle-lens-{}.jpg", crate::util::now_ms()));
+            if std::fs::copy(&src, &pic).is_err() {
+                return to(Cm::Web(gen, false));
+            }
+            let (ox, oy) = monitor_origin(&output);
+            let args = vec!["--at".to_string(), crate::weblink::rect_arg(win.x + ox, win.y + oy, win.w, win.h), "--lens".into(), pic.to_string_lossy().into_owned()];
+            // (the event socket first: the window's openwindow can't be missed)
+            let events = crate::weblink::hypr_events();
+            let mut child = match crate::weblink::spawn(&args) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("tessera-ui: circle to search: tessera-web didn't start ({e}): Lens in the browser");
+                    let _ = std::fs::remove_file(&pic);
+                    return to(Cm::Web(gen, false));
+                }
+            };
+            match crate::weblink::wait_window(events, &mut child, crate::weblink::CLASS, WEB_TIMEOUT) {
+                crate::weblink::Shown::Opened => {
+                    to(Cm::Web(gen, true));
+                    let _ = child.wait();
+                }
+                shown => {
+                    eprintln!("tessera-ui: circle to search: tessera-web's window didn't open ({shown:?}): Lens in the browser");
+                    if shown == crate::weblink::Shown::TimedOut {
+                        let _ = child.kill();
+                    }
+                    let _ = child.wait();
+                    to(Cm::Web(gen, false));
+                }
+            }
+            let _ = std::fs::remove_file(&pic);
+        });
+    }
+
+    /// Search the web, both done: the window is there and the animation has
+    /// played; the overlay fades out onto tessera-web
+    fn web_settle(&mut self, st: &mut State) {
+        if !(self.web && self.web_open && self.web_played) {
+            return;
+        }
+        self.chips[1] = (false, true);
+        self.sync_chips();
+        self.dismiss(st);
+    }
+
+    /// Search the web put back: the overlay's own window gone, the bar back
+    fn web_reset(&mut self) {
+        self.web = false;
+        self.web_open = false;
+        self.web_played = false;
+        if let Some(w) = &self.win {
+            w.ui.set_web(false);
+        }
+    }
+
+    /// Search the web in the browser: it uploads the picture to Lens
+    /// (lens-upload.py: a one-time 127.0.0.1 page, so the upload and the
+    /// results share the browser's session)
+    fn lens_upload(&mut self, st: &mut State) {
+        let Some(crop) = &self.crop else { return };
+        self.chips[1] = (true, false);
+        self.sync_chips();
         let (to, gen, path) = (to_part(st), self.gen, crop.path.clone());
         let script = crate::util::asset("shell/assets/scripts/lens-upload.py").map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
         std::thread::spawn(move || {
@@ -837,7 +1023,9 @@ impl Circle {
         if r["ok"] == true && ok_url {
             self.chips[1] = (false, true);
             self.sync_chips();
-            crate::shell::ask("launch.openLink", json!([url]));
+            // (your browser itself: this page uploads from the browser's
+            // session; tessera-web is unwanted or couldn't start here)
+            crate::weblink::xdg_open(&url);
             // (the results open in the browser: out of its way)
             self.dismiss(st);
         } else if r["fallback"] == true {
@@ -847,7 +1035,7 @@ impl Circle {
                     crate::util::pipe_to(&["wl-copy", "--type", "image/jpeg"], bytes);
                 }
             }
-            crate::shell::ask("launch.openLink", json!(["https://lens.google.com/"]));
+            crate::weblink::xdg_open("https://lens.google.com/");
             self.chips[1] = (false, true);
             self.sync_chips();
             self.status_fix = Fix::None;
@@ -1078,6 +1266,27 @@ impl Circle {
                     self.lens_done(st, r);
                 }
             }
+            Cm::Web(gen, opened) => {
+                if gen != self.gen || !self.open || !self.web {
+                    return;
+                }
+                if opened {
+                    self.web_open = true;
+                    self.web_settle(st);
+                } else {
+                    // (no tessera-web after all: Lens in the browser, as before)
+                    self.later.stop();
+                    self.web_reset();
+                    self.lens_upload(st);
+                }
+            }
+            Cm::WebPlayed(gen) => {
+                if gen != self.gen || !self.web {
+                    return;
+                }
+                self.web_played = true;
+                self.web_settle(st);
+            }
             Cm::Text(gen, r) => {
                 if gen != self.gen {
                     return;
@@ -1121,6 +1330,7 @@ impl Circle {
                 }
                 self.shot = None;
                 self.crop = None;
+                self.web_reset();
                 if let Some(w) = &mut self.win {
                     w.surface.hide();
                     st.shell.glass.set(&w.output, NS, &[]);
@@ -1331,6 +1541,29 @@ mod tests {
         assert!(!lens_accepted(&json!({})));
         assert!(lens_accepted(&json!({"circle": {"lensAccepted": true}})));
         assert_eq!(Fix::SendToGoogle.label(), "Send to Google");
+    }
+
+    #[test]
+    fn search_the_web_grows_to_tessera_webs_window() {
+        // (about 66% × 70% of the screen, centred)
+        let win = web_window(1920.0, 1080.0);
+        assert_eq!(win, Rect::new(327.0, 162.0, 1267.0, 756.0));
+        assert!((win.x * 2.0 + win.w - 1920.0).abs() <= 1.0 && (win.y * 2.0 + win.h - 1080.0).abs() <= 1.0);
+        // (the picture settles in the bar, at the pill's thumbnail: inside
+        // the window, 28 px high, its own shape kept within bounds)
+        let wide = web_slot(win, Rect::new(800.0, 400.0, 400.0, 100.0));
+        assert_eq!((wide.x, wide.y, wide.h), (win.x + 158.0, win.y + 12.0, 28.0));
+        assert!((wide.w - 28.0 * 1.6).abs() < 0.01);
+        let tall = web_slot(win, Rect::new(800.0, 400.0, 100.0, 400.0));
+        assert!((tall.w - 21.0).abs() < 0.01);
+        let square = web_slot(win, Rect::new(0.0, 0.0, 50.0, 50.0));
+        assert_eq!(square.w, 28.0);
+        assert!(square.y + square.h <= win.y + WEB_BAR_H && square.x + square.w < win.x + win.w);
+        // (the lift and the growth, then the fade; Reduce motion: no growth)
+        assert_eq!(web_anim_ms(false), 1050);
+        assert_eq!(web_anim_ms(true), 150);
+        // (--at in Hyprland's layout: a second screen's origin added)
+        assert_eq!(crate::weblink::rect_arg(win.x + 1920.0, win.y, win.w, win.h), "2247,162,1267,756");
     }
 
     #[test]

@@ -792,8 +792,9 @@ impl About {
             "bug.send" => h.ask("bugreport.send", json!([])),
             "bug.openIssue" => {
                 let u = st(h, "bugreport")["issueUrl"].as_str().unwrap_or("").to_string();
+                // (the bug report's issue: where Settings says, tessera-web or your browser)
                 if u.starts_with("https://") {
-                    h.ask("launch.open", json!([u]));
+                    h.ask("launch.openLink", json!([u]));
                 }
             }
             // a link in the update notes (Launch.openLink: web links only)

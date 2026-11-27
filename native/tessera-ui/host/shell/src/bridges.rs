@@ -980,9 +980,10 @@ impl Service for Bridges {
                         launch_open(&s(0));
                     }
                 }
+                // (a web link where Settings says: tessera-web or your browser)
                 "openLink" => {
                     if link_allowed(&s(0)) {
-                        launch_open(s(0).trim());
+                        open_link(s(0).trim());
                     }
                 }
                 // [[argv], hold]: a command in the chosen terminal (Launch.terminal)

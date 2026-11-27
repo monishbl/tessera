@@ -50,10 +50,28 @@ fn row(cx: &mut Ctx, label: &str, keys: &str, key: &str, auto: &str, all: &[&str
     r
 }
 
+/// "Open links from Tessera in" (`apps.webLinks`): Tessera's quick-look
+/// browser, tessera-web (the default), or your browser (tessera_core::weblink)
+pub fn web_links_index(v: &Value) -> i32 {
+    if v.as_str() == Some("browser") {
+        1
+    } else {
+        0
+    }
+}
+
+fn web_links_row(cx: &mut Ctx) -> Row {
+    let cur = web_links_index(&cx.get("apps.webLinks"));
+    let pick = cx.pick("apps.webLinks", &["tessera", "browser"]);
+    let labels = vec!["Tessera's quick-look browser".to_string(), "Your browser".to_string()];
+    Row::new("Open links from Tessera in").detail("Links in notifications, AI answers, Search and menus").choice(&labels, cur, pick).width(220.0)
+}
+
 pub fn page(cx: &mut Ctx, p: &mut Page) {
     let rows = vec![
         row(cx, "Terminal", "Super+Return", "terminal", "Automatic", &["kitty", "foot", "alacritty", "wezterm", "ghostty", "konsole", "gnome-terminal", "kgx", "ptyxis", "xfce4-terminal", "xterm"]),
         row(cx, "Browser", "Super+W", "browser", "Automatic (system default)", &["zen-browser", "firefox", "google-chrome-stable", "chromium", "brave"]),
+        web_links_row(cx),
         row(cx, "Code editor", "Super+C", "code", "Automatic", &["code", "codium", "zed", "cursor", "windsurf"]),
         row(cx, "Text editor", "Super+X", "text", "Automatic", &["gnome-text-editor", "kate", "mousepad"]),
     ];
@@ -87,5 +105,12 @@ mod tests {
         let c = choices("Automatic", &["foot", "kitty -e btop"], |p| p == "foot" || p == "btop");
         assert_eq!(c.iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), ["", "foot"]);
         assert_eq!(c[0].1, "Automatic");
+    }
+
+    #[test]
+    fn links_open_in_tessera_unless_you_chose_your_browser() {
+        assert_eq!(web_links_index(&Value::Null), 0);
+        assert_eq!(web_links_index(&Value::from("tessera")), 0);
+        assert_eq!(web_links_index(&Value::from("browser")), 1);
     }
 }
