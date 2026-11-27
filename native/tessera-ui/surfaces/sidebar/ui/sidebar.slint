@@ -7,7 +7,7 @@
 // LensButton.qml. The numbers are theirs, per look (Theme.material).
 
 import { Theme } from "@tessera/theme.slint";
-import { Busy } from "@tessera/widgets.slint";
+import { Busy, Spinner } from "@tessera/widgets.slint";
 
 // ── Icons: Phosphor in Glass, Material Symbols Rounded in Material, as
 // shell/common/Icon.qml (phosphor.js / material-symbols.js codes; "" where
@@ -84,25 +84,6 @@ component SIcon {
         font-family: sym ? (fill ? "Tessera Symbols Fill" : "Tessera Symbols") : fill ? "Phosphor-Fill" : bold ? "Phosphor-Bold" : "Phosphor";
         horizontal-alignment: center;
         vertical-alignment: center;
-        accessible-role: none;
-    }
-}
-
-component Spinner {
-    in property <color> color: Theme.secondary;
-    in property <length> size: 14px;
-    preferred-width: size;
-    preferred-height: size;
-    Text {
-        width: 100%;
-        height: 100%;
-        text: G.spinner.p;
-        font-family: "Phosphor-Bold";
-        font-size: size;
-        color: root.color;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        transform-rotation: Math.mod(animation-tick() / 1ms * 0.4, 360) * 1deg;
         accessible-role: none;
     }
 }
@@ -287,7 +268,7 @@ export component ChatButton inherits FocusScope {
             Rectangle {
                 width: Theme.material ? 18px : 14px;
                 if !busy: SIcon { g: icon; size: parent.width; color: ink; }
-                if busy: Spinner { size: parent.width; color: ink; }
+                if busy: Spinner { size: parent.width; ink: root.ink; }
             }
             Text {
                 text: label;
@@ -1092,7 +1073,7 @@ component History inherits Rectangle {
             y: (parent.height - self.height) / 2;
             width: Theme.material ? 36px : 26px;
             height: self.width;
-            if searching && field.text != "": Spinner { size: 14px; }
+            if searching && field.text != "": Spinner { size: 14px; ink: Theme.secondary; }
             if field.text != "" && !searching: GhostButton {
                 width: parent.width;
                 height: parent.height;
