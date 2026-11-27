@@ -51,9 +51,24 @@ it replaces is kept in $XDG_STATE_HOME/tessera/backups/before-restore-<time>
 (undo puts it back). Files are written whole (a temporary file, renamed).
 Pacman and AUR apps are installed by Software Update's job (the root
 helper, one password; the AUR helper), not here: apps-install leaves them
-to it. Flatpak apps get their remote added first when it's missing (https
-only); user-level managers run as you; one that's missing makes its apps
-"needs <manager>" (installing the manager's package comes first).
+to it. Flatpak apps get Flathub added first when it's missing (another
+remote only when it's already set up here); user-level managers run as you;
+one that's missing makes its apps "needs <manager>" (installing the
+manager's package comes first).
+
+What Settings shows for each app is what runs (audit #704): inspect and
+apps-status rebuild every app from its checked fields (checked_app), with
+"command" = shown_command(install_steps(…)), the very argv apps-install
+runs; the file's own "command" and "source" strings are never used. Names
+are checked per source and sources come from an allow-list: a git or https
+address in a backup is never followed (those apps are listed, refused, with
+why). Restore writes only to an allow-list (allowed(): the three settings
+files, Restored pictures, your ~/.config/hypr files; Tessera's own hypr
+files only beside, as .from-backup), never through a link. A backup from
+another computer or user (manifest "computer": a hash of the machine ID and
+uid, no host name) is "elsewhere": apps-install, and a restore of Hyprland
+files that run, need --confirm-elsewhere, which Settings passes only after
+showing what would run and a second yes.
 
 Prints one JSON object: {"ok": true, …} or {"ok": false, "error": "…"},
 exit 0 or 1 (apps-install: a JSON line per step before it).
@@ -66,6 +81,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -870,7 +886,7 @@ def create(dest, include, ctx):
         members["apps.json"] = dump(inv)
         contents["apps"] = {"apps": len(inv["apps"]), "groups": sorted({a["group"] for a in inv["apps"]})}
     manifest = {"app": "Tessera", "kind": "backup", "format": FORMAT, "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "home": ctx.home, "parts": include, "contents": contents, "wallpapers": pics}
+                "home": ctx.home, "computer": computer_tag(), "parts": include, "contents": contents, "wallpapers": pics}
     members["manifest.json"] = dump(manifest)
     pack(path, members, files)
     return {"file": path, "bytes": os.path.getsize(path), "parts": include}
@@ -878,6 +894,7 @@ def create(dest, include, ctx):
 
 # ── Reading a backup ────────────────────────────────────────────────────
 NOT_BACKUP = "This isn't a Tessera backup, or it's damaged. Choose a file made with Back Up."
+ELSEWHERE = "This backup is from another computer. Look at what it would run, then confirm in Settings."
 SAFE = r"[A-Za-z0-9 _.,()+@=-]+"
 MEMBER_REL = re.compile(r"^%s(/%s){0,3}$" % (SAFE, SAFE))
 MEMBER = re.compile(r"^(manifest\.json|apps\.json|login\.json|settings/(config|keybinds|focus|state)\.json|"
@@ -946,10 +963,145 @@ def json_member(members, name, default=None):
         raise Refused(NOT_BACKUP)
 
 
-def backup_apps(members):
+def backup_apps(members, remotes_here=None, helper=None):
+    """The backup's apps as a restore sees them: each rebuilt from its
+    checked fields only (checked_app), never the file's own "command" or
+    "source" strings; one entry an id"""
     inv = json_member(members, "apps.json", {})
     apps = inv.get("apps") if isinstance(inv, dict) else None
-    return [a for a in apps or [] if isinstance(a, dict) and a.get("group") in MANAGERS and isinstance(a.get("name"), str)]
+    if remotes_here is None:
+        remotes_here = flatpak_remotes_here()
+    if helper is None:
+        helper = aur_helper()
+    out, seen = [], set()
+    for i, a in enumerate(apps or []):
+        if not isinstance(a, dict) or a.get("group") not in MANAGERS or not isinstance(a.get("name"), str):
+            continue
+        c = checked_app(a, remotes_here, helper, i)
+        if c["id"] not in seen:
+            seen.add(c["id"])
+            out.append(c)
+    return out
+
+
+VERSION_TEXT = re.compile(r"^[A-Za-z0-9._+:~-]{0,64}$")
+ID_KEY = re.compile(r"^[A-Za-z0-9@._+/-]{1,214}$")
+
+
+def checked_app(a, remotes_here, helper="", index=0):
+    """One app of a backup, with only the fields that pass their checks; its
+    id, source and command made here from them. "command" is shown_command()
+    of the very steps apps-install runs (audit #704: the file's own command
+    string was shown while another one ran)"""
+    g = a.get("group")
+    n = a.get("name") if isinstance(a.get("name"), str) else ""
+    v = a.get("version") if isinstance(a.get("version"), str) and VERSION_TEXT.match(a.get("version")) else ""
+    c = {"group": g, "name": n, "version": v, "system": g in ("pacman", "aur")}
+    if g == "flatpak":
+        c["remote"] = a.get("remote") if isinstance(a.get("remote"), str) else ""
+        c["installation"] = "user" if a.get("installation") == "user" else "system"
+    if g in ("fnm", "nvm", "rustup"):
+        c["default"] = a.get("default") is True
+    if g == "rustup":
+        c["components"] = [x for x in a.get("components") if ok_name(TOOLCHAIN, x)] if isinstance(a.get("components"), list) else []
+        c["targets"] = [x for x in a.get("targets") if ok_name(TOOLCHAIN, x)] if isinstance(a.get("targets"), list) else []
+    if g == "cargo":
+        c["features"] = [x for x in a.get("features") if ok_name(FEATURE, x)] if isinstance(a.get("features"), list) else []
+        c["noDefault"] = a.get("noDefault") is True
+        if a.get("git") or a.get("url"):
+            c["git"] = True  # (only that it had one: the address is never used)
+    if g == "pipx":
+        spec = a.get("spec")
+        c["spec"] = spec if isinstance(spec, str) and ok_name(PYPKG, spec) else ("<address>" if spec else "")
+    why = refused_why(c, remotes_here)
+    key = v if g in ("fnm", "nvm") else n
+    c["id"] = "%s:%s" % (g, key) if ID_KEY.match(key or "") and not key.startswith("-") else "%s:#%d" % (g, index)
+    if c["system"]:
+        c["installable"] = not why
+        c["command"] = ("Software Update: " + ("pacman" if g == "pacman" else (helper or "yay")) + " -S --needed " + n) if not why else ""
+    else:
+        steps = install_steps(c, remotes_here)
+        c["installable"] = bool(steps)
+        c["command"] = shown_command(steps) if steps else ""
+    c["why"] = why or ("" if c["installable"] else "it can't be installed again from here")
+    c["source"] = source_words(c, helper)
+    return c
+
+
+def source_words(c, helper=""):
+    """Where an app comes from, in words made here (never the file's)"""
+    g = c["group"]
+    if g == "pacman":
+        return "Arch repositories"
+    if g == "aur":
+        return "AUR" + (" (with %s)" % helper if helper else "")
+    if g == "flatpak":
+        r = c.get("remote") or ""
+        return "Flatpak, from " + (r if ok_name(REMOTE, r) else "an unknown remote")
+    if g in ("fnm", "nvm", "rustup"):
+        return g + (", the default" if c.get("default") else "")
+    if g == "cargo":
+        return "cargo, from a git repository" if c.get("git") else "cargo, from crates.io"
+    if g in ("appimage", "local", "deno"):
+        return MANAGERS[g]["name"] + ", origin unknown"
+    return MANAGERS[g]["name"]
+
+
+def shown_command(steps):
+    """The commands as Settings shows them: each step's argv, quoted as a
+    shell would read it, joined with &&. (nvm's one runs nvm.sh in bash:
+    shown as the nvm commands it runs)"""
+    out = []
+    for st in steps or []:
+        if st[:2] == ["bash", "-c"] and len(st) == 6 and st[3] == "nvm":
+            out.append(st[2].replace('. "$1/nvm.sh" && ', "").replace('"$2"', shlex.quote(st[5])))
+        else:
+            out.append(shlex.join(st))
+    return " && ".join(out)
+
+
+def flatpak_remotes_here():
+    if not find_bin("flatpak"):
+        return set()
+    return set(parse_flatpak("", run(["flatpak", "remotes", "--columns=name,url,options"]))[1])
+
+
+def aur_helper():
+    return "paru" if find_bin("paru") else "yay" if find_bin("yay") else ""
+
+
+# ── Which computer a backup came from ───────────────────────────────────
+MACHINE_ID_FILES = ("/etc/machine-id", "/var/lib/dbus/machine-id")
+
+
+def computer_tag():
+    """This computer and user, as a tag a backup carries (no host name: a
+    hash of the machine ID and the user's number), "" when there's no
+    machine ID"""
+    for p in MACHINE_ID_FILES:
+        try:
+            with open(p) as f:
+                mid = f.read(200).strip()
+        except OSError:
+            continue
+        if mid:
+            return hashlib.sha256(("tessera-backup\0%s\0%d" % (mid, os.getuid())).encode()).hexdigest()[:32]
+    return ""
+
+
+def origin_of(manifest, ctx):
+    """"here" (made on this computer, by you), "elsewhere" (another computer
+    or another user), or "unknown" (made before backups said which, or no
+    machine ID here). Anything but "here" is shown as "From another
+    computer" with what would run, and nothing that runs goes ahead without
+    a second yes (--confirm-elsewhere)"""
+    tag, here = manifest.get("computer"), computer_tag()
+    home = manifest.get("home")
+    if isinstance(home, str) and home and home != ctx.home:
+        return "elsewhere"
+    if not isinstance(tag, str) or not tag or not here:
+        return "unknown"
+    return "here" if tag == here else "elsewhere"
 
 
 def needs(a):
@@ -1004,11 +1156,16 @@ def inspect(path, ctx):
             n, summary = len(apps), apps_summary(apps)
         parts.append({"id": p, "name": PART_NAMES[p], "count": n, "summary": summary,
                       "bytes": sum(len(v) for k, v in members.items() if member_part(k) == p)})
-    out = {"created": manifest.get("created", ""), "parts": parts}
+    origin = origin_of(manifest, ctx)
+    out = {"created": manifest.get("created", ""), "parts": parts, "origin": origin, "elsewhere": origin != "here"}
     if "apps" in have:
-        inv = json_member(members, "apps.json", {})
         out["apps"] = with_status(backup_apps(members), ctx)
-        out["managers"] = inv.get("managers") if isinstance(inv, dict) else {}
+        # (which managers that computer had: only their names)
+        inv = json_member(members, "apps.json", {})
+        mgrs = inv.get("managers") if isinstance(inv, dict) and isinstance(inv.get("managers"), dict) else {}
+        out["managers"] = {k: {"present": True} for k in mgrs if k in MANAGERS}
+        # (everything an install could run, as it would run it)
+        out["runs"] = [{"id": a["id"], "command": a["command"]} for a in out["apps"] if a["installable"] and a["command"]]
     return out
 
 
@@ -1160,11 +1317,16 @@ def plan(path, include, ctx):
             if name.startswith("hypr/"):
                 rel = name[len("hypr/"):]
                 target = os.path.join(ctx.hypr, rel)
+                if os.path.islink(target):
+                    skipped.append("%s (it's a link: left as it is)" % tilde(target, home))
+                    continue
                 now = read_bytes(target)
                 if now == data:
                     files.append({"path": tilde(target, home), "action": "same"})
                     continue
-                if rel in ships or rel in GENERATED or rel.endswith(HYPR_SKIP):
+                # (Tessera's own: hyprland.lua and tessera/*, whether or not
+                # this install has a checkout to compare with; audit #704)
+                if rel in ships or tessera_owned(rel) or rel.endswith(HYPR_SKIP):
                     if not rel.endswith(HYPR_SKIP):
                         writes[target + BESIDE] = data
                         files.append({"path": tilde(target + BESIDE, home), "action": "beside"})
@@ -1174,6 +1336,9 @@ def plan(path, include, ctx):
             elif name.startswith("hypr-edited/"):
                 rel = name[len("hypr-edited/"):]
                 target = os.path.join(ctx.hypr, rel)
+                if os.path.islink(target + BESIDE):
+                    skipped.append("%s (it's a link: left as it is)" % tilde(target + BESIDE, home))
+                    continue
                 if read_bytes(target) == data:
                     files.append({"path": tilde(target, home), "action": "same"})
                     continue
@@ -1194,9 +1359,54 @@ def plan(path, include, ctx):
             "look": (config.get("appearance") or {}).get("look", "glass") if isinstance(config.get("appearance"), dict) else "glass"}
 
 
+def tessera_owned(rel):
+    """A ~/.config/hypr file that's Tessera's own (shipped or written by the
+    installer): never replaced from a backup, only put beside"""
+    return rel == "hyprland.lua" or rel.startswith("tessera/") or rel in GENERATED
+
+
+def inside(path, top):
+    """path is under top, where both really are: no link in between leads
+    out (the deepest folder that's there is followed; the file itself is
+    never a link)"""
+    if os.path.islink(path):
+        return False
+    real_top, real = real_of(top), real_of(os.path.dirname(os.path.abspath(path)))
+    return real == real_top or real.startswith(real_top + "/")
+
+
+def real_of(path):
+    """Where a path really is, folders not made yet included: the deepest
+    one that's there followed through its links, the rest as written"""
+    d, rest = os.path.abspath(path), []
+    while not os.path.lexists(d) and d != os.path.dirname(d):
+        d, tail = os.path.split(d)
+        rest.insert(0, tail)
+    return os.path.join(os.path.realpath(d), *rest)
+
+
 def allowed(path, ctx):
+    """Where a restore (and its undo) may write, and only there: the three
+    settings files, a picture straight in ~/Pictures/Wallpapers/Restored,
+    and your files in ~/.config/hypr (Tessera's own only as <file>.from-
+    backup). Never another file in ~/.config/tessera, Tessera's install,
+    the root helper, PAM or greetd; never through a link out (audit #704)"""
     p = os.path.abspath(path)
-    return any(p.startswith(os.path.abspath(d) + "/") for d in (ctx.config, ctx.hypr, ctx.pictures)) and not never(p, ctx.home)
+    if never(p, ctx.home):
+        return False
+    config, hypr, pictures = (os.path.abspath(d) for d in (ctx.config, ctx.hypr, ctx.pictures))
+    if p in (os.path.join(config, n) for n in SETTINGS_FILES):
+        return inside(p, config)
+    if os.path.dirname(p) == pictures:
+        return p.lower().endswith(PICTURE_EXT) and inside(p, pictures)
+    if p.startswith(hypr + "/"):
+        rel = os.path.relpath(p, hypr)
+        if rel.endswith(BESIDE):
+            return bool(MEMBER_REL.match(rel[:-len(BESIDE)])) and inside(p, hypr)
+        if not MEMBER_REL.match(rel) or tessera_owned(rel) or rel in shipped(ctx) or rel.endswith(HYPR_SKIP):
+            return False
+        return inside(p, hypr)
+    return False
 
 
 def tilde(p, home):
@@ -1287,8 +1497,14 @@ def apply_writes(writes, ctx):
         write_whole(target, writes[target], SB.mode_of(target))
 
 
-def restore(path, include, ctx, undo=True):
+def restore(path, include, ctx, undo=True, confirmed=False):
     p = plan(path, include, ctx)
+    # (Hyprland files run commands as soon as they're written: from another
+    # computer only after Settings showed them and you said yes again)
+    if p["report"].get("hypr", {}).get("runs") and not confirmed:
+        manifest, _ = unpack(path)
+        if origin_of(manifest, ctx) != "here":
+            raise Refused(ELSEWHERE)
     if not p["writes"] and not p["state"]:
         return {"restored": p["include"], "skipped": p["skipped"], "undo": "", "look": p["look"], "changed": 0}
     undo_file = write_undo(p, ctx) if undo else ""
@@ -1335,22 +1551,69 @@ FLATHUB = "https://dl.flathub.org/repo/flathub.flatpakrepo"
 FLATHUB_REMOTES = {"flathub": FLATHUB, "flathub-beta": "https://dl.flathub.org/beta-repo/flathub-beta.flatpakrepo"}
 
 
+def refused_why(a, remotes_here):
+    """Why an app from a backup isn't installed from here ("" when it can
+    be): only names that pass their source's pattern, and only from the
+    allow-list of sources (Arch's repositories, the AUR, Flathub or a
+    Flatpak remote already set up here, crates.io, PyPI, npm, the Node.js
+    and Rust releases). A git or https address in a backup is never
+    followed: anyone's backup could name any repository (audit #704)"""
+    g, n, v = a.get("group"), a.get("name"), a.get("version") or ""
+    if g not in MANAGERS:
+        return "it's from an unknown source"
+    if g in ("pacman", "aur"):
+        return "" if package_name(n) else "its name isn't a package name"
+    if g in ("appimage", "local") or (g == "deno"):
+        return "where it came from isn't known"
+    if g == "flatpak":
+        if not ok_name(FLATPAK_ID, n):
+            return "its name isn't a Flatpak app ID"
+        remote = a.get("remote")
+        if not ok_name(REMOTE, remote):
+            return "its Flatpak remote has an odd name"
+        if remote not in remotes_here and remote not in FLATHUB_REMOTES:
+            return "it's from the Flatpak remote “%s”, which isn't Flathub: add that remote yourself if you trust it, then look again" % remote
+        return ""
+    if g in ("fnm", "nvm"):
+        return "" if ok_name(NODE, v) else "its Node.js version isn't a version number"
+    if g == "rustup":
+        return "" if ok_name(TOOLCHAIN, n) else "its toolchain's name is odd"
+    if g == "cargo":
+        if a.get("git") or a.get("url"):
+            return "it was built from a git repository; install it yourself if you trust it"
+        return "" if ok_name(CRATE, n) else "its name isn't a crate name"
+    if g == "pipx":
+        spec = a.get("spec") or n
+        if not ok_name(PYPKG, n) or not ok_name(PYPKG, spec) or pep503(spec) != pep503(n):
+            return "it was installed from an address, not by name from PyPI; install it yourself if you trust it"
+        return ""
+    if g == "uv":
+        return "" if ok_name(PYPKG, n) else "its name isn't a Python package name"
+    if g in ("npm", "bun"):
+        return "" if ok_name(NPM, n) else "its name isn't an npm package name"
+    return "it can't be installed again from here"
+
+
+def pep503(n):
+    return re.sub(r"[-_.]+", "-", n).lower() if isinstance(n, str) else ""
+
+
 def install_steps(a, remotes_here):
     """The commands that install an app again, built from its checked
-    name, version and source (never a command from the file), or None"""
+    name, version and source (never a command from the file), or None.
+    Settings shows exactly these (shown_command), so what's shown is what
+    runs"""
+    if refused_why(a, remotes_here):
+        return None
     g, n, v = a.get("group"), a.get("name"), a.get("version") or ""
     if g == "flatpak":
         remote = a.get("remote")
-        if not ok_name(FLATPAK_ID, n) or not ok_name(REMOTE, remote):
-            return None
         scope = "--user" if a.get("installation") == "user" else "--system"
         steps = []
         if remote not in remotes_here:
-            url = FLATHUB_REMOTES.get(remote) or a.get("url") or ""
-            # (a repository's address alone has no GPG key: flatpak refuses it)
-            if not HTTPS.match(url) or not url.split("?", 1)[0].endswith(".flatpakrepo"):
-                return None
-            steps.append(["flatpak", "remote-add", "--if-not-exists", scope, remote, url])
+            # (Flathub's own .flatpakrepo, which carries its key: never an
+            # address from the file)
+            steps.append(["flatpak", "remote-add", "--if-not-exists", scope, remote, FLATHUB_REMOTES[remote]])
         steps.append(["flatpak", "install", "-y", "--noninteractive", scope, remote, n])
         return steps
     if g == "fnm":
@@ -1377,11 +1640,6 @@ def install_steps(a, remotes_here):
         if not ok_name(CRATE, n):
             return None
         cmd = ["cargo", "install", "--locked"]
-        git = a.get("git") or ""
-        if git:
-            if not HTTPS.match(git):
-                return None
-            cmd += ["--git", git]
         feats = [f for f in a.get("features") or [] if ok_name(FEATURE, f)]
         if feats:
             cmd += ["--features", ",".join(feats)]
@@ -1389,10 +1647,7 @@ def install_steps(a, remotes_here):
             cmd.append("--no-default-features")
         return [cmd + [n]]
     if g == "pipx":
-        spec = a.get("spec") or n
-        if not (ok_name(PYPKG, spec) or HTTPS.match(spec.replace("git+https://", "https://", 1))):
-            return None
-        return [["pipx", "install", spec]]
+        return [["pipx", "install", n]]
     if g == "uv":
         return [["uv", "tool", "install", n]] if ok_name(PYPKG, n) else None
     if g == "npm":
@@ -1422,15 +1677,17 @@ def run_step(argv):
     return r.returncode == 0, " ".join(tail)[:300]
 
 
-def apps_install(path, ids, ctx):
+def apps_install(path, ids, ctx, confirmed=False):
     """The chosen user-level apps (and Flatpak's), one at a time: a line per
     step ({"progress": {id, state, why}}), then the results. Pacman and AUR
-    ones are Software Update's job: left to it ("system")"""
-    _, members = unpack(path)
-    apps = {a["id"]: a for a in backup_apps(members) if isinstance(a.get("id"), str)}
-    remotes = set()
-    if find_bin("flatpak"):
-        remotes = set(parse_flatpak("", run(["flatpak", "remotes", "--columns=name,url,options"]))[1])
+    ones are Software Update's job: left to it ("system"). A backup from
+    another computer only with --confirm-elsewhere (Settings asks first,
+    showing every command)"""
+    manifest, members = unpack(path)
+    if origin_of(manifest, ctx) != "here" and not confirmed:
+        raise Refused(ELSEWHERE)
+    remotes = flatpak_remotes_here()
+    apps = {a["id"]: a for a in backup_apps(members, remotes)}
     results = {}
     for i in ids:
         a = apps.get(i)
@@ -1444,7 +1701,7 @@ def apps_install(path, ids, ctx):
         if missing:
             results[i] = {"state": "skipped", "why": "needs " + missing}
         elif not steps:
-            results[i] = {"state": "skipped", "why": "it can't be installed again from here"}
+            results[i] = {"state": "skipped", "why": a.get("why") or "it can't be installed again from here"}
         else:
             say({"progress": {"id": i, "state": "running", "done": len(results), "total": len(ids)}})
             ok, why = True, ""
@@ -1484,6 +1741,7 @@ def main(argv):
         c.add_argument("--ids", default="")
         c.add_argument("--no-undo", action="store_true")
         c.add_argument("--no-apps", action="store_true")
+        c.add_argument("--confirm-elsewhere", action="store_true")
     a = ap.parse_args(argv)
     try:
         if os.geteuid() == 0:
@@ -1498,13 +1756,13 @@ def main(argv):
         elif a.cmd == "restore-plan":
             out = restore_plan(a.file, parts_arg(a.include), ctx)
         elif a.cmd == "restore":
-            out = restore(a.file, parts_arg(a.include), ctx, undo=not a.no_undo)
+            out = restore(a.file, parts_arg(a.include), ctx, undo=not a.no_undo, confirmed=a.confirm_elsewhere)
         elif a.cmd == "undo":
             out = undo(a.file, ctx)
         elif a.cmd == "apps-status":
             out = apps_status(a.file, ctx)
         else:
-            out = apps_install(a.file, [i for i in a.ids.split(",") if i], ctx)
+            out = apps_install(a.file, [i for i in a.ids.split(",") if i], ctx, confirmed=a.confirm_elsewhere)
         out = dict(out)
         out.pop("ok", None)
         say(dict(ok=True, **out))
