@@ -126,6 +126,8 @@ pub struct Panel {
     alert_buttons: super::stable::Stable<ui::NoteButton>,
     day_colors: super::stable::Stable<slint::Color>,
     day_lines: super::stable::Stable<ui::NcItem>,
+    /// the picture under it (bare Glass: the title's ink follows it)
+    wall: crate::services::wallpaper::Follow,
 }
 
 impl Default for Panel {
@@ -152,8 +154,15 @@ impl Default for Panel {
             alert_buttons: Default::default(),
             day_colors: Default::default(),
             day_lines: Default::default(),
+            wall: Default::default(),
         }
     }
+}
+
+/// Bare Glass: dark ink for the title over a light wallpaper (the bar's
+/// reading: wallpaper::WallTop under that rectangle, else its top's)
+pub fn title_dark(wall: Option<&crate::services::wallpaper::WallTop>, screen: (f32, f32), rect: (f32, f32, f32, f32)) -> bool {
+    wall.is_some_and(|w| w.dark_ink_under(screen, rect).unwrap_or(w.light))
 }
 
 impl Panel {
@@ -612,7 +621,16 @@ impl Notifications {
             win.surface.redraw_all();
         }
         ui.set_anything(anything);
-        ui.set_bare(bare(&st.shell.cfg, material, st.shell.look.transparency));
+        let is_bare = bare(&st.shell.cfg, material, st.shell.look.transparency);
+        ui.set_bare(is_bare);
+        if is_bare {
+            // (the title over the wallpaper: its ink follows what's under it)
+            self.nc.wall.check(&st.shell.cfg, material, &st.tx, false);
+            let wall = st.shell.get::<crate::services::wallpaper::WallTop>().filter(|w| self.nc.wall.is(w)).cloned();
+            let screen = crate::surfaces::kit::screen_named(st, &win.output).unwrap_or((1920.0, 1080.0));
+            let rect = (ui.get_body_x() + 16.0, ui.get_body_y() + 16.0, (ui.get_body_width() - 32.0).max(1.0), 28.0);
+            ui.set_title_dark(title_dark(wall.as_ref(), screen, rect));
+        }
         ui.set_glass_plugin(st.shell.plugin);
         ui.set_focus_text(focus_text.into());
         ui.set_clock(clock_short(h24).into());
@@ -996,6 +1014,14 @@ impl Notifications {
                 } else {
                     shapes.push(theme::glass_shape(look, x, by + pad + 28.0 + 10.0, bw - 2.0 * pad, 84.0, 18.0, o, 1.0));
                 }
+                // Clear all's chip (fading as the list scrolls it away under the top)
+                if ui.get_anything() {
+                    let (cx, cy, cw) = (ui.get_clear_left(), ui.get_clear_top(), ui.get_clear_w());
+                    let fade = ((cy - (by + pad) + 26.0) / 26.0).clamp(0.0, 1.0);
+                    if fade > 0.0 {
+                        shapes.push(theme::glass_shape(look, cx, cy, cw, 26.0, 13.0, o * fade, 1.0));
+                    }
+                }
                 let (wy, ww, wh) = (ui.get_widgets_y(), bw - 2.0 * pad, ui.get_widgets_h());
                 if wh > 0.0 {
                     shapes.push(theme::glass_shape(look, x, by + wy, ww, wh, 36f32.min(ww.min(wh) / 2.0), o, 1.0));
@@ -1074,6 +1100,18 @@ fn item(v: &Value) -> ui::NcItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_bare_title_reads_on_a_light_wallpaper() {
+        use crate::services::wallpaper::{WallTop, GRID};
+        let light = WallTop::from_grid("/w.jpg", 16.0 / 9.0, vec![0.92; GRID * GRID]);
+        let dark = WallTop::from_grid("/w.jpg", 16.0 / 9.0, vec![0.08; GRID * GRID]);
+        let rect = (1500.0, 40.0, 340.0, 28.0);
+        assert!(title_dark(Some(&light), (1920.0, 1080.0), rect));
+        assert!(!title_dark(Some(&dark), (1920.0, 1080.0), rect));
+        // (not measured yet: white, as before)
+        assert!(!title_dark(None, (1920.0, 1080.0), rect));
+    }
 
     #[test]
     fn rows_fan_out_from_where_the_stack_was() {

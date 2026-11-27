@@ -96,6 +96,8 @@ enum M {
     Report(String),
     /// the notification's Turn off
     SaverOff,
+    /// the daemon didn't take this mode; what it has instead (None: unread)
+    Refused(String, Option<(String, bool)>),
 }
 
 fn ppd_read(conn: &zbus::blocking::Connection, dest: &'static str, path: &'static str) -> zbus::Result<(String, bool)> {
@@ -107,30 +109,39 @@ fn ppd_read(conn: &zbus::blocking::Connection, dest: &'static str, path: &'stati
     Ok((active, perf))
 }
 
+const PPD_NAMES: [(&str, &str); 2] = [("net.hadess.PowerProfiles", "/net/hadess/PowerProfiles"), ("org.freedesktop.UPower.PowerProfiles", "/org/freedesktop/UPower/PowerProfiles")];
+
 /// Set the energy mode over D-Bus, as powerprofilesctl does (TuneD's
 /// tuned-ppd and older daemons answer the same names, without always
 /// shipping powerprofilesctl); powerprofilesctl only when neither answers.
-/// On a thread
-fn set_profile(mode: String) {
+/// Whether it was taken (blocks: the setter's thread)
+fn set_profile(mode: &str) -> bool {
+    // (core's one system-bus connection, not a new one per change)
+    let set = tessera_core::inhibit::system_bus().is_some_and(|conn| {
+        PPD_NAMES.iter().any(|(dest, path)| conn.call_method(Some(*dest), *path, Some("org.freedesktop.DBus.Properties"), "Set", &(*dest, "ActiveProfile", zbus::zvariant::Value::from(mode))).is_ok())
+    });
+    set || (tessera_core::util::on_path("powerprofilesctl")
+        && std::process::Command::new("powerprofilesctl").args(["set", mode]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success()))
+}
+
+/// The thread that sets the energy mode, one at a time: a mode the daemon
+/// refuses (polkit, a daemon that went away) is said, and its real mode read
+/// back for the menus (they showed the new mode while the computer stayed in
+/// the old one; #607)
+fn spawn_setter(send: impl Fn(Box<dyn Any + Send>) + Send + 'static) -> std::sync::mpsc::Sender<String> {
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
     std::thread::spawn(move || {
-        let names = [("net.hadess.PowerProfiles", "/net/hadess/PowerProfiles"), ("org.freedesktop.UPower.PowerProfiles", "/org/freedesktop/UPower/PowerProfiles")];
-        // (core's one system-bus connection, not a new one per change)
-        let set = tessera_core::inhibit::system_bus().is_some_and(|conn| {
-            names.iter().any(|(dest, path)| {
-                conn.call_method(Some(*dest), *path, Some("org.freedesktop.DBus.Properties"), "Set", &(*dest, "ActiveProfile", zbus::zvariant::Value::from(mode.as_str()))).is_ok()
-            })
-        });
-        let set = set
-            || (tessera_core::util::on_path("powerprofilesctl")
-                && std::process::Command::new("powerprofilesctl").args(["set", &mode]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success()));
-        if !set {
-            // (refused, by polkit or a daemon that went away: the menus
-            // showed the new mode while the computer stayed in the old one
-            // with no word)
+        for mode in rx {
+            if set_profile(&mode) {
+                continue;
+            }
             eprintln!("Power: couldn't set the energy mode to {mode}");
             tessera_core::util::notify("Battery & Power", "dialog-error", "", "Couldn't change the energy mode", &format!("The power daemon didn't take “{}”. Try again, or check that power-profiles-daemon is running.", mode_name(&mode)));
+            let now = tessera_core::inhibit::system_bus().and_then(|conn| PPD_NAMES.iter().find_map(|(d, p)| ppd_read(&conn, *d, *p).ok()));
+            send(Box::new(M::Refused(mode, now)));
         }
     });
+    tx
 }
 
 fn spawn_ppd(send: impl Fn(Box<dyn Any + Send>) + Send + Clone + 'static) {
@@ -224,6 +235,15 @@ fn spawn_ppd(send: impl Fn(Box<dyn Any + Send>) + Send + Clone + 'static) {
     });
 }
 
+/// The bar's energy button's next mode after `profile`
+fn cycle_next(profile: &str, has_perf: bool) -> &'static str {
+    match profile {
+        "power-saver" => "balanced",
+        "balanced" if has_perf => "performance",
+        _ => "power-saver",
+    }
+}
+
 /// UPower's battery state as 'on battery': 2 discharging, 3 empty; 1, 4, 5
 /// charging, full, not charging; 0 unknown and 6 pending discharge (a moment's
 /// reading of some firmware) change nothing, so they never look like a charger
@@ -293,6 +313,10 @@ pub struct Power {
     last: Value,
     /// the shell's battery saver
     saver: policy::Saver,
+    /// its Low Power let go by the bar's energy button, until it turns off
+    saver_released: bool,
+    /// the setter's thread (spawn_setter)
+    setter: Option<std::sync::mpsc::Sender<String>>,
 }
 
 impl Default for Power {
@@ -336,6 +360,8 @@ impl Default for Power {
             energy_minutes: 0,
             ticks: 0,
             reporting: false,
+            saver_released: false,
+            setter: None,
             last: Value::Null,
             saver: policy::Saver::default(),
         }
@@ -448,7 +474,23 @@ impl Power {
         }
         self.applied = mode.clone();
         if self.profile != mode {
-            set_profile(mode);
+            if let Some(tx) = &self.setter {
+                let _ = tx.send(mode);
+            }
+        }
+    }
+
+    /// The daemon refused `mode`: the menus show what it has (`now`), and
+    /// that counts as applied, so its reports aren't taken for a lag to undo
+    /// (a new choice tries again)
+    fn refused(&mut self, mode: &str, now: Option<(String, bool)>) {
+        if self.applied != mode {
+            return; // (an older choice's answer)
+        }
+        if let Some((profile, perf)) = now {
+            self.profile = profile.clone();
+            self.has_perf = perf;
+            self.applied = profile;
         }
     }
 
@@ -681,8 +723,12 @@ impl Power {
         let mode = policy::SaverMode::from_cfg(&self.cfg);
         let level = policy::saver_level(&self.cfg);
         let changed = self.saver.step(mode, level, self.percent(), self.on_battery());
-        // (Low Power with it: only when asked for, and only while it's on)
-        let profile = self.saver.on && self.cfg["saverProfile"].as_bool().unwrap_or(false) && self.ppd;
+        // (Low Power with it: only when asked for, and only while it's on;
+        // let go by the bar's energy button until it turns off)
+        if !self.saver.on {
+            self.saver_released = false;
+        }
+        let profile = self.saver.on && self.cfg["saverProfile"].as_bool().unwrap_or(false) && self.ppd && !self.saver_released;
         if profile && !self.requests.contains_key("saver") {
             self.ask_mode("saver", "power-saver", "battery saver", 0.0);
         } else if !profile {
@@ -820,6 +866,7 @@ impl Service for Power {
         self.cfg = cfg_with_defaults(h.cfg());
         self.idle_key = idle_key(&self.cfg);
         spawn_ppd(h.sender(NAME));
+        self.setter = Some(spawn_setter(h.sender(NAME)));
         self.idle_later(h);
         self.last_mode = self.mode();
     }
@@ -846,21 +893,28 @@ impl Service for Power {
     }
     fn call(&mut self, h: &mut Host, call: &str, args: &Value) {
         let a = args_list(args);
+        // (a choice made by hand: tried again even when it's the answer
+        // already, after the daemon refused it)
+        let mut chosen = false;
         match call.strip_prefix("power.").unwrap_or("") {
             "setMode" => {
                 let m = str_arg(&a, 0);
                 if ["power-saver", "balanced", "performance"].contains(&m.as_str()) {
                     self.set_mode(&m);
+                    chosen = true;
                 }
             }
-            // the menu bar's energy button: Low Power -> Balanced -> Performance (if there is one) -> Low Power
+            // the menu bar's energy button: Low Power -> Balanced -> Performance (if there is one) -> Low Power.
+            // It does what it says: the battery saver's Low Power lets go too (until the saver turns off;
+            // it only ever changed power.mode while that held, and nothing visible happened)
             "cycleProfile" => {
-                let next = match self.profile.as_str() {
-                    "power-saver" => "balanced",
-                    "balanced" if self.has_perf => "performance",
-                    _ => "power-saver",
-                };
+                let next = cycle_next(&self.profile, self.has_perf);
+                if self.requests.contains_key("saver") {
+                    self.saver_released = true;
+                    self.release("saver");
+                }
                 self.set_mode(next);
+                chosen = true;
             }
             "ask" => {
                 // ({owner, mode, why, until}, or the same as a list: the island's
@@ -899,8 +953,11 @@ impl Service for Power {
         // the daemon's profile, so it shows the new one straight away: it was
         // a beat late and looked like the click hadn't taken)
         let mode = self.mode();
-        if mode != self.last_mode {
+        if mode != self.last_mode || (chosen && self.profile != mode) {
             self.last_mode = mode.clone();
+            if chosen {
+                self.applied.clear(); // (tried again: a refusal before set applied to the daemon's)
+            }
             self.apply();
             if self.ppd && !tessera_core::env::sandboxed() {
                 self.profile = mode;
@@ -989,6 +1046,7 @@ impl Service for Power {
                 self.saver.turn_off();
                 self.saver_step(h);
             }
+            M::Refused(mode, now) => self.refused(&mode, now),
             M::Report(t) => {
                 self.reporting = false;
                 if let Ok(r) = serde_json::from_str::<Value>(&t) {
@@ -1036,6 +1094,22 @@ fn cpu_temp_c() -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_energy_button_cycles_and_a_refusal_shows_the_real_mode() {
+        assert_eq!(cycle_next("power-saver", true), "balanced");
+        assert_eq!(cycle_next("balanced", true), "performance");
+        assert_eq!(cycle_next("balanced", false), "power-saver");
+        assert_eq!(cycle_next("performance", true), "power-saver");
+        let mut p = Power::default();
+        p.applied = "performance".into();
+        p.profile = "performance".into();
+        // (an older choice's answer changes nothing)
+        p.refused("balanced", Some(("power-saver".into(), true)));
+        assert_eq!(p.profile, "performance");
+        p.refused("performance", Some(("balanced".into(), true)));
+        assert_eq!((p.profile.as_str(), p.applied.as_str()), ("balanced", "balanced"));
+    }
 
     #[test]
     fn unknown_battery_states_change_nothing() {

@@ -18,6 +18,40 @@
 use serde_json::Value;
 
 pub const MAX_ALERTS: usize = 4;
+
+/// How many of these items (heights in px, `spacing` between) fit in
+/// `room`, keeping `more_h` (and a spacing) for the "+N more" line when not
+/// all do; at least one shows (#363: the open island's surface is a fixed
+/// height, and its lower part was cut)
+pub fn fit(heights: &[f32], spacing: f32, room: f32, more_h: f32) -> usize {
+    let total: f32 = heights.iter().sum::<f32>() + spacing * heights.len().saturating_sub(1) as f32;
+    if total <= room {
+        return heights.len();
+    }
+    let mut used = 0.0;
+    let mut n = 0;
+    for (i, h) in heights.iter().enumerate() {
+        let next = used + if i > 0 { spacing } else { 0.0 } + h;
+        if next + spacing + more_h > room && n > 0 {
+            break;
+        }
+        used = next;
+        n += 1;
+    }
+    n.min(heights.len())
+}
+
+/// The open island's room for its items, from its window's height: the
+/// glass from 3 px down to 8 px above the window's foot, less the content's
+/// top and foot (alerts 16 and 16; activities 36 and 14)
+pub fn room(window_h: f32, event_inside: bool) -> f32 {
+    let open = window_h - 8.0 - 3.0;
+    if event_inside {
+        open - 32.0
+    } else {
+        open - 50.0
+    }
+}
 pub const BURST_MS: f64 = 400.0;
 pub const LEAVE_MS: f64 = 700.0;
 
@@ -559,6 +593,16 @@ mod tests {
             i.post(ev("custom", &format!("n{n}")), 3000.0, 10 + n, 1000.0 * (n + 1) as f64);
         }
         assert_eq!(i.alerts.len(), MAX_ALERTS);
+        // four notification cards don't fit the island's room: two and "+2 more"
+        let r = room(420.0, true);
+        assert_eq!(r, 377.0);
+        assert_eq!(fit(&[120.0; 4], 10.0, r, 18.0), 2);
+        assert_eq!(fit(&[52.0; 4], 10.0, r, 18.0), 4);
+        assert_eq!(fit(&[400.0, 52.0], 10.0, r, 18.0), 1);
+        assert_eq!(fit(&[], 10.0, r, 18.0), 0);
+        // what shows and the line fit
+        let n = fit(&[100.0; 4], 10.0, r, 18.0);
+        assert!(n as f32 * 110.0 - 10.0 + 10.0 + 18.0 <= r && n == 3);
         assert_eq!(i.alerts[0].kind(), "ringing");
         let t: Vec<&str> = i.alerts.iter().skip(1).map(|a| a.event["title"].as_str().unwrap()).collect();
         assert_eq!(t, vec!["n2", "n3", "n4"]);

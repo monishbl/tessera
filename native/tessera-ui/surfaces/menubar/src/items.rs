@@ -80,6 +80,42 @@ pub struct Inputs<'a> {
     pub clock_long: &'a str,
     /// ms since the epoch
     pub now_ms: f64,
+    /// the right side over its room (#383): 1 the tray folds behind its
+    /// arrow, then (`dropped`) the least important items go
+    pub squeeze: u8,
+}
+
+/// The deepest squeeze: tray folded, then Now Playing, the extra buttons,
+/// resources, weather and the keyboard layout gone (never the clock, the
+/// battery, Wi-Fi, Bluetooth or Control Center)
+pub const SQUEEZE_MAX: u8 = 6;
+
+/// Whether an item goes at this squeeze, least important first
+pub fn dropped(id: &str, squeeze: u8) -> bool {
+    let rank = match id {
+        "nowPlaying" => 2,
+        _ if id.starts_with("util:") => 3,
+        "resources" => 4,
+        "weather" => 5,
+        "keyboard" => 6,
+        _ => return false,
+    };
+    squeeze >= rank
+}
+
+/// One step of the squeeze from what the right side needs and its room:
+/// tighter while it needs more, looser once what the last step freed (and
+/// 8 px) fits again
+pub fn squeeze_step(level: u8, need: f32, room: f32, freed: f32) -> u8 {
+    if room <= 0.0 {
+        level
+    } else if need > room + 0.5 && level < SQUEEZE_MAX {
+        level + 1
+    } else if level > 0 && need + freed + 8.0 <= room {
+        level - 1
+    } else {
+        level
+    }
 }
 
 /// "3:07"
@@ -239,7 +275,8 @@ pub fn entries(i: &Inputs) -> Vec<Entry> {
         out.push(Entry { fill: true, tip: format!("Keeping awake · {}", s.str("caffeine.status").to_lowercase()), ..e("caffeine", "", "coffee") });
     }
     // The tray (behind its arrow when collapsed)
-    let collapses = bar.collapse_tray && !i.tray.items.is_empty();
+    // (folded too while the bar's right side is short of room)
+    let collapses = (bar.collapse_tray || i.squeeze >= 1) && !i.tray.items.is_empty();
     if !collapses || i.tray_open {
         for t in &i.tray.items {
             out.push(Entry { id: format!("tray:{}", t.key), glyph: Glyph::Tray(t.key.clone()), tip: t.label().to_string(), active: i.tray_menu == t.key, ..Default::default() });
@@ -364,6 +401,9 @@ pub fn entries(i: &Inputs) -> Vec<Entry> {
     if !i.material {
         clock(&mut out);
     }
+    if i.squeeze > 1 {
+        out.retain(|x| !dropped(&x.id, i.squeeze));
+    }
     out
 }
 
@@ -375,6 +415,22 @@ mod tests {
 
     fn ids(v: &[Entry]) -> Vec<&str> {
         v.iter().map(|e| e.id.as_str()).collect()
+    }
+
+    #[test]
+    fn a_short_bar_folds_the_tray_then_drops_the_least_important() {
+        assert!(!dropped("nowPlaying", 1) && dropped("nowPlaying", 2));
+        assert!(!dropped("util:record", 2) && dropped("util:record", 3));
+        assert!(dropped("keyboard", SQUEEZE_MAX));
+        for id in ["clock", "battery", "wifi", "bluetooth", "controlCenter", "sound"] {
+            assert!(!dropped(id, SQUEEZE_MAX), "{id}");
+        }
+        // tighter while over, looser once the last step's room fits again
+        assert_eq!(squeeze_step(0, 700.0, 600.0, 0.0), 1);
+        assert_eq!(squeeze_step(SQUEEZE_MAX, 700.0, 600.0, 0.0), SQUEEZE_MAX);
+        assert_eq!(squeeze_step(2, 500.0, 600.0, 120.0), 2);
+        assert_eq!(squeeze_step(2, 470.0, 600.0, 120.0), 1);
+        assert_eq!(squeeze_step(0, 0.0, 0.0, 0.0), 0);
     }
 
     struct World {
@@ -400,7 +456,7 @@ mod tests {
     }
 
     fn run(w: &World, material: bool, tray_open: bool) -> Vec<Entry> {
-        entries(&Inputs { bar: &w.bar, material, screen: "DP-1", shell: &w.shell, battery: &w.battery, wifi: &w.wifi, bt: &w.bt, players: &w.players, tray: &w.tray, tray_open, tray_menu: "", clock: "Wed 4 Nov  7:26 PM", clock_long: "Wednesday 4 November 2026, 7:26 PM", now_ms: 0.0 })
+        entries(&Inputs { bar: &w.bar, material, screen: "DP-1", shell: &w.shell, battery: &w.battery, wifi: &w.wifi, bt: &w.bt, players: &w.players, tray: &w.tray, tray_open, tray_menu: "", clock: "Wed 4 Nov  7:26 PM", clock_long: "Wednesday 4 November 2026, 7:26 PM", now_ms: 0.0, squeeze: 0 })
     }
 
     #[test]
