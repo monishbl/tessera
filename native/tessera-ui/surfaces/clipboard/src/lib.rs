@@ -284,6 +284,8 @@ impl Clipboard {
         });
         let ui = ui::ClipboardPanel::new().expect("ClipboardPanel");
         st.shell.apply_theme(&ui.global::<ui::Theme>());
+        // (Material: the kit's icons as Material Symbols)
+        ui.global::<ui::Symbols>().on_of(|g| tessera_core::icons::symbol(&g).into());
         let to = st.shell.sender(NAME);
         {
             let (to, weak) = (to.clone(), ui.as_weak());

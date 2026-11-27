@@ -314,6 +314,8 @@ impl Notifications {
         });
         let ui = ui::Center::new().expect("Center");
         st.shell.apply_theme(&ui.global::<ui::Theme>());
+        // (Material: the kit's and the calendar's icons as Material Symbols)
+        ui.global::<ui::Symbols>().on_of(|g| tessera_core::icons::symbol(&g).into());
         super::stack_shapes(&ui.global::<ui::StackShape>());
         let to = st.shell.sender(NAME);
         macro_rules! on {

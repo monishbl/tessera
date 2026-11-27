@@ -154,6 +154,8 @@ impl WidgetOptions {
             });
             let ui = ui::WidgetOptions::new().expect("WidgetOptions");
             st.shell.apply_theme(&ui.global::<ui::Theme>());
+            // (Material: the kit's icons as Material Symbols)
+            ui.global::<ui::Symbols>().on_of(|g| tessera_core::icons::symbol(&g).into());
             let to = st.shell.sender(OPT_NAME);
             let t = to.clone();
             ui.on_commit(move |s| t(Box::new(Msg::Commit(s.to_string()))));

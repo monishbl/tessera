@@ -252,6 +252,7 @@ impl Captions {
             "strip" => {
                 let u = ui::CaptionsStrip::new().expect("CaptionsStrip");
                 st.shell.apply_theme(&u.global::<ui::Theme>());
+                u.global::<ui::Symbols>().on_of(|g| tessera_core::icons::symbol(&g).into());
                 u.set_x_glyph(x.into());
                 let t = to.clone();
                 u.on_turn_off(move || t(Box::new(M::Off)));
@@ -269,6 +270,8 @@ impl Captions {
             _ => {
                 let u = ui::CaptionsBar::new().expect("CaptionsBar");
                 st.shell.apply_theme(&u.global::<ui::Theme>());
+                // (Material: the close button's icon as a Material Symbol)
+                u.global::<ui::Symbols>().on_of(|g| tessera_core::icons::symbol(&g).into());
                 u.set_x_glyph(x.into());
                 let t = to.clone();
                 u.on_turn_off(move || t(Box::new(M::Off)));

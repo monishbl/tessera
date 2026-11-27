@@ -368,6 +368,8 @@ impl Emoji {
         });
         let ui = ui::EmojiPicker::new().expect("EmojiPicker");
         st.shell.apply_theme(&ui.global::<ui::Theme>());
+        // (Material: the kit's icons as Material Symbols)
+        ui.global::<ui::Symbols>().on_of(|g| tessera_core::icons::symbol(&g).into());
         let tabs: Vec<ui::ETab> = view::TABS.iter().map(|(icon, text, label)| ui::ETab { icon: (*icon).into(), text: (*text).into(), label: (*label).into() }).collect();
         ui.set_tabs(ModelRc::new(VecModel::from(tabs)));
         ui.set_gifs(ModelRc::from(self.gifs.model.clone()));
