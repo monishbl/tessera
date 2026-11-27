@@ -235,7 +235,7 @@ pub struct Notifications {
     /// live entries' histories (core notify/live.rs), the same way
     histories: stable::Stable<slint::SharedString>,
     /// the pills last set (count, expanded): set again only when they change
-    pills_sent: Option<(usize, bool)>,
+    pills_sent: Option<(usize, bool, usize)>,
 }
 
 fn now_ms() -> i64 {
@@ -462,6 +462,34 @@ pub fn stack_with_leaving(heights: &[f32], leaving: &[bool], last: &[Option<Plac
     (out, height, staying.len())
 }
 
+/// Fanned out, the cards that fit in `room` from the stack's top (the front
+/// one always): the rest wait unseen behind the last that fits (no clicks,
+/// faded out) and are counted for a "+N more" pill, so the cards shown and
+/// the pills under them stay on the screen (#212). Leaving cards keep their
+/// place. Returns the cards' height as shown and how many wait
+pub fn cap_fanned(places: &mut [Place], heights: &[f32], leaving: &[bool], room: f32) -> (f32, usize) {
+    let mut last: Option<(f32, f32)> = None;
+    let mut content = 0.0f32;
+    let mut waiting = 0;
+    for i in 0..places.len() {
+        if leaving[i] {
+            continue;
+        }
+        let p = places[i];
+        match last {
+            Some((y, h)) if waiting > 0 || p.y + heights[i] > room => {
+                places[i] = Place { y, scale: 1.0, fade: 0.0, plate: h, depth: 0 };
+                waiting += 1;
+            }
+            _ => {
+                last = Some((p.y, heights[i]));
+                content = content.max(p.y + heights[i]);
+            }
+        }
+    }
+    (content, waiting)
+}
+
 /// What shows of each card peeking out of a folded stack, for Slint's
 /// Path (stack.rs; both windows)
 pub(crate) fn stack_shapes(g: &ui::StackShape<'_>) {
@@ -471,14 +499,32 @@ pub(crate) fn stack_shapes(g: &ui::StackShape<'_>) {
     });
 }
 
-/// The pills under a stack of more than one
-fn pills(count: usize, expanded: bool) -> Vec<ui::StackPill> {
+/// The pills under a stack of more than one (`waiting`: fanned out, the
+/// cards that didn't fit: "+N more" opens Notification Center, where all are)
+fn pills(count: usize, expanded: bool, waiting: usize) -> Vec<ui::StackPill> {
     let p = |t: String, i: &str, a: &str| ui::StackPill { text: t.into(), icon: i.into(), act: a.into() };
     match (count, expanded) {
         (0..=1, _) => Vec::new(),
-        (_, true) => vec![p("Clear all".into(), "", "clear"), p("Show less".into(), "\u{e13c}", "collapse")],
+        (_, true) => {
+            let mut v = Vec::new();
+            if waiting > 0 {
+                v.push(p(format!("+{waiting} more"), "", "center"));
+            }
+            v.push(p("Clear all".into(), "", "clear"));
+            v.push(p("Show less".into(), "\u{e13c}", "collapse"));
+            v
+        }
         (n, false) => vec![p(format!("{} more", n - 1), "\u{e136}", "expand")],
     }
+}
+
+/// The room the cards have fanned out on a screen `screen_h` tall: from
+/// their top (under the bar, and the OSD when it shows) to the pills, which
+/// stay on the screen under them
+pub fn fanned_room(screen_h: f32, material: bool, osd: bool) -> f32 {
+    let top = 30.0 + if material { 8.0 } else { 6.0 } + if osd { 62.0 } else { 0.0 };
+    let pills = 8.0 + if material { 32.0 } else { 26.0 };
+    (screen_h - top - pills - 12.0).max(120.0)
 }
 
 impl Notifications {
@@ -779,7 +825,7 @@ impl Notifications {
             None => (None, false),
         };
         let app = if n.app_name.is_empty() { "Notification".to_string() } else { n.app_name.clone() };
-        let h24 = st.shell.cfg["appearance"]["clock24"].as_bool().unwrap_or(false);
+        let h24 = tessera_core::locale::clock24(&st.shell.cfg);
         let plain = markup::plain(&n.body);
         ui::Banner {
             id: n.id as i32,
@@ -825,7 +871,16 @@ impl Notifications {
         let heights: Vec<f32> = self.banners.iter().map(|s| self.heights.get(&s.id).copied().unwrap_or(default_h)).collect();
         let leaving: Vec<bool> = self.banners.iter().map(|s| s.leaving).collect();
         let last: Vec<Option<Place>> = self.banners.iter().map(|s| s.place).collect();
-        let (places, content, _) = stack_with_leaving(&heights, &leaving, &last, self.expanded, material);
+        let (mut places, mut content, _) = stack_with_leaving(&heights, &leaving, &last, self.expanded, material);
+        // (fanned out: as many as fit on its screen, "+N more" for the rest)
+        let mut waiting = 0;
+        if self.expanded {
+            let output = self.win.as_ref().map(|w| w.output.clone()).unwrap_or_else(|| self.focused.clone());
+            let screen_h = st.output_named(&output).and_then(|o| st.outputs.info(&o)).and_then(|i| i.logical_size).map_or(768.0, |s| s.1.max(1) as f32);
+            let (shown, n) = cap_fanned(&mut places, &heights, &leaving, fanned_room(screen_h, material, self.osd));
+            content = shown;
+            waiting = n;
+        }
         for (s, p) in self.banners.iter_mut().zip(&places) {
             s.place = Some(*p);
         }
@@ -874,9 +929,9 @@ impl Notifications {
         }
         w.ui.set_expanded(self.expanded);
         w.ui.set_content_height(content);
-        if self.pills_sent != Some((count, self.expanded)) {
-            self.pills_sent = Some((count, self.expanded));
-            w.ui.set_pills(ModelRc::new(VecModel::from(pills(count, self.expanded))));
+        if self.pills_sent != Some((count, self.expanded, waiting)) {
+            self.pills_sent = Some((count, self.expanded, waiting));
+            w.ui.set_pills(ModelRc::new(VecModel::from(pills(count, self.expanded, waiting))));
         }
         w.ui.set_glass_plugin(st.shell.plugin);
         // The window: the cards plus their room and the pills
@@ -1149,6 +1204,14 @@ impl Part for Notifications {
             }
             return;
         }
+        // (a wallpaper measured: bare Glass's title follows it)
+        if what == TypeId::of::<crate::services::wallpaper::WallTop>() {
+            if self.nc_open {
+                self.nc_dirty = true;
+                self.nc_refresh(st);
+            }
+            return;
+        }
         if what != TypeId::of::<Event>() {
             return;
         }
@@ -1319,6 +1382,12 @@ impl Part for Notifications {
                 match p.as_str() {
                     "expand" => self.expanded = self.banners.len() > 1,
                     "collapse" => self.expanded = false,
+                    // "+N more": Notification Center has them all
+                    "center" => {
+                        self.expanded = false;
+                        let screen = self.win.as_ref().map(|w| w.output.clone()).unwrap_or_default();
+                        tessera_core::shell::ask("panels.show", serde_json::json!(["notificationCenter", screen]));
+                    }
                     // (the stack's Clear all takes the banners off the screen;
                     // they stay in Notification Center, as a banner's own X)
                     "clear" => {
@@ -1445,7 +1514,7 @@ mod tests {
         let (p, h) = stack(&[90.0], false, false);
         assert_eq!(p, vec![Place::WHOLE]);
         assert_eq!(h, 90.0);
-        assert!(pills(1, false).is_empty());
+        assert!(pills(1, false, 0).is_empty());
     }
 
     #[test]
@@ -1467,8 +1536,37 @@ mod tests {
         assert_eq!(h, 420.0);
         // Material's gap is 8
         assert_eq!(stack(&hs, true, true).1, 414.0);
-        assert_eq!(pills(4, false)[0].text, "3 more");
-        assert_eq!(pills(4, true).iter().map(|p| p.text.to_string()).collect::<Vec<_>>(), vec!["Clear all", "Show less"]);
+        assert_eq!(pills(4, false, 0)[0].text, "3 more");
+        assert_eq!(pills(4, true, 0).iter().map(|p| p.text.to_string()).collect::<Vec<_>>(), vec!["Clear all", "Show less"]);
+        assert_eq!(pills(9, true, 3).iter().map(|p| p.text.to_string()).collect::<Vec<_>>(), vec!["+3 more", "Clear all", "Show less"]);
+    }
+
+    #[test]
+    fn a_tall_fanned_stack_shows_what_fits_and_counts_the_rest() {
+        // seven cards of 100 px on a 768 px screen (Glass)
+        let hs = [100.0; 7];
+        let leaving = [false; 7];
+        let (mut p, h) = stack(&hs, true, false);
+        assert_eq!(h, 760.0);
+        let room = fanned_room(768.0, false, false);
+        assert_eq!(room, 768.0 - 36.0 - 34.0 - 12.0);
+        let (shown, waiting) = cap_fanned(&mut p, &hs, &leaving, room);
+        // six fit (to 650), the seventh waits behind the sixth, unseen
+        assert_eq!((shown, waiting), (650.0, 1));
+        assert!(p[..6].iter().all(|x| x.fade == 1.0));
+        assert_eq!(p[6], Place { y: 550.0, scale: 1.0, fade: 0.0, plate: 100.0, depth: 0 });
+        // the pills sit under what's shown, on the screen
+        assert!(36.0 + shown + 34.0 <= 768.0);
+        // the front card always shows, even taller than the room
+        let mut p = stack(&[900.0, 100.0], true, false).0;
+        assert_eq!(cap_fanned(&mut p, &[900.0, 100.0], &[false, false], room), (900.0, 1));
+        // a leaving card keeps its place and isn't counted
+        let mut p = stack(&hs, true, false).0;
+        let mut l = leaving;
+        l[6] = true;
+        let before = p[6];
+        assert_eq!(cap_fanned(&mut p, &hs, &l, room).1, 0);
+        assert_eq!(p[6], before);
     }
 
     /// The bug: "Battery empty" (two lines) behind "Connection activated"

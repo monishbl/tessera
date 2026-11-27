@@ -494,6 +494,62 @@ pub fn from_text(t: &str) -> String {
         .join(" + ")
 }
 
+// libxkbcommon, linked already (smithay-client-toolkit's keyboard): the key
+// names Hyprland reads keys by (xkb_keysym_from_name, case aside, as it does)
+#[link(name = "xkbcommon")]
+extern "C" {
+    fn xkb_keysym_from_name(name: *const std::os::raw::c_char, flags: std::os::raw::c_int) -> u32;
+}
+
+/// A key name xkbcommon knows ("S", "Return", "udiaeresis", "XF86AudioPlay")
+pub fn xkb_knows(name: &str) -> bool {
+    let Ok(c) = std::ffi::CString::new(name) else { return false };
+    // (XKB_KEYSYM_CASE_INSENSITIVE; 0 is XKB_KEY_NoSymbol)
+    unsafe { xkb_keysym_from_name(c.as_ptr(), 1) != 0 }
+}
+
+/// Why Hyprland couldn't bind keys typed as text (Edit as text), or None:
+/// modifiers it knows, then one key, by a name xkbcommon knows, code:N,
+/// mouse:N or a scroll (audit #904: a typo was saved and silently did nothing)
+pub fn text_keys_error(keys: &str) -> Option<String> {
+    text_keys_error_with(keys, &xkb_knows)
+}
+
+/// text_keys_error with the key names given (tests)
+pub fn text_keys_error_with(keys: &str, known: &dyn Fn(&str) -> bool) -> Option<String> {
+    // (Hyprland's other modifiers: parse_keys leaves them with the key)
+    let other_mods = ["CAPS", "MOD2", "MOD3", "MOD5", "LOGO"];
+    let p = parse_keys(keys);
+    let rest: Vec<&str> = p.key.split('+').map(str::trim).filter(|s| !s.is_empty() && !other_mods.contains(&s.to_uppercase().as_str())).collect();
+    match rest.as_slice() {
+        [] => None,
+        [k] => {
+            let number = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+            let ok = *k == "$MODKEY"
+                || k.strip_prefix("code:").is_some_and(number)
+                || k.strip_prefix("mouse:").is_some_and(number)
+                || ["mouse_up", "mouse_down", "mouse_left", "mouse_right", "catchall"].contains(k)
+                || k.starts_with("switch:")
+                || known(*k);
+            if ok { None } else { Some(format!("Hyprland doesn't know the key “{k}”. Check its spelling, or use the key picker.")) }
+        }
+        _ => Some(format!("Use one key after the modifiers, like SUPER + SHIFT + S (here: {}).", rest.join(", "))),
+    }
+}
+
+/// What the key box says when a key it can't name is pressed (a non-US
+/// layout's ü, ß, ж…; audit #905): None for a modifier on its own or nothing
+pub fn unpickable(text: &str) -> Option<&'static str> {
+    let mut chars = text.chars();
+    let c = chars.next()?;
+    // (Slint's modifier keys: Shift, Control, Alt, AltGr, CapsLock, the right
+    // ones and Meta, U+0010–U+0018)
+    if chars.next().is_none() && ('\u{10}'..='\u{18}').contains(&c) {
+        return None;
+    }
+    key_name(text).is_none().then_some("This key can't be picked here, use Edit as text")
+}
+
 /// A key Slint reported (its text) as Hyprland's name, and whether it was a
 /// shifted symbol (Shift turns on); None for a modifier alone or a key it
 /// can't name. Slint's special keys are private-use characters.
@@ -584,6 +640,33 @@ mod tests {
         assert_eq!(key_list("$MODKEY", "SUPER"), ["SUPER"]);
         assert_eq!(key_text("$MOD + SHIFT + S", "SUPER", "linux"), "Super Shift S");
         assert_eq!(key_text("$MOD + SHIFT + S", "SUPER", "mac"), "⇧⌘S");
+    }
+
+    #[test]
+    fn typed_keys_are_checked() {
+        let known = |k: &str| ["S", "Return", "udiaeresis", "XF86AudioPlay"].iter().any(|n| n.eq_ignore_ascii_case(k));
+        assert_eq!(text_keys_error_with("$MOD + SHIFT + S", &known), None);
+        assert_eq!(text_keys_error_with("$MOD + s", &known), None);
+        assert_eq!(text_keys_error_with("$MOD + udiaeresis", &known), None);
+        assert_eq!(text_keys_error_with("XF86AudioPlay", &known), None);
+        assert_eq!(text_keys_error_with("$MOD + code:86", &known), None);
+        assert_eq!(text_keys_error_with("$MOD + mouse:272", &known), None);
+        assert_eq!(text_keys_error_with("$MOD + mouse_down", &known), None);
+        assert_eq!(text_keys_error_with("$MODKEY", &known), None);
+        assert_eq!(text_keys_error_with("$MOD + MOD5 + S", &known), None);
+        assert!(text_keys_error_with("$MOD + Foo", &known).unwrap().contains("“Foo”"));
+        assert!(text_keys_error_with("$MOD + code:x", &known).is_some());
+        assert!(text_keys_error_with("SUPER + S + Return", &known).unwrap().starts_with("Use one key"));
+    }
+
+    #[test]
+    fn keys_the_box_cant_name_say_so() {
+        assert_eq!(unpickable("a"), None);
+        assert_eq!(unpickable("\u{10}"), None); // Shift alone
+        assert_eq!(unpickable("\u{17}"), None); // Meta alone
+        assert_eq!(unpickable(""), None);
+        assert_eq!(unpickable("ü"), Some("This key can't be picked here, use Edit as text"));
+        assert_eq!(unpickable("ж"), Some("This key can't be picked here, use Edit as text"));
     }
 
     #[test]

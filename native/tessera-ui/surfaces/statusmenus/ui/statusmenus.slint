@@ -152,11 +152,24 @@ component Transport inherits Rectangle {
     height: m3 ? 40px : size;
     border-radius: m3 ? (t.pressed ? 8px : self.height / 2) : 0;
     background: m3 ? (t.pressed ? Theme.m3-on-surface-variant.with-alpha(0.1) : t.has-hover ? Theme.m3-on-surface-variant.with-alpha(0.08) : transparent) : transparent;
-    opacity: enabled ? 1 : (m3 ? 0.38 : 0.35);
+    opacity: enabled ? 1 : (m3 ? 0.38 : Theme.disabled-alpha);
+    // (Glass: the usual states, a round fill under the glyph on hover, darker
+    // pressed, and a press that squishes it, #438)
+    transform-scale: t.pressed && !m3 ? 0.9 : 1;
+    animate transform-scale { duration: Theme.motion(t.pressed ? 80ms : 200ms); easing: ease-out; }
     accessible-role: button;
     accessible-label: label;
     accessible-enabled: enabled;
     accessible-action-default => { if enabled { clicked(); } }
+    if !m3: Rectangle {
+        x: -6px;
+        y: -6px;
+        width: root.width + 12px;
+        height: root.height + 12px;
+        border-radius: self.height / 2;
+        background: t.pressed ? Theme.fill-pressed : t.has-hover ? Theme.fill : transparent;
+        animate background { duration: Theme.hover; }
+    }
     SymIcon {
         text: icon;
         fill: true;

@@ -47,11 +47,12 @@
 // the accent that reads on white). out: add(text), toggle(key), remove(key),
 // restore(), rename(key, text).
 //
-// Also exported: Segmented (Segmented.qml) and Tick (a tick box:
+// Also exported: Tick (a tick box:
 // MaterialCheck.qml in Material).
 
-import { Theme, Ease, Icon } from "theme.slint";
-import { IconButton } from "widgets.slint";
+import { Theme, Ease } from "theme.slint";
+import { IconButton, Segmented, Switch, TextField, PillButton } from "widgets.slint";
+import { SymIcon } from "symbols.slint";
 import { FocusRing } from "focus.slint";
 
 export struct NcItem {
@@ -121,95 +122,6 @@ export struct NcDraft {
     target: string, // a new event's calendar ("" this computer)
 }
 
-// Segmented.qml: Glass, a track with a sliding pill; Material, a connected
-// button group (2 px apart, round ends, 8 px inside; the chosen one fills
-// and turns round). Each segment fits its label plus 24 px; the room to
-// spare is shared equally (too little shrinks them alike).
-export component Segmented inherits Rectangle {
-    in property <[string]> options;
-    in property <int> current;
-    in property <string> label;
-    callback selected(int);
-    property <length> gap: Theme.material ? 2px : 0;
-    height: Theme.material ? 36px : 30px;
-    border-radius: self.height / 2;
-    background: Theme.material ? transparent : Theme.toggle-off;
-    accessible-role: tab-list;
-    accessible-label: label;
-    forward-focus: keys;
-    keys := FocusScope {
-        // (a click goes to what's under it: keys only; it covered link rows and choices, which then took two clicks or none)
-        focus-on-click: false;
-        // (the ring shows which one the arrows change: keyboard focus only)
-        property <bool> keyed;
-        focus-gained(r) => { self.keyed = r == FocusReason.tab-navigation; }
-        key-pressed(e) => {
-            if e.text == Key.LeftArrow && current > 0 { self.keyed = true; selected(current - 1); return accept; }
-            if e.text == Key.RightArrow && current < options.length - 1 { self.keyed = true; selected(current + 1); return accept; }
-            reject
-        }
-    }
-    HorizontalLayout {
-    padding-left: 2px;
-    padding-right: 2px;
-    spacing: gap;
-    for o[i] in options: Rectangle {
-        property <bool> chosen: i == current;
-        property <length> full: self.height / 2;
-        property <length> inner: chosen ? full : touch.pressed ? 4px : 8px;
-        min-width: 0;
-        preferred-width: measure.preferred-width + 24px;
-        horizontal-stretch: 1;
-        height: parent.height;
-        measure := Text {
-            visible: false;
-            text: o;
-            font-size: Theme.material ? Theme.body : Theme.small;
-            font-weight: Theme.material ? 500 : 600;
-        }
-        // Glass: the selection pill on the chosen one
-        if !Theme.material: Rectangle {
-            y: 2px;
-            height: parent.height - 4px;
-            border-radius: self.height / 2;
-            background: Theme.dark ? #ffffff33 : #ffffff;
-            opacity: chosen ? 1 : 0;
-            animate opacity { duration: 280ms; easing: Ease.standard; }
-        }
-        border-top-left-radius: !Theme.material ? 0 : i == 0 ? full : inner;
-        border-bottom-left-radius: self.border-top-left-radius;
-        border-top-right-radius: !Theme.material ? 0 : i == options.length - 1 ? full : inner;
-        border-bottom-right-radius: self.border-top-right-radius;
-        animate border-top-left-radius, border-top-right-radius { duration: Theme.motion(200ms); easing: spring(0.6); }
-        background: !Theme.material ? transparent : chosen ? Theme.m3-primary.mix(Theme.m3-on-primary, touch.pressed ? 0.9 : touch.has-hover ? 0.92 : 1)
-            : Theme.m3-surface-container-highest.mix(Theme.m3-on-surface-variant, touch.pressed ? 0.9 : touch.has-hover ? 0.92 : 1);
-        animate background { duration: Theme.hover; }
-        accessible-role: tab;
-        accessible-label: o;
-        accessible-checked: chosen;
-        accessible-action-default => { selected(i); }
-        Text {
-            text: o;
-            color: Theme.material ? (chosen ? Theme.m3-on-primary : Theme.m3-on-surface-variant) : chosen ? Theme.label : Theme.secondary;
-            font-size: Theme.material ? Theme.body : Theme.small;
-            font-weight: Theme.material ? 500 : 600;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            overflow: elide;
-            accessible-role: none;
-        }
-        touch := TouchArea {
-            mouse-cursor: pointer;
-            clicked => {
-                keys.keyed = false;
-                root.selected(i);
-            }
-        }
-    }
-    }
-    FocusRing { shown: keys.has-focus && keys.keyed; radius: root.border-radius; }
-}
-
 // A tick box: Glass a circle (accent when done), Material MaterialCheck.qml
 // (a rounded square, primary when checked)
 export component Tick inherits Rectangle {
@@ -247,10 +159,10 @@ export component Tick inherits Rectangle {
             reject
         }
     }
-    if checked: Icon {
+    if checked: SymIcon {
         text: "\u{e182}"; // check
         bold: true;
-        font-size: Theme.material ? 14px : 10px;
+        font-size: Theme.material ? 12px : 10px;
         color: Theme.material ? Theme.m3-on-primary : Theme.on-accent;
     }
     TouchArea {
@@ -265,120 +177,6 @@ export component Tick inherits Rectangle {
         }
     }
     FocusRing { shown: keys.has-focus && keys.keyed; radius: root.border-radius; }
-}
-
-// TextField.qml in the editor: Glass a fill outlined in the accent while
-// typing; Material FilledField's pill, outlined in primary
-component CalField inherits Rectangle {
-    in-out property <string> text <=> input.text;
-    in property <string> placeholder;
-    in property <bool> read-only;
-    callback committed();
-    public function focus-input() {
-        input.focus();
-    }
-    height: Theme.material ? 40px : 32px;
-    border-radius: Theme.material ? min(self.height / 2, 28px) : Theme.radius-control - 2px;
-    background: Theme.material ? Theme.m3-surface-container-highest : Theme.fill;
-    border-width: Theme.material ? (input.has-focus ? 2px : 0) : 1px;
-    border-color: Theme.material ? Theme.m3-primary : input.has-focus ? Theme.accent : Theme.separator;
-    opacity: read-only ? 0.6 : 1;
-    input := TextInput {
-        x: Theme.material ? 16px : 10px;
-        width: parent.width - 2 * self.x;
-        color: Theme.label;
-        font-size: Theme.body;
-        vertical-alignment: center;
-        single-line: true;
-        read-only: root.read-only;
-        selection-background-color: Theme.material ? Theme.m3-primary.with-alpha(0.3) : Theme.accent.with-alpha(0.4);
-        accessible-label: placeholder;
-        accepted => { root.committed(); }
-    }
-    Text {
-        x: input.x;
-        width: input.width;
-        visible: input.text == "" && !input.has-focus;
-        text: placeholder;
-        color: Theme.tertiary;
-        font-size: Theme.body;
-        vertical-alignment: center;
-        overflow: elide;
-        accessible-role: none;
-    }
-}
-
-// Switch.qml
-component CalSwitch inherits Rectangle {
-    in property <bool> checked;
-    in property <bool> enabled: true;
-    in property <string> label;
-    callback toggled();
-    width: Theme.material ? 52px : 38px;
-    height: Theme.material ? 32px : 22px;
-    opacity: enabled ? 1 : 0.4;
-    border-radius: self.height / 2;
-    background: Theme.material ? (checked ? Theme.m3-primary : Theme.m3-surface-container-highest) : checked ? Theme.accent : Theme.toggle-off;
-    animate background { duration: Theme.hover; }
-    border-width: Theme.material && !checked ? 2px : 0;
-    border-color: Theme.m3-outline;
-    accessible-role: switch;
-    accessible-checked: checked;
-    accessible-label: label;
-    accessible-action-default => { if enabled { toggled(); } }
-    accessible-enabled: enabled;
-    // (Tab reaches it, Space or Enter flips it)
-    forward-focus: keys;
-    keys := FocusScope {
-        focus-on-click: false;
-        enabled: root.enabled;
-        property <bool> keyed;
-        focus-gained(r) => { self.keyed = r == FocusReason.tab-navigation; }
-        key-pressed(e) => {
-            if !e.repeat && (e.text == " " || e.text == Key.Return) {
-                self.keyed = true;
-                root.toggled();
-                return accept;
-            }
-            reject
-        }
-    }
-    if !Theme.material: Rectangle {
-        width: parent.height - 4px;
-        height: self.width;
-        y: 2px;
-        x: checked ? parent.width - self.width - 2px : 2px;
-        border-radius: self.width / 2;
-        background: #ffffff;
-        animate x { duration: Theme.move-standard; easing: Ease.standard; }
-    }
-    if Theme.material: Rectangle {
-        property <length> size: t.pressed ? 28px : checked ? 24px : 16px;
-        width: size;
-        height: size;
-        y: (parent.height - size) / 2;
-        x: checked ? parent.width - 16px - size / 2 : 16px - size / 2;
-        border-radius: size / 2;
-        background: checked ? Theme.m3-on-primary : root.enabled && (t.has-hover || t.pressed) ? Theme.m3-on-surface-variant : Theme.m3-outline;
-        animate x, width, height, y { duration: Theme.motion(300ms); easing: spring(0.54); }
-        animate background { duration: Theme.hover; }
-        if checked: Icon {
-            text: "\u{e182}";
-            bold: true;
-            font-size: 14px;
-            color: Theme.m3-primary;
-        }
-    }
-    t := TouchArea {
-        // (off: no pointer hand, no hover look, not pressable)
-        enabled: root.enabled;
-        mouse-cursor: pointer;
-        clicked => {
-            keys.keyed = false;
-            root.toggled();
-        }
-    }
-    FocusRing { shown: keys.has-focus && keys.keyed; radius: root.height / 2; }
 }
 
 // Dropdown.qml's button (its list is the editor's: drawn over the card)
@@ -419,12 +217,12 @@ component CalChoice inherits Rectangle {
         vertical-alignment: center;
         overflow: elide;
     }
-    Icon {
+    SymIcon {
         x: parent.width - self.width - (Theme.material ? 12px : 8px);
         width: self.preferred-width;
         text: Theme.material ? "\u{e136}" : "\u{e140}"; // caret-down, caret-up-down
         bold: true;
-        font-size: Theme.material ? 14px : 11px;
+        font-size: Theme.material ? 12px : 11px;
         color: Theme.secondary;
         transform-rotation: Theme.material && open ? 180deg : 0deg;
         animate transform-rotation { duration: Theme.motion(200ms); easing: Ease.out-cubic; }
@@ -440,68 +238,12 @@ component CalChoice inherits Rectangle {
     FocusRing { shown: keys.has-focus && keys.keyed; radius: root.border-radius; }
 }
 
-// The editor's buttons: 0 Cancel (tonal; Material a text button), 1 Save
-// (filled), 2 Delete (red text)
-component CalButton inherits Rectangle {
-    in property <string> text;
-    in property <int> kind;
-    // (off: greyed, no hover or press look, not pressable)
-    in property <bool> enabled: true;
-    callback clicked();
-    opacity: enabled ? 1 : Theme.material ? 0.38 : 0.4;
-    width: label.preferred-width + (kind == 1 && Theme.material ? 32px : 24px);
-    height: Theme.material ? 40px : 32px;
-    border-radius: Theme.material ? self.height / 2 : Theme.radius-control;
-    background: kind == 2 ? (t.has-hover ? Theme.danger.with-alpha(Theme.material ? 0.08 : 0.15) : transparent)
-        : kind == 1 ? (Theme.material ? Theme.m3-primary.mix(Theme.m3-on-primary, t.pressed ? 0.9 : t.has-hover ? 0.92 : 1) : t.pressed ? Theme.accent.darker(0.2) : t.has-hover ? Theme.accent.darker(0.1) : Theme.accent)
-        : Theme.material ? (t.pressed ? Theme.m3-primary.with-alpha(0.1) : t.has-hover ? Theme.m3-primary.with-alpha(0.08) : transparent)
-        : t.pressed ? Theme.fill-pressed : t.has-hover ? Theme.fill-hover : Theme.fill;
-    animate background { duration: Theme.hover; }
-    accessible-role: button;
-    accessible-label: text;
-    accessible-enabled: enabled;
-    accessible-action-default => { if enabled { clicked(); } }
-    // (Tab reaches it, Enter or Space presses it)
-    forward-focus: keys;
-    keys := FocusScope {
-        focus-on-click: false;
-        enabled: root.enabled;
-        property <bool> keyed;
-        focus-gained(r) => { self.keyed = r == FocusReason.tab-navigation; }
-        key-pressed(e) => {
-            if !e.repeat && (e.text == " " || e.text == Key.Return) {
-                self.keyed = true;
-                root.clicked();
-                return accept;
-            }
-            reject
-        }
-    }
-    label := Text {
-        text: root.text;
-        color: kind == 2 ? Theme.danger : kind == 1 ? (Theme.material ? Theme.m3-on-primary : Theme.on-accent) : Theme.material ? Theme.m3-primary : Theme.label;
-        font-size: Theme.material ? 14px : Theme.small;
-        font-weight: kind == 1 && !Theme.material ? 600 : 500;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        accessible-role: none;
-    }
-    t := TouchArea {
-        enabled: root.enabled;
-        mouse-cursor: pointer;
-        clicked => {
-            keys.keyed = false;
-            root.clicked();
-        }
-    }
-    FocusRing { shown: keys.has-focus && keys.keyed; radius: root.border-radius; }
-}
-
 // ── The calendar (CalendarWidget.qml) ───────────────────────────────────────
 export component CalendarTab {
     in property <string> outline; // Material: today, when chosen too, is a cookie
     in property <string> title;
     in property <bool> week;
+    in property <[string]> letters: ["M", "T", "W", "T", "F", "S", "S"]; // the month's header, from the week's first day
     in property <[NcDay]> days;
     in property <string> day-title;
     in property <string> day-key;
@@ -612,7 +354,7 @@ export component CalendarTab {
     property <length> menu-y;
     property <length> menu-w;
     property <int> menu-hi;
-    property <[NcTarget]> alerts: [
+    property <[NcTarget]> presets: [
         { value: "-1", label: "None" },
         { value: "0", label: "At the time" },
         { value: "5", label: "5 min before" },
@@ -621,8 +363,31 @@ export component CalendarTab {
         { value: "60", label: "1 hour before" },
         { value: "1440", label: "1 day before" },
     ];
+    // An alert that isn't one of the presets (15 min, 2 hours: a calendar's
+    // default or a synced event's own) is a row of its own, in its place by
+    // time, rather than shown as "10 min before" (#450)
+    property <bool> alert-own: ed-alert > 0 && ed-alert != 5 && ed-alert != 10 && ed-alert != 30 && ed-alert != 60 && ed-alert != 1440;
+    property <int> alert-own-at: 2 + (ed-alert > 5 ? 1 : 0) + (ed-alert > 10 ? 1 : 0) + (ed-alert > 30 ? 1 : 0) + (ed-alert > 60 ? 1 : 0) + (ed-alert > 1440 ? 1 : 0);
+    property <NcTarget> alert-own-row: { value: "" + ed-alert, label: alert-words(ed-alert) };
+    function alert-words(m: int) -> string {
+        if m >= 1440 && mod(m, 1440) == 0 { return (m / 1440) + " days before"; }
+        if m >= 60 && mod(m, 60) == 0 { return (m / 60) + " hours before"; }
+        return m + " min before";
+    }
+    function alert-row(i: int) -> NcTarget {
+        if i < alert-own-at { return presets[i]; }
+        if i == alert-own-at { return alert-own-row; }
+        return presets[i - 1];
+    }
+    property <[NcTarget]> alerts: alert-own ? [alert-row(0), alert-row(1), alert-row(2), alert-row(3), alert-row(4), alert-row(5), alert-row(6), alert-row(7)] : presets;
     function alert-index(a: int) -> int {
+        if alert-own { return alert-own-at; }
         return a < 0 ? 0 : a == 0 ? 1 : a == 5 ? 2 : a == 10 ? 3 : a == 30 ? 4 : a == 60 ? 5 : a == 1440 ? 6 : 3;
+    }
+    // The pop-up list's rows and height (at most 280 px; the rest scroll)
+    property <length> menu-item-h: Theme.material ? 36px : 28px;
+    function menu-list-h(n: int) -> length {
+        return min(280px, n * menu-item-h + 10px);
     }
     function draft() -> NcDraft {
         return {
@@ -644,11 +409,16 @@ export component CalendarTab {
         menu = 0;
         root.save(draft(), -1);
     }
-    function open-menu(which: int, x: length, y: length, w: length) {
+    // (x, y: the button's top left in the editor; under it, or above it when
+    // the list would pass the editor's bottom and there's more room above)
+    function open-menu(which: int, x: length, y: length, w: length, h: length) {
         if menu == which { menu = 0; return; }
         menu-w = max(w, 200px);
         menu-x = max(4px, x - (menu-w - w));
-        menu-y = y;
+        let lh = menu-list-h(which == 1 ? targets.length : alerts.length);
+        let below = y + h + 4px;
+        let above = y - 4px - lh;
+        menu-y = below + lh > editor.height - 4px && above >= 4px ? above : max(4px, min(below, editor.height - 4px - lh));
         menu-hi = which == 2 ? alert-index(ed-alert) : 0;
         menu = which;
     }
@@ -797,7 +567,7 @@ export component CalendarTab {
                     accept
                 }
             }
-            for l[i] in ["M", "T", "W", "T", "F", "S", "S"]: Text {
+            for l[i] in root.letters: Text {
                 x: i * cell;
                 y: 0;
                 width: cell;
@@ -996,7 +766,7 @@ export component CalendarTab {
         }
         if every-day != "": HorizontalLayout {
             spacing: 6px;
-            Icon {
+            SymIcon {
                 text: "\u{e3f6}"; // repeat
                 font-size: 12px;
                 color: Theme.tertiary;
@@ -1184,6 +954,9 @@ export component CalendarTab {
                 color: Theme.material ? Theme.m3-primary : root.ink;
                 font-size: Theme.small;
                 font-weight: 600;
+                // (a link's hover and pressed look, #438)
+                opacity: undo-t.pressed ? 0.55 : undo-t.has-hover ? 0.75 : 1;
+                animate opacity { duration: Theme.hover; }
                 accessible-role: button;
                 accessible-label: "Undo";
                 accessible-action-default => { restore(); }
@@ -1200,7 +973,7 @@ export component CalendarTab {
                         reject
                     }
                 }
-                TouchArea {
+                undo-t := TouchArea {
                     mouse-cursor: pointer;
                     clicked => {
                         ukeys.keyed = false;
@@ -1296,13 +1069,13 @@ export component CalendarTab {
                         text: ed-target-label;
                         open: menu == 1;
                         label: "Calendar";
-                        clicked => { root.open-menu(1, self.absolute-position.x - editor.absolute-position.x, self.absolute-position.y + self.height + 4px - editor.absolute-position.y, self.width); }
+                        clicked => { root.open-menu(1, self.absolute-position.x - editor.absolute-position.x, self.absolute-position.y - editor.absolute-position.y, self.width, self.height); }
                     }
-                    title-f := CalField {
+                    title-f := TextField {
                         text <=> ed-title;
                         read-only: ed-readonly;
                         placeholder: ed-todo ? "What to do" : "Title";
-                        committed => { root.save-now(); }
+                        accepted(t) => { root.save-now(); }
                     }
                     // Event: all day, or from–to; to-do: an optional time
                     if !ed-todo: HorizontalLayout {
@@ -1314,7 +1087,7 @@ export component CalendarTab {
                             font-size: Theme.small;
                             vertical-alignment: center;
                         }
-                        CalSwitch {
+                        Switch {
                             y: (parent.height - self.height) / 2;
                             checked: ed-all-day;
                             enabled: !ed-readonly;
@@ -1322,20 +1095,20 @@ export component CalendarTab {
                             toggled => { ed-all-day = !ed-all-day; }
                         }
                     }
-                    if ed-todo: CalField {
+                    if ed-todo: TextField {
                         text <=> ed-start;
                         read-only: ed-readonly;
                         placeholder: "Time (optional), e.g. 5pm";
-                        committed => { root.save-now(); }
+                        accepted(t) => { root.save-now(); }
                     }
                     if !ed-todo && !ed-all-day: HorizontalLayout {
                         spacing: 8px;
-                        CalField {
+                        TextField {
                             horizontal-stretch: 1;
                             text <=> ed-start;
                             read-only: ed-readonly;
                             placeholder: "Starts";
-                            committed => { root.save-now(); }
+                            accepted(t) => { root.save-now(); }
                         }
                         Text {
                             width: 8px;
@@ -1345,23 +1118,23 @@ export component CalendarTab {
                             vertical-alignment: center;
                             horizontal-alignment: center;
                         }
-                        CalField {
+                        TextField {
                             horizontal-stretch: 1;
                             text <=> ed-end;
                             read-only: ed-readonly;
                             placeholder: "Ends";
-                            committed => { root.save-now(); }
+                            accepted(t) => { root.save-now(); }
                         }
                     }
-                    if ed-google && !ed-readonly: CalField {
+                    if ed-google && !ed-readonly: TextField {
                         text <=> ed-location;
                         placeholder: "Location";
-                        committed => { root.save-now(); }
+                        accepted(t) => { root.save-now(); }
                     }
-                    if !ed-todo && !ed-readonly: CalField {
+                    if !ed-todo && !ed-readonly: TextField {
                         text <=> ed-notes;
                         placeholder: "Notes";
-                        committed => { root.save-now(); }
+                        accepted(t) => { root.save-now(); }
                     }
                     if !ed-todo && !ed-all-day && !ed-readonly && !ed-google: HorizontalLayout {
                         spacing: 8px;
@@ -1377,7 +1150,7 @@ export component CalendarTab {
                             text: alerts[alert-index(ed-alert)].label;
                             open: menu == 2;
                             label: "Alert";
-                            clicked => { root.open-menu(2, self.absolute-position.x - editor.absolute-position.x, self.absolute-position.y + self.height + 4px - editor.absolute-position.y, self.width); }
+                            clicked => { root.open-menu(2, self.absolute-position.x - editor.absolute-position.x, self.absolute-position.y - editor.absolute-position.y, self.width, self.height); }
                             step(d) => { ed-alert = alerts[max(0, min(alerts.length - 1, alert-index(ed-alert) + d))].value.to-float(); }
                         }
                     }
@@ -1409,11 +1182,14 @@ export component CalendarTab {
                     if asking != 0: HorizontalLayout {
                         spacing: 8px;
                         alignment: end;
-                        CalButton {
+                        // (Material: text buttons; Glass: tonal)
+                        PillButton {
+                            kind: Theme.material ? 3 : 0;
                             text: "Cancel";
                             clicked => { asking = 0; }
                         }
-                        CalButton {
+                        PillButton {
+                            kind: Theme.material ? 3 : 0;
                             text: "This event";
                             clicked => {
                                 let w = asking;
@@ -1421,7 +1197,8 @@ export component CalendarTab {
                                 if w == 1 { root.save(draft(), 0); } else if w == 2 { root.remove(ed-key, 0); } else { root.move(ed-key, ask-day, 0); }
                             }
                         }
-                        CalButton {
+                        PillButton {
+                            kind: Theme.material ? 3 : 0;
                             text: "All events";
                             clicked => {
                                 let w = asking;
@@ -1433,7 +1210,7 @@ export component CalendarTab {
                     // Delete (when editing) on the left; Cancel and Save on the right
                     if asking == 0: HorizontalLayout {
                         spacing: 8px;
-                        if ed-key != "" && !ed-readonly: CalButton {
+                        if ed-key != "" && !ed-readonly: PillButton {
                             kind: 2;
                             text: ed-todo ? "Delete to-do" : "Delete event";
                             clicked => { root.remove(ed-key, -1); }
@@ -1441,11 +1218,12 @@ export component CalendarTab {
                         Rectangle {
                             horizontal-stretch: 1;
                         }
-                        CalButton {
+                        PillButton {
+                            kind: Theme.material ? 3 : 0;
                             text: ed-readonly ? "Close" : "Cancel";
                             clicked => { root.close-editor(); }
                         }
-                        if !ed-readonly: CalButton {
+                        if !ed-readonly: PillButton {
                             kind: 1;
                             text: ed-key != "" ? "Save changes" : ed-todo ? "Add to-do" : "Add event";
                             clicked => { root.save-now(); }
@@ -1454,18 +1232,27 @@ export component CalendarTab {
                 }
             }
         }
-        // A list (Dropdown.qml's): over the card, its right edge on the button's
+        // A list (Dropdown.qml's): over the card, its right edge on the button's;
+        // above the button when there's no room under it, and its rows scroll
+        // inside it (many calendars hung below the box, unclipped; #453, #879)
         if menu != 0: Rectangle {
             property <[NcTarget]> options: menu == 1 ? targets : alerts;
-            property <length> item-h: Theme.material ? 36px : 28px;
             TouchArea {
                 clicked => { menu = 0; }
             }
-            Rectangle {
+            box := Rectangle {
+                // (the highlighted row kept in sight as the arrows move it)
+                function reveal() {
+                    if menu-hi * menu-item-h < -list.content-y {
+                        list.content-y = -menu-hi * menu-item-h;
+                    } else if (menu-hi + 1) * menu-item-h > -list.content-y + list.height {
+                        list.content-y = -((menu-hi + 1) * menu-item-h - list.height);
+                    }
+                }
                 x: menu-x;
                 y: menu-y;
                 width: menu-w;
-                height: min(280px, options.length * item-h + 10px);
+                height: menu-list-h(options.length);
                 border-radius: Theme.material ? 16px : Theme.menu-radius;
                 background: Theme.material ? Theme.m3-surface-container : Theme.menu-bg;
                 border-width: 1px;
@@ -1477,41 +1264,50 @@ export component CalendarTab {
                 menu-keys := FocusScope {
                     // (a click goes to what's under it: keys only; it covered link rows and choices, which then took two clicks or none)
                     focus-on-click: false;
-                    init => { self.focus(); }
+                    init => { self.focus(); box.reveal(); }
                     key-pressed(e) => {
-                        if e.text == Key.UpArrow { menu-hi = max(0, menu-hi - 1); return accept; }
-                        if e.text == Key.DownArrow { menu-hi = min(options.length - 1, menu-hi + 1); return accept; }
-                        if e.text == Key.Home { menu-hi = 0; return accept; }
-                        if e.text == Key.End { menu-hi = options.length - 1; return accept; }
+                        if e.text == Key.UpArrow { menu-hi = max(0, menu-hi - 1); box.reveal(); return accept; }
+                        if e.text == Key.DownArrow { menu-hi = min(options.length - 1, menu-hi + 1); box.reveal(); return accept; }
+                        if e.text == Key.Home { menu-hi = 0; box.reveal(); return accept; }
+                        if e.text == Key.End { menu-hi = options.length - 1; box.reveal(); return accept; }
                         if e.text == Key.Return || e.text == " " { root.choose(menu, options[menu-hi]); ed-keys.focus(); return accept; }
                         if e.text == Key.Escape { menu = 0; ed-keys.focus(); return accept; }
                         reject
                     }
                 }
-                for o[i] in options: Rectangle {
-                    property <bool> lit: ot.has-hover || i == menu-hi;
-                    property <bool> chosen: menu == 1 ? o.value == ed-target : o.value.to-float() == ed-alert;
-                    x: 5px;
-                    y: 5px + i * item-h;
-                    width: parent.width - 10px;
-                    height: item-h;
-                    border-radius: Theme.material ? (chosen ? 12px : 8px) : 7px;
-                    background: Theme.material ? (chosen ? Theme.m3-tertiary-container : lit ? Theme.m3-on-surface.with-alpha(0.08) : transparent) : lit ? Theme.accent : transparent;
-                    accessible-role: list-item;
-                    accessible-label: o.label;
-                    accessible-action-default => { root.choose(menu, o); }
-                    Text {
-                        x: 10px;
-                        width: parent.width - 20px;
-                        text: o.label;
-                        color: Theme.material ? (chosen ? Theme.m3-on-tertiary-container : Theme.label) : lit ? Theme.on-accent : Theme.label;
-                        font-size: Theme.body;
-                        vertical-alignment: center;
-                        overflow: elide;
-                    }
-                    ot := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { root.choose(menu, o); }
+                list := Flickable {
+                    x: 0;
+                    y: 5px;
+                    width: parent.width;
+                    height: parent.height - 10px;
+                    clip: true;
+                    content-height: options.length * menu-item-h;
+                    for o[i] in options: Rectangle {
+                        property <bool> lit: ot.has-hover || i == menu-hi;
+                        property <bool> chosen: menu == 1 ? o.value == ed-target : o.value.to-float() == ed-alert;
+                        x: 5px;
+                        y: i * menu-item-h;
+                        width: parent.width - 10px;
+                        height: menu-item-h;
+                        border-radius: Theme.material ? (chosen ? 12px : 8px) : 7px;
+                        background: Theme.material ? (chosen ? Theme.m3-tertiary-container : lit ? Theme.m3-on-surface.with-alpha(0.08) : transparent) : lit ? Theme.accent : transparent;
+                        accessible-role: list-item;
+                        accessible-label: o.label;
+                        accessible-item-selected: chosen;
+                        accessible-action-default => { root.choose(menu, o); }
+                        Text {
+                            x: 10px;
+                            width: parent.width - 20px;
+                            text: o.label;
+                            color: Theme.material ? (chosen ? Theme.m3-on-tertiary-container : Theme.label) : lit ? Theme.on-accent : Theme.label;
+                            font-size: Theme.body;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        ot := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.choose(menu, o); }
+                        }
                     }
                 }
             }
@@ -1546,12 +1342,12 @@ export component TodoTab {
             // (focused: outlined in both looks, as the search field)
             border-width: input.has-focus ? (Theme.material ? 2px : 1px) : 0;
             border-color: Theme.material ? Theme.m3-primary : Theme.accent;
-            Icon {
+            SymIcon {
                 x: Theme.material ? 14px : 10px;
                 width: self.preferred-width;
                 text: "\u{e3d4}"; // plus
                 bold: !Theme.material;
-                font-size: Theme.material ? 18px : 12px;
+                font-size: Theme.material ? 15px : 12px;
                 color: Theme.secondary;
             }
             input := TextInput {
@@ -1589,10 +1385,50 @@ export component TodoTab {
             horizontal-alignment: center;
             vertical-alignment: center;
         }
-        for t in todos: Rectangle {
+        // (each row takes the keyboard: Space toggles, F2 renames, Delete
+        // deletes, Menu opens its menu; right-click or a long press opens the
+        // menu too. The hover × waits a moment before it can be pressed: a
+        // finger moves the pointer there and taps at once, which deleted the
+        // to-do under a tap at the row's right end; #880)
+        for t in todos: row := FocusScope {
+            property <bool> hot: th.has-hover || xb.hovered;
+            property <bool> x-ready;
+            changed hot => { if !hot { x-ready = false; } }
             height: t.due != "" ? (Theme.material ? 48px : 40px) : Theme.material ? 40px : 30px;
+            focus-on-click: false;
+            accessible-role: list-item;
+            accessible-label: t.text + (t.due != "" ? ", " + t.due : "") + (t.done ? ", done" : "");
+            accessible-action-default => { toggle(t.key); }
+            key-pressed(e) => {
+                if renaming == t.key { return reject; }
+                if e.text == " " || e.text == Key.Return { toggle(t.key); return accept; }
+                if e.text == Key.Delete || e.text == Key.Backspace { remove(t.key); return accept; }
+                if e.text == Key.F2 { renaming = t.key; return accept; }
+                if e.text == Key.Menu || (e.text == Key.F10 && e.modifiers.shift) {
+                    root.open-row-menu(t.key, t.text, 40px, self.y + col.y + self.height, true);
+                    return accept;
+                }
+                reject
+            }
+            if row.has-focus && renaming != t.key: Rectangle {
+                x: -4px;
+                width: parent.width + 8px;
+                border-radius: Theme.material ? 12px : 8px;
+                border-width: Theme.material ? 3px : 2px;
+                border-color: Theme.material ? Theme.m3-secondary : Theme.accent;
+            }
+            hover-wait := Timer {
+                interval: 300ms;
+                running: hot && !x-ready;
+                triggered => { x-ready = true; }
+            }
             th := TouchArea {
                 double-clicked => { renaming = t.key; }
+                pointer-event(e) => {
+                    if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                        root.open-row-menu(t.key, t.text, self.mouse-x, row.y + col.y + self.mouse-y, false);
+                    }
+                }
             }
             Tick {
                 x: 0;
@@ -1661,8 +1497,8 @@ export component TodoTab {
             // (made while the row is there, shown while the row or the button
             // itself has the pointer: made on the row's hover alone, it went
             // away under the pointer and clicks missed; audit #180)
-            if renaming != t.key: IconButton {
-                visible: th.has-hover || self.hovered;
+            xb := IconButton {
+                visible: renaming != t.key && x-ready && (th.has-hover || self.hovered);
                 x: parent.width - self.width + 6px;
                 y: (parent.height - self.height) / 2;
                 width: 24px;
@@ -1688,6 +1524,9 @@ export component TodoTab {
                 color: Theme.material ? Theme.m3-primary : root.ink;
                 font-size: Theme.small;
                 font-weight: 600;
+                // (a link's hover and pressed look, #438)
+                opacity: undo-t.pressed ? 0.55 : undo-t.has-hover ? 0.75 : 1;
+                animate opacity { duration: Theme.hover; }
                 accessible-role: button;
                 accessible-label: "Undo";
                 accessible-action-default => { restore(); }
@@ -1704,7 +1543,7 @@ export component TodoTab {
                         reject
                     }
                 }
-                TouchArea {
+                undo-t := TouchArea {
                     mouse-cursor: pointer;
                     clicked => {
                         ukeys.keyed = false;
@@ -1712,6 +1551,86 @@ export component TodoTab {
                     }
                 }
                 FocusRing { shown: ukeys.has-focus && ukeys.keyed; radius: 4px; }
+            }
+        }
+    }
+    // A to-do's menu (right-click, a long press, or the Menu key on a row):
+    // Rename and Delete, under the pointer, kept inside the list
+    property <string> menu-key;
+    property <string> menu-text;
+    property <length> menu-x;
+    property <length> menu-y;
+    property <int> menu-hi;
+    property <length> menu-row-h: Theme.material ? 36px : 28px;
+    function open-row-menu(key: string, text: string, x: length, y: length, by-keys: bool) {
+        menu-key = key;
+        menu-text = text;
+        menu-hi = by-keys ? 0 : -1;
+        menu-x = max(4px, min(x, root.width - 164px));
+        menu-y = max(4px, min(y, root.height - 2 * menu-row-h - 14px));
+    }
+    function menu-do(i: int) {
+        let k = menu-key;
+        menu-key = "";
+        if i == 0 { renaming = k; }
+        if i == 1 { remove(k); }
+    }
+    if menu-key != "": Rectangle {
+        TouchArea {
+            clicked => { menu-key = ""; }
+            pointer-event(e) => {
+                if e.kind == PointerEventKind.down && e.button == PointerEventButton.right { menu-key = ""; }
+            }
+        }
+        Rectangle {
+            x: menu-x;
+            y: menu-y;
+            width: 160px;
+            height: 2 * menu-row-h + 10px;
+            border-radius: Theme.material ? 16px : Theme.menu-radius;
+            background: Theme.material ? Theme.m3-surface-container : Theme.menu-bg;
+            border-width: 1px;
+            border-color: Theme.material ? transparent : Theme.separator;
+            drop-shadow-blur: 16px;
+            drop-shadow-offset-y: 4px;
+            drop-shadow-color: #00000033;
+            accessible-role: list;
+            accessible-label: "Options for “" + menu-text + "”";
+            TouchArea { }
+            FocusScope {
+                focus-on-click: false;
+                init => { self.focus(); }
+                key-pressed(e) => {
+                    if e.text == Key.UpArrow { menu-hi = max(0, menu-hi - 1); return accept; }
+                    if e.text == Key.DownArrow { menu-hi = min(1, menu-hi + 1); return accept; }
+                    if (e.text == Key.Return || e.text == " ") && menu-hi >= 0 { menu-do(menu-hi); return accept; }
+                    if e.text == Key.Escape { menu-key = ""; return accept; }
+                    reject
+                }
+            }
+            for word[i] in ["Rename", "Delete"]: Rectangle {
+                property <bool> lit: mt.has-hover || i == menu-hi;
+                x: 5px;
+                y: 5px + i * menu-row-h;
+                width: parent.width - 10px;
+                height: menu-row-h;
+                border-radius: Theme.material ? 8px : 7px;
+                background: Theme.material ? (lit ? Theme.m3-on-surface.with-alpha(0.08) : transparent) : lit ? (i == 1 ? Theme.danger : Theme.accent) : transparent;
+                accessible-role: button;
+                accessible-label: word;
+                accessible-action-default => { menu-do(i); }
+                Text {
+                    x: 10px;
+                    width: parent.width - 20px;
+                    text: word;
+                    color: Theme.material ? (i == 1 ? Theme.m3-error : Theme.label) : lit ? Theme.on-accent : i == 1 ? Theme.danger : Theme.label;
+                    font-size: Theme.body;
+                    vertical-alignment: center;
+                }
+                mt := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { menu-do(i); }
+                }
             }
         }
     }

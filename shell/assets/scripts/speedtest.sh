@@ -8,7 +8,9 @@
 #   done download|upload <bits/s> <bytes>
 #   ookla <json>            Ookla's own progress and result lines, passed on
 #   error <code> <message>  offline | curl | ookla | timeout | nodev
-# Usage: speedtest.sh cloudflare | ookla | ookla-py
+# Usage: speedtest.sh cloudflare | ookla accepted | ookla-py accepted
+# ("accepted": you accepted Ookla's licence and privacy notice in Settings;
+# only then are its terms answered for you: #338)
 # Each phase stops after about 9 s or a data cap, so a test stays well under
 # 400 MB even on gigabit.
 set -uo pipefail
@@ -28,10 +30,12 @@ now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
 
 case "$backend" in
 ookla)
+    [[ "${2:-}" == accepted ]] || { echo "error terms Ookla's licence and privacy notice aren't accepted"; exit 1; }
     command -v speedtest >/dev/null || { echo "error ookla speedtest isn't installed"; exit 1; }
     speedtest --format=jsonl --progress=yes --accept-license --accept-gdpr 2>/dev/null | while IFS= read -r l; do echo "ookla $l"; done
     exit 0 ;;
 ookla-py)
+    [[ "${2:-}" == accepted ]] || { echo "error terms Ookla's licence and privacy notice aren't accepted"; exit 1; }
     command -v speedtest-cli >/dev/null || { echo "error ookla speedtest-cli isn't installed"; exit 1; }
     echo "phase download"
     out=$(speedtest-cli --json --secure 2>&1) || { echo "error ookla ${out//$'\n'/ }"; exit 1; }

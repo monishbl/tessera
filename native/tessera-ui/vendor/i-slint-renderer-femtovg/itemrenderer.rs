@@ -879,7 +879,11 @@ impl<'a, R: femtovg::Renderer + TextureImporter> ItemRenderer for GLItemRenderer
         });
         let draw = self.get_current_clip().intersects(&bounding_rect);
         // (tessera-ui: an item on screen but outside this frame's damage is
-        // left as the back buffer has it)
+        // left as the back buffer has it. An Opacity, Transform, Layer, Clip
+        // or BoxShadow culled here is still rendered by i-slint-core 1.18.1's
+        // render_item_children, which calls their render whatever do_draw
+        // says, so a child reaching outside a faded or turned parent's box
+        // keeps the parent's effect: 23 Nov audit #884, checked 27 Nov)
         let draw_now = draw && self.state.last().unwrap().cull.is_none_or(|c| c.intersects(&bounding_rect));
         if draw_now {
             self.counts.drawn += 1;

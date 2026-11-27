@@ -113,6 +113,9 @@ Singleton {
                 property string mode: "dark" // dark | light | auto (light from sunrise to sunset)
                 property string gaps: "compact" // round windows: none | compact (3 between, 4 at the edges) | comfortable (5, 10)
                 property bool clock24: false // 24-hour time everywhere (TimeFormat)
+                // (the Rust shell's: declared so the fallback keeps them)
+                property string clockHours: "auto" // auto (the system's language) | 12 | 24
+                property string weekStart: "auto" // auto (the system's language) | monday | sunday | saturday
                 // The look: glass (this shell) | material (experimental: Material 3
                 // Expressive, the material/ folder; switching restarts the shell,
                 // assets/scripts/switch-look.sh)
@@ -420,6 +423,7 @@ Singleton {
                 property string name: "" // what the greeting calls you (Settings → About); empty = your account's name
             }
             property JsonObject weather: JsonObject {
+                property bool enabled: true // (Rust shell) off: wttr.in is never asked and no weather shows
                 property string location: "" // empty = detect from IP
                 property string units: "metric" // metric | imperial
             }
@@ -472,7 +476,8 @@ Singleton {
             }
             property JsonObject emoji: JsonObject {
                 property string style: "android" // emoji drawn by the shell: android (Noto) | apple | windows (Fluent)
-                property string klipyKey: "" // your KLIPY app key for the picker's GIF tab (partner.klipy.com/api-keys); KLIPY_API_KEY in the environment wins
+                property string klipyKey: "" // your KLIPY app key for the picker's GIF tab (partner.klipy.com/api-keys); KLIPY_API_KEY in the environment wins. The Rust shell moves it into the keyring
+                property int klipyKeySaved: 0 // (Rust shell) counts up each time a KLIPY key is saved in the keyring; never the key
                 property string gifFilter: "medium" // GIF safety filter: off | low | medium | high
             }
             property JsonObject resources: JsonObject {
@@ -480,6 +485,7 @@ Singleton {
             }
             property JsonObject network: JsonObject {
                 property string speedTest: "cloudflare" // speed test server: cloudflare (speed.cloudflare.com, needs only curl) | ookla (speedtest.net; needs speedtest or speedtest-cli)
+                property bool ooklaAccepted: false // (Rust shell) you accepted Ookla's licence and privacy notice in Settings → Network
             }
             property JsonObject power: JsonObject {
                 // Battery & Power (Settings; services/Power.qml)
@@ -538,9 +544,14 @@ Singleton {
             // Search's edge light, tessera-ui edgefx.rs; audit #61)
             property JsonObject circle: JsonObject {
                 property string glow: "" // "": dots (the default), siri, gemini, ripple…
+                property bool webSearch: true // the "Search the web" chip (sends the circled picture to Google Lens)
+                property bool lensAccepted: false // you said yes, once, to the circled picture going to Google
             }
             property JsonObject keyboard: JsonObject {
                 property string superTap: "overview" // tapping Super alone: overview | spotlight | none
+                // the on-screen keyboard's button beside password fields (lock,
+                // login, the admin password dialog; Rust shell): always | touch | off
+                property string oskButton: "touch"
             }
             // Dictation (services/Dictation): speech to text with whisper.cpp, on
             // this computer. Super+H: tap to start and stop, or hold while speaking

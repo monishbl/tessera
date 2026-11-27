@@ -170,7 +170,7 @@ impl SearchSvc {
                     .get::<tessera_core::services::calendar::Calendar>()
                     .map(|c| c.between(now - 86_400_000, now + 366 * 86_400_000).into_iter().filter(|e| e.title.to_lowercase().contains(&q)).take(3).collect())
                     .unwrap_or_default();
-                let hm = if h.cfg()["appearance"]["clock24"].as_bool().unwrap_or(false) { "%H:%M" } else { "%-I:%M %p" };
+                let hm = if tessera_core::locale::clock24(&h.cfg()) { "%H:%M" } else { "%-I:%M %p" };
                 let list = events
                     .into_iter()
                     .map(|e| {

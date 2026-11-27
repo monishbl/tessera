@@ -287,6 +287,13 @@ export component GlassCard {
     in property <int> more;
     in property <bool> tap-expands;
     in property <string> close-label;
+    // Notification Center: a body cut at four lines shows whole on a click
+    // (#396; banners keep four)
+    in property <bool> expandable;
+    property <bool> full;
+    property <bool> cut: gmeasure.preferred-height > 4 * gmeasure.line + 1px;
+    property <int> bid: b.id;
+    changed bid => { self.full = false; }
     callback group-toggled();
     callback activated();
     callback close();
@@ -376,18 +383,45 @@ export component GlassCard {
         }
         // (its own width, not only the layout's: a wrapping text measures
         // its height against it, and the layout's comes too late for that)
-        if b.body-plain != "": StyledText {
+        if b.body-plain != "": Rectangle {
             width: root.width - 70px;
-            // (its own measure under-counts wrapped lines: the plain text's)
-            height: min(gmeasure.preferred-height, 4 * gmeasure.line);
-            text: b.body;
-            default-color: Theme.label;
-            default-font-size: Theme.body;
-            default-font-family: Theme.font;
-            link-color: Theme.accent;
-            max-lines: 4;
-            opacity: 0.85;
-            link-clicked(url) => { root.link(url); }
+            height: gbody.height;
+            gbody := StyledText {
+                width: parent.width;
+                // (its own measure under-counts wrapped lines: the plain text's)
+                height: root.full ? gmeasure.preferred-height : min(gmeasure.preferred-height, 4 * gmeasure.line);
+                text: b.body;
+                default-color: Theme.label;
+                default-font-size: Theme.body;
+                default-font-family: Theme.font;
+                link-color: Theme.accent;
+                max-lines: root.full ? 0 : 4;
+                opacity: 0.85;
+                link-clicked(url) => { root.link(url); }
+            }
+            // (cut: a click on the text shows the rest; its links work once it's whole)
+            if root.expandable && root.cut && !root.full: TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.full = true; }
+            }
+        }
+        if root.expandable && root.cut: Rectangle {
+            height: gmore.preferred-height + 4px;
+            accessible-role: button;
+            accessible-label: gmore.text;
+            accessible-action-default => { root.full = !root.full; }
+            gmore := Text {
+                x: 0;
+                text: root.full ? "Show less" : "Show more";
+                color: Theme.accent;
+                font-size: Theme.caption;
+                font-weight: 500;
+                accessible-role: none;
+            }
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.full = !root.full; }
+            }
         }
         // the app's progress (the "value" hint), as Material's card has it
         if b.progress >= 0: Rectangle {
@@ -561,6 +595,12 @@ export component MaterialCard {
     in property <bool> tap-expands;
     // the X's spoken name when it does more than dismiss this card
     in property <string> close-label;
+    // Notification Center: a body cut at four lines shows whole on a click (#396)
+    in property <bool> expandable;
+    property <bool> full;
+    property <bool> cut: mmeasure.preferred-height > 4 * mmeasure.line + 1px;
+    property <int> bid: b.id;
+    changed bid => { self.full = false; }
     callback group-toggled();
     callback activated();
     callback close();
@@ -670,16 +710,42 @@ export component MaterialCard {
             overflow: elide;
             accessible-role: none;
         }
-        if b.body-plain != "": StyledText {
+        if b.body-plain != "": Rectangle {
             width: root.width - 84px;
-            height: min(mmeasure.preferred-height, 4 * mmeasure.line);
-            text: b.body;
-            default-color: Theme.m3-on-surface-variant;
-            default-font-size: 14px;
-            default-font-family: Theme.font;
-            link-color: Theme.m3-primary;
-            max-lines: 4;
-            link-clicked(url) => { root.link(url); }
+            height: mbody.height;
+            mbody := StyledText {
+                width: parent.width;
+                height: root.full ? mmeasure.preferred-height : min(mmeasure.preferred-height, 4 * mmeasure.line);
+                text: b.body;
+                default-color: Theme.m3-on-surface-variant;
+                default-font-size: 14px;
+                default-font-family: Theme.font;
+                link-color: Theme.m3-primary;
+                max-lines: root.full ? 0 : 4;
+                link-clicked(url) => { root.link(url); }
+            }
+            if root.expandable && root.cut && !root.full: TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.full = true; }
+            }
+        }
+        if root.expandable && root.cut: Rectangle {
+            height: mmore.preferred-height + 4px;
+            accessible-role: button;
+            accessible-label: mmore.text;
+            accessible-action-default => { root.full = !root.full; }
+            mmore := Text {
+                x: 0;
+                text: root.full ? "Show less" : "Show more";
+                color: Theme.m3-primary;
+                font-size: 12px;
+                font-weight: 500;
+                accessible-role: none;
+            }
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.full = !root.full; }
+            }
         }
         if b.history.length > 1: History {
             lines: b.history;
@@ -865,14 +931,26 @@ export component Banners inherits Window {
             // plate under that translucent card; moving, the plate
             property <bool> settled: !live && b.depth > 0 && abs(place-y - b.ty / 1px) < 0.5 && abs(sc - b.tscale) < 0.002 && abs(drawn-h - b.plate / 1px) < 0.5;
             property <brush> surface: Theme.material ? Theme.m3-surface-container-high.with-alpha(Theme.blur ? 1 - 0.4 * (1 - Theme.panel-alpha) / 0.55 : 1) : glass-plugin ? transparent : Frost.tint;
+            // Swiped sideways (both looks, touch or a drag; #397): past a
+            // third of the way, or flung, it slides off and is dismissed;
+            // otherwise it springs back (Notification Center's Material rows)
+            property <length> sw-live: bswipe.current-position.x - bswipe.pressed-position.x;
+            property <length> sw-off: 0;
+            property <length> sw-dx: bswipe.swiping ? sw-live : sw-off;
+            animate sw-dx { duration: Theme.motion(bswipe.swiping ? 0ms : sw-off != 0 ? 150ms : 322ms); easing: sw-off != 0 ? cubic-bezier(0.3333, 0, 0.6667, 0) : spring(0.5); }
+            property <length> sw-last-x;
+            property <duration> sw-last-t;
+            property <float> sw-vel;
+            property <int> bid: b.id;
+            changed bid => { self.sw-off = 0; }
 
-            x: m + (1 - enter) * card-w * (Theme.material ? 0.4 : 0.55);
+            x: m + sw-dx + (1 - enter) * card-w * (Theme.material ? 0.4 : 0.55);
             y: m + place-y * 1px + (Theme.material ? (1 - enter) * -16px : 0);
             width: card-w;
             height: drawn-h * 1px;
             transform-origin: { x: self.width / 2, y: self.height };
             transform-scale: sc;
-            opacity: shown;
+            opacity: shown * (1 - 0.6 * min(1, abs(sw-dx) / card-w));
             // Glass: no plugin (Hyprland's blur behind the window): a tint;
             // Material: its tonal card, elevation 3 when it's in front
             border-radius: Theme.material ? 24px : 22px;
@@ -896,8 +974,37 @@ export component Banners inherits Window {
                 root.moved(b.id, self.x, self.y, self.width, self.height, shown);
             }
 
+            sw-fly := Timer {
+                interval: 150ms;
+                running: false;
+                triggered => {
+                    self.running = false;
+                    root.dismiss-banner(b.id);
+                }
+            }
+            bswipe := SwipeGestureHandler {
+                enabled: live && !b.replying && !b.leaving && b.tfade > 0;
+                handle-swipe-left: true;
+                handle-swipe-right: true;
+                moved => {
+                    let dt = max(1, (animation-tick() - parent.sw-last-t) / 1ms);
+                    parent.sw-vel = (parent.sw-live - parent.sw-last-x) / 1px / dt;
+                    parent.sw-last-x = parent.sw-live;
+                    parent.sw-last-t = animation-tick();
+                }
+                // (past a third, or flung over 900 px/s its way)
+                swiped => {
+                    if abs(parent.sw-live) > card-w / 3 || (abs(parent.sw-vel) > 0.9 && parent.sw-vel * parent.sw-live / 1px > 0) {
+                        parent.sw-off = (parent.sw-live > 0 ? 1 : -1) * (card-w + m);
+                        sw-fly.running = true;
+                    } else {
+                        parent.sw-off = 0;
+                    }
+                }
+                cancelled => { parent.sw-off = 0; }
             card-hover := TouchArea {
-                enabled: live;
+                // (a card waiting behind the last that fits, fanned out: no clicks; #212)
+                enabled: live && b.tfade > 0;
                 opacity: content;
                 visible: content > 0;
                 gcard := GlassCard {
@@ -926,6 +1033,7 @@ export component Banners inherits Window {
                     draft(t) => { root.draft(b.id, t); }
                     link(u) => { root.link(u); }
                 }
+            }
             }
             if settled && (Theme.material || !glass-plugin): Sliver {
                 width: parent.width;

@@ -33,6 +33,9 @@ pub struct Look {
     pub motion: String,
     /// appearance.reduceMotion
     pub reduce_motion: bool,
+    /// How key hints are written: mac | windows | linux (Shortcut symbols,
+    /// keynames::style); Theme.key-* from it
+    pub keys: String,
 }
 
 pub fn config_path() -> PathBuf {
@@ -118,7 +121,8 @@ pub fn look_with(v: &Value, look_override: Option<&str>, wallpaper: impl Fn(&str
     });
     let motion = s("motion", "subtle"); // (Config.qml's default)
     let reduce_motion = a["reduceMotion"].as_bool().unwrap_or(false);
-    Look { material, dark, seed, style, accent, contrast, transparency, glass, motion, reduce_motion }
+    let keys = crate::keynames::style(v).to_string();
+    Look { material, dark, seed, style, accent, contrast, transparency, glass, motion, reduce_motion, keys }
 }
 
 // ── Glass: Theme.glass (shell/common/Theme.qml) ─────────────────────────────
@@ -720,6 +724,10 @@ macro_rules! __theme_tokens {
             accent_tint / set_accent_tint: slint::Color,
             code_fill / set_code_fill: slint::Color,
             control_alpha / set_control_alpha: f32,
+            window_bg / set_window_bg: slint::Color,
+            sidebar_bg / set_sidebar_bg: slint::Color,
+            card_bg / set_card_bg: slint::Color,
+            card_solid / set_card_solid: slint::Color,
             caption / set_caption: f32,
             small / set_small: f32,
             title / set_title: f32,
@@ -737,6 +745,15 @@ macro_rules! __theme_tokens {
             hover / set_hover: i64,
             popover / set_popover: i64,
             motion_panel / set_motion_panel: i64,
+            key_save / set_key_save: slint::SharedString,
+            key_save_copy / set_key_save_copy: slint::SharedString,
+            key_copy / set_key_copy: slint::SharedString,
+            key_undo / set_key_undo: slint::SharedString,
+            key_redo / set_key_redo: slint::SharedString,
+            key_esc / set_key_esc: slint::SharedString,
+            key_del / set_key_del: slint::SharedString,
+            key_enter / set_key_enter: slint::SharedString,
+            key_ctrl_enter / set_key_ctrl_enter: slint::SharedString,
         }
     };
 }
@@ -821,6 +838,17 @@ pub fn tokens(look: &Look, plugin: bool) -> Tokens {
     t.set_motion_panel((320.0_f64 * pace).round() as i64);
     t.set_press_bounce(look.material && !look.reduce_motion);
     t.set_still(look.reduce_motion);
+    // (key hints in tooltips, buttons and footers, as Shortcut symbols says: audit #1047)
+    let k = |spec: &str| slint::SharedString::from(crate::keynames::combo(&look.keys, spec));
+    t.set_key_save(k("CTRL S"));
+    t.set_key_save_copy(k("CTRL SHIFT S"));
+    t.set_key_copy(k("CTRL C"));
+    t.set_key_undo(k("CTRL Z"));
+    t.set_key_redo(k("CTRL SHIFT Z"));
+    t.set_key_esc(k("ESCAPE"));
+    t.set_key_del(k("DELETE"));
+    t.set_key_enter(k("RETURN"));
+    t.set_key_ctrl_enter(k("CTRL RETURN"));
     if look.material {
         let roles = look_roles(look);
         let r = |k: &str| hex(roles.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str()).unwrap_or("#ff00ff"));
@@ -851,7 +879,9 @@ pub fn tokens(look: &Look, plugin: bool) -> Tokens {
         let on = r("onSurface");
         t.set_label(on);
         t.set_secondary(r("onSurfaceVariant"));
-        t.set_tertiary(r("onSurfaceVariant").with_alpha(l(0.72, 0.85, 1.0)));
+        // (footnotes and placeholders: 0.8 keeps them near 4.5:1 on the
+        // containers; 0.72 read faint on the dark sheet)
+        t.set_tertiary(r("onSurfaceVariant").with_alpha(l(0.8, 0.9, 1.0)));
         t.set_separator(r("outlineVariant").with_alpha(l(0.45, 0.7, 1.0)));
         t.set_outline(r("outline"));
         let hi = r("surfaceContainerHighest");
@@ -913,6 +943,10 @@ pub fn tokens(look: &Look, plugin: bool) -> Tokens {
         t.set_code_fill(hi);
 
         t.set_control_alpha(1.0 - 0.4 * look.transparency);
+        t.set_window_bg(r("surface"));
+        t.set_sidebar_bg(r("surfaceContainer"));
+        t.set_card_bg(r("surfaceContainerLow"));
+        t.set_card_solid(r("surfaceContainerHigh"));
         t.set_caption(11.0);
         t.set_small(12.0);
         t.set_title(16.0);
@@ -944,8 +978,11 @@ pub fn tokens(look: &Look, plugin: bool) -> Tokens {
         let l = |s: f32, h: f32, m: f32| [s, h, m][look.contrast.min(2) as usize];
         let ink = |a: f32| if d { rgba(255, 255, 255, a) } else { rgba(0, 0, 0, a) };
         t.set_label(ink(if d { l(0.92, 1.0, 1.0) } else { l(0.85, 0.9, 0.95) }));
-        t.set_secondary(ink(if d { l(0.58, 0.72, 0.85) } else { l(0.52, 0.68, 0.8) }));
-        t.set_tertiary(ink(if d { l(0.34, 0.56, 0.7) } else { l(0.3, 0.6, 0.7) }));
+        // (secondary: at least 4.5:1 on the window, light 0.52 was 4.2:1;
+        // tertiary, footnotes and greyed text: about 3:1 and up, 0.3-0.34
+        // was 2.1-3.1:1 and hard to read on the dark sheet)
+        t.set_secondary(ink(if d { l(0.62, 0.74, 0.85) } else { l(0.6, 0.7, 0.8) }));
+        t.set_tertiary(ink(if d { l(0.46, 0.58, 0.7) } else { l(0.46, 0.6, 0.7) }));
         t.set_separator(ink(if d { l(0.12, 0.14, 0.16) } else { l(0.1, 0.12, 0.14) }));
         t.set_outline(ink(if d { 0.42 } else { 0.38 }));
         t.set_fill(ink(if d { l(0.1, 0.14, 0.18) } else { l(0.06, 0.09, 0.12) }));
@@ -982,6 +1019,12 @@ pub fn tokens(look: &Look, plugin: bool) -> Tokens {
         t.set_blur(false);
         t.set_panel_alpha(1.0);
         t.set_control_alpha(1.0);
+        // (Settings' and Welcome's window, sidebar and cards: they were
+        // literals by Theme.dark, so Increase contrast never reached them)
+        t.set_window_bg(hex(if d { "#1E1E21" } else { "#F5F5F7" }));
+        t.set_sidebar_bg(if d { rgba(0x1f, 0x1f, 0x24, l(0.78, 0.9, 0.97)) } else { rgba(0xf0, 0xf0, 0xf5, l(0.8, 0.92, 0.97)) });
+        t.set_card_bg(if d { rgba(255, 255, 255, l(0.05, 0.08, 0.11)) } else { rgba(255, 255, 255, 1.0) });
+        t.set_card_solid(if d { rgba(0x23, 0x23, 0x27, 1.0) } else { rgba(255, 255, 255, 1.0) });
         t.set_caption(11.0);
         t.set_small(12.0);
         t.set_title(15.0);
@@ -1227,6 +1270,31 @@ mod tests {
         assert_eq!(look_from(&v, None, none).transparency, 0.0);
         let v = json!({"appearance": {"look": "glass", "materialTransparency": 0.6}});
         assert_eq!(look_from(&v, None, none).transparency, 0.0);
+    }
+
+    #[test]
+    fn glass_footnotes_and_greyed_text_read_on_the_window() {
+        // (#254: secondary at least 4.5:1, tertiary about 3:1, on the
+        // window colour, at every contrast; #946: the window, sidebar and
+        // cards come from the theme, more opaque with Increase contrast)
+        for mode in ["dark", "light"] {
+            let mut sidebar = 0;
+            for contrast in ["standard", "higher", "maximum"] {
+                let v = json!({"appearance": {"look": "glass", "mode": mode, "contrast": contrast}});
+                let k = tokens(&look_from(&v, None, none), false);
+                let bg = k.window_bg.expect("window");
+                let on = |c: Color| tint(bg, Color::from_rgb_u8(c.red(), c.green(), c.blue()), c.alpha() as f32 / 255.0);
+                let (sec, ter) = (on(k.secondary.unwrap()), on(k.tertiary.unwrap()));
+                assert!(contrast_ratio(sec, bg) >= 4.5, "{mode} {contrast} secondary {}", contrast_ratio(sec, bg));
+                assert!(contrast_ratio(ter, bg) >= 3.0, "{mode} {contrast} tertiary {}", contrast_ratio(ter, bg));
+                let a = k.sidebar_bg.unwrap().alpha();
+                assert!(a >= sidebar, "{mode} {contrast}: the sidebar grew clearer");
+                sidebar = a;
+                assert!(k.card_bg.is_some() && k.card_solid.is_some());
+            }
+        }
+        let k = tokens(&look_from(&json!({"appearance": {"look": "material"}}), None, none), false);
+        assert!(k.window_bg.is_some() && k.sidebar_bg.is_some() && k.card_bg.is_some() && k.card_solid.is_some());
     }
 
     #[test]

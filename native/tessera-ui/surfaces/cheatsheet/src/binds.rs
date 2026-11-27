@@ -99,13 +99,7 @@ pub fn groups(json: &str) -> Option<Vec<Group>> {
 
 /// KeyNames.style: mac | windows | linux ("auto" follows the menu icon)
 pub fn style(cfg: &Value) -> &'static str {
-    match cfg["appearance"]["keySymbols"].as_str().unwrap_or("auto") {
-        "mac" => "mac",
-        "windows" => "windows",
-        "linux" => "linux",
-        _ if cfg["appearance"]["menuIcon"].as_str() == Some("command") => "mac",
-        _ => "linux",
-    }
+    tessera_core::keynames::style(cfg)
 }
 
 fn names(style: &str, key: &str) -> Option<&'static str> {

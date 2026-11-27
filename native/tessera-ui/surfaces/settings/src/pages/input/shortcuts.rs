@@ -166,6 +166,11 @@ fn validate(cx: &Ctx, editing: &Value, custom: bool) -> String {
     if !rec_complete(cx) {
         return "Choose a key: click the box and press one, or use Edit as text.".into();
     }
+    if lb(cx, "textMode") {
+        if let Some(why) = keymap::text_keys_error(&rec_result(cx)) {
+            return why;
+        }
+    }
     if !lone_key_ok(&parse_keys(&rec_result(cx))) {
         return "Add Super, Ctrl, Alt or Shift: on its own this key would stop typing everywhere.".into();
     }
@@ -360,6 +365,8 @@ fn list(cx: &mut Ctx, p: &mut Page, all: &[Value], ready: bool, user_error: &str
     }
 
     let style = keys::style(&*cx.cfg);
+    // (the binds Hyprland refused at its last load: keybinds.lua, audit #904)
+    let failed: Vec<String> = super::strings(&feed(cx)["keymap"]["failed"]);
     for (name, list) in shown {
         let mut rows = Vec::new();
         if list.is_empty() {
@@ -375,6 +382,8 @@ fn list(cx: &mut Ctx, p: &mut Page, all: &[Value], ready: bool, user_error: &str
             let default_keys = b["defaultKeys"].as_str().unwrap_or("").to_string();
             let what = if disabled {
                 "Off".to_string()
+            } else if failed.iter().any(|f| *f == id) {
+                "Hyprland couldn't bind these keys".to_string()
             } else if b["keysChanged"] == true {
                 format!("Changed · was {}", keytext(cx, &default_keys))
             } else if custom {
@@ -637,7 +646,13 @@ fn recorder_event(cx: &mut Ctx, i: i32, f: f32, s: &str) {
             rec_set_mods(cx, mods);
         }
         10 => {
-            let Some((name, shifted)) = keymap::key_name(s) else { return };
+            let Some((name, shifted)) = keymap::key_name(s) else {
+                // (a key the box can't name, as on non-US layouts: say where to go; audit #905)
+                if let Some(why) = keymap::unpickable(s) {
+                    set(cx, "error", why);
+                }
+                return;
+            };
             let held = f as i32;
             let mut mods = rec_mods(cx);
             for (bit, m) in [(1, "SHIFT"), (2, "CTRL"), (4, "ALT"), (8, "SUPER")] {

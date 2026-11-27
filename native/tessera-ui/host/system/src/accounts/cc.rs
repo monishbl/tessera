@@ -473,7 +473,8 @@ impl ControlCenter {
                     d.needs = "warp-cli";
                     d
                 }
-                "keyboard" => def("Keyboard", "keyboard", false, ""),
+                // (a switch: the keyboard stays up beside Control Center, #763)
+                "keyboard" => def("Keyboard", "keyboard", bs(&st(h, "osk"), "open"), ""),
                 "screenshot" => def("Screenshot", "camera", false, ""),
                 "colorPicker" => {
                     let mut d = def("Colour picker", "eyedropper", false, "");
@@ -841,7 +842,7 @@ impl ControlCenter {
             let status = if is_active {
                 ss(&focus, "statusText").to_string()
             } else if bs(sched, "enabled") {
-                let c24 = h.cfg()["appearance"]["clock24"].as_bool().unwrap_or(false);
+                let c24 = tessera_core::locale::clock24(&h.cfg());
                 format!("Scheduled {}–{}", fmt_hm(ss(sched, "from"), c24), fmt_hm(ss(sched, "to"), c24))
             } else {
                 String::new()
@@ -1395,7 +1396,7 @@ impl ControlCenter {
             "record" => ask(h, "recorder.openToolbar", json!([])), // the recording toolbar (again: stop)
             "easyEffects" => ask(h, "system.setEasyEffects", json!([!on])),
             "warp" => ask(h, "system.setWarp", json!([!on])),
-            "keyboard" => ask(h, "panels.show", json!(["keyboard"])),
+            "keyboard" => ask(h, "panels.toggle", json!(["keyboard"])),
             "screenshot" => ask(h, "panels.show", json!(["screenTools"])),
             "colorPicker" => {
                 ask(h, "panels.close", json!([]));
@@ -1727,7 +1728,7 @@ fn map_alts(ap: &Value) -> Value {
     Value::Array(
         ap["alternatives"]
             .as_array()
-            .map(|a| a.iter().map(|x| json!({"name": ss(x, "name"), "kind": ss(x, "kind"), "busy": !sw.is_empty() && ss(x, "profile") == sw})).collect())
+            .map(|a| a.iter().map(|x| json!({"name": ss(x, "name"), "kind": ss(x, "kind"), "busy": !sw.is_empty() && ss(x, "profile") == sw, "id": crate::net::audio_profiles::alt_id(x)})).collect())
             .unwrap_or_default(),
     )
 }
@@ -1810,9 +1811,8 @@ impl Service for ControlCenter {
             "cc.block" => {
                 // (Sound is drawn there; its card-switching outputs are this shell's)
                 if s(0) == "sound" && s(1).starts_with("prof:") {
-                    let ap = g("AudioProfiles");
-                    let i = s(1)[5..].parse::<usize>().unwrap_or(usize::MAX);
-                    if let Some(alt) = ap["alternatives"].as_array().and_then(|x| x.get(i)) {
+                    // (by its card and profile: the list may have changed since it was drawn)
+                    if let Some(alt) = crate::net::audio_profiles::find(&g("AudioProfiles"), &s(1)[5..]) {
                         h.ask("audioprofiles.pick", json!([alt]));
                     }
                     return;

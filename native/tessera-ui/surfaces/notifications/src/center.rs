@@ -5,6 +5,7 @@
 
 use super::model::{self, Note};
 use serde::Deserialize;
+use tessera_core::locale;
 use std::collections::{HashMap, HashSet};
 
 /// The island's alerts' row ids: negative, one per alert (by its hid) for as
@@ -211,17 +212,23 @@ pub fn weekday(d: Day) -> u32 {
     ((days_from_civil(d) + 3).rem_euclid(7)) as u32
 }
 
-/// The month's grid: 42 days from the Monday on or before the 1st
-pub fn month_grid(y: i32, m: u32) -> Vec<Day> {
-    let first = (y, m, 1);
-    let start = add_days(first, -(weekday(first) as i64));
-    (0..42).map(|i| add_days(start, i)).collect()
+/// 0 Sunday … 6 Saturday (tessera_core::locale's numbering)
+pub fn weekday_sun(d: Day) -> u32 {
+    (weekday(d) + 1) % 7
 }
 
-/// The week (Monday first) a day is in
-pub fn week_of(d: Day) -> Vec<Day> {
-    let start = add_days(d, -(weekday(d) as i64));
-    (0..7).map(|i| add_days(start, i)).collect()
+/// The month's grid: 42 days from the week's first day (`start`, 0 Sunday …
+/// 6 Saturday: appearance.weekStart or the system's language) on or before the 1st
+pub fn month_grid(y: i32, m: u32, start: u32) -> Vec<Day> {
+    let first = (y, m, 1);
+    let from = add_days(first, -(locale::column(weekday_sun(first), start) as i64));
+    (0..42).map(|i| add_days(from, i)).collect()
+}
+
+/// The week (from `start`) a day is in
+pub fn week_of(d: Day, start: u32) -> Vec<Day> {
+    let from = add_days(d, -(locale::column(weekday_sun(d), start) as i64));
+    (0..7).map(|i| add_days(from, i)).collect()
 }
 
 /// A month on: (year, month) `n` months from this one
@@ -230,19 +237,21 @@ pub fn add_months((y, m): (i32, u32), n: i32) -> (i32, u32) {
     (k.div_euclid(12), (k.rem_euclid(12) + 1) as u32)
 }
 
-pub const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-pub const WEEKDAYS: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+/// A day's weekday in the system's language: "Thursday", short "Thu"
+pub fn day_name(d: Day, short: bool) -> String {
+    locale::day_name(weekday_sun(d), short)
+}
 
 /// "2026-11-05", as the shell's lines key days
 pub fn key(d: Day) -> String {
     format!("{:04}-{:02}-{:02}", d.0, d.1, d.2)
 }
 
-/// The header: "November 2026", or the week "2 Nov – 8 Nov"
+/// The header: "November 2026", or the week "2 Nov – 8 Nov" (names in the system's language)
 pub fn title(shown: (i32, u32), week: Option<&[Day]>) -> String {
     match week {
-        Some(w) if w.len() == 7 => format!("{} {} – {} {}", w[0].2, &MONTHS[w[0].1 as usize - 1][..3], w[6].2, &MONTHS[w[6].1 as usize - 1][..3]),
-        _ => format!("{} {}", MONTHS[shown.1 as usize - 1], shown.0),
+        Some(w) if w.len() == 7 => format!("{} {} – {} {}", w[0].2, locale::month_name(w[0].1, true), w[6].2, locale::month_name(w[6].1, true)),
+        _ => format!("{} {}", locale::month_title(shown.1), shown.0),
     }
 }
 
@@ -253,13 +262,13 @@ pub fn day_title(d: Day, today: Day) -> String {
     } else if d == add_days(today, 1) {
         "Tomorrow".into()
     } else {
-        format!("{} {} {}", WEEKDAYS[weekday(d) as usize], d.2, MONTHS[d.1 as usize - 1])
+        format!("{} {} {}", day_name(d, false), d.2, locale::month_name(d.1, false))
     }
 }
 
 /// The editor's "New on Fri 13 Nov" (Qt's "ddd d MMM")
 pub fn short_date(d: Day) -> String {
-    format!("{} {} {}", &WEEKDAYS[weekday(d) as usize][..3], d.2, &MONTHS[d.1 as usize - 1][..3])
+    format!("{} {} {}", day_name(d, true), d.2, locale::month_name(d.1, true))
 }
 
 /// "y-mm-dd" -> the day
@@ -301,7 +310,7 @@ pub fn minutes(s: &str) -> i32 {
 
 /// Material's big date under the time ("Thursday, 5 November")
 pub fn long_date(d: Day) -> String {
-    format!("{}, {} {}", WEEKDAYS[weekday(d) as usize], d.2, MONTHS[d.1 as usize - 1])
+    format!("{}, {} {}", day_name(d, false), d.2, locale::month_name(d.1, false))
 }
 
 // ── The focus timer's ring (FocusWidget.qml's Canvas) ───────────────────────
@@ -460,14 +469,23 @@ mod tests {
         }
         assert_eq!(weekday((2026, 11, 5)), 3); // a Thursday
         assert_eq!(weekday((2026, 11, 2)), 0);
-        let g = month_grid(2026, 11);
+        let g = month_grid(2026, 11, 1);
         assert_eq!((g.len(), g[0], g[6], g[41]), (42, (2026, 10, 26), (2026, 11, 1), (2026, 12, 6)));
-        assert_eq!(week_of((2026, 11, 5)), (2..=8).map(|d| (2026, 11, d)).collect::<Vec<_>>());
+        assert_eq!(week_of((2026, 11, 5), 1), (2..=8).map(|d| (2026, 11, d)).collect::<Vec<_>>());
+        // Sunday first: 1 Nov 2026 is a Sunday, so the grid starts on it
+        let g = month_grid(2026, 11, 0);
+        assert_eq!((g[0], g[41]), ((2026, 11, 1), (2026, 12, 12)));
+        assert_eq!(week_of((2026, 11, 5), 0), (1..=7).map(|d| (2026, 11, d)).collect::<Vec<_>>());
+        // Saturday first
+        assert_eq!(month_grid(2026, 11, 6)[0], (2026, 10, 31));
+        assert_eq!(week_of((2026, 11, 7), 6)[0], (2026, 11, 7));
+        assert_eq!(weekday_sun((2026, 11, 1)), 0);
+        assert_eq!(short_date((2026, 11, 13)), "Fri 13 Nov");
         assert_eq!(add_months((2026, 11), 2), (2027, 1));
         assert_eq!(add_months((2026, 1), -1), (2025, 12));
         assert_eq!(key((2026, 1, 5)), "2026-01-05");
         assert_eq!(title((2026, 11), None), "November 2026");
-        assert_eq!(title((2026, 11), Some(&week_of((2026, 11, 30)))), "30 Nov – 6 Dec");
+        assert_eq!(title((2026, 11), Some(&week_of((2026, 11, 30), 1))), "30 Nov – 6 Dec");
         assert_eq!(day_title((2026, 11, 5), (2026, 11, 5)), "Today");
         assert_eq!(day_title((2026, 11, 6), (2026, 11, 5)), "Tomorrow");
         assert_eq!(day_title((2026, 11, 9), (2026, 11, 5)), "Monday 9 November");

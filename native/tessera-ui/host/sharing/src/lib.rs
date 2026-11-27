@@ -187,6 +187,9 @@ pub struct Sharing {
     /// the sharing modes as last seen ("10min" starts its timer)
     last_modes: (String, String),
     last_hotspot: bool,
+    /// the screen is locked (host-shell's state "locked"): nothing is
+    /// broadcast meanwhile, Quick Share's name and ids nor LocalSend's (#1009)
+    pub screen_locked: bool,
 }
 
 impl Default for Sharing {
@@ -218,6 +221,7 @@ impl Default for Sharing {
             last_store: Value::Null,
             last_modes: (String::new(), String::new()),
             last_hotspot: true,
+            screen_locked: false,
         }
     }
 }
@@ -998,6 +1002,14 @@ impl Service for Sharing {
     /// The open sheet's close, as it happens (Panels' turn sets "open"):
     /// no polling while it stays open
     fn settled(&mut self, h: &mut Host) {
+        // (locked or unlocked: visibility follows; the lock screen itself
+        // isn't touched, only its state read)
+        let locked = h.state("locked").as_bool().unwrap_or(false);
+        if locked != self.screen_locked {
+            self.screen_locked = locked;
+            eprintln!("tessera-ui: sharing: {}", if locked { "screen locked: not broadcasting" } else { "screen unlocked: visible as set" });
+            self.settle(h);
+        }
         if self.sheet_seen && !self.sheet_open(h) {
             self.sheet_seen = false;
             self.sched.cancel("sheet_poll");

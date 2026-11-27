@@ -556,7 +556,7 @@ component GroupView inherits VerticalLayout {
     }
     Rectangle {
         border-radius: 12px;
-        background: Theme.material ? transparent : Theme.dark ? #ffffff0d : white;
+        background: Theme.material ? transparent : Theme.card-bg;
         border-width: Theme.material ? 0 : 1px;
         border-color: Theme.separator;
         VerticalLayout {
@@ -577,7 +577,7 @@ component GroupView inherits VerticalLayout {
         WrapText {
             avail: SBus.page-width - (Theme.material ? 32px : 8px);
             text: b.footer;
-            color: Theme.material ? Theme.m3-on-surface-variant : Theme.tertiary;
+            color: Theme.material ? Theme.m3-on-surface-variant : Theme.secondary; // (11 px notes: the readable grey, #254)
             font-size: Theme.material ? 12px : Theme.caption;
             letter-spacing: Theme.material ? 0.4px : 0;
         }
@@ -919,7 +919,7 @@ export component SettingsWindow inherits Window {
             y: 0;
             width: Theme.material ? 300px : 230px;
             height: parent.height;
-            property <color> bg: Theme.material ? Theme.m3-surface-container : Theme.dark ? #1f1f24c7 : #f0f0f5cc;
+            property <color> bg: Theme.material ? Theme.m3-surface-container : Theme.sidebar-bg;
             background: self.bg;
 
             // Glass: scrolled down and idle, the search folds into a magnifier
@@ -1334,7 +1334,7 @@ export component SettingsWindow inherits Window {
             x: side.width;
             width: parent.width - side.width;
             height: parent.height;
-            background: Theme.material ? Theme.m3-surface : Theme.dark ? #1e1e21 : #f5f5f7;
+            background: Theme.material ? Theme.m3-surface : Theme.window-bg;
             property <length> bar-h: Theme.material ? 64px : 52px;
             // Material: the headline has scrolled under the top bar
             property <bool> collapsed: Theme.material && page-scroll.content-y < -(headline.y + headline.height - 8px);
@@ -1443,7 +1443,7 @@ export component SettingsWindow inherits Window {
                         property <bool> usable: d < 0 ? can-back : can-forward;
                         width: Theme.material ? 40px : 28px;
                         height: self.width;
-                        opacity: usable ? 1 : (Theme.material ? 0.38 : 0.35);
+                        opacity: usable ? 1 : (Theme.material ? 0.38 : Theme.disabled-alpha);
                         border-radius: Theme.material ? self.height / 2 : Theme.radius-control - 2px;
                         background: Theme.material ? Theme.m3-on-surface-variant.with-alpha(ata.pressed ? 0.1 : ata.has-hover ? 0.08 : 0) : ata.pressed ? Theme.fill-pressed : ata.has-hover ? Theme.fill : transparent;
                         accessible-role: AccessibleRole.button;

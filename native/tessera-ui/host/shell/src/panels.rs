@@ -64,6 +64,23 @@ pub struct Model {
     pub nc_tab: i64,
     pub last_closed: String,
     pub last_closed_at: i64,
+    /// the on-screen keyboard is up, and on which output: it is not one of
+    /// the panels (#763: it stays up while Search, Control Center or a menu
+    /// opens over it, so it can type into them, and its tile can close it)
+    pub keyboard: bool,
+    pub keyboard_screen: String,
+}
+
+/// The panel that is the on-screen keyboard (Panels calls it so; the surface is "osk")
+pub const KEYBOARD: &str = "keyboard";
+
+/// A panel's output: the one asked for, else the focused one, else the first
+fn pick_screen(screen: Option<&str>, focused: &str, first: &str) -> String {
+    match screen.filter(|s| !s.is_empty()) {
+        Some(s) => s.to_string(),
+        None if !focused.is_empty() => focused.to_string(),
+        None => first.to_string(),
+    }
 }
 
 impl Model {
@@ -72,21 +89,26 @@ impl Model {
     }
 
     pub fn is_open(&self, name: &str, screen: Option<&str>) -> bool {
+        if name == KEYBOARD {
+            return self.keyboard && screen.map_or(true, |s| s.is_empty() || self.keyboard_screen == s);
+        }
         self.open == name && screen.map_or(true, |s| s.is_empty() || self.screen == s)
     }
 
     /// Panels.show: `screen` None is the focused one (`focused`), else the first
     pub fn show(&mut self, name: &str, screen: Option<&str>, x: Option<f64>, action: Option<&str>, focused: &str, first: &str) {
+        // (the keyboard comes up beside whatever panel is open, which stays)
+        if name == KEYBOARD {
+            self.keyboard = true;
+            self.keyboard_screen = pick_screen(screen, focused, first);
+            return;
+        }
         if name != "missionControl" {
             self.expose_app.clear();
         }
         self.session_action = if name == "session" { action.unwrap_or("").to_string() } else { String::new() };
         self.open = name.to_string();
-        self.screen = match screen.filter(|s| !s.is_empty()) {
-            Some(s) => s.to_string(),
-            None if !focused.is_empty() => focused.to_string(),
-            None => first.to_string(),
-        };
+        self.screen = pick_screen(screen, focused, first);
         // (no x — a shortcut, a command — is "no item": 0, so the menu finds
         // its own item rather than the last panel's, #159)
         self.anchor_x = x.unwrap_or(0.0);
@@ -95,6 +117,16 @@ impl Model {
     /// Panels.toggle: a click on a menu bar item first dismisses the open
     /// popover, then reaches the item; that must not reopen the same popover
     pub fn toggle(&mut self, name: &str, screen: Option<&str>, x: Option<f64>, now: i64, focused: &str, first: &str) {
+        // (no popover closes on the click that reaches the keyboard's button:
+        // up on this screen it goes, else it comes here)
+        if name == KEYBOARD {
+            if self.is_open(KEYBOARD, screen) {
+                self.keyboard = false;
+            } else {
+                self.show(KEYBOARD, screen, x, None, focused, first);
+            }
+            return;
+        }
         if self.is_open(name, screen) || (self.last_closed == name && now - self.last_closed_at < 250) {
             self.close(now);
         } else {
@@ -190,6 +222,8 @@ pub struct Panels {
     sent_live: bool,
     sent_bridge_page: String,
     sent_quick_look: String,
+    /// the keyboard's surface was told to open there (None: closed)
+    sent_keyboard: Option<String>,
     /// the other host crates' fields of each settings page group (`settings.feed`)
     feeds: std::collections::BTreeMap<String, Value>,
     sent_feeds: std::collections::BTreeMap<String, String>,
@@ -256,6 +290,8 @@ impl Panels {
             "toggle" => self.m.toggle(&panel_of(str_arg(a, 0)), opt(str_arg(a, 1)), a.get(2).and_then(Value::as_f64), now, &f, &first),
             // toggleAt <panel> <screen> <x>: a panel under its menu bar item
             "toggleAt" => self.m.toggle(&panel_of(str_arg(a, 0)), opt(str_arg(a, 1)), a.get(2).and_then(|x| x.as_f64().or_else(|| x.as_str().and_then(|s| s.parse().ok()))), now, &f, &first),
+            // (close ["keyboard"]: only the keyboard; the open panel stays)
+            "close" if panel_of(str_arg(a, 0)) == KEYBOARD => self.m.keyboard = false,
             "close" => self.m.close(now),
             // a panel drawn here is open: close it (the window-management surfaces)
             "closeOpen" => {
@@ -266,6 +302,11 @@ impl Panels {
             "closed" => {
                 // it closed itself (Esc, a click outside, a pick): follow, if still the open one
                 let surface = str_arg(a, 0).to_string();
+                if panel_of(&surface) == KEYBOARD {
+                    self.m.keyboard = false;
+                    self.sent_keyboard = None;
+                    return;
+                }
                 if self.forwarded == surface {
                     self.forwarded.clear();
                 }
@@ -401,6 +442,8 @@ impl Panels {
         let m = &self.m;
         h.set_state("open", json!(m.open));
         h.set_state("screen", json!(m.screen));
+        // (ShellState::open("keyboard") reads this; the dock steps aside for it)
+        h.set_state("osk", json!({"open": m.keyboard, "screen": m.keyboard_screen}));
         h.set_state("panels", json!({
             "open": m.open, "screen": m.screen, "anchorX": m.anchor_x, "ccPage": m.cc_page, "sessionAction": m.session_action,
             "sharePaths": m.share_paths, "shareNote": m.share_note, "quickLookPath": m.quick_look_path, "exposeApp": m.expose_app,
@@ -427,6 +470,15 @@ impl Panels {
         self.forwarded = want;
         self.forwarded_screen = scr;
         self.forwarded_panel = panel;
+        // The on-screen keyboard: up or down on its own, whatever else is open
+        let kb = (self.m.keyboard && drawing(h, "osk")).then(|| self.m.keyboard_screen.clone());
+        if kb != self.sent_keyboard {
+            match &kb {
+                Some(s) => h.command("open", "osk", Some(s.as_str()), json!({"panel": KEYBOARD})),
+                None => h.command("close", "osk", None, json!({})),
+            }
+            self.sent_keyboard = kb;
+        }
     }
 
     /// After a change: everything that follows Panels' properties
@@ -562,6 +614,7 @@ impl Panels {
             // the surfaces are up: what they are told at "ready"
             "ready" => {
                 self.forwarded.clear();
+                self.sent_keyboard = None;
                 self.sent_tab = -1;
                 self.sent_settings = None;
                 self.sent_app_store = None;
@@ -867,6 +920,27 @@ mod tests {
         // opened without an x (a shortcut): no stale anchor from the last one
         m.show("soundMenu", None, None, None, "", "eDP-1");
         assert_eq!(m.anchor_x, 0.0);
+    }
+
+    #[test]
+    fn the_keyboard_stays_up_beside_the_panels() {
+        let mut m = Model::new();
+        m.show("controlCenter", None, None, None, "DP-1", "");
+        // (Control Center's tile: the keyboard comes up, Control Center stays)
+        m.toggle(KEYBOARD, None, None, 10, "DP-1", "");
+        assert!(m.keyboard && m.is_open(KEYBOARD, Some("DP-1")) && m.is_open("controlCenter", None));
+        assert_eq!(m.open, "controlCenter");
+        // another panel, or closing the open one, leaves it up
+        m.show("spotlight", None, None, None, "DP-1", "");
+        m.close(20);
+        assert!(m.is_open(KEYBOARD, None) && m.open.is_empty());
+        // the same button again puts it away at once (no 250 ms guard)
+        m.toggle(KEYBOARD, Some("DP-1"), None, 21, "DP-1", "");
+        assert!(!m.keyboard);
+        // a button on another screen moves it there
+        m.show(KEYBOARD, Some("DP-1"), None, None, "", "");
+        m.toggle(KEYBOARD, Some("HDMI-A-1"), None, 30, "DP-1", "");
+        assert!(m.keyboard && m.keyboard_screen == "HDMI-A-1" && !m.is_open(KEYBOARD, Some("DP-1")));
     }
 
     #[test]

@@ -37,7 +37,7 @@ pub fn settings(cfg: &serde_json::Value) -> Settings {
         name: s(&cfg["today"]["name"], ""),
         chime: cfg["sounds"]["today"].as_bool().unwrap_or(true),
         reduce_motion: cfg["appearance"]["reduceMotion"].as_bool().unwrap_or(false),
-        clock24: cfg["appearance"]["clock24"].as_bool().unwrap_or(false),
+        clock24: tessera_core::locale::clock24(&cfg),
     }
 }
 
@@ -55,8 +55,7 @@ pub fn entrance(asked: &str, setting: &str) -> &'static str {
 
 // ── Words ────────────────────────────────────────────────────────────────
 
-const WEEKDAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+use tessera_core::locale;
 
 /// TimeFormat.hm: "9:05 AM", or "09:05"
 pub fn hm(ms: i64, h24: bool) -> String {
@@ -80,19 +79,19 @@ pub fn hour(h: u32, h24: bool) -> String {
 /// "dddd, d MMMM": "Thursday, 5 November"
 pub fn long_date(ms: i64) -> String {
     let t = calendar::local(ms);
-    format!("{}, {} {}", WEEKDAYS[t.wday as usize], t.d, MONTHS[t.mo as usize])
+    format!("{}, {} {}", locale::day_name(t.wday as u32, false), t.d, locale::month_name(t.mo as u32 + 1, false))
 }
 
 /// "ddd d MMM": "Thu 5 Nov"
 pub fn short_date(ms: i64) -> String {
     let t = calendar::local(ms);
-    format!("{} {} {}", &WEEKDAYS[t.wday as usize][..3], t.d, &MONTHS[t.mo as usize][..3])
+    format!("{} {} {}", locale::day_name(t.wday as u32, true), t.d, locale::month_name(t.mo as u32 + 1, true))
 }
 
 /// "MMM", upper case: "NOV"; and the day of the month
 pub fn cookie(ms: i64) -> (String, String) {
     let t = calendar::local(ms);
-    (MONTHS[t.mo as usize][..3].to_uppercase(), t.d.to_string())
+    (locale::month_name(t.mo as u32 + 1, true).to_uppercase(), t.d.to_string())
 }
 
 /// Today.dayKey: "YYYY-MM-DD" of the day, days starting at 4 AM

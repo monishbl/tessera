@@ -183,7 +183,7 @@ pub fn material(cfg: &Value) -> bool {
 
 /// TimeFormat.hm: "9:41 AM" or "09:41" (Settings → Appearance → 24-hour time)
 pub fn hm(cfg: &Value, secs: i64) -> String {
-    tessera_core::util::strftime(if cfg_bool(cfg, "appearance.clock24", false) { "%H:%M" } else { "%-I:%M %p" }, secs)
+    tessera_core::util::strftime(if tessera_core::locale::clock24(cfg) { "%H:%M" } else { "%-I:%M %p" }, secs)
 }
 
 // ── Processes ───────────────────────────────────────────────────────────────

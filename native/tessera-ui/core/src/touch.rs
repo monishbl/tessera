@@ -14,6 +14,9 @@
 //!     nothing more until it lifts;
 //!   - cancelled by the compositor (a gesture took it): the button, if down,
 //!     comes up outside, so nothing is clicked.
+//! A surface that asked for it (`press_at_once`: the on-screen keyboard)
+//! has the left button go down as the finger does and come up as it lifts,
+//! with no long press: a key types on touch and repeats while held (#1051).
 //! The pointer seen by Slint moves to the finger first, so hovers show.
 
 use crate::wayland::State;
@@ -55,6 +58,23 @@ thread_local! {
     static FINGER: RefCell<Option<Finger>> = const { RefCell::new(None) };
     static SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static TOUCH: RefCell<Option<WlTouch>> = const { RefCell::new(None) };
+    /// the namespaces of the surfaces pressed at once (`press_at_once`)
+    static AT_ONCE: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A finger on this surface (by its layer namespace) presses at once and
+/// lets go as it lifts: no tap, no drag slop, no long press
+pub fn press_at_once(namespace: &str) {
+    AT_ONCE.with(|a| {
+        let mut a = a.borrow_mut();
+        if !a.iter().any(|n| n == namespace) {
+            a.push(namespace.to_string());
+        }
+    });
+}
+
+fn pressed_at_once(namespace: &str) -> bool {
+    AT_ONCE.with(|a| a.borrow().iter().any(|n| n == namespace))
 }
 
 /// The seat has touch: listen (wayland.rs's SeatHandler)
@@ -65,6 +85,12 @@ pub fn bind(st: &mut State, qh: &QueueHandle<State>, seat: &smithay_client_toolk
     if let Ok(t) = smithay_client_toolkit::seat::SeatHandler::seat_state(st).get_touch(qh, seat) {
         TOUCH.with(|x| *x.borrow_mut() = Some(t));
     }
+}
+
+/// This computer has a touch screen (the seat offers touch): Settings →
+/// Accessibility's "Only on touch screens" (settings::OskButton)
+pub fn has_touch() -> bool {
+    TOUCH.with(|t| t.borrow().is_some())
 }
 
 /// The seat lost touch
@@ -155,6 +181,12 @@ impl TouchHandler for State {
             q.get()
         });
         send(&s, WindowEvent::PointerMoved { position: pos(position) });
+        if pressed_at_once(&s.namespace) {
+            // (down now, up where it lifts: as a drag from the first moment)
+            send(&s, WindowEvent::PointerPressed { position: pos(position), button: PointerEventButton::Left });
+            FINGER.with(|f| *f.borrow_mut() = Some(Finger { id, surface: s, start: position, at: position, phase: Phase::Dragging, seq }));
+            return;
+        }
         FINGER.with(|f| *f.borrow_mut() = Some(Finger { id, surface: s, start: position, at: position, phase: Phase::Waiting, seq }));
         // the long press: a right click where the finger rests
         let timer = smithay_client_toolkit::reexports::calloop::timer::Timer::from_duration(HOLD);
@@ -218,5 +250,17 @@ mod tests {
         // after a long press, nothing more
         assert_eq!(step(Phase::Held, (0.0, 0.0), (50.0, 0.0), false), (Phase::Held, Act::Nothing));
         assert_eq!(step(Phase::Held, (0.0, 0.0), (50.0, 0.0), true), (Phase::Held, Act::Nothing));
+    }
+
+    #[test]
+    fn some_surfaces_press_at_once() {
+        assert!(!pressed_at_once("tessera:test-keys"));
+        press_at_once("tessera:test-keys");
+        press_at_once("tessera:test-keys");
+        assert!(pressed_at_once("tessera:test-keys") && !pressed_at_once("tessera:spotlight"));
+        assert_eq!(AT_ONCE.with(|a| a.borrow().iter().filter(|n| *n == "tessera:test-keys").count()), 1);
+        // (pressed at once, the finger is a drag from the start: it follows, and lets go where it lifts)
+        assert_eq!(step(Phase::Dragging, (0.0, 0.0), (2.0, 0.0), false), (Phase::Dragging, Act::Move));
+        assert_eq!(step(Phase::Dragging, (0.0, 0.0), (2.0, 0.0), true), (Phase::Dragging, Act::EndDrag));
     }
 }

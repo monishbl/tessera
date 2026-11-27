@@ -20,6 +20,11 @@ use tessera_core::host::{Host, Service};
 
 const NAME: &str = "SpeedTest";
 const PHASE_SECS: f64 = 9.0; // (as in the script)
+/// Ookla's terms, accepted in Settings → Network (network.ooklaAccepted)
+pub fn ookla_accepted(cfg: &Value) -> bool {
+    cfg["network"]["ooklaAccepted"].as_bool().unwrap_or(false)
+}
+pub const OOKLA_TERMS_NEEDED: &str = "Accept Ookla's licence and privacy notice in Settings → Network first, or switch to Cloudflare.";
 pub const OOKLA_INSTALL: &str = "Install Ookla's speedtest with “paru -S ookla-speedtest-bin” (or “sudo pacman -S speedtest-cli”), or switch to Cloudflare.";
 
 // ── Strings (the QML's format helpers) ─────────────────────────────────────
@@ -341,7 +346,7 @@ impl SpeedTest {
                 "loadedDown": self.loaded_down, "loadedUp": self.loaded_up, "live": self.live, "progress": self.progress,
                 "usedBytes": self.used_bytes, "server": self.server, "client": self.client, "resultUrl": self.result_url,
                 "error": self.error, "finishedAt": self.finished_at, "hasOokla": self.has_ookla, "hasOoklaPy": self.has_ookla_py,
-                "ooklaReady": self.ookla_ready(), "ooklaInstall": OOKLA_INSTALL, "history": self.history,
+                "ooklaReady": self.ookla_ready(), "ooklaAccepted": ookla_accepted(h.cfg()), "ooklaInstall": OOKLA_INSTALL, "history": self.history,
                 "last": self.history.first().cloned().unwrap_or(Value::Null), "link": self.link,
             }),
         );
@@ -376,6 +381,12 @@ impl SpeedTest {
             self.stage = "error".into();
             return;
         }
+        // (Ookla's terms are yours to accept, in Settings: never answered for you; #338)
+        if backend == "ookla" && !ookla_accepted(h.cfg()) {
+            self.error = OOKLA_TERMS_NEEDED.into();
+            self.stage = "error".into();
+            return;
+        }
         self.pings.clear();
         self.loaded = (vec![], vec![]);
         self.ping = -1.0;
@@ -398,7 +409,8 @@ impl SpeedTest {
         let which = if backend == "ookla" { if self.has_ookla { "ookla" } else { "ookla-py" } } else { "cloudflare" };
         let (a, b) = (h.sender(NAME), h.sender(NAME));
         let script = crate::util::script("speedtest.sh");
-        self.watch = Some(Watch::start(&[&script, which], None, move |l| a(Box::new(M::Line(l))), move |c, cancelled| b(Box::new(M::Exit(c, cancelled)))));
+        let consent = if backend == "ookla" { "accepted" } else { "" };
+        self.watch = Some(Watch::start(&[&script, which, consent], None, move |l| a(Box::new(M::Line(l))), move |c, cancelled| b(Box::new(M::Exit(c, cancelled)))));
         self.read_link(h);
     }
 
@@ -460,6 +472,7 @@ impl SpeedTest {
                 self.error = match code {
                     "offline" => "You're offline: connect to Wi-Fi or a network, then test again.".into(),
                     "curl" => format!("The speed test needs curl. Install it with “{}”.", tessera_core::util::install_hint("curl", "", "")),
+                    "terms" => OOKLA_TERMS_NEEDED.into(),
                     "timeout" => format!("{msg}. Your connection may be very slow or blocked; try again, or switch the server in Settings → Network."),
                     "ookla" => {
                         if msg.contains("installed") {
@@ -655,6 +668,13 @@ impl Service for SpeedTest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ookla_needs_your_yes() {
+        assert!(!ookla_accepted(&json!({})));
+        assert!(!ookla_accepted(&json!({"network": {"speedTest": "ookla"}})));
+        assert!(ookla_accepted(&json!({"network": {"ooklaAccepted": true}})));
+    }
 
     #[test]
     fn strings() {

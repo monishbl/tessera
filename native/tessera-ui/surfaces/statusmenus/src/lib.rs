@@ -245,6 +245,7 @@ fn block(b: &Block, first: bool, last: bool, material: bool, (caption, small): (
         cur: b.current,
         flag: b.flag,
         gap,
+        tw: width - 12.0,
         first,
         last,
         graph: b.graph.as_str().into(),
@@ -517,7 +518,7 @@ impl StatusMenus {
     fn profiles(&self) -> Vec<Profile> {
         self.feed["profiles"]
             .as_array()
-            .map(|a| a.iter().map(|p| Profile { name: p["name"].as_str().unwrap_or("").into(), kind: p["kind"].as_str().unwrap_or("").into(), busy: p["busy"].as_bool().unwrap_or(false) }).collect())
+            .map(|a| a.iter().map(|p| Profile { name: p["name"].as_str().unwrap_or("").into(), kind: p["kind"].as_str().unwrap_or("").into(), busy: p["busy"].as_bool().unwrap_or(false), id: p["id"].as_str().unwrap_or("").into() }).collect())
             .unwrap_or_default()
     }
 
@@ -603,7 +604,7 @@ impl StatusMenus {
     fn push_weather(&self, st: &State) {
         let Some(w) = &self.win else { return };
         let wx = st.shell.get::<Weather>().cloned().unwrap_or_default();
-        let h24 = st.shell.cfg["appearance"]["clock24"].as_bool().unwrap_or(false);
+        let h24 = tessera_core::locale::clock24(&st.shell.cfg);
         w.ui.set_wx_note(model::weather_note(wx.ready, &wx.error).into());
         w.ui.set_wx_place(if wx.place.is_empty() { "Weather".into() } else { wx.place.as_str().into() });
         w.ui.set_wx_icon(tessera_core::icons::glyph(if wx.icon.is_empty() { "cloud" } else { wx.icon }).into());
@@ -866,8 +867,8 @@ impl StatusMenus {
             self.close(st, true);
             return;
         }
-        if let Some(n) = b.id.strip_prefix("prof:") {
-            shell::ask("statusmenus", json!(["profile", n.parse::<i64>().unwrap_or(-1)]));
+        if let Some(id) = b.id.strip_prefix("prof:") {
+            shell::ask("statusmenus", json!(["profile", id]));
         } else if let Some(name) = b.id.strip_prefix("out:") {
             audio::send(Cmd::DefaultSink(name.into()));
         } else if let Some(name) = b.id.strip_prefix("in:") {

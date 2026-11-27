@@ -9,9 +9,7 @@
 //   system      how resource graphs are drawn
 
 import { Theme } from "@tessera/theme.slint";
-import { IconButton } from "@tessera/widgets.slint";
-import { Segmented } from "@tessera/calendar.slint";
-import { KeyStop } from "@tessera/focus.slint";
+import { IconButton, TextField, Switch, Segmented, PillButton } from "@tessera/widgets.slint";
 
 component Lbl inherits Text {
     color: Theme.label;
@@ -24,95 +22,6 @@ component Hint inherits Text {
     color: Theme.secondary;
     font-size: Theme.small;
     wrap: word-wrap;
-}
-
-// A text field (TextField.qml): it keeps what is typed as it loses focus
-component Field inherits Rectangle {
-    in-out property <string> text <=> input.text;
-    in property <string> placeholder;
-    in property <string> label;
-    in property <bool> autofocus;
-    callback commit(string);
-    callback enter(string);
-    init => {
-        if root.autofocus {
-            input.focus();
-        }
-    }
-    height: 36px;
-    border-radius: Theme.material ? self.height / 2 : Theme.radius-control;
-    background: Theme.material ? Theme.m3-surface-container-highest : Theme.fill;
-    border-width: 1px;
-    border-color: input.has-focus ? (Theme.material ? Theme.m3-primary : Theme.accent) : transparent;
-    clip: true;
-    input := TextInput {
-        x: 12px;
-        width: parent.width - 24px;
-        height: parent.height;
-        single-line: true;
-        vertical-alignment: center;
-        color: Theme.label;
-        font-size: Theme.body + 1px;
-        selection-background-color: Theme.material ? Theme.m3-primary.with-alpha(0.3) : Theme.accent.with-alpha(0.4);
-        accessible-label: root.label;
-        accepted => {
-            root.commit(self.text);
-            root.enter(self.text);
-        }
-        changed has-focus => {
-            if !self.has-focus {
-                root.commit(self.text);
-            }
-        }
-    }
-    if input.text == "": Text {
-        x: 12px;
-        width: parent.width - 24px;
-        height: parent.height;
-        text: root.placeholder;
-        color: Theme.tertiary;
-        font-size: Theme.body + 1px;
-        vertical-alignment: center;
-        overflow: elide;
-        accessible-role: none;
-    }
-}
-
-// A switch (Switch.qml): Glass the accent when on, Material primary with a round thumb
-component Toggle inherits Rectangle {
-    in property <bool> checked;
-    in property <string> label;
-    callback toggled(bool);
-    width: Theme.material ? 52px : 40px;
-    height: Theme.material ? 32px : 24px;
-    border-radius: self.height / 2;
-    background: checked ? (Theme.material ? Theme.m3-primary : Theme.accent) : (Theme.material ? Theme.m3-surface-container-highest : Theme.toggle-off);
-    border-width: Theme.material && !checked ? 2px : 0px;
-    border-color: Theme.m3-outline;
-    animate background { duration: Theme.hover; }
-    accessible-role: switch;
-    accessible-label: label;
-    accessible-checked: checked;
-    accessible-action-default => { toggled(!checked); }
-    Rectangle {
-        property <length> d: Theme.material ? (checked ? 24px : 16px) : 20px;
-        width: d;
-        height: d;
-        y: (parent.height - d) / 2;
-        x: checked ? parent.width - d - (parent.height - d) / 2 : (parent.height - d) / 2;
-        border-radius: d / 2;
-        background: Theme.material ? (checked ? Theme.m3-on-primary : Theme.m3-outline) : #ffffff;
-        animate x, width, height { duration: Theme.motion(180ms); easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
-    }
-    TouchArea {
-        mouse-cursor: pointer;
-        clicked => { toggled(!checked); }
-    }
-    // (Tab reaches it, Space or Enter flips it, #520)
-    KeyStop {
-        radius: root.border-radius;
-        activated => { root.toggled(!root.checked); }
-    }
 }
 
 export component WidgetOptions inherits Window {
@@ -225,13 +134,17 @@ export component WidgetOptions inherits Window {
                     Lbl { text: field-label; }
                     HorizontalLayout {
                         spacing: 8px;
-                        Field {
+                        TextField {
+                            height: 36px;
                             text <=> root.field-edit;
                             autofocus: true;
                             placeholder: root.placeholder;
                             label: field-label;
-                            commit(t) => { root.commit(t); }
-                            enter(t) => { root.dismissed(); }
+                            left(t) => { root.commit(t); }
+                            accepted(t) => {
+                                root.commit(t);
+                                root.dismissed();
+                            }
                         }
                         if kind == "photos": IconButton {
                             width: 36px;
@@ -253,10 +166,10 @@ export component WidgetOptions inherits Window {
                         Lbl { text: "Smart rotate"; }
                         Hint { text: "Brings forward what matters now: music, the next event, a low battery. For every Widget Stack."; }
                     }
-                    Toggle {
+                    Switch {
                         checked: smart-rotate;
                         label: "Smart rotate";
-                        toggled(on) => { root.rotate(on); }
+                        toggled => { root.rotate(!smart-rotate); }
                     }
                 }
                 // System: resource graphs
@@ -278,31 +191,10 @@ export component WidgetOptions inherits Window {
                     height: Theme.material ? 40px : 36px;
                     HorizontalLayout {
                         alignment: end;
-                        Rectangle {
-                            width: dl.preferred-width + (Theme.material ? 48px : 32px);
-                            border-radius: Theme.material ? self.height / 2 : Theme.radius-control;
-                            background: Theme.material ? Theme.m3-primary.mix(Theme.m3-on-primary, dt.pressed ? 0.9 : dt.has-hover ? 0.92 : 1)
-                                : dt.pressed ? Theme.accent.darker(0.15) : dt.has-hover ? Theme.accent.brighter(0.08) : Theme.accent;
-                            accessible-role: button;
-                            accessible-label: "Done";
-                            accessible-action-default => { root.finish(); }
-                            dl := Text {
-                                x: (parent.width - self.width) / 2;
-                                y: (parent.height - self.height) / 2;
-                                text: "Done";
-                                color: Theme.material ? Theme.m3-on-primary : Theme.on-accent;
-                                font-size: Theme.material ? 14px : Theme.small;
-                                font-weight: Theme.material ? 500 : 600;
-                                accessible-role: none;
-                            }
-                            dt := TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => { root.finish(); }
-                            }
-                            KeyStop {
-                                radius: parent.border-radius;
-                                activated => { root.finish(); }
-                            }
+                        PillButton {
+                            kind: 1;
+                            text: "Done";
+                            clicked => { root.finish(); }
                         }
                     }
                 }

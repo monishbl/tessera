@@ -6,8 +6,11 @@
 # untouched), and it must
 #   1. start, and answer IPC within 30 s,
 #   2. draw: the wallpaper and the bar up ("shell ready"),
-#   3. lock and unlock and still answer (the lock is what a restart into an
-#      update leans on),
+#   3. lock and unlock, and say so: `ipc call lock state` must answer
+#      "locked" (the compositor holds the session lock) within 10 s of the
+#      lock, then "unlocked" within 10 s of the unlock, and the shell still
+#      answer (the lock is what a restart into an update leans on, and the
+#      riskiest thing to ship broken; audit #719),
 # else the set isn't made ready, and why is the last line.
 #
 #   tools/release-builder/pretest.sh <tessera-ui binary> <checkout of its commit> [arena number]
@@ -36,9 +39,14 @@ for _ in $(seq 60); do q call shell ready >/dev/null && { up=1; break; }; sleep 
 drawn=0
 for _ in $(seq 40); do [ "$(q call shell ready)" = yes ] && { drawn=1; break; }; sleep 0.5; done
 [ $drawn = 1 ] && ok draws || { ok "fail: it answered but never drew (no wallpaper and bar)"; exit 0; }
-q call lock lock >/dev/null; sleep 2
+# (lock state: locked | locking | unlocking | unlocked; "" from a build
+# that can't say, which fails: a lock nobody can see working isn't tested)
+waitlock() { s=; for _ in $(seq 20); do s=$(q call lock state); [ "$s" = "$1" ] && return 0; sleep 0.5; done; return 1; }
+q call lock lock >/dev/null
+waitlock locked || { ok "fail: it did not lock within 10 s (lock state: ${s:-no answer})"; exit 0; }
 q call shell ready >/dev/null || { ok "fail: it stopped answering once locked"; exit 0; }
-q call lock unlock >/dev/null; sleep 2
+q call lock unlock >/dev/null
+waitlock unlocked || { ok "fail: it did not unlock within 10 s (lock state: ${s:-no answer})"; exit 0; }
 q call shell ready >/dev/null && [ "$(q call shell ready)" = yes ] && ok locks || ok "fail: it did not come back from the lock"
 '
 WALL=$(ls site/film/tessera/capture/seed/photos 2>/dev/null | grep -m1 -iE '[.](jpe?g|png)$')

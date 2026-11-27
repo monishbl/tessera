@@ -168,7 +168,7 @@ impl System {
     }
 
     fn clock24(h: &Host) -> bool {
-        h.cfg()["appearance"]["clock24"].as_bool().unwrap_or(false)
+        tessera_core::locale::clock24(&h.cfg())
     }
 
     fn status(&self, h: &Host) -> String {

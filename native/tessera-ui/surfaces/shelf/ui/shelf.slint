@@ -8,6 +8,7 @@
 
 import { Theme } from "@tessera/theme.slint";
 import { SymIcon } from "@tessera/symbols.slint";
+import { IconButton } from "@tessera/widgets.slint";
 
 // One row: a picture or a glyph, a name and where it is
 export struct ShelfItem {
@@ -20,45 +21,6 @@ export struct ShelfItem {
     first: bool, // (Material's segmented list: outer corners 16, inner 4)
     last: bool,
     index: int, // on the shelf; -1: everything ("All N items")
-}
-
-// A ghost icon button (IconButton.qml): Glass a fill on hover; Material
-// round, a state layer, squaring off while pressed
-component ShelfButton inherits Rectangle {
-    in property <string> icon;
-    in property <bool> bold;
-    in property <length> icon-size: 16px;
-    in property <color> icon-color: Theme.secondary;
-    in property <string> label;
-    out property <bool> hovered: touch.has-hover;
-    callback clicked();
-    width: 28px;
-    height: 28px;
-    border-radius: Theme.material ? (touch.pressed ? min(8px, self.height / 2) : self.height / 2) : Theme.radius-control - 2px;
-    background: Theme.material ? (touch.pressed ? Theme.m3-on-surface-variant.with-alpha(0.1) : touch.has-hover ? Theme.m3-on-surface-variant.with-alpha(0.08) : transparent)
-        : touch.pressed ? Theme.fill-pressed : touch.has-hover ? Theme.fill : transparent;
-    animate background { duration: Theme.hover; }
-    animate border-radius { duration: Theme.move-fast; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
-    // (ElasticControl: Material swells 1 + min(6 %, 10 px) = 1.06 on springPress
-    // 7.5/0.3 → 290 ms spring(0.57); Glass squishes to 0.95 on spring 6 /
-    // damping 0.37 → ω 19.4, ζ 0.60: 325 ms spring(0.4); no rubber band)
-    // (Material's swell off with Reduce motion, as every other press: Theme.press-bounce)
-    transform-scale: touch.pressed ? (Theme.material ? (Theme.press-bounce ? 1.06 : 1) : 0.95) : 1;
-    transform-origin: { x: self.width / 2, y: self.height / 2 };
-    animate transform-scale { duration: Theme.motion(Theme.material ? 290ms : 325ms); easing: Theme.material ? spring(0.57) : spring(0.4); }
-    accessible-role: button;
-    accessible-label: label;
-    accessible-action-default => { clicked(); }
-    SymIcon {
-        text: icon;
-        bold: root.bold;
-        font-size: icon-size;
-        color: icon-color;
-    }
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
 }
 
 // A row of the shelf (ShelfRow.qml); dragged out, it carries its item (or all)
@@ -152,7 +114,7 @@ component ShelfRow inherits Rectangle {
         accessible-role: none;
     }
 
-    close := ShelfButton {
+    close := IconButton {
         // (the row's hover: over the row, or over this button on it)
         visible: removable && (grab.has-hover || self.hovered);
         x: parent.width - self.width - 4px;
@@ -265,17 +227,17 @@ export component ShelfCard inherits Window {
             height: 28px;
             x: parent.width - 12px - self.preferred-width;
             spacing: 2px;
-            if has-paths: ShelfButton {
+            if has-paths: IconButton {
                 icon: g-share;
                 label: "Share to a nearby device";
                 clicked => { root.share(); }
             }
-            if count > 0: ShelfButton {
+            if count > 0: IconButton {
                 icon: g-trash;
                 label: "Clear the shelf";
                 clicked => { root.clear(); }
             }
-            ShelfButton {
+            IconButton {
                 icon: g-x;
                 label: "Close";
                 clicked => { root.close(); }

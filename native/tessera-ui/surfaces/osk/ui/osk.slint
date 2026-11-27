@@ -5,6 +5,8 @@
 // shrinking a little while pressed. Material, as Gboard: letters on the
 // highest container, the other keys tonal, Return in primary container, a
 // latched modifier filled primary; a pressed key rounds into a pill.
+// A key types as it goes down and, held, again after 400 ms and then every
+// 40 ms, as a hardware keyboard repeats (#1051); modifiers only latch.
 
 import { Theme } from "@tessera/theme.slint";
 
@@ -27,6 +29,9 @@ component Cap inherits Rectangle {
     in property <OskKey> key;
     in property <length> unit;
     callback pressed();
+    callback repeat();
+    // (held past the first delay: the quick repeats)
+    property <bool> repeating;
     property <color> m-base: key.latched ? Theme.m3-primary : key.action ? Theme.m3-primary-container : key.wide ? Theme.m3-secondary-container : Theme.m3-surface-container-highest;
     property <color> m-ink: key.latched ? Theme.m3-on-primary : key.action ? Theme.m3-on-primary-container : key.wide ? Theme.m3-on-secondary-container : Theme.m3-on-surface;
     width: unit * key.units - 6px;
@@ -54,7 +59,20 @@ component Cap inherits Rectangle {
         accessible-role: none;
     }
     touch := TouchArea {
-        clicked => { root.pressed(); }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                root.repeating = false;
+                root.pressed();
+            }
+        }
+    }
+    Timer {
+        interval: root.repeating ? 40ms : 400ms;
+        running: touch.pressed && !root.key.modifier;
+        triggered => {
+            root.repeating = true;
+            root.repeat();
+        }
     }
 }
 
@@ -63,6 +81,7 @@ export component Keyboard inherits Window {
     in property <length> unit: 58px;
     in property <bool> on-glass;
     callback pressed(int, int);
+    callback repeat(int, int);
     property <length> m: 20px;
 
     background: transparent;
@@ -95,6 +114,7 @@ export component Keyboard inherits Window {
                 key: k;
                 unit: root.unit;
                 pressed => { root.pressed(r, c); }
+                repeat => { root.repeat(r, c); }
             }
         }
     }

@@ -269,6 +269,8 @@ impl Toolbar {
             })
             .collect();
         w.tool_rows.set(tools);
+        let f = geometry::fit(&self.tools);
+        ui.set_fit(ui::StFit { tools: f.tools, seps: f.seps, opts: f.opts, split: f.split, tools_a: f.tools_a, seps_a: f.seps_a });
         ui.set_record_only(self.record_only);
         ui.set_options_open(self.options);
         ui.set_available(b.available);

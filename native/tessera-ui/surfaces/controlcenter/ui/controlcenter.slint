@@ -8,8 +8,8 @@
 
 import { Theme } from "@tessera/theme.slint";
 import { Squircle } from "@tessera/squircle.slint";
-import { ScrollIndicator } from "@tessera/widgets.slint";
 import { RowRing } from "@tessera/focus.slint";
+import { ScrollIndicator, Switch } from "@tessera/widgets.slint";
 
 // An icon: Phosphor, or in Material the matching Material Symbols glyph (sym)
 export struct CcIc {
@@ -70,6 +70,9 @@ export struct CcBlock {
     cur: int,
     flag: bool,
     gap: length,
+    // a note's or notice's text width: Slint measures its wrapped height
+    // against it (it was guessed from the characters; #349)
+    tw: length,
     first: bool,
     last: bool,
 }
@@ -240,6 +243,17 @@ component CapsuleSlider {
             height: vertical ? self.len : root.height;
             border-radius: thick / 2;
             background: Theme.dark ? #ffffffeb : #ffffff;
+            // the level's mark: a short grey bar inset at the fill's end, so a
+            // full slider still reads as a level, not a blank white pill (#230)
+            if v > 0.02: Rectangle {
+                property <length> mark-l: max(8px, round(thick * 0.36 / 1px) * 1px);
+                x: vertical ? (parent.width - self.width) / 2 : parent.width - 9px - self.width;
+                y: vertical ? 9px : (parent.height - self.height) / 2;
+                width: vertical ? mark-l : 3px;
+                height: vertical ? 3px : mark-l;
+                border-radius: 1.5px;
+                background: #000000.with-alpha(Theme.dark ? 0.3 : 0.2);
+            }
         }
     }
     Ic {
@@ -989,9 +1003,10 @@ component QsTile {
         }
     }
 
-    // Small: the icon (the battery's reading under it)
+    // Small: the icon, its name under it (Android's labelled small tiles:
+    // four icons alone didn't say what they were, #262), or the battery's reading
     if !large: Ic {
-        y: (root.height - 22px) / 2 - (info && m.id == "battery" ? 9px : 0);
+        y: (root.height - 22px) / 2 - 9px;
         height: 22px;
         icon: m.icon;
         fill: on;
@@ -1006,6 +1021,18 @@ component QsTile {
         color: sub-ink;
         font-size: 12px;
         font-weight: 500;
+    }
+    if !large && !(info && m.id == "battery"): Text {
+        x: 6px;
+        y: root.height / 2 + 14px - self.preferred-height / 2;
+        width: root.width - 12px;
+        horizontal-alignment: center;
+        text: m.label;
+        color: ink.with-alpha(0.85);
+        font-size: 11px;
+        font-weight: 500;
+        overflow: elide;
+        accessible-role: none;
     }
 
     // Large: the icon button, the name and state, a chevron
@@ -1464,9 +1491,9 @@ export component Block inherits VerticalLayout {
       padding-top: b.center ? 12px : 0;
       padding-bottom: b.center ? 12px : 0;
       Text {
-        // (Slint measures wrapped text in a layout as one line: the part
-        // estimates its lines)
-        min-height: b.gap;
+        // (its own width: Slint measures a wrapped text's height against it,
+        // the layout's comes too late for that; no guess of its lines)
+        width: b.tw;
         wrap: word-wrap;
         horizontal-alignment: b.center ? center : left;
         text: b.title;
@@ -1555,6 +1582,15 @@ export component Block inherits VerticalLayout {
             height: parent.height;
             border-radius: 13px;
             background: Theme.dark ? #ffffffeb : #ffffff;
+            // (the level's mark at the fill's end: full still reads as a level, #230)
+            if b.value > 0.02: Rectangle {
+                x: parent.width - 8px - self.width;
+                y: (parent.height - self.height) / 2;
+                width: 3px;
+                height: 10px;
+                border-radius: 1.5px;
+                background: #000000.with-alpha(Theme.dark ? 0.3 : 0.2);
+            }
         }
         Ic {
             x: 8px;
@@ -1701,8 +1737,13 @@ export component Block inherits VerticalLayout {
         }
         Text {
             text: "Other options…";
-            color: ot.has-hover ? Theme.accent : Theme.secondary;
+            color: ot.has-hover || ot.pressed ? Theme.accent-ink : Theme.secondary;
+            // (pressed: dimmer, #438)
+            opacity: ot.pressed ? 0.6 : 1;
             font-size: Theme.small;
+            accessible-role: button;
+            accessible-label: "Other options";
+            accessible-action-default => { do("other", ""); }
             ot := TouchArea {
                 mouse-cursor: pointer;
                 clicked => { do("other", ""); }
@@ -1730,7 +1771,7 @@ export component Block inherits VerticalLayout {
             font-weight: 600;
         }
         if b.status != "": Text {
-            min-height: b.gap;
+            width: b.tw;
             horizontal-alignment: center;
             wrap: word-wrap;
             text: b.status;
@@ -2042,37 +2083,21 @@ component PageHeader {
                 clicked => { spin += 360deg; refreshed(); }
             }
         }
-        if has-switch: Rectangle {
+        // (the kit's switch: hover and press in Glass too, #438)
+        if has-switch: Switch {
             x: parent.width - 38px;
-            width: 38px;
-            height: 22px;
-            border-radius: 11px;
-            background: switch-on ? Theme.accent : Theme.toggle-off;
-            animate background { duration: Theme.hover; }
-            accessible-role: switch;
-            accessible-label: switch-label;
-            accessible-checkable: true;
-            accessible-checked: switch-on;
-            accessible-action-default => { toggled(); }
-            Rectangle {
-                x: switch-on ? parent.width - self.width - 2px : 2px;
-                animate x { duration: Theme.move-standard; easing: cubic-bezier(0.2, 0.9, 0.1, 1.0); }
-                width: parent.height - 4px;
-                height: self.width;
-                border-radius: self.width / 2;
-                background: #ffffff;
-            }
-            TouchArea {
-                mouse-cursor: pointer;
-                clicked => { toggled(); }
-            }
+            y: (parent.height - self.height) / 2;
+            checked: switch-on;
+            label: switch-label;
+            toggled => { root.toggled(); }
+            // (the keyboard's, #351)
             RowRing {
                 x: -3px;
                 y: -3px;
                 width: parent.width + 6px;
                 height: parent.height + 6px;
                 shown: root.switch-focused;
-                radius: parent.border-radius + 3px;
+                radius: parent.height / 2 + 3px;
             }
         }
     }
@@ -2370,7 +2395,11 @@ export component ControlCenter inherits Window {
     out property <length> sub-h: sub-page.preferred-height + 32px;
     out property <length> sub-x: panel-x - sub-w - 10px;
     out property <length> sub-top: max(panel-y, min(sub-y - 16px, self.height - sub-h - 12px));
-    out property <length> footer-y: Theme.material ? 0 : grid-height + 12px;
+    out property <length> footer-y: Theme.material ? 0 : g-grid-view + 12px;
+    // Glass: the grid as scrolled, and the height of its view (lib.rs: the
+    // chips' glass follows; #359)
+    out property <length> grid-scroll: Theme.material ? 0 : -g-flick.content-y;
+    out property <length> grid-view: Theme.material ? m-grid-view : g-grid-view;
     out property <length> battery-w: bat-row.preferred-width + 28px;
     out property <length> gallery-h: gal-col.preferred-height;
     out property <float> page-t: paging && Theme.material ? 1 : 0;
@@ -2411,13 +2440,20 @@ export component ControlCenter inherits Window {
     property <length> content-w: Theme.material ? 368px : editing ? 320px + 16px + 260px : 320px;
     animate content-w { duration: Theme.move-fast; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
     property <length> max-h: self.height - 34px - 2 * pad - 16px;
-    // Glass: the grid, 12, the footer (the gallery beside it while editing)
-    property <length> glass-h: max(grid-height + 12px + 40px, editing ? gal-col.preferred-height : 0);
+    // Glass: the grid, 12, the footer (the gallery beside it while editing);
+    // never past the screen: the grid scrolls in what's left above the
+    // footer, which stays put (#359)
+    property <length> g-grid-view: min(grid-height, max(120px, max-h - 12px - 40px));
+    property <length> glass-h: min(max-h, max(g-grid-view + 12px + 40px, editing ? gal-col.preferred-height : 0));
     // Material: the editor's header, the grid, the gallery or the footer
     // (QuickSettings: the grid's height glides on the default spring as tiles move)
     property <length> grid-h: grid-height;
     animate grid-h { duration: Theme.motion(322ms); easing: spring(0.2); }
-    property <length> home-h: (editing ? edit-head.preferred-height + 12px : 0) + (grid-h > 0 ? grid-h + 12px : 0) + (editing ? m-gal.preferred-height : 48px);
+    // (the grid's view: what's left of the screen's height after the editor's
+    // header and the footer, or the gallery's least, 96 px; the grid scrolls
+    // in it and the footer stays put, #359)
+    property <length> m-grid-view: min(grid-h, max(96px, max-h - (editing ? edit-head.preferred-height + 12px + 12px + 28px + 96px : 12px + 48px)));
+    property <length> home-h: (editing ? edit-head.preferred-height + 12px : 0) + (m-grid-view > 0 ? m-grid-view + 12px : 0) + (editing ? m-gal.preferred-height : 48px);
     property <length> m-target: min(max-h, page-t > 0.5 ? m-page.preferred-height : home-h);
     property <length> m-h: m-target;
     animate m-h { duration: Theme.motion(322ms); easing: spring(0.2); }
@@ -2537,8 +2573,9 @@ export component ControlCenter inherits Window {
                         color: Theme.secondary;
                         font-size: Theme.caption;
                     }
-                    Flickable {
-                        height: min(gl.preferred-height, 440px);
+                    sb-list2486 := Flickable {
+                        // (on a short screen it gives way: the gallery fits the panel)
+                        height: min(gl.preferred-height, min(440px, max(80px, max-h - 160px)));
                         content-height: gl.preferred-height;
                         gl := VerticalLayout {
                             spacing: 2px;
@@ -2603,6 +2640,16 @@ export component ControlCenter inherits Window {
                                 }
                             }
                         }
+                        // (the kit's scroll indicator, held still over the list's right
+                        // edge while the content moves under it, #358 #1037)
+                        ScrollIndicator {
+                            x: sb-list2486.width - self.width;
+                            y: -sb-list2486.content-y;
+                            height: sb-list2486.height;
+                            content-y: sb-list2486.content-y;
+                            content-height: sb-list2486.content-height;
+                            view-height: sb-list2486.height;
+                        }
                     }
                     // (a real button, one name with Material's)
                     Rectangle {
@@ -2640,6 +2687,21 @@ export component ControlCenter inherits Window {
                     x: editing ? 260px + 16px + (bare ? 2 * pad : 0) : 0;
                     width: 320px;
                     height: parent.height;
+                    g-flick := Flickable {
+                    x: -8px;
+                    y: -8px;
+                    width: 320px + 16px;
+                    height: g-grid-view + 16px;
+                    content-width: self.width;
+                    content-height: grid-height + 16px;
+                    // (a wheel or a finger scrolls it; a mouse drag still moves a tile or a slider)
+                    mouse-drag-pan-enabled: false;
+                    interactive: grid-height > g-grid-view + 0.5px;
+                    Rectangle {
+                    x: 8px;
+                    y: 8px;
+                    width: 320px;
+                    height: grid-height;
                     for m[i] in modules: gm := GlassModule {
                         x: m.x + self.drag-dx;
                         y: m.y + self.drag-dy;
@@ -2669,9 +2731,11 @@ export component ControlCenter inherits Window {
                         media-do(w) => { media-do(w); }
                         pressed-any => { if paging { back(); } }
                     }
+                    }
+                    }
                     // You, the battery, Settings, Power, Edit controls
                     Rectangle {
-                        y: grid-height + 12px;
+                        y: g-grid-view + 12px;
                         height: 40px;
                         opacity: paging ? 0.45 : 1;
                         animate opacity { duration: 220ms; }
@@ -2863,8 +2927,19 @@ export component ControlCenter inherits Window {
                             font-size: 13px;
                         }
                     }
+                    m-flick := Flickable {
+                    x: -8px;
+                    y: (editing ? edit-head.preferred-height + 12px : 0) - 8px;
+                    width: parent.width + 16px;
+                    height: m-grid-view + 16px;
+                    content-width: self.width;
+                    content-height: grid-height + 16px;
+                    mouse-drag-pan-enabled: false;
+                    interactive: grid-height > m-grid-view + 0.5px;
                     Rectangle {
-                        y: editing ? edit-head.preferred-height + 12px : 0;
+                        x: 8px;
+                        y: 8px;
+                        width: parent.width - 16px;
                         height: grid-height;
                         for m[i] in modules: mc := Rectangle {
                             property <bool> due: stagger >= 1 || stagger * 24 >= m.order + 1;
@@ -2949,10 +3024,11 @@ export component ControlCenter inherits Window {
                             }
                         }
                     }
+                    }
                     // Edit controls: the controls to add
                     m-gal := VerticalLayout {
                         visible: editing;
-                        y: (editing ? edit-head.preferred-height + 12px : 0) + (grid-h > 0 ? grid-h + 12px : 0);
+                        y: (editing ? edit-head.preferred-height + 12px : 0) + (m-grid-view > 0 ? m-grid-view + 12px : 0);
                         height: editing ? self.preferred-height : 0;
                         spacing: 8px;
                         Text {
@@ -2961,8 +3037,10 @@ export component ControlCenter inherits Window {
                             font-size: 14px;
                             font-weight: 500;
                         }
-                        Flickable {
-                            height: min(mgl.preferred-height, max(176px, max-h - edit-head.preferred-height - grid-height - 36px - 40px));
+                        sb-list2910 := Flickable {
+                            // (what's left under the grid's view, so the last rows can be
+                            // reached on a short or scaled screen: it was 176 px at least, #359)
+                            height: min(mgl.preferred-height, max(96px, max-h - edit-head.preferred-height - 12px - m-grid-view - 12px - 28px));
                             content-height: mgl.preferred-height;
                             mgl := VerticalLayout {
                                 spacing: 2px;
@@ -2983,6 +3061,16 @@ export component ControlCenter inherits Window {
                                     do(w, t) => { add(it.id); }
                                 }
                             }
+                            // (the kit's scroll indicator, held still over the list's right
+                            // edge while the content moves under it, #358 #1037)
+                            ScrollIndicator {
+                                x: sb-list2910.width - self.width;
+                                y: -sb-list2910.content-y;
+                                height: sb-list2910.height;
+                                content-y: sb-list2910.content-y;
+                                content-height: sb-list2910.content-height;
+                                view-height: sb-list2910.height;
+                            }
                         }
                     }
                     // The footer: you and the battery; Settings, Power, Edit
@@ -2991,7 +3079,7 @@ export component ControlCenter inherits Window {
                         property <bool> due: stagger >= 1 || stagger * 24 >= modules.length + 2;
                         property <float> rise: due ? 1 : 0;
                         animate rise { duration: Theme.motion(due ? 222ms : 0ms); easing: spring(0.58); }
-                        y: (grid-h > 0 ? grid-h + 12px : 0) + 12px * (1 - rise);
+                        y: (m-grid-view > 0 ? m-grid-view + 12px : 0) + 12px * (1 - rise);
                         height: 48px;
                         opacity: min(1, rise);
                         // (QuickSettings.qml: your picture in a cookie, MaterialShape "cookie9")

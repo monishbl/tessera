@@ -12,7 +12,7 @@
 //!                                `{"to":"osd",…}` for that surface (RustUi.tell)
 //!   tessera-ui --material-roles SEED dark|light [style]   print Material roles (for checking colours)
 //!   tessera-ui --seed PICTURE    print the Material seed a wallpaper gives (as matugen)
-//!   tessera-ui --version [--json]   which build: (channel, commit, date, variant, [profile,] signed release | built locally)
+//!   tessera-ui --version [--json]   which build: (channel, commit, date, variant, [profile,] release build | built locally)
 //!   tessera-ui --greeter [--style …] [--demo [STATE]]   the login screen (surfaces/greeter)
 //!   tessera-ui --update-screen [-p] DIR   the update screen update-run.sh shows (surfaces/updatescreen)
 //!   tessera-ui --look-cover [-p] DIR      the cover switch-look.sh shows (surfaces/lookcover)
@@ -244,6 +244,10 @@ fn main() {
     if args.get(1).map(String::as_str) == Some("ipc") {
         std::process::exit(tessera_host_shell::ipc::client(&args[2..]));
     }
+    // The system's language for dates and times (day and month names, the
+    // 12/24-hour default, the week's first day), before any thread starts:
+    // tessera_core::locale
+    tessera_core::locale::init();
     // --standalone: no QML shell; every surface, and the host in its place
     let standalone = args.iter().any(|a| a == "--standalone");
     let args: Vec<String> = args.into_iter().filter(|a| a != "--standalone").collect();

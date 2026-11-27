@@ -9,6 +9,7 @@
 
 import { Theme, Icon } from "@tessera/theme.slint";
 import { Gl, GIcon } from "@tessera/small-icons.slint";
+import { IconButton } from "@tessera/widgets.slint";
 
 export struct TileZone {
     name: string,
@@ -69,31 +70,6 @@ component Light inherits Rectangle {
         y: -4px;
         width: parent.width + 8px;
         height: parent.height + 8px;
-        clicked => { root.clicked(); }
-    }
-}
-
-// Material's icon button (IconButton.qml, 24 px, a state layer)
-component MButton inherits Rectangle {
-    in property <Gl> icon;
-    in property <string> label;
-    out property <bool> hovered: touch.has-hover;
-    callback clicked();
-    width: 24px;
-    height: 24px;
-    border-radius: touch.pressed ? 8px : self.height / 2;
-    animate border-radius { duration: Theme.move-fast; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
-    background: touch.pressed ? Theme.m3-on-surface-variant.with-alpha(0.1) : touch.has-hover ? Theme.m3-on-surface-variant.with-alpha(0.08) : transparent;
-    animate background { duration: Theme.hover; }
-    accessible-role: button;
-    accessible-label: label;
-    accessible-action-default => { clicked(); }
-    GIcon {
-        g: icon;
-        size: 16px;
-        color: Theme.m3-on-surface-variant;
-    }
-    touch := TouchArea {
         clicked => { root.clicked(); }
     }
 }
@@ -233,19 +209,29 @@ export component WindowControls inherits Window {
             y: m + 2px;
             height: 24px;
             spacing: 2px;
-            MButton {
-                icon: min-icon;
+            // (the kit's icon button, 24 px; SymIcon draws the Material Symbol)
+            IconButton {
+                width: 24px;
+                height: 24px;
+                icon: min-icon.p;
+                icon-color: Theme.m3-on-surface-variant;
                 label: "Minimize";
                 clicked => { act("minimize"); }
             }
-            MButton {
-                icon: max-icon;
+            IconButton {
+                width: 24px;
+                height: 24px;
+                icon: max-icon.p;
+                icon-color: Theme.m3-on-surface-variant;
                 label: maximized ? "Restore" : "Maximize";
                 clicked => { act("maximize"); }
                 changed hovered => { tile-delay.running = self.hovered; }
             }
-            MButton {
-                icon: close-icon;
+            IconButton {
+                width: 24px;
+                height: 24px;
+                icon: close-icon.p;
+                icon-color: Theme.m3-on-surface-variant;
                 label: "Close";
                 clicked => { act("close"); }
             }

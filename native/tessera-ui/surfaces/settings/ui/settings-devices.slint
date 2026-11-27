@@ -674,7 +674,7 @@ export component DevicesBlock inherits VerticalLayout {
     // left; act 0 go back, 1 keep)
     if b.sub == "confirm": Rectangle {
         border-radius: Theme.material ? 24px : 12px;
-        background: Theme.material ? Theme.m3-primary-container : Theme.dark ? #ffffff0d : white;
+        background: Theme.material ? Theme.m3-primary-container : Theme.card-bg;
         border-width: Theme.material ? 0 : 1px;
         border-color: Theme.accent;
         HorizontalLayout {
@@ -717,7 +717,7 @@ export component DevicesBlock inherits VerticalLayout {
         spacing: Theme.material ? 8px : 6px;
         Rectangle {
             border-radius: 12px;
-            background: Theme.material ? transparent : Theme.dark ? #ffffff0d : white;
+            background: Theme.material ? transparent : Theme.card-bg;
             border-width: Theme.material ? 0 : 1px;
             border-color: Theme.separator;
             VerticalLayout {

@@ -356,6 +356,8 @@ struct Cfg {
     stocks: Vec<String>,
     graph: String,
     h24: bool,
+    /// the week's first day, 0 Sunday … 6 Saturday (appearance.weekStart or the language)
+    week_start: u32,
     /// desktop.screen: "primary" or a connector name (#501)
     screen: String,
 }
@@ -375,7 +377,8 @@ impl Cfg {
             cities: list("worldClocks", default_cities),
             stocks: list("stocks", default_stocks),
             graph: cfg["resources"]["graphStyle"].as_str().unwrap_or("area").to_string(),
-            h24: cfg["appearance"]["clock24"].as_bool().unwrap_or(false),
+            h24: tessera_core::locale::clock24(&cfg),
+            week_start: tessera_core::locale::week_start(&cfg),
             screen: d["screen"].as_str().unwrap_or("primary").to_string(),
         }
     }
@@ -516,15 +519,18 @@ impl Desktop {
         let (list, unknown) = grid::read(&c.widgets);
         self.list = list;
         self.unknown = unknown;
-        let g = self.grid_now();
+        let g = self.grid_now(st);
         self.placed = g.placed(&self.list);
         self.grid = Some(g);
     }
 
-    fn grid_now(&self) -> Grid {
+    /// The grid on this screen, above the dock as it is now (its size, on,
+    /// off or auto-hiding: a change to `dock.*` or the look re-places the
+    /// widgets and files through config_changed, #499)
+    fn grid_now(&self, st: &State) -> Grid {
         let (w, h) = self.win.as_ref().map(|w| w.surface.logical_size()).unwrap_or((1920, 1080));
         let (w, h) = if w == 0 || h == 0 { (1920, 1080) } else { (w, h) };
-        Grid::new(w as f32, h as f32)
+        Grid::new(w as f32, h as f32, grid::dock_room(&st.shell.cfg, st.shell.look.material))
     }
 
     fn save(&mut self, list: Vec<W>) {
@@ -874,7 +880,9 @@ impl Desktop {
                 r.t2 = format!("{}{}", wx.temp, wx.unit).into();
                 r.t3 = s(&wx.condition);
                 r.t4 = format!("H:{}°  L:{}°", wx.high, wx.low).into();
-                r.t5 = if wx.error.is_empty() { "Loading weather…".into() } else { s(&wx.error) };
+                // (on: the medium's bottom line when no hours came, so its
+                // lower part isn't left empty; #263)
+                r.t5 = if wx.ready { weather_day_line(wx.rain_chance).into() } else if wx.error.is_empty() { "Loading weather…".into() } else { s(&wx.error) };
                 r.t6 = format!("{}°", wx.temp).into();
                 r.g1 = glyphs::glyph(if wx.icon.is_empty() { "cloud" } else { &wx.icon }).into();
                 r.shape = crate::surfaces::shapes::outline("circle").into();
@@ -922,10 +930,12 @@ impl Desktop {
                 r.lines = keep!(lines, lines);
                 r.t3 = if small || on_today { "No more events today" } else { "No events" }.into();
                 let busy: HashSet<String> = f.busy.iter().cloned().collect();
-                let (days, weeks) = view::month(today, sel, &busy);
+                let (days, weeks) = view::month(today, sel, &busy, c.week_start);
                 let days: Vec<ui::DDay> = days.iter().map(|d| ui::DDay { label: d.day.to_string().into(), col: d.col as i32, row: d.row as i32, today: d.today, selected: d.selected, busy: d.busy }).collect();
                 r.days = keep!(days, days);
                 r.n1 = weeks as f32;
+                // (the header's letters, from the week's first day: chars, the clock's slots elsewhere)
+                r.chars = keep!(chars, tessera_core::locale::weekday_letters(c.week_start).into_iter().map(SharedString::from).collect::<Vec<_>>());
                 r.t4 = view::fmt("%B", now).to_uppercase().into();
             }
             "reminders" => {
@@ -1862,6 +1872,16 @@ fn sync<T: Clone + PartialEq + 'static>(m: &VecModel<T>, rows: Vec<T>) {
     }
 }
 
+/// The weather's day in a line: where the medium widget's hours go when
+/// none came (#263)
+fn weather_day_line(rain_chance: i64) -> String {
+    if rain_chance > 0 {
+        format!("{}% chance of rain today", rain_chance.min(100))
+    } else {
+        "No rain expected today".to_string()
+    }
+}
+
 /// Overview is open on this screen (or on the focused one, no screen
 /// named): its strip lies over the top of the desktop, so the widgets and
 /// files step back rather than show a slice under its edge (#170)
@@ -1942,6 +1962,13 @@ mod step_back_tests {
         assert!(!super::steps_back("overview", "HDMI-A-1", "eDP-1"));
         assert!(!super::steps_back("spotlight", "eDP-1", "eDP-1"));
         assert!(!super::steps_back("", "", "eDP-1"));
+    }
+
+    #[test]
+    fn the_weathers_day_line() {
+        assert_eq!(super::weather_day_line(40), "40% chance of rain today");
+        assert_eq!(super::weather_day_line(0), "No rain expected today");
+        assert_eq!(super::weather_day_line(250), "100% chance of rain today");
     }
 }
 
@@ -2147,11 +2174,8 @@ impl Part for Desktop {
             M::Image(k, px) => {
                 self.pending.remove(&k);
                 if let Some(px) = px {
-                    // (a file's icon arriving after the desktop's first frames
-                    // often didn't draw: the stacks kept bare labels until
-                    // something else redrew them. Their cells made afresh,
-                    // and the frame drawn whole, they show. Once for a burst
-                    // of them: 40 files at login rebuilt 40 icons 40 times)
+                    // (once for a burst of them: 40 files at login updated
+                    // the icons 40 times)
                     let file_icon = k.starts_with("icon:") || k.starts_with("thumb:");
                     self.failed.remove(&k);
                     self.images.insert(k, slint::Image::from_rgba8(px));
@@ -2169,10 +2193,14 @@ impl Part for Desktop {
                 }
             }
             M::IconsArrived => {
-                if let Some(w) = &self.win {
-                    w.icons.set(Vec::new());
-                    w.surface.redraw_all();
-                }
+                // Only the rows whose picture arrived change (update's
+                // set_keyed), and only their cells are drawn again. (The
+                // icon list used to be emptied and the whole surface drawn
+                // anew for each burst, so at login the icons flashed several
+                // times (#509): a late icon once kept a bare label because
+                // a culled frame left the window's redraw tracker blind to
+                // every item outside its damage, which damage.rs's track_all
+                // has fixed since, 18 Nov)
                 self.update(st);
             }
             M::Zones(z) => {
@@ -2251,7 +2279,7 @@ impl Part for Desktop {
     fn after_frame(&mut self, st: &mut State) {
         self.gallery_frame(st);
         if let Some(w) = &self.win {
-            let g = self.grid_now();
+            let g = self.grid_now(st);
             if w.surface.mapped.get() && self.grid != Some(g) {
                 self.read_layout(st);
                 self.after_layout(st);

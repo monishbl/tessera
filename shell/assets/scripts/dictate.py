@@ -14,8 +14,10 @@ the computer.
                                    ("en") or "auto". The recording is deleted.
 
 Models live in $XDG_DATA_HOME/tessera/whisper (ggml-MODEL.bin), downloaded
-from whisper.cpp's own Hugging Face repository.
+from whisper.cpp's own Hugging Face repository at a pinned revision and
+kept only when their size and SHA-256 match (SUMS).
 """
+import hashlib
 import json
 import os
 import re
@@ -38,7 +40,18 @@ MODELS = {
     "medium": ("Medium", 1500),
     "large-v3-turbo": ("Large (turbo)", 1620),
 }
-URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{}.bin"
+# Each model's exact size and SHA-256 at the pinned revision below (Hugging
+# Face's own LFS ids): a changed or damaged file is refused, never kept and
+# handed to whisper.cpp's parser (#991). A new revision means new sums here.
+REVISION = "5359861c739e955e79d9a303bcbc70fb988958b1"
+SUMS = {
+    "tiny": (77691713, "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21"),
+    "base": (147951465, "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"),
+    "small": (487601967, "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"),
+    "medium": (1533763059, "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208"),
+    "large-v3-turbo": (1624555275, "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69"),
+}
+URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/" + REVISION + "/ggml-{}.bin"
 # whisper.cpp's command-line tool, by the names packages give it
 BINARIES = ["whisper-cli", "whisper-cpp", "whisper.cpp"]
 MAGIC = b"lmgg"  # a ggml model file's first bytes
@@ -74,6 +87,10 @@ class Incomplete(Exception):
     pass
 
 
+class Mismatch(Exception):
+    """Whole, but not the file whose checksum is pinned."""
+
+
 def download(name, opener=urllib.request.urlopen):
     if name not in MODELS:
         emit({"ok": False, "error": "unknown model"})
@@ -87,6 +104,7 @@ def download(name, opener=urllib.request.urlopen):
             total = int(r.headers.get("Content-Length") or 0)
             done, shown = 0, -1
             first = b""
+            sha = hashlib.sha256()
             while True:
                 chunk = r.read(1 << 20)
                 if not chunk:
@@ -94,16 +112,22 @@ def download(name, opener=urllib.request.urlopen):
                 if not first:
                     first = chunk[:4]
                 f.write(chunk)
+                sha.update(chunk)
                 done += len(chunk)
                 pct = done * 100 // total if total else done >> 24
                 if pct != shown:
                     shown = pct
                     emit({"done": done, "total": total})
-        if first != MAGIC or (total and done != total):
+        size, want = SUMS[name]
+        if (total and done != total) or (first == MAGIC and done < size):
             raise Incomplete()
+        if first != MAGIC or done != size or sha.hexdigest() != want:
+            raise Mismatch()
         os.replace(part, dest)
     except Exception as e:  # noqa: BLE001
         emit({"ok": False, "error": "The download didn't finish. Try again." if isinstance(e, Incomplete)
+              else "The downloaded model wasn't the expected file, so it wasn't kept. Try again later."
+              if isinstance(e, Mismatch)
               else "Couldn't download the model. Check your internet connection, then try again."})
         return 1
     finally:

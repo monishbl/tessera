@@ -66,13 +66,7 @@ fn header(text: &str) -> Row {
 /// How shortcuts are written (KeyNames.qml): appearance.keySymbols, or
 /// "auto": mac with the command icon, linux otherwise
 pub fn key_style(cfg: &serde_json::Value) -> &'static str {
-    match cfg["appearance"]["keySymbols"].as_str().unwrap_or("auto") {
-        "mac" => "mac",
-        "windows" => "windows",
-        "linux" => "linux",
-        _ if cfg["appearance"]["menuIcon"].as_str() == Some("command") => "mac",
-        _ => "linux",
-    }
+    tessera_core::keynames::style(cfg)
 }
 
 /// "SUPER CTRL F" → "⌃⌘F" | "Win+Ctrl+F" | "Super+Ctrl+F"
@@ -221,6 +215,28 @@ pub fn tray_in(node: &MenuNode, back_to: Option<&str>) -> Vec<Row> {
         v.push(sep());
     }
     v.extend(tray(node));
+    v
+}
+
+/// A tray menu's rows before its app answers ("Loading…"), or when it
+/// didn't or has nothing in it ("No menu"), so the panel is never an empty
+/// box (#366)
+pub fn tray_waiting(failed: bool) -> Vec<Row> {
+    vec![Row { enabled: false, ..item(if failed { "No menu" } else { "Loading…" }, Action::None) }]
+}
+
+/// The rows for a tray menu's answer (`back_to`: in a submenu), "No menu"
+/// when it has no entry to choose
+pub fn tray_answer(node: &MenuNode, back_to: Option<&str>, failed: bool) -> Vec<Row> {
+    let mut v = tray_in(node, back_to);
+    if failed || !v.iter().any(|r| matches!(r.action, Action::Tray(_) | Action::TraySub(_))) {
+        // (only the way back stays: separators or disabled entries alone are no menu)
+        v.retain(|r| r.action == Action::TrayBack);
+        if !v.is_empty() {
+            v.push(sep());
+        }
+        v.extend(tray_waiting(true));
+    }
     v
 }
 
@@ -454,5 +470,19 @@ mod tray_back {
         let v = tray_in(&node, Some(""));
         assert_eq!((v[0].text.as_str(), v[0].action.clone(), v[0].keep_open), ("‹  Back", Action::TrayBack, true));
         assert!(tray_in(&node, None).is_empty());
+    }
+
+    #[test]
+    fn a_menu_waits_then_says_when_there_is_none() {
+        assert_eq!((tray_waiting(false)[0].text.as_str(), tray_waiting(false)[0].enabled), ("Loading…", false));
+        let none = tray_answer(&MenuNode::default(), None, true);
+        assert_eq!(none.len(), 1);
+        assert_eq!(none[0].text, "No menu");
+        // in a submenu: the way back stays
+        let sub = tray_answer(&MenuNode::default(), Some(""), false);
+        assert_eq!((sub[0].action.clone(), sub[2].text.as_str()), (Action::TrayBack, "No menu"));
+        let one = MenuNode { children: vec![MenuNode { id: 4, label: "Quit".into(), enabled: true, visible: true, ..Default::default() }], ..Default::default() };
+        let rows = tray_answer(&one, None, false);
+        assert_eq!((rows.len(), rows[0].action.clone()), (1, Action::Tray(4)));
     }
 }

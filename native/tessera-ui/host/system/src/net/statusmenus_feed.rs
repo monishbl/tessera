@@ -55,7 +55,7 @@ pub fn profiles(ap: &Value) -> Value {
     Value::Array(
         ap["alternatives"]
             .as_array()
-            .map(|a| a.iter().map(|x| json!({"name": x["name"], "kind": x["kind"], "busy": !sw.is_empty() && x["profile"].as_str() == Some(sw.as_str())})).collect())
+            .map(|a| a.iter().map(|x| json!({"name": x["name"], "kind": x["kind"], "busy": !sw.is_empty() && x["profile"].as_str() == Some(sw.as_str()), "id": super::audio_profiles::alt_id(x)})).collect())
             .unwrap_or_default(),
     )
 }
@@ -128,10 +128,9 @@ impl Service for StatusMenusFeed {
                     h.ask("power.setMode", json!([m]));
                 }
             }
+            // [id]: its card and profile (never its place in a list that may have changed)
             "profile" => {
-                let i = a.get(1).and_then(Value::as_i64).unwrap_or(-1);
-                let ap = audio_profiles();
-                if let Some(alt) = ap["alternatives"].as_array().and_then(|x| x.get(i.max(0) as usize).filter(|_| i >= 0)) {
+                if let Some(alt) = super::audio_profiles::find(&audio_profiles(), &str_arg(&a, 1)) {
                     h.ask("audioprofiles.pick", json!([alt]));
                 }
             }
@@ -194,7 +193,7 @@ mod tests {
     #[test]
     fn profiles_as_sound_lists_them() {
         let ap = json!({"switching": "hdmi", "alternatives": [{"name": "Monitor", "kind": "display", "profile": "hdmi"}, {"name": "Speakers", "kind": "", "profile": "analog"}]});
-        assert_eq!(profiles(&ap), json!([{"name": "Monitor", "kind": "display", "busy": true}, {"name": "Speakers", "kind": "", "busy": false}]));
+        assert_eq!(profiles(&ap), json!([{"name": "Monitor", "kind": "display", "busy": true, "id": "\u{1f}hdmi"}, {"name": "Speakers", "kind": "", "busy": false, "id": "\u{1f}analog"}]));
         assert_eq!(profiles(&Value::Null), json!([]));
         assert!(PANELS.contains(&"nowPlaying") && !PANELS.contains(&"wifiMenu"));
     }

@@ -135,7 +135,8 @@ Singleton {
     }
 
     readonly property var slots: {
-        const ids = ["anthropic", "gemini", "aistudio", "vertex", "vertex-oauth", "openai", "openrouter"];
+        // ("klipy": the GIF key, which the Rust shell keeps in the keyring)
+        const ids = ["anthropic", "gemini", "aistudio", "vertex", "vertex-oauth", "openai", "openrouter", "klipy"];
         for (const entry of Config.options.ai.models ?? []) {
             try {
                 const key = JSON.parse(entry).key;

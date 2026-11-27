@@ -22,6 +22,10 @@ d = os.path.dirname(os.path.abspath(__file__))
 args = sys.argv[1:]
 with open(os.path.join(d, "calls"), "a") as f:
     f.write(json.dumps(args) + "\n")
+if "passwd-file" in args:
+    pf = args[args.index("passwd-file") + 1]
+    with open(os.path.join(d, "passwd"), "a") as f:
+        f.write(json.dumps([oct(os.stat(pf).st_mode & 0o777), open(pf).read()]) + "\n")
 state = json.load(open(os.path.join(d, "state.json")))
 if args[:2] == ["-t", "-f"] and "permissions" in args:
     print("\n".join(f"org.freedesktop.NetworkManager.{k}:{v}" for k, v in state["perms"].items()))
@@ -135,6 +139,28 @@ class NmLinks(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls()[-1], ["-w", "20", "connection", "up", "uuid", "HOME-UUID"])
         self.assertFalse(Path(wifi.NM_MARKER).exists())
         self.assertFalse(await wifi.NmWifi.recover())  # nothing left
+
+    async def test_the_passphrase_never_goes_on_a_command_line(self):
+        # (#1012: /proc/<pid>/cmdline is readable by every local user)
+        old = os.environ.get("XDG_RUNTIME_DIR")
+        os.environ["XDG_RUNTIME_DIR"] = self.dir.name
+        self.addCleanup(lambda: os.environ.__setitem__("XDG_RUNTIME_DIR", old) if old else
+                        os.environ.pop("XDG_RUNTIME_DIR", None))
+        link = wifi.NmWifi()
+        group = await link.host(self.NET)
+        await link.restore()
+        try:
+            await link.join(self.NET, "DIRECT-phone", "phone-secret-42")
+        except wifi.WifiUnavailable:
+            pass  # (no address from the stand-in: the part after `up` isn't the point here)
+        for c in self.calls():
+            self.assertNotIn(group["passphrase"], c)
+            self.assertNotIn("phone-secret-42", c)
+            self.assertNotIn("wifi-sec.psk", c)
+        got = [json.loads(line) for line in Path(self.dir.name, "passwd").read_text().splitlines()]
+        self.assertEqual(got, [["0o600", f"802-11-wireless-security.psk:{group['passphrase']}\n"],
+                               ["0o600", "802-11-wireless-security.psk:phone-secret-42\n"]])
+        self.assertEqual([p.name for p in Path(self.dir.name).glob("tessera-qs-*")], [])  # (removed after)
 
     def test_band_choice(self):
         self.assertEqual(wifi.nm_hotspot_band({5180: "no-ir", 2437: "ok"}), ("bg", 6))

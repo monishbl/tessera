@@ -8,6 +8,7 @@
 
 import { Theme, Icon } from "@tessera/theme.slint";
 import { SymIcon } from "@tessera/symbols.slint";
+import { ScrollIndicator } from "@tessera/widgets.slint";
 
 export struct NoteMenuItem {
     text: string,
@@ -209,6 +210,16 @@ export component QuickNote inherits Window {
                     wrap: word-wrap;
                     accessible-role: none;
                 }
+                // (the kit's scroll indicator, held still over the list's right
+                // edge while the content moves under it, #358 #1037)
+                ScrollIndicator {
+                    x: flick.width - self.width;
+                    y: -flick.content-y;
+                    height: flick.height;
+                    content-y: flick.content-y;
+                    content-height: flick.content-height;
+                    view-height: flick.height;
+                }
             }
 
             // ── Material: more to put in (the FAB menu) ──
@@ -277,7 +288,7 @@ export component QuickNote inherits Window {
                 accessible-enabled: can-save;
                 accessible-action-default => { if can-save { save(); } }
                 save-label := Text {
-                    text: saving ? "Saving…" : "Save note  ⌃↵";
+                    text: saving ? "Saving…" : "Save note  " + Theme.key-ctrl-enter;
                     color: Theme.material ? (can-save ? Theme.m3-on-primary : Theme.m3-on-surface.with-alpha(0.38)) : can-save ? #ffffff : Theme.tertiary;
                     font-size: Theme.material ? 14px : Theme.small;
                     font-weight: Theme.material ? 500 : 600;

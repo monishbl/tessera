@@ -20,10 +20,13 @@
 //! Standalone the host's shortcuts say every sound and brightness key press
 //! (`{"to":"osd","key":"volume"}`, with a `reason` when nothing could
 //! change), so it shows at 100% and 0% and without a sound output too.
+//! External monitors (DDC) are the host's: its state "brightnessNow" and
+//! "displays" give the level and name of the one the keys move (shown on
+//! each change set on it) and every display's row under Displays (#401).
 //!
 //! Not like the QML yet: Material draws Phosphor icons, not Material Symbols
 //! (Slint can't set the font's FILL axis); the apps in App volumes show a
-//! generic symbol, not their own icons; external displays' brightness (DDC) isn't read;
+//! generic symbol, not their own icons;
 //! the fullscreen bar's halo is a shadow under the track only (no
 //! MultiEffect); Cool-down's slower motion isn't followed.
 
@@ -120,6 +123,8 @@ pub struct Osd {
     quiet_until: [u64; 2], // sound, brightness (ms since start)
     watch: logic::Watch,
     backlight_seen: Option<f64>,
+    /// the host's displays as last read (logic::Displays)
+    displays: logic::Displays,
     switch_kind: Option<Kind>,
     names: HashMap<String, String>,
     pictures: HashMap<String, slint::Image>,
@@ -156,6 +161,7 @@ impl Default for Osd {
             quiet_until: [0; 2],
             watch: logic::Watch::default(),
             backlight_seen: None,
+            displays: Default::default(),
             switch_kind: None,
             names: HashMap::new(),
             pictures: HashMap::new(),
@@ -388,17 +394,26 @@ impl Osd {
         }
     }
 
+    /// The host's displays and the one the brightness keys move
+    fn displays_now(st: &State) -> logic::Displays {
+        let shell = st.shell.get::<tessera_core::services::bridge::ShellState>().cloned().unwrap_or_default();
+        logic::Displays::from_state(shell.get("brightnessNow"), shell.get("displays"))
+    }
+
     /// Push what shows into whichever windows exist
     fn refresh(&mut self, st: &mut State) {
         let s = st.shell.get::<Sound>().cloned().unwrap_or_default();
-        let b = st.shell.get::<Backlight>().cloned().unwrap_or_default();
+        let raw = st.shell.get::<Backlight>().cloned().unwrap_or_default();
+        let displays = self.displays.clone();
+        // (an external monitor the keys move: its level, not the panel's)
+        let b = displays.shown(&raw);
         let kind = self.kind;
         let names = &mut self.names;
         let mut app_name = |x: &audio::Stream| {
             let key = [&x.icon, &x.binary, &x.name].into_iter().find(|k| !k.is_empty()).cloned().unwrap_or_default().to_lowercase();
             names.entry(key.clone()).or_insert_with(|| crate::util::desktop_name(&key).unwrap_or_else(|| x.name.clone())).clone()
         };
-        self.rows = logic::rows(kind, self.page, &s, &b, &mut app_name);
+        self.rows = logic::rows(kind, self.page, &s, &raw, &displays, &mut app_name);
         if let Some((act, v, t)) = &self.row_held {
             if t.elapsed() < HOLD {
                 for r in self.rows.iter_mut().filter(|r| r.act == *act && r.value >= 0.0) {
@@ -433,7 +448,9 @@ impl Osd {
             (Kind::Volume, Some(v)) => logic::volume_icon(v, false),
             _ => logic::icon(kind, &s),
         };
-        let label = logic::label(kind, &self.device, &s);
+        // (an external monitor: its name)
+        let device = if kind == Kind::Brightness && self.device.is_empty() && displays.external { displays.name.clone() } else { self.device.clone() };
+        let label = logic::label(kind, &device, &s);
         let pace = settings::pace(&st.shell.cfg, st.shell.look.material);
         if let Some(w) = &self.capsule {
             let ui = &w.ui;
@@ -559,6 +576,8 @@ impl Osd {
         self.held = Some((self.kind, v, Instant::now()));
         let s = st.shell.get::<Sound>().cloned().unwrap_or_default();
         match self.kind {
+            // (an external monitor: the host's, quiet)
+            Kind::Brightness if self.displays.external => shell::ask("brightness.set", serde_json::json!([v, true])),
             Kind::Brightness => brightness::set(v),
             Kind::Volume => {
                 if let Some(d) = s.sink() {
@@ -618,7 +637,7 @@ impl Osd {
                 shell::ask("panels.openSettings", serde_json::json!([page]));
                 return;
             }
-            Act::Backlight => {}
+            Act::Backlight | Act::Display(_) => {}
         }
         self.refresh(st);
     }
@@ -635,6 +654,10 @@ impl Osd {
             Act::Backlight => {
                 self.hush(Kind::Brightness);
                 brightness::set(v);
+            }
+            Act::Display(id) => {
+                self.hush(Kind::Brightness);
+                shell::ask("brightness.setFor", serde_json::json!([id, v, true]));
             }
             Act::Stream(index) => {
                 if let Some(x) = s.streams.iter().find(|x| x.index == index) {
@@ -727,6 +750,18 @@ impl Part for Osd {
                 }
             }
             self.refresh(st);
+        } else if what == TypeId::of::<tessera_core::services::bridge::ShellState>() {
+            // An external monitor's level set (the keys, a slider elsewhere): shown with its name
+            let now = Self::displays_now(st);
+            if now != self.displays {
+                let changed = now.changed_from(&self.displays);
+                self.displays = now;
+                if changed {
+                    self.show(st, Kind::Brightness, String::new());
+                } else if self.kind == Kind::Brightness || self.bar_kind == Kind::Brightness {
+                    self.refresh(st);
+                }
+            }
         } else if what == TypeId::of::<Backlight>() {
             let b = st.shell.get::<Backlight>().cloned().unwrap_or_default();
             let changed = self.backlight_seen.is_some_and(|v| (v - b.value).abs() > 1e-6);

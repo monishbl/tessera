@@ -114,6 +114,8 @@ impl Decorations {
         });
         let ui = ui::WindowControls::new().expect("WindowControls");
         st.shell.apply_theme(&ui.global::<ui::Theme>());
+        // (Material: the kit's icon buttons draw Material Symbols)
+        ui.global::<ui::Symbols>().on_of(|g| tessera_core::icons::symbol(&g).into());
         ui.set_tile_rows(tile_rows());
         ui.set_close_icon(gl("x"));
         ui.set_min_icon(gl("minus"));
@@ -153,6 +155,11 @@ impl Decorations {
         // (Hyprland's fullscreen: 1 maximized, 2 fullscreen; a maximized
         // window keeps its controls, so it can be restored from them)
         if c.monitor != m.id || c.fullscreen >= 2 || !c.mapped || c.hidden {
+            return None;
+        }
+        // (another window over the pill's place, a floating or pinned one:
+        // hidden, rather than drawn over that window and taking its clicks)
+        if layout::covered(c, &w.clients, layout::pill_rect(c.at, c.size, st.shell.look.material)) {
             return None;
         }
         Some((c.address.clone(), layout::place(c.at, c.size, (m.x, m.y), size.0 as f32)))

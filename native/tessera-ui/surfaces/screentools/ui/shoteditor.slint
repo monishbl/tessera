@@ -138,7 +138,7 @@ export component LiveTextBar inherits Rectangle {
             icon: ic-copy;
             label: "Copy text";
             tip-below: false;
-            shortcut: "Ctrl+C";
+            shortcut: Theme.key-copy;
             tooltip: "Copy the selected text";
             clicked => { root.copy-sel(); }
         }
@@ -1106,7 +1106,7 @@ export component ShotEditor inherits Window {
                         icon: ic-check;
                         label: "Apply crop";
                         tip-below: false;
-                        shortcut: "Enter";
+                        shortcut: Theme.key-enter;
                         tooltip: "Apply";
                         clicked => { root.crop-apply(); }
                     }
@@ -1236,7 +1236,7 @@ export component ShotEditor inherits Window {
                         label: "Copy";
                         variant: 1;
                         tip-below: false;
-                        shortcut: "Ctrl+C";
+                        shortcut: Theme.key-copy;
                         tooltip: "Copy image";
                         enabled: status == 1 && (root.busy == "" || root.busy == "copy");
                         busy: root.busy == "copy";
@@ -1250,7 +1250,7 @@ export component ShotEditor inherits Window {
                             label: dirty ? "Save" : "Done";
                             tip-below: false;
                             tooltip: dirty ? "Save over the original" : "Close the editor";
-                            shortcut: dirty ? "Ctrl+S" : "";
+                            shortcut: dirty ? Theme.key-save : "";
                             enabled: status == 1 && (root.busy == "" || root.busy == "save");
                             busy: root.busy == "save";
                             clicked => { root.save(); }
@@ -1261,7 +1261,7 @@ export component ShotEditor inherits Window {
                             tip-below: false;
                             tip-end: true;
                             tooltip: "Save as a copy";
-                            shortcut: "Ctrl+Shift+S";
+                            shortcut: Theme.key-save-copy;
                             enabled: status == 1 && (root.busy == "" || root.busy == "saveCopy");
                             busy: root.busy == "saveCopy";
                             clicked => { root.save-copy(); }
@@ -1363,7 +1363,7 @@ export component ShotEditor inherits Window {
                     EditorButton {
                         icon: ic-close;
                         tooltip: "Close editor";
-                        shortcut: "Esc";
+                        shortcut: Theme.key-esc;
                         clicked => { root.close-clicked(); }
                     }
                     Rectangle {
@@ -1406,7 +1406,7 @@ export component ShotEditor inherits Window {
                     EditorButton {
                         icon: ic-undo;
                         tooltip: "Undo";
-                        shortcut: "Ctrl+Z";
+                        shortcut: Theme.key-undo;
                         enabled: can-undo && !busy-any;
                         clicked => { root.undo(); }
                     }
@@ -1414,7 +1414,7 @@ export component ShotEditor inherits Window {
                         icon: ic-redo;
                         tooltip: "Redo";
                         tip-end: true;
-                        shortcut: "Ctrl+Shift+Z";
+                        shortcut: Theme.key-redo;
                         enabled: can-redo && !busy-any;
                         clicked => { root.redo(); }
                     }

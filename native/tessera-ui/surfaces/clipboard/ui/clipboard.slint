@@ -53,7 +53,10 @@ export component ClipboardPanel inherits Window {
 
     out property <float> openness: shown ? 1 : 0;
     out property <length> body-width: 560px + 2 * 16px;
-    out property <length> body-height: 480px + 2 * 16px;
+    // (480 px of list and field, less on a short screen: the dialog stays
+    // 16 px inside the top and bottom edges, #1078)
+    property <length> content-h: max(200px, min(480px, root.height - 2 * 16px - 2 * 16px));
+    out property <length> body-height: content-h + 2 * 16px;
     out property <length> body-x: body.x;
     out property <length> body-y: body.y;
     out property <float> body-scale: body.transform-scale;
@@ -62,7 +65,7 @@ export component ClipboardPanel inherits Window {
     property <length> pad: 16px;
     property <bool> toolbar: Theme.material && count > 0;
 
-    callback key(string, bool, bool, bool) -> bool; // text, shift, alt, control: handled?
+    callback key(string, bool, bool, bool, string, int, int) -> bool; // text, shift, alt, control, the search, its caret and anchor: handled?
     callback edited(string);
     callback hovered(int);
     callback activate(int, bool, bool); // row, plain text, copy only
@@ -111,7 +114,7 @@ export component ClipboardPanel inherits Window {
         width: body-width;
         height: body-height;
         x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2 - 40px;
+        y: max(16px, (parent.height - self.height) / 2 - 40px);
         opacity: min(1, openness);
         transform-scale: 0.96 + 0.04 * min(1, openness);
         transform-origin: { x: self.width / 2, y: self.height / 2 };
@@ -134,7 +137,7 @@ export component ClipboardPanel inherits Window {
             x: pad;
             y: pad;
             width: 560px;
-            height: 480px;
+            height: content-h;
 
             field := SearchField {
                 x: 0;
@@ -143,7 +146,7 @@ export component ClipboardPanel inherits Window {
                 placeholder: "Search clipboard";
                 clearable: false;
                 edited(t) => { root.edited(t); }
-                key(e) => { return root.key(e.text, e.modifiers.shift, e.modifiers.alt, e.modifiers.control); }
+                key(e) => { return root.key(e.text, e.modifiers.shift, e.modifiers.alt, e.modifiers.control, self.text, self.caret, self.anchor); }
             }
 
             // All / Text / Images (Segmented.qml)

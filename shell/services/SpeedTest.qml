@@ -99,7 +99,8 @@ Singleton {
         error = "";
         stage = "latency";
         phaseStart = Date.now();
-        test.command = [Tools.watcher, script, backend === "ookla" ? (hasOokla ? "ookla" : "ookla-py") : "cloudflare"];
+        // (Ookla only once its terms were accepted, in the Rust shell's Settings)
+        test.command = backend === "ookla" ? [Tools.watcher, script, hasOokla ? "ookla" : "ookla-py", Config.options.network.ooklaAccepted ? "accepted" : ""] : [Tools.watcher, script, "cloudflare"];
         test.running = true;
         readLink();
     }

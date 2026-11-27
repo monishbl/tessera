@@ -8,7 +8,7 @@
 // selection, the keys, the inline AI answer); this draws it.
 
 import { Theme } from "@tessera/theme.slint";
-import { Busy } from "@tessera/widgets.slint";
+import { Busy, ScrollIndicator } from "@tessera/widgets.slint";
 
 // Material's see-through containers (Theme.qml's controlAlpha: Settings'
 // transparency; the shared Theme has the panel's, 1 - 0.55 t)
@@ -684,7 +684,15 @@ export component SpotlightPanel inherits Window {
     property <length> m-x: round((root.width - m-w) / 2 / 1px) * 1px;
     property <length> m-top: round(root.height * 0.2 / 1px) * 1px;
     property <bool> m-open: answering || rows.length > 0;
-    property <length> m-body: answering ? m-answer-h + 28px : min(content-h, 480px) + 20px;
+    // The lists' most, kept on a short screen (#1078): 440 / 480 px, or what
+    // is left below the field and 24 px from the bottom edge; Rust's
+    // keyboard scrolling reads it (list-max)
+    property <length> g-list-max: max(120px, min(440px, root.height - round(root.height * 0.2 / 1px) * 1px - 64px - 16px - 24px));
+    property <length> m-list-max: max(120px, min(480px, root.height - m-top - 56px - 20px - 24px));
+    out property <length> list-max: Theme.material ? m-list-max : g-list-max;
+    // (an inline answer's text: 360 px at most, less on a short screen)
+    property <length> answer-max: max(100px, min(360px, list-max - 80px));
+    property <length> m-body: answering ? m-answer-h + 28px : min(content-h, m-list-max) + 20px;
     property <length> m-answer-h;
     property <length> m-view-h: 56px + (m-open ? m-body : 0);
     // (springDefault 6.08 / 0.5: ω 19.5, ζ 0.80)
@@ -757,13 +765,13 @@ export component SpotlightPanel inherits Window {
         g-results := Rectangle {
             visible: !Theme.material && rows.length > 0 && !answering;
             y: 64px;
-            height: min(content-h, 440px) + 16px;
+            height: min(content-h, g-list-max) + 16px;
             border-radius: 24px;
             background: glass-fill;
             border-width: 0.5px;
             border-color: Theme.separator;
             TouchArea { }
-            if !Theme.material: Flickable {
+            if !Theme.material: sb-list766 := Flickable {
                 x: 8px;
                 y: 8px;
                 width: parent.width - 16px;
@@ -803,6 +811,16 @@ export component SpotlightPanel inherits Window {
                         activate => { root.activate(r.index); }
                     }
                 }
+                // (the kit's scroll indicator, held still over the list's right
+                // edge while the content moves under it, #358 #1037)
+                ScrollIndicator {
+                    x: sb-list766.width - self.width;
+                    y: -sb-list766.content-y;
+                    height: sb-list766.height;
+                    content-y: sb-list766.content-y;
+                    content-height: sb-list766.content-height;
+                    view-height: sb-list766.height;
+                }
             }
         }
         g-answer := Rectangle {
@@ -840,8 +858,8 @@ export component SpotlightPanel inherits Window {
                         vertical-alignment: center;
                     }
                 }
-                if quick-shown: Flickable {
-                    height: min(g-text.preferred-height, 360px);
+                if quick-shown: sb-list843 := Flickable {
+                    height: min(g-text.preferred-height, answer-max);
                     content-height: g-text.preferred-height;
                     g-text := VerticalLayout {
                         if quick-error == "": StyledText {
@@ -858,6 +876,16 @@ export component SpotlightPanel inherits Window {
                             wrap: word-wrap;
                         }
                     }
+                    // (the kit's scroll indicator, held still over the list's right
+                    // edge while the content moves under it, #358 #1037)
+                    ScrollIndicator {
+                        x: sb-list843.width - self.width;
+                        y: -sb-list843.content-y;
+                        height: sb-list843.height;
+                        content-y: sb-list843.content-y;
+                        content-height: sb-list843.content-height;
+                        view-height: sb-list843.height;
+                    }
                 }
                 if quick-done: HorizontalLayout {
                     spacing: 8px;
@@ -872,7 +900,7 @@ export component SpotlightPanel inherits Window {
                         clicked => { copy-answer(); }
                     }
                     Text {
-                        text: "  ↵ to continue in chat";
+                        text: "  " + Theme.key-enter + " continues in chat";
                         color: Theme.tertiary;
                         font-size: Theme.small;
                         vertical-alignment: center;
@@ -892,11 +920,11 @@ export component SpotlightPanel inherits Window {
                 height: max(0, parent.height - 56px);
                 clip: true;
                 visible: self.height > 1px;
-                if !answering: Flickable {
+                if !answering: sb-list895 := Flickable {
                     x: 12px;
                     y: 8px;
                     width: parent.width - 24px;
-                    height: min(content-h, 480px);
+                    height: min(content-h, m-list-max);
                     content-height: max(content-h, self.height);
                     content-y <=> root.list-y;
                     accessible-role: list;
@@ -949,6 +977,16 @@ export component SpotlightPanel inherits Window {
                             }
                         }
                     }
+                    // (the kit's scroll indicator, held still over the list's right
+                    // edge while the content moves under it, #358 #1037)
+                    ScrollIndicator {
+                        x: sb-list895.width - self.width;
+                        y: -sb-list895.content-y;
+                        height: sb-list895.height;
+                        content-y: sb-list895.content-y;
+                        content-height: sb-list895.content-height;
+                        view-height: sb-list895.height;
+                    }
                 }
                 // Inline AI answer
                 if answering: m-body := VerticalLayout {
@@ -990,8 +1028,8 @@ export component SpotlightPanel inherits Window {
                             vertical-alignment: center;
                         }
                     }
-                    if quick-shown: Flickable {
-                        height: min(m-text.preferred-height, 360px);
+                    if quick-shown: sb-list993 := Flickable {
+                        height: min(m-text.preferred-height, answer-max);
                         content-height: m-text.preferred-height;
                         m-text := VerticalLayout {
                             if quick-error == "": StyledText {
@@ -1008,6 +1046,16 @@ export component SpotlightPanel inherits Window {
                                 wrap: word-wrap;
                             }
                         }
+                        // (the kit's scroll indicator, held still over the list's right
+                        // edge while the content moves under it, #358 #1037)
+                        ScrollIndicator {
+                            x: sb-list993.width - self.width;
+                            y: -sb-list993.content-y;
+                            height: sb-list993.height;
+                            content-y: sb-list993.content-y;
+                            content-height: sb-list993.content-height;
+                            view-height: sb-list993.height;
+                        }
                     }
                     if quick-done: HorizontalLayout {
                         spacing: 8px;
@@ -1022,7 +1070,7 @@ export component SpotlightPanel inherits Window {
                             clicked => { copy-answer(); }
                         }
                         Text {
-                            text: "  Enter continues in chat";
+                            text: "  " + Theme.key-enter + " continues in chat";
                             color: Theme.m3-on-surface-variant;
                             font-size: 13px;
                             vertical-alignment: center;

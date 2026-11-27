@@ -28,9 +28,9 @@ pub fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
 }
 
-/// Tools.has(cmd): is it on PATH
+/// Tools.has(cmd): is it on PATH (remembered a while: core's has_tool, #571)
 pub fn has_tool(cmd: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(cmd).is_file()))
+    tessera_core::util::has_tool(cmd)
 }
 
 /// The helper script the QML runs (shell/assets/scripts/<name>)

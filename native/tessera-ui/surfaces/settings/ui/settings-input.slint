@@ -87,8 +87,10 @@ component Dots inherits Rectangle {
     in property <string> menu-id;
     in property <bool> lit;
     in property <string> label;
-    // (its ink at rest: shortcuts' tertiary; mouse-gestures.qml's secondary)
-    in property <color> rest: Theme.tertiary;
+    // (its ink at rest: secondary, on a faint fill in Glass, so it can be
+    // seen before the pointer finds it; the tertiary glyph alone was lost on
+    // the dark sheet, #254)
+    in property <color> rest: Theme.secondary;
     // (a Tab stop of its own, Return/Space/Menu open it; not in a row that
     // is one already, as a shortcut's)
     in property <bool> tab-stop: true;
@@ -96,7 +98,7 @@ component Dots inherits Rectangle {
     height: 28px;
     border-radius: Theme.material ? (ta.pressed ? 8px : self.height / 2) : Theme.radius-control - 2px;
     background: Theme.material ? Theme.m3-on-surface-variant.with-alpha(ta.pressed ? 0.1 : ta.has-hover || shown ? 0.08 : 0)
-        : ta.pressed ? Theme.fill-pressed : ta.has-hover || shown ? Theme.fill : transparent;
+        : ta.pressed ? Theme.fill-pressed : ta.has-hover || shown ? Theme.fill-hover : Theme.fill;
     animate background { duration: SM.hover; }
     accessible-role: AccessibleRole.button;
     accessible-label: label;
@@ -215,7 +217,7 @@ component BindRow inherits Tile {
         }
         HorizontalLayout {
             spacing: 4px;
-            opacity: r.enabled ? 1 : 0.4;
+            opacity: r.enabled ? 1 : Theme.disabled-alpha;
             for k in r.data: VerticalLayout {
                 alignment: center;
                 Keycap { text: k.text; }

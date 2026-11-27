@@ -9,7 +9,10 @@
 //! each burst. Icons: IconName looked up in the icon theme (and the item's
 //! IconThemePath), else IconPixmap (ARGB32, network order) as RGBA.
 //! Menus are com.canonical.dbusmenu: `menu(key)` reads one (on a thread,
-//! the answer comes back as a TrayMenu message), `menu_event` clicks an entry.
+//! the answer comes back as a TrayMenu message, `failed` when the app didn't
+//! give one), `menu_event` clicks an entry. While one is open, `follow` has
+//! its app's LayoutUpdated / ItemsPropertiesUpdated read the level shown
+//! again (a network list refreshing, "Connecting…"; #366).
 
 use crate::Msg;
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
@@ -80,6 +83,10 @@ pub struct MenuNode {
 pub struct TrayMenu {
     pub key: String,
     pub root: MenuNode,
+    /// the app didn't answer (or not with a menu): `root` is empty
+    pub failed: bool,
+    /// read again because the app changed it while open (not a new level)
+    pub live: bool,
 }
 
 /// "service/path" or a bare service ("org.kde.StatusNotifierItem-12-1",
@@ -551,33 +558,137 @@ fn call_at(key: &str, method: &'static str, x: i32, y: i32) {
     });
 }
 
+/// One level of a menu (0 the root), AboutToShow first when `show`
+fn read_level(c: &Connection, key: &str, menu_path: &str, id: i32, show: bool) -> Option<MenuNode> {
+    let (svc, _) = parse_address(key, "");
+    let p = proxy(c, &svc, menu_path, MENU).ok()?;
+    if show {
+        let _: zbus::Result<bool> = p.call("AboutToShow", &(id,));
+    }
+    let m = p.call_method("GetLayout", &(id, -1i32, Vec::<String>::new())).ok()?;
+    layout_of(&m)
+}
+
+/// The answer for a level read (or not)
+fn answer(key: String, root: Option<MenuNode>, live: bool) -> TrayMenu {
+    TrayMenu { key, failed: root.is_none(), root: root.unwrap_or_default(), live }
+}
+
 /// Read an item's menu; the answer comes back to `reply` (Msg::Part) as a TrayMenu
+/// (`failed` when the app didn't give one: no empty panel left waiting)
 pub fn menu(key: &str, menu_path: &str, reply: impl Fn(Box<dyn std::any::Any + Send>) + Send + 'static) {
-    let (key, menu_path) = (key.to_string(), menu_path.to_string());
-    std::thread::spawn(move || {
-        let Some(c) = conn() else { return };
-        let (svc, _) = parse_address(&key, "");
-        let Ok(p) = proxy(&c, &svc, &menu_path, MENU) else { return };
-        let _: zbus::Result<bool> = p.call("AboutToShow", &(0i32,));
-        let Ok(m) = p.call_method("GetLayout", &(0i32, -1i32, Vec::<String>::new())) else { return };
-        if let Some(root) = layout_of(&m) {
-            reply(Box::new(TrayMenu { key, root }));
-        }
-    });
+    submenu(key, menu_path, 0, reply)
 }
 
 /// A submenu is about to show (some apps fill it only then); its fresh layout comes back like `menu`'s
 pub fn submenu(key: &str, menu_path: &str, id: i32, reply: impl Fn(Box<dyn std::any::Any + Send>) + Send + 'static) {
     let (key, menu_path) = (key.to_string(), menu_path.to_string());
     std::thread::spawn(move || {
-        let Some(c) = conn() else { return };
-        let (svc, _) = parse_address(&key, "");
-        let Ok(p) = proxy(&c, &svc, &menu_path, MENU) else { return };
-        let _: zbus::Result<bool> = p.call("AboutToShow", &(id,));
-        let Ok(m) = p.call_method("GetLayout", &(id, -1i32, Vec::<String>::new())) else { return };
-        if let Some(root) = layout_of(&m) {
-            reply(Box::new(TrayMenu { key, root }));
-        }
+        let root = conn().and_then(|c| read_level(&c, &key, &menu_path, id, true));
+        reply(Box::new(answer(key, root, false)));
+    });
+}
+
+// ── The open menu, followed (#366) ───────────────────────────────────────────
+
+type Reply = Box<dyn Fn(Box<dyn std::any::Any + Send>) + Send>;
+
+/// The tray menu that's open: its item, menu path, the level shown, its
+/// app's unique name once looked up, and where its fresh layout goes
+struct Open {
+    key: String,
+    path: String,
+    level: i32,
+    owner: Option<String>,
+    reply: Reply,
+}
+
+fn open_menu() -> &'static Mutex<Option<Open>> {
+    static O: Mutex<Option<Open>> = Mutex::new(None);
+    &O
+}
+
+/// Whether a dbusmenu signal from `sender` on `path` is the open menu's
+/// app's (its unique name: signals carry that, not the item's well-known one)
+fn is_open_menus(sender: &str, path: &str, open_path: &str, owner: &str) -> bool {
+    path == open_path && sender == owner
+}
+
+/// Follow this item's open menu: each change its app signals reads the
+/// level shown (`level`, 0 the root) again, back to `reply` as a live
+/// TrayMenu. Until `unfollow` (or another menu is followed)
+pub fn follow(key: &str, menu_path: &str, level: i32, reply: impl Fn(Box<dyn std::any::Any + Send>) + Send + 'static) {
+    start_follower();
+    let mut o = open_menu().lock().unwrap_or_else(|e| e.into_inner());
+    // (the same menu at another level keeps its looked-up owner)
+    let owner = o.as_ref().filter(|x| x.key == key && x.path == menu_path).and_then(|x| x.owner.clone());
+    *o = Some(Open { key: key.to_string(), path: menu_path.to_string(), level, owner, reply: Box::new(reply) });
+}
+
+/// The open menu closed
+pub fn unfollow() {
+    *open_menu().lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// One thread for the whole session: every dbusmenu change on the bus, the
+/// open menu's app's read again (a burst within 80 ms once)
+fn start_follower() {
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    STARTED.call_once(|| {
+        std::thread::spawn(|| loop {
+            let run = || -> zbus::Result<()> {
+                let c = conn().ok_or(zbus::Error::Address("no session bus".into()))?;
+                let rule = MatchRule::builder().msg_type(zbus::message::Type::Signal).interface(MENU)?.build();
+                let mut it = MessageIterator::for_match_rule(rule, &c, Some(64))?;
+                let (tx, rx) = mpsc::channel::<(String, String)>();
+                std::thread::spawn(move || {
+                    while let Some(m) = it.next() {
+                        let Ok(m) = m else { continue };
+                        let h = m.header();
+                        let member = h.member().map(|x| x.to_string()).unwrap_or_default();
+                        if member != "LayoutUpdated" && member != "ItemsPropertiesUpdated" {
+                            continue;
+                        }
+                        let (Some(s), Some(p)) = (h.sender().map(|x| x.to_string()), h.path().map(|x| x.to_string())) else { continue };
+                        if tx.send((s, p)).is_err() {
+                            return;
+                        }
+                    }
+                });
+                loop {
+                    let Ok(first) = rx.recv() else { return Ok(()) };
+                    let mut hits = vec![first];
+                    while let Ok(x) = rx.recv_timeout(Duration::from_millis(80)) {
+                        hits.push(x);
+                    }
+                    let Some((key, path, level, owner)) = open_menu().lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|o| (o.key.clone(), o.path.clone(), o.level, o.owner.clone())) else { continue };
+                    if !hits.iter().any(|(_, p)| *p == path) {
+                        continue;
+                    }
+                    let owner = match owner {
+                        Some(o) => o,
+                        None => {
+                            let o = owner_of(&c, &key);
+                            if let Some(x) = open_menu().lock().unwrap_or_else(|e| e.into_inner()).as_mut().filter(|x| x.key == key) {
+                                x.owner = Some(o.clone());
+                            }
+                            o
+                        }
+                    };
+                    if !hits.iter().any(|(s, p)| is_open_menus(s, p, &path, &owner)) {
+                        continue;
+                    }
+                    let Some(root) = read_level(&c, &key, &path, level, false) else { continue };
+                    // (still that menu, at that level: else it's an old answer)
+                    let o = open_menu().lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(x) = o.as_ref().filter(|x| x.key == key && x.path == path && x.level == level) {
+                        (x.reply)(Box::new(answer(key, Some(root), true)));
+                    }
+                }
+            };
+            let _ = run();
+            std::thread::sleep(Duration::from_secs(3));
+        });
     });
 }
 
@@ -682,6 +793,17 @@ mod tests {
         assert_eq!(&d[..4], &[10, 20, 30, 128]);
         // a truncated one is skipped
         assert_eq!(best_pixmap(&[(8, 8, vec![0; 10])], 8), None);
+    }
+
+    #[test]
+    fn only_the_open_menus_app_is_followed() {
+        assert!(is_open_menus(":1.42", "/MenuBar", "/MenuBar", ":1.42"));
+        assert!(!is_open_menus(":1.43", "/MenuBar", "/MenuBar", ":1.42"));
+        assert!(!is_open_menus(":1.42", "/Other", "/MenuBar", ":1.42"));
+        let a = answer("k".into(), None, false);
+        assert!(a.failed && a.root.children.is_empty() && !a.live);
+        let b = answer("k".into(), Some(MenuNode { id: 3, ..Default::default() }), true);
+        assert!(!b.failed && b.live && b.root.id == 3);
     }
 
     #[test]

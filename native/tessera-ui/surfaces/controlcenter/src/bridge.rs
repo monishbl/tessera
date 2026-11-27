@@ -97,6 +97,8 @@ pub struct Profile {
     /// display | headphones | (speakers)
     pub kind: String,
     pub busy: bool,
+    /// its card and profile, for the pick (the host's audio_profiles::alt_id)
+    pub id: String,
 }
 
 impl Said {
@@ -127,7 +129,7 @@ impl Said {
             position: f(m, "position"),
             length: f(m, "length"),
         };
-        let profiles = v["profiles"].as_array().map(|a| a.iter().map(|p| Profile { name: s(p, "name"), kind: s(p, "kind"), busy: b(p, "busy") }).collect()).unwrap_or_default();
+        let profiles = v["profiles"].as_array().map(|a| a.iter().map(|p| Profile { name: s(p, "name"), kind: s(p, "kind"), busy: b(p, "busy"), id: s(p, "id") }).collect()).unwrap_or_default();
         Self { modules, media, cast: b(v, "cast"), casting: b(v, "casting"), cast_tip: s(v, "castTip"), avatar: s(v, "avatar").trim_start_matches("file://").to_string(), user: s(v, "user"), profiles }
     }
 
@@ -440,13 +442,13 @@ pub fn sound_page(snd: &Sound, profiles: &[Profile], mic_in_sound: bool) -> Page
     for d in &snd.sinks {
         blocks.push(Block { kind: BlockKind::Row, id: format!("out:{}", d.name), icon: device_icon(d, false).into(), picture: device_picture(d), title: audio::list_name(d), highlighted: d.name == snd.default_sink, ..Default::default() });
     }
-    for (i, p) in profiles.iter().enumerate() {
+    for p in profiles {
         let icon = match p.kind.as_str() {
             "display" => "monitor",
             "headphones" => "headphones",
             _ => "speaker-hifi",
         };
-        blocks.push(Block { kind: BlockKind::Row, id: format!("prof:{i}"), icon: icon.into(), title: p.name.clone(), busy: p.busy, ..Default::default() });
+        blocks.push(Block { kind: BlockKind::Row, id: format!("prof:{}", p.id), icon: icon.into(), title: p.name.clone(), busy: p.busy, ..Default::default() });
     }
     let streams: Vec<&audio::Stream> = snd.streams.iter().filter(|s| !audio::EVENT_PLAYERS.contains(&s.binary.as_str())).collect();
     if !streams.is_empty() {
@@ -562,9 +564,9 @@ mod tests {
         let p = sound_page(&snd, &[], true);
         assert_eq!(p.blocks.iter().filter(|b| b.kind == Slider).count(), 2);
         assert!(p.blocks[p.blocks.len() - 3].highlighted);
-        let prof = [Profile { name: "Monitor speakers".into(), kind: "display".into(), busy: true }];
+        let prof = [Profile { name: "Monitor speakers".into(), kind: "display".into(), busy: true, id: "card\u{1f}hdmi".into() }];
         let p = sound_page(&snd, &prof, false);
-        assert_eq!((p.blocks[3].id.as_str(), p.blocks[3].icon.as_str(), p.blocks[3].busy), ("prof:0", "monitor", true));
+        assert_eq!((p.blocks[3].id.as_str(), p.blocks[3].icon.as_str(), p.blocks[3].busy), ("prof:card\u{1f}hdmi", "monitor", true));
         assert!(p.blocks[1].picture.ends_with("laptop.svg"));
         assert_eq!(p.blocks[2].picture, "");
         let none = mic_page(&Sound::default());
