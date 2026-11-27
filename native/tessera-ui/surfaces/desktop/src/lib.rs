@@ -2169,11 +2169,8 @@ impl Part for Desktop {
             M::Image(k, px) => {
                 self.pending.remove(&k);
                 if let Some(px) = px {
-                    // (a file's icon arriving after the desktop's first frames
-                    // often didn't draw: the stacks kept bare labels until
-                    // something else redrew them. Their cells made afresh,
-                    // and the frame drawn whole, they show. Once for a burst
-                    // of them: 40 files at login rebuilt 40 icons 40 times)
+                    // (once for a burst of them: 40 files at login updated
+                    // the icons 40 times)
                     let file_icon = k.starts_with("icon:") || k.starts_with("thumb:");
                     self.failed.remove(&k);
                     self.images.insert(k, slint::Image::from_rgba8(px));
@@ -2191,10 +2188,14 @@ impl Part for Desktop {
                 }
             }
             M::IconsArrived => {
-                if let Some(w) = &self.win {
-                    w.icons.set(Vec::new());
-                    w.surface.redraw_all();
-                }
+                // Only the rows whose picture arrived change (update's
+                // set_keyed), and only their cells are drawn again. (The
+                // icon list used to be emptied and the whole surface drawn
+                // anew for each burst, so at login the icons flashed several
+                // times (#509): a late icon once kept a bare label because
+                // a culled frame left the window's redraw tracker blind to
+                // every item outside its damage, which damage.rs's track_all
+                // has fixed since, 18 Nov)
                 self.update(st);
             }
             M::Zones(z) => {
