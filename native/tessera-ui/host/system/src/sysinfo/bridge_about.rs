@@ -443,7 +443,7 @@ impl About {
     fn feed(&self, h: &Host) -> Value {
         let up = &self.up;
         let health = st(h, "health");
-        let checks: Vec<Value> = health["checks"].as_array().map(|a| a.iter().map(|c| json!({"id": c["id"], "name": s(&c["name"]), "group": s(&c["group"]), "status": s(&c["status"]), "detail": s(&c["detail"]), "fix": s(&c["fix"]), "canFix": c["canFix"] == true, "fixRoot": c["fixRoot"] == true, "fixPassword": c["fixPassword"] == true, "fixCommand": s(&c["fixCommand"]), "page": s(&c["page"]), "target": s(&c["target"]), "steps": steps(&c["steps"])})).collect()).unwrap_or_default();
+        let checks: Vec<Value> = health["checks"].as_array().map(|a| a.iter().map(|c| json!({"id": c["id"], "name": s(&c["name"]), "group": s(&c["group"]), "status": s(&c["status"]), "detail": s(&c["detail"]), "fix": s(&c["fix"]), "canFix": c["canFix"] == true, "fixRoot": c["fixRoot"] == true, "fixPassword": c["fixPassword"] == true, "fixCommand": s(&c["fixCommand"]), "fixLabel": s(&c["fixLabel"]), "page": s(&c["page"]), "target": s(&c["target"]), "steps": steps(&c["steps"])})).collect()).unwrap_or_default();
         let checked_at = health["checkedAt"].as_f64().unwrap_or(0.0);
         let conf = st(h, "conflicts");
         let muted = conf["muted"].as_array().cloned().unwrap_or_default();

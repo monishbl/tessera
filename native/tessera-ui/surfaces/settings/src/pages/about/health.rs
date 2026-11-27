@@ -155,6 +155,21 @@ pub fn remedy(c: &Value, here: &str) -> (String, Option<&'static str>) {
 /// fix is confirmed first: the row shows exactly what will run), Open <the
 /// page where its setting lives> (not on that page: `here`), and the steps
 /// by hand
+/// The fix button's words: the check's own (`fixLabel`, "Restore the login
+/// screen") or Fix; while confirming, what pressing it again does; while
+/// it runs, Fixing…
+fn fix_label(own: &str, running: bool, asking: bool, password: bool) -> String {
+    if running {
+        "Fixing…".into()
+    } else if asking {
+        (if password { "Run with password" } else { "Run fix" }).to_string()
+    } else if own.is_empty() {
+        "Fix".into()
+    } else {
+        own.into()
+    }
+}
+
 pub fn check_row(cx: &mut Ctx, c: &Value, here: &str) -> Row {
     let confirming = cx.local_s("about.health.confirming");
     let fixing = s(&feed(cx)["health"]["fixing"]);
@@ -185,7 +200,7 @@ pub fn check_row(cx: &mut Ctx, c: &Value, here: &str) -> Row {
         roles.push("open");
     }
     if b(&c["canFix"]) {
-        let label = if fixing == id { "Fixing…" } else if asking { if pw { "Run with password" } else { "Run fix" } } else { "Fix" };
+        let label = fix_label(&s(&c["fixLabel"]), fixing == id, asking, pw);
         let mut o = btn(label).on(fixing == id).off(!fixing.is_empty());
         if asking {
             o = o.primary();
@@ -282,6 +297,19 @@ mod tests {
         assert_eq!(page_name("appearance/glass"), Some("Glass"));
         assert_eq!(page_name("sound"), Some("Sound"));
         assert_eq!(page_name("nowhere"), None);
+    }
+
+    #[test]
+    fn a_fix_can_say_what_it_does() {
+        assert_eq!(fix_label("", false, false, false), "Fix");
+        assert_eq!(fix_label("Restore the login screen", false, false, true), "Restore the login screen");
+        // (confirming first: the password is asked; running: Fixing…)
+        assert_eq!(fix_label("Restore the login screen", false, true, true), "Run with password");
+        assert_eq!(fix_label("", false, true, false), "Run fix");
+        assert_eq!(fix_label("Restore the login screen", true, false, true), "Fixing…");
+        // (health-check.py names the button for the login rescue's Restore, audit #805)
+        let src = include_str!("../../../../../../../shell/assets/scripts/health-check.py");
+        assert!(src.contains("FIX_LABELS = {\"loginrestore\": \"Restore the login screen\"}"));
     }
 
     #[test]

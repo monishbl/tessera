@@ -89,6 +89,12 @@ sharing = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sharing)
 ROOT_FIXES = sharing.tessera_root.FIXES
 SHOWN = {"btpairing": sharing.PAIRING_SHOWN, "networkmanager": sharing.tessera_root.NETWORK_SHOWN}  # (what the page shows for these)
+# Root fixes that always ask for the password (their polkit action is
+# auth_admin, not the fixed passwordless `fix`): the login rescue's Restore,
+# Settings → Health → Login screen's "Restore the login screen" (audit #805:
+# only when you press it; nothing switches back by itself)
+PASSWORD_FIXES = {"loginrestore": [sharing.HELPER, "rescue", "undo"]}
+FIX_LABELS = {"loginrestore": "Restore the login screen"}
 SYSTEM = os.environ.get("TESSERA_SYSTEM_ROOT", "/")  # where /usr is looked for (tests)
 
 _local = threading.local() # per check: whether something it asked hung
@@ -117,14 +123,19 @@ def result(id, name, group, status, detail="", fix="", page="", target="", steps
     """One check's row. page/target: the Settings page where its setting
     lives (and the part of it to show); steps: what to do by hand, in order"""
     broken = status in ("fail", "warn")
-    root = broken and id in ROOT_FIXES
+    asks = broken and id in PASSWORD_FIXES
+    root = broken and (id in ROOT_FIXES or asks)
     return {"id": id, "name": name, "group": group, "status": status, "detail": detail, "fix": fix,
             "page": page, "target": target, "steps": list(steps),
             "canFix": broken and (id in FIXES or root), "fixRoot": root,
-            # a root fix asks for the password (no root helper installed yet)
-            "fixPassword": root and not sharing.helper_installed(),
+            # a root fix asks for the password (no root helper installed yet,
+            # or one that always does)
+            "fixPassword": asks or (root and not sharing.helper_installed()),
             # what the button will run, shown before a root fix is confirmed
-            "fixCommand": (SHOWN.get(id) or " ".join(ROOT_FIXES[id])) if root else ""}
+            "fixCommand": ("pkexec " + " ".join(PASSWORD_FIXES[id])) if asks else
+                          (SHOWN.get(id) or " ".join(ROOT_FIXES[id])) if root else "",
+            # the button's own words, where "Fix" isn't what it does
+            "fixLabel": FIX_LABELS.get(id, "") if broken else ""}
 
 
 def no_fix(r):
@@ -430,8 +441,9 @@ LOGIN_STEPS = ["Don't log out or restart until this is fixed",
                "Press Fix and give your password: Tessera checks again and undoes its own change that's in the way",
                "Still failing: see docs/RECOVERY.md. If there's no login screen later, Ctrl+Alt+F2 gives a console: "
                "log in there and run sudo /usr/lib/tessera/tessera-root rescue"]
-RESTORE_STEPS = [TERMINAL + "pkexec /usr/lib/tessera/tessera-root rescue undo (puts back what was taken out, "
-                 "once it would no longer stop the login screen)",
+RESTORE_STEPS = ["Press Restore the login screen and give your password: Tessera puts back what the rescue took out, "
+                 "only what would no longer stop the login screen, and says what it couldn't",
+                 "Or in a terminal, run: pkexec /usr/lib/tessera/tessera-root rescue undo",
                  "Or leave it: logging in with the password works as before"]
 
 
@@ -466,9 +478,10 @@ def check_login(_):
     if note:
         when = time.strftime("%d %b %H:%M", time.localtime(note.get("time", 0))) if isinstance(note.get("time"), (int, float)) else "lately"
         did = [d for d in note.get("did") or [] if isinstance(d, str)]
-        return no_fix(result("login", name, "Tessera itself", "warn",
-                             f"The login rescue stepped in ({when}): " + ("; ".join(did[:2]) or "see the note"),
-                             page="lock", steps=RESTORE_STEPS))
+        # (its button: rescue undo, with the password; never by itself)
+        return result("loginrestore", name, "Tessera itself", "warn",
+                      f"The login rescue stepped in ({when}): " + ("; ".join(did[:2]) or "see the note"),
+                      page="lock", steps=RESTORE_STEPS)
     if live.get("error"):
         return result("login", name, "Tessera itself", "warn", "Couldn't check: " + live["error"], page="about/bugreport", steps=UNANSWERED)
     return result("login", name, "Tessera itself", "ok", "Will start" + (" (checked after the last update too)" if last.get("ok") else ""))
@@ -837,6 +850,8 @@ def main(argv):
             return 1
         if opts.id in FIXES:
             cmd = FIXES[opts.id]
+        elif opts.id in PASSWORD_FIXES:
+            cmd = ["pkexec"] + PASSWORD_FIXES[opts.id]
         elif opts.id in ROOT_FIXES:
             cmd = ["pkexec"] + ROOT_FIXES[opts.id]
             if sharing.helper_installed():
@@ -846,7 +861,7 @@ def main(argv):
             return 1
         try:
             p = subprocess.run(cmd, capture_output=True, text=True, timeout=FIX_TIMEOUT.get(opts.id, 120))
-            if cmd[1:2] == [sharing.HELPER] and p.returncode == sharing.tessera_root.REFUSED_EXIT:
+            if opts.id in ROOT_FIXES and cmd[1:2] == [sharing.HELPER] and p.returncode == sharing.tessera_root.REFUSED_EXIT:
                 # (an older helper without this fix: the command itself, with the password)
                 cmd = ["pkexec"] + ROOT_FIXES[opts.id]
                 p = subprocess.run(cmd, capture_output=True, text=True, timeout=120)

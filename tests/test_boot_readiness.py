@@ -375,6 +375,36 @@ class HealthRow(Machine):
         r = self.health()
         self.assertEqual(r["status"], "warn")
         self.assertIn("rescue undo", " ".join(r["steps"]))
+        # (audit #805: a button, Restore the login screen, that runs the
+        # rescue's undo with the password; only when pressed)
+        self.assertEqual(r["id"], "loginrestore")
+        self.assertEqual(r["fixLabel"], "Restore the login screen")
+        self.assertTrue(r["canFix"] and r["fixRoot"] and r["fixPassword"])
+        self.assertTrue(r["fixCommand"].startswith("pkexec ") and r["fixCommand"].endswith(" rescue undo"), r["fixCommand"])
+
+    def test_restore_runs_the_rescue_undo_with_the_password_and_nothing_else(self):
+        os.environ["TESSERA_SYSTEM_ROOT"] = self.root
+        self.addCleanup(os.environ.pop, "TESSERA_SYSTEM_ROOT", None)
+        h = load(SCRIPTS / "health-check.py", "health_restore")
+        ran = []
+
+        class Done:
+            returncode, stdout, stderr = 0, "", ""
+        real = h.subprocess.run
+        h.subprocess.run = lambda cmd, **k: ran.append(cmd) or Done()
+        self.addCleanup(setattr, h.subprocess, "run", real)
+        import io
+        import contextlib as cl
+        out = io.StringIO()
+        with cl.redirect_stdout(out):
+            self.assertEqual(h.main(["fix", "loginrestore"]), 0)
+        self.assertEqual(ran, [["pkexec", h.sharing.HELPER, "rescue", "undo"]])
+        self.assertEqual(json.loads(out.getvalue()), {"ok": True, "error": ""})
+        # (the passwordless `fix` never has it: it always asks)
+        self.assertNotIn("loginrestore", R.FIXES)
+        # (and no check runs it by itself: only main's fix does)
+        src = (SCRIPTS / "health-check.py").read_text()
+        self.assertEqual(src.count("PASSWORD_FIXES[opts.id]"), 1)
 
 
 class LoginRescue(Machine):
