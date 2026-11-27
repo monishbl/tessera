@@ -473,7 +473,8 @@ impl ControlCenter {
                     d.needs = "warp-cli";
                     d
                 }
-                "keyboard" => def("Keyboard", "keyboard", false, ""),
+                // (a switch: the keyboard stays up beside Control Center, #763)
+                "keyboard" => def("Keyboard", "keyboard", bs(&st(h, "osk"), "open"), ""),
                 "screenshot" => def("Screenshot", "camera", false, ""),
                 "colorPicker" => {
                     let mut d = def("Colour picker", "eyedropper", false, "");
@@ -841,7 +842,7 @@ impl ControlCenter {
             let status = if is_active {
                 ss(&focus, "statusText").to_string()
             } else if bs(sched, "enabled") {
-                let c24 = h.cfg()["appearance"]["clock24"].as_bool().unwrap_or(false);
+                let c24 = tessera_core::locale::clock24(&h.cfg());
                 format!("Scheduled {}–{}", fmt_hm(ss(sched, "from"), c24), fmt_hm(ss(sched, "to"), c24))
             } else {
                 String::new()
@@ -1395,7 +1396,7 @@ impl ControlCenter {
             "record" => ask(h, "recorder.openToolbar", json!([])), // the recording toolbar (again: stop)
             "easyEffects" => ask(h, "system.setEasyEffects", json!([!on])),
             "warp" => ask(h, "system.setWarp", json!([!on])),
-            "keyboard" => ask(h, "panels.show", json!(["keyboard"])),
+            "keyboard" => ask(h, "panels.toggle", json!(["keyboard"])),
             "screenshot" => ask(h, "panels.show", json!(["screenTools"])),
             "colorPicker" => {
                 ask(h, "panels.close", json!([]));

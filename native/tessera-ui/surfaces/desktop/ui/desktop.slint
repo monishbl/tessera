@@ -456,8 +456,21 @@ component WeatherW inherits Rectangle {
             T { text: w.t3; horizontal-alignment: right; font-weight: 500; overflow: elide; }
             T { text: w.t4; horizontal-alignment: right; color: Theme.secondary; overflow: elide; }
         }
+        // (the next hours along the bottom; none came: the day's rain in a
+        // line, so the lower part isn't left empty; #263)
+        if w.size != "s" && w.hours.length == 0: T {
+            x: 0;
+            y: root.height - self.height;
+            width: root.width;
+            height: self.preferred-height;
+            text: w.t5;
+            color: Theme.secondary;
+            overflow: elide;
+        }
         if w.size != "s": HorizontalLayout {
+            x: 0;
             y: root.height - self.preferred-height;
+            width: root.width;
             height: self.preferred-height;
             for h in w.hours: VerticalLayout {
                 spacing: 2px;
@@ -541,7 +554,7 @@ component CalendarW inherits Rectangle {
         property <length> cw: self.width / 7;
         property <length> ch: self.height / (2 + w.n1);
         T { x: 0; y: 0; text: w.t4; color: Desk.accent-ink; font-size: Theme.caption; font-weight: 700; }
-        for l[i] in ["M", "T", "W", "T", "F", "S", "S"]: T {
+        for l[i] in w.chars: T {
             x: i * cw;
             y: ch;
             width: cw;
@@ -949,16 +962,25 @@ component NotesW inherits Rectangle {
         font-size: Theme.body;
         font-weight: 600;
     }
-    Rectangle {
+    // (scrolls, following the caret: text past the widget's height and the
+    // caret were cut off, with no way to reach the end; #514)
+    note-flick := Flickable {
         y: 36px;
         height: root.height - 36px;
-        clip: true;
+        content-height: max(self.height, edit.preferred-height);
         edit := TextInput {
             y: 0;
             width: parent.width;
             height: max(parent.height, self.preferred-height);
             single-line: false;
             wrap: word-wrap;
+            cursor-position-changed(p) => {
+                if p.y < -note-flick.content-y {
+                    note-flick.content-y = -p.y;
+                } else if p.y + 20px > -note-flick.content-y + note-flick.height {
+                    note-flick.content-y = -(p.y + 20px - note-flick.height);
+                }
+            }
             text: w.note;
             color: Theme.material ? Theme.m3-on-tertiary-container : Theme.label;
             selection-background-color: Theme.material ? Theme.m3-tertiary.with-alpha(0.3) : Theme.accent.with-alpha(0.4);

@@ -95,6 +95,8 @@ struct Win {
     targets: Rows<ui::NcTarget>,
     a11y: Option<crate::a11y::A11y>,
     glass_sent: String,
+    /// the week start the header letters were set for (u32::MAX: not yet)
+    letters_for: std::cell::Cell<u32>,
 }
 
 pub struct Panel {
@@ -112,6 +114,8 @@ pub struct Panel {
     shown: (i32, u32),
     selected: Day,
     week: bool,
+    /// the week's first day, 0 Sunday … 6 Saturday (appearance.weekStart or the language: tessera_core::locale)
+    week_start: u32,
     /// what the shell last said: the widgets, the calendar's days
     widgets: Value,
     calendar: Value,
@@ -140,6 +144,7 @@ impl Default for Panel {
             shown: (today.0, today.1),
             selected: today,
             week: false,
+            week_start: tessera_core::locale::system_week_start(),
             widgets: Value::Null,
             calendar: Value::Null,
             cards: HashMap::new(),
@@ -367,7 +372,7 @@ impl Notifications {
         let a11y = crate::a11y::A11y::new(&surface, st.tx.clone());
         // (a new window's rows say their places as they're made)
         self.nc.cards.clear();
-        self.nc.win = Some(Win { output: output.into(), surface, ui, rows, days, day_items, todos, laps, targets, a11y, glass_sent: String::new() });
+        self.nc.win = Some(Win { output: output.into(), surface, ui, rows, days, day_items, todos, laps, targets, a11y, glass_sent: String::new(), letters_for: std::cell::Cell::new(u32::MAX) });
         true
     }
 
@@ -391,6 +396,7 @@ impl Notifications {
             // (the QML widgets are made anew: month view, the Focus timer)
             self.nc.week = false;
             self.nc.focus_mode = 0;
+            self.nc.week_start = tessera_core::locale::week_start(&st.shell.cfg);
             self.nc_ask_calendar();
         }
         let w = self.nc.win.as_ref().unwrap();
@@ -447,7 +453,7 @@ impl Notifications {
 
     fn nc_ask_calendar(&self) {
         let p = &self.nc;
-        let days = if p.week { center::week_of(p.selected) } else { center::month_grid(p.shown.0, p.shown.1) };
+        let days = if p.week { center::week_of(p.selected, p.week_start) } else { center::month_grid(p.shown.0, p.shown.1, p.week_start) };
         let (first, last) = (days[0], days[days.len() - 1]);
         nc("calendar", json!({"from": center::key(first), "to": center::key(center::add_days(last, 1)), "day": center::key(p.selected)}));
     }
@@ -458,7 +464,7 @@ impl Notifications {
             let i = self.nc.alerts.iter().position(|a| a.hid == e.item).unwrap_or(0);
             let a = self.nc.alerts.get(i).cloned().unwrap_or_default();
             let alert_id = self.nc.alert_ids.id(a.hid);
-            let h24 = st.shell.cfg["appearance"]["clock24"].as_bool().unwrap_or(false);
+            let h24 = tessera_core::locale::clock24(&st.shell.cfg);
             let pic = if a.picture.is_empty() { None } else { self.image(st, a.picture.trim_start_matches("file://"), true) };
             let kind = if a.kind.is_empty() { "Tessera".to_string() } else { a.kind.clone() };
             return ui::Banner {
@@ -546,13 +552,19 @@ impl Notifications {
         // (places of rows no longer there)
         let n = rows.len() as i32;
         self.nc.cards.retain(|i, _| *i < n);
-        let h24 = st.shell.cfg["appearance"]["clock24"].as_bool().unwrap_or(false);
+        let h24 = tessera_core::locale::clock24(&st.shell.cfg);
         let today = today();
+        // (Week starts on changed while it's open: the new days asked for)
+        let start = tessera_core::locale::week_start(&st.shell.cfg);
+        if start != self.nc.week_start {
+            self.nc.week_start = start;
+            self.nc_ask_calendar();
+        }
         let w = &self.nc.widgets;
         let focus_text = s(&w["focus"]);
         let p = &self.nc;
         // the calendar
-        let days = if p.week { center::week_of(p.selected) } else { center::month_grid(p.shown.0, p.shown.1) };
+        let days = if p.week { center::week_of(p.selected, p.week_start) } else { center::month_grid(p.shown.0, p.shown.1, p.week_start) };
         let marks = &p.calendar["marks"];
         let cal_days: Vec<ui::NcDay> = days
             .iter()
@@ -568,7 +580,7 @@ impl Notifications {
                     in_month: p.week || d.1 == p.shown.1,
                     colors: p.day_colors.get(&k, m["colors"].as_array().map(|a| a.iter().take(3).map(|c| color(c.as_str().unwrap_or(""))).collect()).unwrap_or_else(Vec::<slint::Color>::new)),
                     todos: m["todos"].as_i64().unwrap_or(0) > 0,
-                    name: center::WEEKDAYS[center::weekday(d) as usize][..3].to_string().into(),
+                    name: center::day_name(d, true).into(),
                     lines: p.day_lines.get(&k, lines),
                     more: m["more"].as_i64().unwrap_or(0) as i32,
                     long: center::short_date(d).into(),
@@ -610,6 +622,9 @@ impl Notifications {
         ui.set_tab(p.tab);
         ui.set_cal_title(center::title(p.shown, if p.week { Some(&days) } else { None }).into());
         ui.set_cal_week(p.week);
+        if win.letters_for.replace(p.week_start) != p.week_start {
+            ui.set_cal_letters(slint::ModelRc::new(slint::VecModel::from(tessera_core::locale::weekday_letters(p.week_start).into_iter().map(slint::SharedString::from).collect::<Vec<_>>())));
+        }
         win.days.set(cal_days);
         ui.set_day_title(center::day_title(p.selected, today).into());
         win.day_items.set(day_items);

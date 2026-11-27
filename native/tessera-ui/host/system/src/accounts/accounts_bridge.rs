@@ -25,6 +25,8 @@
 //! ai.setModel [key], ai.accountsSave [raw, oldKey, credential],
 //! ai.removeModel [key] (keeps the removed record for an undo),
 //! ai.restoreRemoved, ai.forgetRemoved, ai.deleteAllChats.
+//! The KLIPY key (klipySave [key]) goes to the keyring itself, on a thread
+//! (keys::save_klipy); one left in config.json is moved there at the start.
 
 use super::common::*;
 use serde_json::{json, Value};
@@ -46,11 +48,17 @@ pub struct AccountsBridge {
     /// models whose credential was saved here since the keys were read (the
     /// shell's cached Keys don't hear of it)
     saved_keys: std::collections::HashSet<String>,
+    /// a KLIPY key was saved here since the keys were read
+    klipy_saved: bool,
+    /// calendars.json and the chat index, read again only when they change
+    /// (#571: both were read every second while Settings was open)
+    cal_memo: std::cell::RefCell<tessera_core::util::FileMemo<Value>>,
+    ai_memo: std::cell::RefCell<tessera_core::util::FileMemo<(usize, usize)>>,
 }
 
 impl Default for AccountsBridge {
     fn default() -> Self {
-        Self { live: true, sent: String::new(), ai_undo: String::new(), undo_t: slint::Timer::default(), tx: None, saved_keys: Default::default() }
+        Self { live: true, sent: String::new(), ai_undo: String::new(), undo_t: slint::Timer::default(), tx: None, saved_keys: Default::default(), klipy_saved: false, cal_memo: Default::default(), ai_memo: Default::default() }
     }
 }
 
@@ -92,15 +100,18 @@ fn s_(v: &Value, k: &str) -> Value {
 
 /// Calendar's subscriptions and default alert: calendars.json, which the
 /// desktop's calendar.* calls write (host/desktop today/calendar.rs)
-fn calendar_doc() -> Value {
-    let p = tessera_core::theme::config_path().parent().map(|p| p.join("calendars.json")).unwrap_or_default();
+fn calendar_path() -> std::path::PathBuf {
+    tessera_core::theme::config_path().parent().map(|p| p.join("calendars.json")).unwrap_or_default()
+}
+
+fn calendar_doc(p: &std::path::Path) -> Value {
     std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(Value::is_object).unwrap_or_else(|| json!({}))
 }
 
 /// Ai.sessions.length and the pinned ones: the chat index the sidebar writes
-fn ai_sessions() -> (usize, usize) {
+fn ai_sessions(dir: &std::path::Path) -> (usize, usize) {
     use tessera_core::services::ai::chats::Store;
-    let idx = Store::new(Store::default_dir()).read_index();
+    let idx = Store::new(dir.to_path_buf()).read_index();
     (idx.chats.len(), idx.chats.iter().filter(|c| c.pinned).count())
 }
 
@@ -124,7 +135,7 @@ impl AccountsBridge {
                 needs[k] = json!(b);
             }
         }
-        let cal = calendar_doc();
+        let cal = self.cal_memo.borrow_mut().get(&calendar_path(), calendar_doc);
         // AI: whether each model has a credential (Ai.hasCredential), the chats
         let keys = h.st.shell.get::<Keys>();
         let mut has_key = serde_json::Map::new();
@@ -132,7 +143,15 @@ impl AccountsBridge {
             let has = m.auth == "none" || self.saved_keys.contains(&m.key) || keys.is_some_and(|k| k.has(&models::credential_provider(&m), &m.key));
             has_key.insert(m.key.clone(), json!(has));
         }
-        let (sessions, pinned) = ai_sessions();
+        // (whether there's a KLIPY key: never the key)
+        let klipy = self.klipy_saved
+            || keys.is_some_and(|k| k.has(tessera_core::services::ai::keys::KLIPY, tessera_core::services::ai::keys::KLIPY))
+            || h.cfg()["emoji"]["klipyKey"].as_str().is_some_and(|k| !k.trim().is_empty())
+            || std::env::var_os("KLIPY_API_KEY").is_some_and(|v| !v.is_empty());
+        let (sessions, pinned) = {
+            let dir = tessera_core::services::ai::chats::Store::default_dir();
+            self.ai_memo.borrow_mut().get(&dir.join("index.json"), |_| ai_sessions(&dir))
+        };
         let acct = &g["account"];
         let contacts = c["contacts"].as_array().cloned().unwrap_or_default();
         json!({
@@ -185,6 +204,7 @@ impl AccountsBridge {
                 "sessions": sessions,
                 "pinned": pinned,
                 "undo": self.ai_undo,
+                "klipySaved": klipy,
             },
             "tools": TOOLS.iter().filter(|t| has_tool(t)).collect::<Vec<_>>(),
         })
@@ -290,6 +310,16 @@ impl AccountsBridge {
                 }
             }
             "aiDeleteAll" => h.ask("ai.deleteAllChats", json!([])),
+            // [key]: into the keyring, out of config.json (#965)
+            "klipySave" => {
+                let key = s(0).trim().to_string();
+                if !key.is_empty() {
+                    self.klipy_saved = true;
+                    std::thread::spawn(move || {
+                        tessera_core::services::ai::keys::save_klipy(&key);
+                    });
+                }
+            }
             other => eprintln!("tessera-ui: settings (accounts): no act {other}"),
         }
     }
@@ -322,6 +352,8 @@ impl Service for AccountsBridge {
     }
     fn start(&mut self, h: &mut Host) {
         h.st.shell.want("ai"); // (the saved credentials, for hasKey)
+        // (a KLIPY key from before #965 leaves config.json for the keyring)
+        std::thread::spawn(tessera_core::services::ai::keys::migrate_klipy);
         let tx = Tx::new(h.sender("AccountsBridge"));
         self.tx = Some(tx.clone());
     }

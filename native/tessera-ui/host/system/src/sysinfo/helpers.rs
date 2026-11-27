@@ -257,26 +257,24 @@ pub fn fmt_hm(secs: i64, clock24: bool) -> String {
     }
 }
 
-const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-const DAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 /// "d MMMM, h:mm ap" (the update to go back from, long); "d MMMM, HH:mm"
 /// with 24-hour time on, as the bar's clock
 pub fn fmt_long(secs: i64, clock24: bool) -> String {
     let tm = local(secs);
-    format!("{} {}, {}", tm.tm_mday, MONTHS[(tm.tm_mon as usize) % 12], fmt_hm(secs, clock24).to_lowercase())
+    format!("{} {}, {}", tm.tm_mday, tessera_core::locale::month_name(tm.tm_mon as u32 % 12 + 1, false), fmt_hm(secs, clock24).to_lowercase())
 }
 
 /// "dddd h:mm ap" (the same, by day); "dddd HH:mm" with 24-hour time on
 pub fn fmt_day(secs: i64, clock24: bool) -> String {
     let tm = local(secs);
-    format!("{} {}", DAYS[(tm.tm_wday as usize) % 7], fmt_hm(secs, clock24).to_lowercase())
+    format!("{} {}", tessera_core::locale::day_name(tm.tm_wday as u32, false), fmt_hm(secs, clock24).to_lowercase())
 }
 
 /// "d MMMM yyyy" (a version's date: Software Update's channel line)
 pub fn fmt_date(secs: i64) -> String {
     let tm = local(secs);
-    format!("{} {} {}", tm.tm_mday, MONTHS[(tm.tm_mon as usize) % 12], tm.tm_year + 1900)
+    format!("{} {} {}", tm.tm_mday, tessera_core::locale::month_name(tm.tm_mon as u32 % 12 + 1, false), tm.tm_year + 1900)
 }
 
 /// JavaScript truthiness of a JSON value

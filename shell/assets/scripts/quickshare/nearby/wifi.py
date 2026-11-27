@@ -585,13 +585,30 @@ class NmWifi:
         except OSError:
             pass
 
-    def _profile_args(self, sta, ssid, passphrase, extra):
+    def _profile_args(self, sta, ssid, extra):
+        """The profile, without its pass-phrase: that goes to `connection up`
+        in a private file (_up), never on a command line, where every local
+        user could read it in /proc/<pid>/cmdline while nmcli runs."""
         user = os.environ.get("USER") or ""
         return (["connection", "add", "type", "wifi", "ifname", sta, "con-name", NM_PROFILE, "autoconnect", "no",
                  "save", "no", "ssid", ssid] + extra +
-                ["ipv6.method", "disabled", "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", passphrase,
+                ["ipv6.method", "disabled", "wifi-sec.key-mgmt", "wpa-psk",
                  "wifi-sec.proto", "rsn", "wifi-sec.pairwise", "ccmp", "wifi-sec.group", "ccmp"] +
                 (["connection.permissions", f"user:{user}"] if user else []))
+
+    async def _up(self, passphrase, wait):
+        """`nmcli connection up` with the pass-phrase in a passwd-file: 0600 in
+        the runtime directory (only ours), gone as soon as nmcli is done."""
+        fd, path = secret_file("802-11-wireless-security.psk:" + passphrase + "\n")
+        try:
+            return await _nmcli("-w", str(wait), "connection", "up", NM_PROFILE, "passwd-file", path,
+                                timeout=wait + 10)
+        finally:
+            os.close(fd)
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
     async def host(self, net):
         """A hotspot of our own: {"ssid", "passphrase", "freq", "ip", "iface"}."""
@@ -601,7 +618,7 @@ class NmWifi:
         passphrase = new_token(12)
         await _nmcli("connection", "delete", NM_PROFILE, timeout=10)
         await self._remember(sta)
-        code, _, err = await _nmcli(*self._profile_args(sta, ssid, passphrase, [
+        code, _, err = await _nmcli(*self._profile_args(sta, ssid, [
             "802-11-wireless.mode", "ap", "802-11-wireless.band", band, "802-11-wireless.channel", str(channel),
             "ipv4.method", "shared"]), timeout=10)
         if code != 0:
@@ -609,7 +626,7 @@ class NmWifi:
             raise WifiUnavailable(f"NetworkManager wouldn't make a hotspot ({err.strip() or code})")
         self.active = True
         _log(f"hotspot via NetworkManager on {sta}, band {band} channel {channel} (was {self.previous})")
-        code, _, err = await _nmcli("-w", "30", "connection", "up", NM_PROFILE, timeout=40)
+        code, _, err = await self._up(passphrase, 30)
         if code != 0:
             await self.restore()
             raise WifiUnavailable(f"the hotspot didn't start ({err.strip() or code})")
@@ -621,14 +638,14 @@ class NmWifi:
         sta = net["station"]
         await _nmcli("connection", "delete", NM_PROFILE, timeout=10)
         await self._remember(sta)
-        code, _, err = await _nmcli(*self._profile_args(sta, ssid, passphrase, ["ipv4.method", "auto",
+        code, _, err = await _nmcli(*self._profile_args(sta, ssid, ["ipv4.method", "auto",
                                                                                 "ipv4.never-default", "yes"]), timeout=10)
         if code != 0:
             await self.restore()
             raise WifiUnavailable(f"NetworkManager wouldn't join the phone's Wi-Fi ({err.strip() or code})")
         self.active = True
         _log(f"joining the phone's Wi-Fi via NetworkManager on {sta} (was {self.previous})")
-        code, _, err = await _nmcli("-w", str(NM_JOIN_WAIT), "connection", "up", NM_PROFILE, timeout=NM_JOIN_WAIT + 10)
+        code, _, err = await self._up(passphrase, NM_JOIN_WAIT)
         if code != 0:
             await self.restore()
             raise WifiUnavailable(f"couldn't join the phone's Wi-Fi ({err.strip() or code})")
@@ -676,6 +693,18 @@ class NmWifi:
         _log(f"putting the Wi-Fi back after an earlier run ({w.previous})")
         await w.restore()
         return True
+
+
+def secret_file(text):
+    """(fd, path) of a new 0600 file holding text, in $XDG_RUNTIME_DIR (a
+    tmpfs only we can enter) or else the temp directory; the caller closes
+    and removes it."""
+    import tempfile
+    run = os.environ.get("XDG_RUNTIME_DIR")
+    fd, path = tempfile.mkstemp(prefix="tessera-qs-", dir=run if run and os.path.isdir(run) else None)
+    os.fchmod(fd, 0o600)
+    os.write(fd, text.encode())
+    return fd, path
 
 
 def new_token(n):

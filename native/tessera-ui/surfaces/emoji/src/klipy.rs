@@ -2,7 +2,9 @@
 //! trending and search, 24 a page.
 //!   GET https://api.klipy.com/api/v1/{app_key}/gifs/trending?page&per_page&customer_id&locale&content_filter&format_filter
 //!   GET https://api.klipy.com/api/v1/{app_key}/gifs/search?q&…
-//! The app key is the user's own: KLIPY_API_KEY, else Settings' emoji.klipyKey.
+//! The app key is the user's own: KLIPY_API_KEY, else the one Settings keeps
+//! in the keyring (keys::KLIPY), else an old emoji.klipyKey still in
+//! config.json from before it moved (#965).
 //! Nothing is fetched without one. The key is part of the URL, so curl gets
 //! the URL on its stdin (`--config -`), never on its command line (which any
 //! program can read), and nothing here prints a URL.
@@ -30,9 +32,29 @@ pub enum Status {
     BadKey,
 }
 
-/// The key: the environment's, else Settings'
-pub fn key(cfg: &serde_json::Value) -> String {
-    std::env::var("KLIPY_API_KEY").ok().filter(|k| !k.trim().is_empty()).unwrap_or_else(|| cfg["emoji"]["klipyKey"].as_str().unwrap_or("").to_string()).trim().to_string()
+/// The key: the environment's, else the keyring's (`saved`, read on a
+/// thread), else an old one left in config.json
+pub fn key(cfg: &serde_json::Value, saved: &str) -> String {
+    env_key().unwrap_or_else(|| key_from(cfg, saved))
+}
+
+/// KLIPY_API_KEY, when set
+pub fn env_key() -> Option<String> {
+    std::env::var("KLIPY_API_KEY").ok().map(|k| k.trim().to_string()).filter(|k| !k.is_empty())
+}
+
+fn key_from(cfg: &serde_json::Value, saved: &str) -> String {
+    let saved = saved.trim();
+    if !saved.is_empty() {
+        return saved.to_string();
+    }
+    cfg["emoji"]["klipyKey"].as_str().unwrap_or("").trim().to_string()
+}
+
+/// What says the saved key changed (Settings counts up emoji.klipyKeySaved;
+/// never the key itself)
+pub fn marker(cfg: &serde_json::Value) -> String {
+    cfg["emoji"]["klipyKeySaved"].to_string()
 }
 
 /// encodeURIComponent (shared: Search's links use it too)
@@ -147,11 +169,13 @@ mod tests {
 
     #[test]
     fn the_key_comes_from_settings() {
-        // (KLIPY_API_KEY wins when set; tests don't set it)
-        if std::env::var("KLIPY_API_KEY").is_err() {
-            assert_eq!(key(&json!({"emoji": {"klipyKey": "  abc "}})), "abc");
-            assert_eq!(key(&json!({})), "");
-        }
+        // (KLIPY_API_KEY wins when set: key_from is the rest)
+        assert_eq!(key_from(&json!({"emoji": {"klipyKey": "  abc "}}), ""), "abc");
+        assert_eq!(key_from(&json!({}), ""), "");
+        // the keyring's beats an old one left in config.json
+        assert_eq!(key_from(&json!({"emoji": {"klipyKey": "old"}}), " new "), "new");
+        assert_eq!(marker(&json!({})), "null");
+        assert_eq!(marker(&json!({"emoji": {"klipyKeySaved": 3}})), "3");
     }
 
     #[test]

@@ -66,13 +66,7 @@ fn header(text: &str) -> Row {
 /// How shortcuts are written (KeyNames.qml): appearance.keySymbols, or
 /// "auto": mac with the command icon, linux otherwise
 pub fn key_style(cfg: &serde_json::Value) -> &'static str {
-    match cfg["appearance"]["keySymbols"].as_str().unwrap_or("auto") {
-        "mac" => "mac",
-        "windows" => "windows",
-        "linux" => "linux",
-        _ if cfg["appearance"]["menuIcon"].as_str() == Some("command") => "mac",
-        _ => "linux",
-    }
+    tessera_core::keynames::style(cfg)
 }
 
 /// "SUPER CTRL F" → "⌃⌘F" | "Win+Ctrl+F" | "Super+Ctrl+F"

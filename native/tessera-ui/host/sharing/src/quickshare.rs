@@ -55,12 +55,20 @@ pub struct QuickShare {
     pub last_hotspot: bool,
 }
 
+/// Whether this computer is announced to devices nearby: visible as set,
+/// and the screen not locked (#1009)
+pub fn broadcasting(visible: bool, locked: bool) -> bool {
+    visible && !locked
+}
+
 impl Sharing {
     pub fn quick_available(&self) -> bool {
         crate::have("python3")
     }
+    /// Visible to phones now: as set, and not while the screen is locked
+    /// (#1009: its name and ids aren't broadcast to a room it's left in)
     pub fn quick_visible(&self) -> bool {
-        self.visible_now()
+        broadcasting(self.visible_now(), self.screen_locked)
     }
     /// One name for this computer, LocalSend's too (Settings -> Sharing -> Your name)
     pub fn my_name(&self) -> String {
@@ -542,6 +550,13 @@ pub fn log_line(who: &str, kind: &str, ev: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nothing_is_broadcast_while_locked() {
+        assert!(broadcasting(true, false));
+        assert!(!broadcasting(true, true));
+        assert!(!broadcasting(false, false));
+    }
 
     #[test]
     fn log_lines_carry_numbers_not_names() {

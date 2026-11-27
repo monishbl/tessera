@@ -54,7 +54,7 @@ pub fn now() -> i64 {
 
 /// TimeFormat.hm: "9:41 AM" or "09:41" (appearance.clock24)
 pub fn hm(ms: i64) -> String {
-    let h24 = cfg_get("appearance.clock24").as_bool().unwrap_or(false);
+    let h24 = tessera_core::locale::clock24(&tessera_core::theme::read_json());
     util::strftime(if h24 { "%H:%M" } else { "%-I:%M %p" }, ms.div_euclid(1000))
 }
 

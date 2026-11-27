@@ -349,7 +349,7 @@ impl FocusModes {
                 }
             }
         }
-        self.clock24 = h.cfg()["appearance"]["clock24"].as_bool().unwrap_or(false);
+        self.clock24 = tessera_core::locale::clock24(&h.cfg());
         self.tick(h, io);
     }
     pub fn begin(&mut self, h: &mut Host, io: &mut Io) {
@@ -358,7 +358,7 @@ impl FocusModes {
         io.every("focus.tick", 30000);
     }
     pub fn config_changed(&mut self, h: &mut Host) {
-        let c = h.cfg()["appearance"]["clock24"].as_bool().unwrap_or(false);
+        let c = tessera_core::locale::clock24(&h.cfg());
         if c != self.clock24 {
             self.clock24 = c;
             self.publish(h);

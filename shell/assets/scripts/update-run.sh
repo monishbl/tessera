@@ -253,6 +253,9 @@ code=$?
 sleep 0.2 # (the progress reader's last lines)
 err="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("error",""))' "$T/result.json" 2>/dev/null)"
 backup="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("backup",""))' "$T/result.json" 2>/dev/null)"
+# (yes: the updater put everything back as it was; no: it couldn't; empty:
+# it didn't say. The screen says "Nothing was lost." for yes only; audit #697)
+restored="$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])).get("restored"); print({True: "yes", False: "no"}.get(r, ""))' "$T/result.json" 2>/dev/null)"
 if [[ $code -ne 0 && -z "$err" ]]; then
     err="The updater stopped unexpectedly (see $T/log)."
     # (Settings → Health: the updater couldn't say so itself)
@@ -326,10 +329,10 @@ if [[ $up == 1 ]]; then
 fi
 sleep 1 # (the bar and dock fade in)
 if [[ -n "$err" ]]; then
-    status error 100 "The update didn't finish" "$err"$'\x1f'"${backup:-}"
+    status error 100 "The update didn't finish" "$err"$'\x1f'"${backup:-}"$'\x1f'"${restored:-}"
 elif [[ $up == 0 ]]; then
     python3 -I "$SHELL_DIR/assets/scripts/health_event.py" update tessera failed "Tessera didn't start again after the update" restart 2>/dev/null
-    status error 100 "Tessera didn't start again" "Press Super+Ctrl+Escape to start it, or run tools/tessera-update.py check in the Tessera folder."$'\x1f'"$backup"
+    status error 100 "Tessera didn't start again" "Press Super+Ctrl+Escape to start it, or run tools/tessera-update.py check in the Tessera folder."$'\x1f'"$backup"$'\x1f'"no"
 else
     status done 100 "Update installed"
 fi

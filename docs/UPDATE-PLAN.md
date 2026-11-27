@@ -1,5 +1,7 @@
 # Update system rework (plan, 22 Nov 2026; steps 3–6 written, not shipped)
 
+(`<builder>` is the build machine and "the reference install" the second, standalone install; both are named only in the operator's private notes.)
+
 ## Why
 
 Updates make laptops stutter because every update compiles the shell on the
@@ -21,7 +23,7 @@ build happens.
   together with a list of tested package versions. Not a whole OS image.
 - **No ready-made build yet:** ask the user. Wait (the default), or build now
   (gently, about 10 minutes).
-- **Builder:** server1, fixed and watched. server1 builds, the main laptop
+- **Builder:** `<builder>`, fixed and watched. `<builder>` builds, the main laptop
   signs and publishes. A health check makes sure it can't stall silently.
 - **Download:** the whole bundle each time, no patches.
 
@@ -39,19 +41,19 @@ are never part of the bundle. Hyprland config edits keep the three-way merge
 ## Steps
 
 1. **Restart publishing and watch it (from the main laptop).**
-   - Find why the server1 builder (tools/release-builder) and the laptop
+   - Find why the `<builder>` builder (tools/release-builder) and the laptop
      publisher (tessera-publish.timer) stopped after 17 Nov. Fix them and
      publish the current beta.
    - Add a health check: notify when the newest release is more than a few
      hours behind origin/beta or origin/main.
    - Every push to beta or main pokes the builder (tools/push-release).
-     Reaching server1 from system1 needs Tailscale approval, which is pending.
+     Reaching the builder from the reference install needs network access that is pending.
 2. **Faster publishing.**
    - Beta uses the "local" profile (thin LTO, minutes). Stable keeps full LTO
      (about 45 minutes).
-   - Install mold on server1.
+   - Install mold on `<builder>`.
    - Build the x86-64-v3 and generic variants in parallel if memory allows.
-3. **The bundle.** server1 builds everything into one file per version:
+3. **The bundle.** `<builder>` builds everything into one file per version:
    - tessera-ui and tessera-events,
    - the glass plugin, built against the pinned Hyprland,
    - shaders and native helpers,
@@ -81,13 +83,13 @@ are never part of the bundle. Hyprland config edits keep the three-way merge
 ## Status (22 Nov, branch worktree-agent-a4f2b2cb7bd6d7baf)
 
 Steps 3–6 are written and tested locally; nothing is published, nothing ran
-on server1, nothing is pushed. docs/releases.md ("Bundles") describes it.
+on `<builder>`, nothing is pushed. docs/releases.md ("Bundles") describes it.
 
 - **3. The bundle: done (code).** `tools/tessera-bundle.py pack` makes one
   bundle per variant from a built checkout; `tessera-release` makes one per
-  commit (shaders, native helpers, the glass plugin against server1's
+  commit (shaders, native helpers, the glass plugin against `<builder>`'s
   Hyprland, both programs from `built/<tree>`, the package lock from
-  server1's pacman) as a `READY` set of type `bundle`; `publish-release`
+  `<builder>`'s pacman) as a `READY` set of type `bundle`; `publish-release`
   checks, signs (and signs the rolling release's pointer,
   `tessera-latest.bundle.json`) and publishes it. Also in the builder (step
   2): beta with the `local` profile, stable and tags `release`; mold when
@@ -115,10 +117,10 @@ on server1, nothing is pushed. docs/releases.md ("Bundles") describes it.
 Left to do:
 
 - Build the Rust side for real (only unit tests ran) and try the whole flow
-  in the sandbox, then on system1: a published beta bundle is needed first.
-- server1: install mold, Hyprland headers, qt6-shadertools, cmake; copy the
+  in the sandbox, then on the reference install: a published beta bundle is needed first.
+- `<builder>`: install mold, Hyprland headers, qt6-shadertools, cmake; copy the
   new tessera-release (`install.sh`); check its bundles' locks name Arch's
-  versions (server1 should be plain Arch, or the archive won't have them).
+  versions (`<builder>` should be plain Arch, or the archive won't have them).
 - First publish from the laptop (publish-release with the bundle support).
 - `uninstall.sh` should take out the Include line and the hold file.
 - The System row still counts held packages among its updates (pacman
@@ -131,4 +133,4 @@ Left to do:
 
 - Steps 1–2 are small and remove the stutter for everyone.
 - Steps 3–6 are a larger round.
-- Ship to system1 first, then to beta after the user says yes.
+- Ship to the reference install first, then to beta after the user says yes.

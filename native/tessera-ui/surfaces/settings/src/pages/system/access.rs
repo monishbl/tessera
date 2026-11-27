@@ -1,13 +1,32 @@
 //! Accessibility (pages/accessibility.qml): live captions (the shell's
 //! Captions and Dictation services say what's installed and downloading:
 //! feed.system.captions; installing and downloading are theirs: cx.ask) and
-//! a link to Shake to find the pointer (its home is Mouse & Trackpad).
+//! a link to Shake to find the pointer (its home is Mouse & Trackpad), and
+//! the on-screen keyboard: where its button shows beside password fields,
+//! its menu bar button, and a button to bring it up (#763).
 
 use super::super::super::model::{btn, Ctx, Page, Row};
 use serde_json::Value;
 
 fn s(v: &Value) -> String {
     v.as_str().unwrap_or("").to_string()
+}
+
+/// The keyboard button's choices, as saved in `keyboard.oskButton`
+/// (tessera_core::settings::OskButton reads them; "touch" when unset)
+pub const OSK_BUTTON: [&str; 3] = ["always", "touch", "off"];
+
+pub fn osk_button_index(saved: &str) -> i32 {
+    OSK_BUTTON.iter().position(|v| *v == saved).unwrap_or(1) as i32
+}
+
+/// The menu bar's buttons with the keyboard's switched on or off
+pub fn with_keyboard_button(list: &[String], on: bool) -> Vec<String> {
+    let mut out: Vec<String> = list.iter().filter(|x| *x != "keyboard").cloned().collect();
+    if on {
+        out.push("keyboard".into());
+    }
+    out
 }
 
 /// The captions row's detail (accessibility.qml's Live captions)
@@ -99,6 +118,26 @@ pub fn accessibility(cx: &mut Ctx, p: &mut Page) {
         g.row(r);
     }
 
+    // ── The on-screen keyboard (#763): for touch screens, and for anyone a
+    // physical keyboard is hard for ──
+    let pick = cx.pick("keyboard.oskButton", &OSK_BUTTON);
+    let in_bar = cx.list("menubar.utilButtons").iter().any(|x| x == "keyboard");
+    let bar = cx.on(move |cx, _| {
+        let next = with_keyboard_button(&cx.list("menubar.utilButtons"), !in_bar);
+        cx.set("menubar.utilButtons", Value::Array(next.into_iter().map(Value::from).collect()));
+    });
+    let show = cx.on(|_, _| crate::shell::ask("panels.toggle", serde_json::json!(["keyboard"])));
+    let g = p.group("On-screen keyboard");
+    g.footer("Types into the window you're using, without taking the keyboard from it. Control Center has a Keyboard tile for it too: add it with Edit Controls.");
+    g.row(
+        Row::new("On-screen keyboard button")
+            .detail("Beside the password on the lock screen, the login screen and the admin password dialog")
+            .segmented(&["Always", "Only on touch screens", "Off"], osk_button_index(&cx.s("keyboard.oskButton")), pick)
+            .width(380.0),
+    );
+    g.row(Row::new("Show in the menu bar").detail("A keyboard button by the clock that brings it up and puts it away").switch(in_bar, bar));
+    g.row(Row::new("On-screen keyboard").button("Show or hide", show));
+
     // ── The pointer: set in Mouse & Trackpad ──
     let style = cx.s("findPointer.style");
     let value = if !cx.b("findPointer.enabled") || style == "off" {
@@ -155,5 +194,18 @@ mod tests {
         assert_eq!(captions_detail(true, true, "", false, "bar"), "Off");
         assert!(captions_detail(true, true, "", true, "strip").starts_with("Across the bottom"));
         assert_eq!(captions_detail(true, true, "oops", true, "bar"), "oops");
+    }
+
+    #[test]
+    fn the_keyboard_button_choice() {
+        assert_eq!(osk_button_index("always"), 0);
+        assert_eq!(osk_button_index("touch"), 1);
+        assert_eq!(osk_button_index("off"), 2);
+        // (unset, or an older config: the default)
+        assert_eq!(osk_button_index(""), 1);
+        let l = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(with_keyboard_button(&l(&["screenshot"]), true), l(&["screenshot", "keyboard"]));
+        assert_eq!(with_keyboard_button(&l(&["keyboard", "mic"]), false), l(&["mic"]));
+        assert_eq!(with_keyboard_button(&l(&["keyboard"]), true), l(&["keyboard"]));
     }
 }

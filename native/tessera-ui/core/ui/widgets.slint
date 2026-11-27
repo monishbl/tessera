@@ -68,6 +68,9 @@ export component SearchField inherits Rectangle {
     in property <bool> clearable: true;
     in-out property <string> text <=> input.text;
     out property <bool> focused: input.has-focus;
+    // the caret and the selection's other end, as byte offsets into `text`
+    out property <int> caret: input.cursor-position-byte-offset;
+    out property <int> anchor: input.anchor-position-byte-offset;
     callback edited(string);
     callback key(KeyEvent) -> bool;
 

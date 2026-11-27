@@ -5,6 +5,13 @@
 //! keeps the last good numbers and says why (`error`: "Offline" when there's
 //! no connection, "Weather unavailable" otherwise), as the QML does.
 //!
+//! Asked only while something shows it (#320: wttr.in finds you by your
+//! address when no place is set): Settings' Weather switch on, and the menu
+//! bar's item, a desktop weather widget (or a widget stack) or Control
+//! Center's weather control there (`wanted`). Otherwise nothing is fetched;
+//! a settings change (`refresh()`) looks again. Today's card shows only then
+//! too (`today_card`).
+//!
 //! TESSERA_WEATHER_URL points it somewhere else (a local file or a mock
 //! server: anything curl reads), for the dev sandbox and tests.
 
@@ -143,6 +150,44 @@ pub fn settings(cfg: &serde_json::Value) -> (String, bool) {
     (cfg["weather"]["location"].as_str().unwrap_or("").to_string(), cfg["weather"]["units"].as_str() != Some("imperial"))
 }
 
+/// Settings → Weather's switch (weather.enabled, on unless turned off): off,
+/// nothing is asked of wttr.in and no weather shows (#320)
+pub fn enabled(cfg: &serde_json::Value) -> bool {
+    cfg["weather"]["enabled"].as_bool().unwrap_or(true)
+}
+
+/// Config.qml's desktop widgets, for a file that has none of its own
+const DEFAULT_WIDGETS: [&str; 4] = ["clock:m:0:0", "weather:m:0:1", "calendar:s:0:2", "batteries:s:1:2"];
+
+/// Something that shows the weather is on (besides Today, which follows
+/// them): the menu bar's item, a desktop weather widget or a widget stack
+/// (it can turn to the weather), Control Center's weather control
+pub fn shown_somewhere(cfg: &serde_json::Value) -> bool {
+    let bar = cfg["menubar"]["weather"].as_bool().unwrap_or(true);
+    let desktop = kinds(&cfg["desktop"]["widgets"], &DEFAULT_WIDGETS).iter().any(|k| *k == "weather" || *k == "stack");
+    // (Control Center's default layout has no weather control)
+    let cc = kinds(&cfg["controlCenter"]["layout"], &[]).iter().any(|k| *k == "weather");
+    bar || desktop || cc
+}
+
+/// The kinds in a "kind:…" list (`defaults` when the file has none)
+fn kinds<'a>(list: &'a serde_json::Value, defaults: &[&'a str]) -> Vec<&'a str> {
+    match list.as_array() {
+        Some(a) => a.iter().filter_map(|e| e.as_str()).map(|e| e.split(':').next().unwrap_or("")).collect(),
+        None => defaults.iter().map(|e| e.split(':').next().unwrap_or("")).collect(),
+    }
+}
+
+/// Whether wttr.in is asked at all
+pub fn wanted(cfg: &serde_json::Value) -> bool {
+    enabled(cfg) && shown_somewhere(cfg)
+}
+
+/// Today's weather card: shown while the weather is wanted
+pub fn today_card(cfg: &serde_json::Value) -> bool {
+    wanted(cfg)
+}
+
 static POKE: OnceLock<Mutex<mpsc::Sender<()>>> = OnceLock::new();
 
 /// Read it again now (the location or units changed)
@@ -267,8 +312,9 @@ pub fn spawn(tx: Sender<Msg>) {
         let mut last = Weather { icon: "cloud", sunrise: 390, sunset: 1110, ..Default::default() };
         // (the last start's reading, at once, while wttr.in is asked)
         {
-            let (place, metric) = settings(&crate::theme::read_json());
-            if let Some(w) = cached().as_ref().and_then(|c| c.fresh_for(&place, metric)) {
+            let cfg = crate::theme::read_json();
+            let (place, metric) = settings(&cfg);
+            if let Some(w) = cached().as_ref().filter(|_| wanted(&cfg)).and_then(|c| c.fresh_for(&place, metric)) {
                 last = w.clone();
                 if tx.send(Msg::Data(Box::new(last.clone()))).is_err() {
                     return;
@@ -276,7 +322,21 @@ pub fn spawn(tx: Sender<Msg>) {
             }
         }
         loop {
-            let (place, metric) = settings(&crate::theme::read_json());
+            let cfg = crate::theme::read_json();
+            // (nothing shows it: nothing is asked; a settings change looks again)
+            if !wanted(&cfg) {
+                if last.ready {
+                    last = Weather { icon: "cloud", sunrise: last.sunrise, sunset: last.sunset, ..Default::default() };
+                    if tx.send(Msg::Data(Box::new(last.clone()))).is_err() {
+                        return;
+                    }
+                }
+                match prx.recv() {
+                    Ok(()) => continue,
+                    Err(_) => return,
+                }
+            }
+            let (place, metric) = settings(&cfg);
             let url = crate::env::var("WEATHER_URL").filter(|u| !u.is_empty()).unwrap_or_else(|| format!("https://wttr.in/{}?format=j1", encode(&place)));
             let (body, code) = fetch(&url);
             let t = crate::services::calendar::local(crate::util::now_ms());
@@ -311,6 +371,24 @@ pub fn spawn(tx: Sender<Msg>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn asked_only_while_something_shows_it() {
+        use serde_json::json;
+        // (the defaults: the bar's item and the desktop's weather widget)
+        assert!(wanted(&json!({})));
+        assert!(!wanted(&json!({"weather": {"enabled": false}})));
+        let none = json!({"menubar": {"weather": false}, "desktop": {"widgets": ["clock:m:0:0", "calendar:s:0:2"]}});
+        assert!(!wanted(&none));
+        assert!(!today_card(&none));
+        // the desktop's widget, a stack, or Control Center's control is enough
+        assert!(wanted(&json!({"menubar": {"weather": false}, "desktop": {"widgets": ["weather:s:0:0"]}})));
+        assert!(wanted(&json!({"menubar": {"weather": false}, "desktop": {"widgets": ["stack:m:1:1"]}})));
+        assert!(wanted(&json!({"menubar": {"weather": false}, "desktop": {"widgets": []}, "controlCenter": {"layout": ["wifi:2x1", "weather:2x1"]}})));
+        assert!(!wanted(&json!({"menubar": {"weather": false}, "desktop": {"widgets": []}})));
+        // the switch wins over all of them
+        assert!(!wanted(&json!({"weather": {"enabled": false}, "menubar": {"weather": true}})));
+    }
 
     const J1: &str = r#"{"current_condition":[{"temp_C":"11","temp_F":"52","FeelsLikeC":"9","FeelsLikeF":"48","weatherCode":"116","weatherDesc":[{"value":"Partly cloudy "}]}],
 "nearest_area":[{"areaName":[{"value":"Lyon"}]}],

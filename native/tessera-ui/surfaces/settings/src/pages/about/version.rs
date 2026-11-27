@@ -29,7 +29,22 @@ pub fn installed() -> Value {
     let rec = std::fs::read(dest.join("tessera-ui.json")).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).unwrap_or(Value::Null);
     let exe = std::fs::read_link("/proc/self/exe").map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
     let replaced = exe.ends_with(" (deleted)") && std::path::Path::new(exe.trim_end_matches(" (deleted)")) == dest.join("tessera-ui");
-    serde_json::json!({"record": rec, "replaced": replaced})
+    // (this process is the installed file: bin/tessera-ui may be a link into
+    // the bundle's version folder, /proc/self/exe is the file itself)
+    let running = !exe.is_empty() && std::fs::canonicalize(dest.join("tessera-ui")).is_ok_and(|p| p == std::path::Path::new(&exe));
+    serde_json::json!({"record": rec, "replaced": replaced, "running": running})
+}
+
+/// "signed" is said only when the installer checked the signature of the
+/// very file that's running (audit #693): a release-kind build, run from
+/// the installed file (not replaced since), whose record says its minisign
+/// signature was verified (`signature`; records from before it said so: a
+/// ready-made download or a signed bundle, which are only installed once
+/// checked, with the signature kept) and names this same build
+pub fn verified(b: &BuildInfo, inst: &Value) -> bool {
+    let r = &inst["record"];
+    let checked = s(&r["signature"]) == "verified" || (matches!(s(&r["source"]).as_str(), "ready-made" | "bundle") && !s(&r["minisig"]).is_empty());
+    b.is_release() && inst["running"] == true && inst["replaced"] != true && checked && s(&r["build"]) == b.line()
 }
 
 /// The channel Software Update follows: update.channel, else what the
@@ -66,7 +81,7 @@ pub fn channel_note(b: &BuildInfo, followed: &str, published: &str) -> Option<St
 
 /// The row's detail: the summary, the variant and kind, then what differs
 pub fn detail(b: &BuildInfo, followed: &str, inst: &Value) -> String {
-    let mut lines = vec![b.summary(), b.details()];
+    let mut lines = vec![b.summary(), b.details_signed(verified(b, inst))];
     if let Some(n) = channel_note(b, followed, &s(&inst["record"]["channel"])) {
         lines.push(n);
     }
@@ -157,11 +172,43 @@ mod tests {
     #[test]
     fn the_detail() {
         let none = json!({"record": null, "replaced": false});
-        assert_eq!(detail(&beta(), "beta", &none), "Beta · 7baa48d · 17 November 2026\nx86-64-v3 · signed release");
-        let newer = json!({"record": {"channel": "beta", "build": "tessera-ui 0.1.0 (beta, 1a2b3c4, 2026-11-18, x86-64-v3, signed release)"}, "replaced": true});
+        assert_eq!(detail(&beta(), "beta", &none), "Beta · 7baa48d · 17 November 2026\nx86-64-v3 · release build");
+        let newer = json!({"record": {"channel": "beta", "build": "tessera-ui 0.1.0 (beta, 1a2b3c4, 2026-11-18, x86-64-v3, release build)", "source": "bundle", "signature": "verified"}, "replaced": true, "running": false});
         assert_eq!(
             detail(&beta(), "stable", &newer),
-            "Beta · 7baa48d · 17 November 2026\nx86-64-v3 · signed release\nThis build is from Beta, but Software Update follows Stable. Check for updates to get Stable's version.\nA newer build is installed (beta, 1a2b3c4, 2026-11-18, x86-64-v3, signed release). It starts when the shell restarts."
+            "Beta · 7baa48d · 17 November 2026\nx86-64-v3 · release build\nThis build is from Beta, but Software Update follows Stable. Check for updates to get Stable's version.\nA newer build is installed (beta, 1a2b3c4, 2026-11-18, x86-64-v3, release build). It starts when the shell restarts."
         );
+    }
+
+    #[test]
+    fn signed_only_when_the_installer_checked_this_file() {
+        let b = beta();
+        let rec = |extra: Value| {
+            let mut r = json!({"source": "ready-made", "build": b.line(), "signature": "verified"});
+            for (k, v) in extra.as_object().unwrap() {
+                r[k] = v.clone();
+            }
+            json!({"record": r, "replaced": false, "running": true})
+        };
+        assert!(verified(&b, &rec(json!({}))));
+        assert_eq!(detail(&b, "beta", &rec(json!({}))), "Beta · 7baa48d · 17 November 2026\nx86-64-v3 · signed release build");
+        // (a record from before "signature": a ready-made one with its signature kept)
+        assert!(verified(&b, &rec(json!({"signature": null, "minisig": "untrusted comment: x"}))));
+        // built here, or nothing recorded about a check: not signed
+        assert!(!verified(&b, &rec(json!({"signature": null, "source": "built"}))));
+        assert!(!verified(&b, &rec(json!({"signature": null, "source": "bundle-built"}))));
+        // another build's record (copied by hand, or this one isn't the installed one)
+        assert!(!verified(&b, &rec(json!({"build": "tessera-ui 0.1.0 (beta, 1a2b3c4, 2026-11-18, x86-64-v3, release build)"}))));
+        let mut not_running = rec(json!({}));
+        not_running["running"] = json!(false);
+        assert!(!verified(&b, &not_running));
+        let mut replaced = rec(json!({}));
+        replaced["replaced"] = json!(true);
+        assert!(!verified(&b, &replaced));
+        // a local build is never called signed
+        let local = BuildInfo { kind: "local", channel: "local build", ..beta() };
+        let r = json!({"record": {"source": "ready-made", "build": local.line(), "signature": "verified"}, "replaced": false, "running": true});
+        assert!(!verified(&local, &r));
+        assert!(!verified(&b, &json!({"record": null, "replaced": false})));
     }
 }

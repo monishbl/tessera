@@ -17,6 +17,7 @@ local root, mod = arg[1], arg[2]
 TESSERA_MOD=mod
 TESSERA_HYPR_DIR=root .. '/hypr/tessera'
 TESSERA_USER_DIR='/nonexistent-tessera-test-config'
+TESSERA_RUNTIME_DIR='' -- (the failed-binds file isn't written: never the session's)
 local records={}
 hl={dsp=setmetatable({}, {__index=function(_, key) return function(...) return {kind=key,args={...}} end end}),
  bind=function(keys,action,opts) table.insert(records,{keys=keys,action=action,opts=opts}) end}

@@ -795,6 +795,7 @@ pub fn spawn(tx: Sender<crate::Msg>) {
     std::thread::spawn(move || {
         let cfg = crate::theme::read_json();
         let mut slots: Vec<String> = keys::SLOTS.iter().map(|s| s.to_string()).collect();
+        slots.push(keys::KLIPY.to_string()); // (only whether it's there: Settings' "Key saved")
         for m in models::read(&cfg["ai"]["models"]) {
             if !slots.contains(&m.key) {
                 slots.push(m.key);

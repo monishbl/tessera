@@ -779,7 +779,7 @@ impl Notifications {
             None => (None, false),
         };
         let app = if n.app_name.is_empty() { "Notification".to_string() } else { n.app_name.clone() };
-        let h24 = st.shell.cfg["appearance"]["clock24"].as_bool().unwrap_or(false);
+        let h24 = tessera_core::locale::clock24(&st.shell.cfg);
         let plain = markup::plain(&n.body);
         ui::Banner {
             id: n.id as i32,

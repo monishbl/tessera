@@ -47,19 +47,76 @@ pub fn list_line(line: &str) -> Vec<String> {
     line.trim_start_matches('[').trim_end_matches(']').split(',').filter(|s| !s.is_empty()).map(str::to_string).collect()
 }
 
+/// The shell's own programs: their recording streams aren't "an app"
+const OURS: &[&str] = &["tessera-ui", "tessera-shell", "quickshell", "qs"];
+/// Volume controls whose level meters ("Peak detect" streams) aren't recording
+const MIXERS: &[&str] = &["pavucontrol", "pavucontrol-qt", "pwvucontrol", "plasmashell", "systemsettings", "kmix", "gnome-control-center", "gnome-shell", "mate-volume-control", "xfce4-panel"];
+/// The sound servers and portals themselves: a pid that's theirs says nothing of the app
+const SERVERS: &[&str] = &["pipewire", "pipewire-pulse", "wireplumber", "pulseaudio", "xdg-desktop-portal", "xdg-desktop-portal-hyprland", "xdg-desktop-portal-gnome", "xdg-desktop-portal-kde", "xdg-desktop-portal-wlr"];
+
+/// The real program behind a process: /proc/<pid>/exe's file name (None:
+/// gone, or not ours to read)
+pub fn exe_name(pid: i64) -> Option<String> {
+    if pid <= 0 {
+        return None;
+    }
+    let p = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+    let n = p.file_name()?.to_string_lossy().into_owned();
+    Some(n.strip_suffix(" (deleted)").map(str::to_string).unwrap_or(n))
+}
+
+/// A pid property, as a string or a number (0: none)
+fn pid_prop(p: &Value, k: &str) -> i64 {
+    p[k].as_str().and_then(|s| s.trim().parse::<i64>().ok()).or_else(|| p[k].as_i64()).unwrap_or(0)
+}
+
+/// The program behind a stream: what the sound server saw on the socket
+/// (pipewire.sec.pid, which a client can't set; the stream's, then its
+/// client's), else what the client says (application.process.id); a
+/// server's or portal's own pid is passed over. None: not known.
+fn real_program(props: &[&Value], exe: &dyn Fn(i64) -> Option<String>) -> Option<String> {
+    for k in ["pipewire.sec.pid", "application.process.id"] {
+        for p in props {
+            if let Some(n) = exe(pid_prop(p, k)) {
+                if !SERVERS.contains(&n.as_str()) {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// The recording streams of `pactl -f json list source-outputs` + `list
-/// sources short` output: (apps, streams [{name, bin, pid}])
+/// sources short` + `list clients` output: (apps, streams [{name, bin, pid}])
 pub fn parse_mic(text: &str) -> (Vec<String>, Vec<Value>) {
+    parse_mic_with(text, &exe_name)
+}
+
+/// parse_mic, `exe` naming a pid's program. Whether a stream is the shell's
+/// own, or a volume control's level meter, is decided by the program really
+/// behind it, never by names the client chose (media.name,
+/// application.process.binary: #617)
+pub fn parse_mic_with(text: &str, exe: &dyn Fn(i64) -> Option<String>) -> (Vec<String>, Vec<Value>) {
     let parts: Vec<&str> = text.split('\n').filter(|l| l.trim().starts_with('[')).collect();
     let outs: Vec<Value> = parts.first().and_then(|p| serde_json::from_str(p).ok()).unwrap_or_default();
     let sources: Vec<Value> = parts.get(1).and_then(|p| serde_json::from_str(p).ok()).unwrap_or_default();
+    let clients: Vec<Value> = parts.get(2).and_then(|p| serde_json::from_str(p).ok()).unwrap_or_default();
     let monitors: Vec<&Value> = sources.iter().filter(|s| s["name"].as_str().unwrap_or("").ends_with(".monitor")).map(|s| &s["index"]).collect();
+    let null = Value::Null;
     let mut apps: Vec<String> = Vec::new();
     let mut streams = Vec::new();
     for o in &outs {
         let p = &o["properties"];
         let bin = p["application.process.binary"].as_str().unwrap_or("");
-        if monitors.contains(&&o["source"]) || matches!(bin, "tessera-shell" | "qs" | "quickshell") || p["media.name"] == "Peak detect" {
+        if monitors.contains(&&o["source"]) {
+            continue;
+        }
+        let client = clients.iter().find(|c| !o["client"].is_null() && c["index"].to_string().trim_matches('"') == o["client"].to_string().trim_matches('"')).map_or(&null, |c| &c["properties"]);
+        let real = real_program(&[p, client], exe).unwrap_or_default();
+        let ours = OURS.contains(&real.as_str());
+        let meter = p["media.name"] == "Peak detect" && MIXERS.contains(&real.as_str());
+        if ours || meter {
             continue;
         }
         let aname = p["application.name"].as_str().unwrap_or("");
@@ -80,6 +137,11 @@ fn props<'a>(o: &'a Value) -> &'a Value {
 /// The shares in a PipeWire graph (Privacy.readGraph), given what was known
 /// (to keep a share's start and target) and the hint for new ones
 pub fn read_graph(graph: &[Value], known: &[Value], hint: (String, bool), now: f64) -> Vec<Value> {
+    read_graph_with(graph, known, hint, now, &exe_name)
+}
+
+/// read_graph, `exe` naming a pid's program
+pub fn read_graph_with(graph: &[Value], known: &[Value], hint: (String, bool), now: f64, exe: &dyn Fn(i64) -> Option<String>) -> Vec<Value> {
     let null = Value::Null;
     let by_id = |id: &Value| graph.iter().find(|o| &o["id"] == id).unwrap_or(&null);
     let links: Vec<&Value> = graph.iter().filter(|o| o["type"].as_str().unwrap_or("").ends_with(":Link") && o["info"].is_object() && o["info"]["state"] != "error").collect();
@@ -98,8 +160,9 @@ pub fn read_graph(graph: &[Value], known: &[Value], hint: (String, bool), now: f
                 }
                 let pp = props(by_id(&l["info"]["input-node-id"]));
                 let cp = props(by_id(&pp["client.id"]));
-                let t = format!("{} {} {} {}", s(pp, "application.process.binary"), s(cp, "application.process.binary"), s(pp, "application.name"), s(cp, "application.name")).to_lowercase();
-                !(t.contains("gpu-screen-recorder") || t.contains("gsr"))
+                // (the recorder by the program really receiving, exactly:
+                // never a name containing "gsr": #617)
+                real_program(&[pp, cp], exe).as_deref() != Some("gpu-screen-recorder")
             })
             .collect();
         if mine.is_empty() {
@@ -279,7 +342,7 @@ impl Privacy {
         self.mic_busy = true;
         let tx = self.tx.clone().unwrap();
         std::thread::spawn(move || {
-            let out = util::sh("pactl -f json list source-outputs; echo; pactl -f json list sources short", Duration::from_secs(10)).map(|(_, o)| o).unwrap_or_default();
+            let out = util::sh("pactl -f json list source-outputs; echo; pactl -f json list sources short; echo; pactl -f json list clients", Duration::from_secs(10)).map(|(_, o)| o).unwrap_or_default();
             tx(Box::new(Ev::Mic(out)));
         });
     }
@@ -580,10 +643,65 @@ mod tests {
 
     #[test]
     fn mic_streams_skip_monitors_and_the_shell() {
-        let t = "[{\"source\":1,\"properties\":{\"application.name\":\"discord\",\"application.process.binary\":\"discord\",\"application.process.id\":\"42\"}},{\"source\":2,\"properties\":{\"application.name\":\"x\"}},{\"source\":1,\"properties\":{\"application.process.binary\":\"qs\"}}]\n\n[{\"index\":1,\"name\":\"mic\"},{\"index\":2,\"name\":\"out.monitor\"}]\n";
-        let (a, s) = parse_mic(t);
+        let t = "[{\"source\":1,\"properties\":{\"application.name\":\"discord\",\"application.process.binary\":\"discord\",\"application.process.id\":\"42\"}},{\"source\":2,\"properties\":{\"application.name\":\"x\"}},{\"source\":1,\"properties\":{\"application.process.binary\":\"qs\",\"application.process.id\":\"10\"}}]\n\n[{\"index\":1,\"name\":\"mic\"},{\"index\":2,\"name\":\"out.monitor\"}]\n";
+        let (a, s) = parse_mic_with(t, &fake_exe);
         assert_eq!(a, vec!["Discord"]);
         assert_eq!(s[0]["pid"], 42);
+    }
+
+    fn fake_exe(pid: i64) -> Option<String> {
+        match pid {
+            10 => Some("tessera-ui".into()),
+            20 => Some("pavucontrol".into()),
+            30 => Some("pipewire-pulse".into()),
+            40 => Some("gpu-screen-recorder".into()),
+            50 => Some("xdg-desktop-portal".into()),
+            66 => Some("spy".into()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_stream_is_ours_by_its_real_program_not_its_name() {
+        // (#617: names the client chose don't hide it)
+        let t = r#"[{"source":1,"client":5,"properties":{"application.name":"spy","application.process.binary":"qs","media.name":"Peak detect","application.process.id":"66"}},
+                    {"source":1,"properties":{"application.name":"Shell","pipewire.sec.pid":"10"}},
+                    {"source":1,"client":7,"properties":{"application.name":"PulseAudio Volume Control","media.name":"Peak detect"}},
+                    {"source":1,"client":8,"properties":{"application.name":"liar","media.name":"Peak detect","application.process.id":"20","pipewire.sec.pid":"66"}}]
+
+[{"index":1,"name":"mic"}]
+
+[{"index":5,"properties":{"pipewire.sec.pid":"66"}},{"index":7,"properties":{"pipewire.sec.pid":"20"}},{"index":8,"properties":{}}]
+"#;
+        let (a, s) = parse_mic_with(t, &fake_exe);
+        // spy shows; the shell's own and pavucontrol's meter don't; a stream
+        // claiming pavucontrol's pid is still the program the server saw
+        assert_eq!(a, vec!["Spy", "Liar"]);
+        assert_eq!(s.len(), 2);
+        // a server's own pid says nothing: then what the client says counts
+        let t2 = r#"[{"source":1,"properties":{"application.name":"x","pipewire.sec.pid":"30","application.process.id":"10"}}]
+
+[]
+"#;
+        assert!(parse_mic_with(t2, &fake_exe).0.is_empty());
+    }
+
+    #[test]
+    fn the_recorder_is_known_by_its_program() {
+        let g = |bin: &str, pid: &str| -> Vec<Value> {
+            serde_json::from_str(&format!(
+                r#"[{{"id":1,"type":"PipeWire:Interface:Node","info":{{"props":{{"node.name":"xdph-streaming-DP-1"}}}}}},
+                    {{"id":2,"type":"PipeWire:Interface:Node","info":{{"props":{{"node.name":"in","application.name":"{bin}","application.process.binary":"{bin}","client.id":4}}}}}},
+                    {{"id":4,"type":"PipeWire:Interface:Client","info":{{"props":{{"pipewire.sec.pid":"50","application.process.id":"{pid}"}}}}}},
+                    {{"id":3,"type":"PipeWire:Interface:Link","info":{{"state":"active","output-node-id":1,"input-node-id":2}}}}]"#
+            ))
+            .unwrap()
+        };
+        // Tessera's recorder: not a share
+        assert!(read_graph_with(&g("gpu-screen-recorder", "40"), &[], ("Your screen".into(), false), 5.0, &fake_exe).is_empty());
+        // a name with "gsr" in it, or the recorder's name, from another program: a share
+        assert_eq!(read_graph_with(&g("gsr-cast", "66"), &[], ("Your screen".into(), false), 5.0, &fake_exe).len(), 1);
+        assert_eq!(read_graph_with(&g("gpu-screen-recorder", "66"), &[], ("Your screen".into(), false), 5.0, &fake_exe).len(), 1);
     }
 
     #[test]

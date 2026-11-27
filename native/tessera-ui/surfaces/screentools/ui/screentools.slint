@@ -390,6 +390,17 @@ export struct StTool {
     red: bool, // the record glyph while recording
 }
 
+// geometry::Fit: the tools, separators and Options; the separator the bar
+// breaks at in two rows (-1 none), and the tools and separators before it
+export struct StFit {
+    tools: int,
+    seps: int,
+    opts: int,
+    split: int,
+    tools-a: int,
+    seps-a: int,
+}
+
 // One choice in the options (a microphone)
 export struct StOpt {
     text: string,
@@ -540,12 +551,105 @@ component SmallButton inherits Rectangle {
     }
 }
 
+// One of the toolbar's buttons (or a separator). Laid out with no spacing:
+// each carries its own 2 px each side, so one left out of a row (width 0)
+// leaves no gap. Icons only while `compact` (a narrow screen, #1071).
+component StToolButton inherits Rectangle {
+    in property <StTool> t;
+    in property <bool> options-open;
+    in property <bool> compact;
+    in property <length> opt-w;
+    in property <StIc> ic-up;
+    in property <StIc> ic-down;
+    // (in this row: the bar in two rows draws each button in one of them)
+    in property <bool> shown: true;
+    callback clicked();
+    property <bool> active: tt.pressed || (t.kind == 2 && options-open);
+    width: !shown ? 0 : (t.kind == 1 ? 17px : t.kind == 2 ? opt-w : compact ? 56px : 104px) + 4px;
+    height: 56px;
+    visible: shown;
+    Rectangle {
+        x: 2px;
+        width: parent.width - 4px;
+        if t.kind == 1: Rectangle {
+            width: 1px;
+            height: Theme.material ? 32px : 36px;
+            background: Theme.material ? Theme.m3-on-primary-container.with-alpha(0.24) : Theme.separator;
+        }
+        face := Rectangle {
+            visible: t.kind != 1;
+            // Material: round, squaring off while pressed; the
+            // picked one filled in primary
+            border-radius: Theme.material ? (tt.pressed ? 16px : t.picked ? 20px : self.height / 2) : 12px;
+            // (MaterialSpring "fast": springFast 12.8 / 0.54 → ω 28.3, ζ 0.60)
+            animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); }
+            background: Theme.material ? (t.picked ? Theme.m3-primary : Theme.m3-on-primary-container.with-alpha(root.active ? 0.1 : tt.has-hover ? 0.08 : 0))
+                : t.picked ? Theme.accent.with-alpha(0.22) : root.active ? Theme.fill-pressed : tt.has-hover ? Theme.fill : transparent;
+            // (ElasticControl, Material: swells by min(6 %, 10 px) on
+            // springPress 7.5 / 0.3 → ω 21.7, ζ 0.43)
+            transform-scale: Theme.material && tt.pressed ? 1 + min(0.06, 10px / max(1px, max(self.width, self.height))) : 1;
+            animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
+            accessible-role: button;
+            accessible-label: t.label;
+            accessible-checked: t.picked;
+            accessible-action-default => { root.clicked(); }
+            if t.kind == 0: VerticalLayout {
+                alignment: center;
+                spacing: 4px;
+                // (Material: 2 px lower, where the QML's icon and label sit)
+                padding-top: Theme.material ? 4px : 0;
+                StIcon {
+                    // (Material: the symbol's line, 1.2x the size, as Icon.qml's Text)
+                    height: Theme.material ? 26px : 22px;
+                    icon: t.icon;
+                    size: 22px;
+                    fill: Theme.material && (t.picked || t.red);
+                    color: t.red ? Theme.danger : Theme.material ? (t.picked ? Theme.m3-on-primary : Theme.m3-on-primary-container) : t.picked ? Theme.accent : Theme.label;
+                }
+                if !root.compact: Text {
+                    text: t.label;
+                    horizontal-alignment: center;
+                    color: Theme.material ? (t.picked ? Theme.m3-on-primary : Theme.m3-on-primary-container) : t.picked ? Theme.label : Theme.secondary;
+                    font-size: Theme.caption;
+                    font-weight: 500;
+                    accessible-role: none;
+                }
+            }
+            if t.kind == 2: HorizontalLayout {
+                alignment: center;
+                spacing: 6px;
+                Text {
+                    text: "Options";
+                    color: Theme.material ? Theme.m3-on-primary-container : Theme.label;
+                    font-size: Theme.body;
+                    font-weight: 500;
+                    vertical-alignment: center;
+                    accessible-role: none;
+                }
+                StIcon {
+                    width: 11px;
+                    icon: options-open ? root.ic-down : root.ic-up;
+                    bold: true;
+                    size: 11px;
+                    color: Theme.material ? Theme.m3-on-primary-container : Theme.secondary;
+                }
+            }
+            tt := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.clicked(); }
+            }
+        }
+    }
+}
+
 // ⇧⌘5's toolbar above the dock, its Options above it. Material: a vibrant
 // floating toolbar (a primaryContainer pill), the picked area filled in
 // primary, the Record split button with its menu upward.
 export component ScreenToolbar inherits Window {
     in property <bool> shown;
     in property <[StTool]> tools;
+    // how the tools count, and where they break into two rows (geometry::fit)
+    in property <StFit> fit;
     in property <bool> record-only;
     in property <bool> options-open;
     in property <bool> available: true;
@@ -635,6 +739,24 @@ export component ScreenToolbar inherits Window {
         font-size: Theme.body;
         font-weight: 500;
     }
+    // (and Record's, recording only: the bar's width before it is laid out)
+    rec-measure := Text {
+        visible: false;
+        text: "Record";
+        font-size: Theme.material ? 14px : Theme.body;
+        font-weight: Theme.material ? 500 : 600;
+    }
+    property <length> opt-w: opt-measure.preferred-width + 40px;
+    // (Glass: the label + 40 + its gap; Material: the split button, 18 icon + 8 + 32 + 2 + 40, in 20)
+    property <length> rec-w: !record-only ? 0 : Theme.material ? rec-measure.preferred-width + 120px : rec-measure.preferred-width + 44px;
+    // The bar in one row with tools `tw` wide (each button + 4 px, the bar's 20 px)
+    pure function one-row(tw: length) -> length {
+        return fit.tools * (tw + 4px) + fit.seps * 21px + fit.opts * (opt-w + 4px) + rec-w + 20px;
+    }
+    // #1071: the labels go when it doesn't fit; then two rows, if even that is too wide
+    property <length> room: root.width - 32px;
+    property <bool> compact: one-row(104px) > room;
+    property <bool> two-rows: compact && fit.split >= 0 && one-row(56px) > room;
 
     // A click beside the menu closes it
     if menu-open: TouchArea {
@@ -767,13 +889,14 @@ export component ScreenToolbar inherits Window {
 
         // ── The bar ──
         bar := Rectangle {
-            width: row.preferred-width + 24px;
-            height: 64px;
+            // (each button carries 4 px of the old spacing: 20 + 4 = the 24 px of room)
+            width: rows.preferred-width + 20px;
+            height: two-rows ? 124px : 64px;
             x: (root.width - self.width) / 2;
             y: root.height - bottom - self.height;
             // Glass: the plugin's glass under a tint; Material: a vibrant
             // floating toolbar, a pill in primaryContainer
-            border-radius: Theme.material ? self.height / 2 : 22px;
+            border-radius: Theme.material ? 32px : 22px;
             // (Glass on the plugin: only its glass, ScreenToolbar draws no tint over it)
             background: Theme.material ? Theme.m3-primary-container : Theme.plugin ? transparent : Theme.panel;
             drop-shadow-blur: Theme.material ? 10px : 0;
@@ -782,192 +905,147 @@ export component ScreenToolbar inherits Window {
             accessible-role: groupbox;
             accessible-label: "Screen tools";
             TouchArea { }
-            row := HorizontalLayout {
+            rows := VerticalLayout {
                 alignment: center;
                 // (the 56 px buttons centred in the 64 px bar: a fixed-height
                 // child of a row sits at its top)
                 padding-top: 4px;
                 padding-bottom: 4px;
                 spacing: 4px;
-                for t[i] in tools: Rectangle {
-                    width: t.kind == 1 ? 17px : t.kind == 2 ? opt-measure.preferred-width + 40px : 104px;
-                    height: 56px;
-                    property <bool> active: tt.pressed || (t.kind == 2 && options-open);
-                    if t.kind == 1: Rectangle {
-                        width: 1px;
-                        height: Theme.material ? 32px : 36px;
-                        background: Theme.material ? Theme.m3-on-primary-container.with-alpha(0.24) : Theme.separator;
-                    }
-                    face := Rectangle {
-                        visible: t.kind != 1;
-                        // Material: round, squaring off while pressed; the
-                        // picked one filled in primary
-                        border-radius: Theme.material ? (tt.pressed ? 16px : t.picked ? 20px : self.height / 2) : 12px;
-                        // (MaterialSpring "fast": springFast 12.8 / 0.54 → ω 28.3, ζ 0.60)
-                        animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); }
-                        background: Theme.material ? (t.picked ? Theme.m3-primary : Theme.m3-on-primary-container.with-alpha(parent.active ? 0.1 : tt.has-hover ? 0.08 : 0))
-                            : t.picked ? Theme.accent.with-alpha(0.22) : parent.active ? Theme.fill-pressed : tt.has-hover ? Theme.fill : transparent;
-                        // (ElasticControl, Material: swells by min(6 %, 10 px) on
-                        // springPress 7.5 / 0.3 → ω 21.7, ζ 0.43)
-                        transform-scale: Theme.material && tt.pressed ? 1 + min(0.06, 10px / max(1px, max(self.width, self.height))) : 1;
-                        animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
-                        accessible-role: button;
-                        accessible-label: t.label;
-                        accessible-checked: t.picked;
-                        accessible-action-default => { root.tool(i); }
-                        if t.kind == 0: VerticalLayout {
-                            alignment: center;
-                            spacing: 4px;
-                            // (Material: 2 px lower, where the QML's icon and label sit)
-                            padding-top: Theme.material ? 4px : 0;
-                            StIcon {
-                                // (Material: the symbol's line, 1.2x the size, as Icon.qml's Text)
-                                height: Theme.material ? 26px : 22px;
-                                icon: t.icon;
-                                size: 22px;
-                                fill: Theme.material && (t.picked || t.red);
-                                color: t.red ? Theme.danger : Theme.material ? (t.picked ? Theme.m3-on-primary : Theme.m3-on-primary-container) : t.picked ? Theme.accent : Theme.label;
-                            }
-                            Text {
-                                text: t.label;
-                                horizontal-alignment: center;
-                                color: Theme.material ? (t.picked ? Theme.m3-on-primary : Theme.m3-on-primary-container) : t.picked ? Theme.label : Theme.secondary;
-                                font-size: Theme.caption;
-                                font-weight: 500;
-                                accessible-role: none;
-                            }
-                        }
-                        if t.kind == 2: HorizontalLayout {
-                            alignment: center;
-                            spacing: 6px;
-                            Text {
-                                text: "Options";
-                                color: Theme.material ? Theme.m3-on-primary-container : Theme.label;
-                                font-size: Theme.body;
-                                font-weight: 500;
-                                vertical-alignment: center;
-                                accessible-role: none;
-                            }
-                            StIcon {
-                                width: 11px;
-                                icon: options-open ? ic-caret-down : ic-caret-up;
-                                bold: true;
-                                size: 11px;
-                                color: Theme.material ? Theme.m3-on-primary-container : Theme.secondary;
-                            }
-                        }
-                        tt := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { root.tool(i); }
-                        }
+                // too wide even as icons: the tools before the middle separator up here
+                if two-rows: HorizontalLayout {
+                    alignment: center;
+                    for entry[i] in tools: StToolButton {
+                        t: entry;
+                        options-open: root.options-open;
+                        compact: root.compact;
+                        opt-w: root.opt-w;
+                        ic-up: root.ic-caret-up;
+                        ic-down: root.ic-caret-down;
+                        shown: i < root.fit.split;
+                        clicked => { root.tool(i); }
                     }
                 }
-                // Recording only: Record (Material: a split button whose menu
-                // records the other areas straight away)
-                if record-only && !Theme.material: Rectangle {
-                    width: rec-label.preferred-width + 40px;
-                    height: 56px;
-                    Rectangle {
-                        width: parent.width;
-                        height: 36px;
-                        border-radius: 18px;
-                        background: !available ? Theme.fill : rt.pressed ? Theme.danger.darker(0.2) : rt.has-hover ? Theme.danger.darker(0.08) : Theme.danger;
-                        transform-scale: rt.pressed ? 0.97 : 1;
-                        animate transform-scale { duration: Theme.motion(100ms); }
-                        accessible-role: button;
-                        accessible-label: "Record";
-                        accessible-action-default => { if available { root.record(); } }
-                        rec-label := Text {
-                            text: "Record";
-                            color: available ? #ffffff : Theme.tertiary;
-                            font-size: Theme.body;
-                            font-weight: 600;
-                            accessible-role: none;
-                        }
-                        rt := TouchArea {
-                            enabled: available;
-                            mouse-cursor: pointer;
-                            clicked => { root.record(); }
-                        }
+                row := HorizontalLayout {
+                    alignment: center;
+                    for entry[i] in tools: StToolButton {
+                        t: entry;
+                        options-open: root.options-open;
+                        compact: root.compact;
+                        opt-w: root.opt-w;
+                        ic-up: root.ic-caret-up;
+                        ic-down: root.ic-caret-down;
+                        shown: !root.two-rows || i > root.fit.split;
+                        clicked => { root.tool(i); }
                     }
-                }
-                if record-only && Theme.material: Rectangle {
-                    width: split.width + 16px;
-                    height: 56px;
-                    split := Rectangle {
-                        x: 8px;
-                        width: lead.width + 2px + 40px;
-                        height: 40px;
-                        opacity: available ? 1 : 0.38;
-                        lead := Rectangle {
-                            width: lead-row.preferred-width + 32px;
-                            height: 40px;
-                            border-top-left-radius: 20px;
-                            border-bottom-left-radius: 20px;
-                            border-top-right-radius: lt.pressed ? 8px : 4px;
-                            border-bottom-right-radius: self.border-top-right-radius;
-                            background: Theme.m3-primary.mix(Theme.m3-on-primary, lt.pressed ? 0.9 : lt.has-hover ? 0.92 : 1);
-                            animate background { duration: Theme.hover; }
-                            transform-scale: lt.pressed ? 1 + min(0.06, 10px / max(1px, max(self.width, self.height))) : 1;
-                            animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
+                    // Recording only: Record (Material: a split button whose menu
+                    // records the other areas straight away)
+                    if record-only && !Theme.material: Rectangle {
+                        width: rec-label.preferred-width + 44px;
+                        height: 56px;
+                        Rectangle {
+                            x: 4px;
+                            width: parent.width - 4px;
+                            height: 36px;
+                            border-radius: 18px;
+                            background: !available ? Theme.fill : rt.pressed ? Theme.danger.darker(0.2) : rt.has-hover ? Theme.danger.darker(0.08) : Theme.danger;
+                            transform-scale: rt.pressed ? 0.97 : 1;
+                            animate transform-scale { duration: Theme.motion(100ms); }
                             accessible-role: button;
                             accessible-label: "Record";
                             accessible-action-default => { if available { root.record(); } }
-                            lead-row := HorizontalLayout {
-                                alignment: center;
-                                spacing: 8px;
-                                StIcon {
-                                    width: 18px;
-                                    icon: ic-record;
-                                    size: 18px;
-                                    color: Theme.m3-on-primary;
-                                }
-                                Text {
-                                    text: "Record";
-                                    color: Theme.m3-on-primary;
-                                    font-size: 14px;
-                                    font-weight: 500;
-                                    vertical-alignment: center;
-                                    accessible-role: none;
-                                }
+                            rec-label := Text {
+                                text: "Record";
+                                color: available ? #ffffff : Theme.tertiary;
+                                font-size: Theme.body;
+                                font-weight: 600;
+                                accessible-role: none;
                             }
-                            lt := TouchArea {
+                            rt := TouchArea {
                                 enabled: available;
                                 mouse-cursor: pointer;
                                 clicked => { root.record(); }
                             }
                         }
-                        Rectangle {
-                            x: lead.width + 2px;
-                            width: 40px;
+                    }
+                    if record-only && Theme.material: Rectangle {
+                        width: split.width + 20px;
+                        height: 56px;
+                        split := Rectangle {
+                            x: 12px;
+                            width: lead.width + 2px + 40px;
                             height: 40px;
-                            property <length> inner: menu-open ? 20px : tr.pressed ? 8px : 4px;
-                            border-top-left-radius: inner;
-                            border-bottom-left-radius: inner;
-                            border-top-right-radius: 20px;
-                            border-bottom-right-radius: 20px;
-                            // (springPress 7.5 / 0.3: ω 21.7, ζ 0.43)
-                            animate border-top-left-radius, border-bottom-left-radius { duration: Theme.motion(290ms); easing: spring(0.57); }
-                            background: Theme.m3-primary.mix(Theme.m3-on-primary, tr.pressed ? 0.9 : tr.has-hover ? 0.92 : 1);
-                            animate background { duration: Theme.hover; }
-                            transform-scale: tr.pressed ? 1 + min(0.06, 10px / max(1px, max(self.width, self.height))) : 1;
-                            animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
-                            accessible-role: button;
-                            accessible-label: "More record options";
-                            accessible-action-default => { menu-open = !menu-open; }
-                            // (the caret-down turned: up while closed, a half turn
-                            // more as the menu opens, popover OutCubic)
-                            StIcon {
-                                icon: ic-caret-down;
-                                size: 18px;
-                                color: Theme.m3-on-primary;
-                                turn: menu-open ? 360deg : 180deg;
-                                animate turn { duration: Theme.move-standard; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+                            opacity: available ? 1 : 0.38;
+                            lead := Rectangle {
+                                width: lead-row.preferred-width + 32px;
+                                height: 40px;
+                                border-top-left-radius: 20px;
+                                border-bottom-left-radius: 20px;
+                                border-top-right-radius: lt.pressed ? 8px : 4px;
+                                border-bottom-right-radius: self.border-top-right-radius;
+                                background: Theme.m3-primary.mix(Theme.m3-on-primary, lt.pressed ? 0.9 : lt.has-hover ? 0.92 : 1);
+                                animate background { duration: Theme.hover; }
+                                transform-scale: lt.pressed ? 1 + min(0.06, 10px / max(1px, max(self.width, self.height))) : 1;
+                                animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
+                                accessible-role: button;
+                                accessible-label: "Record";
+                                accessible-action-default => { if available { root.record(); } }
+                                lead-row := HorizontalLayout {
+                                    alignment: center;
+                                    spacing: 8px;
+                                    StIcon {
+                                        width: 18px;
+                                        icon: ic-record;
+                                        size: 18px;
+                                        color: Theme.m3-on-primary;
+                                    }
+                                    Text {
+                                        text: "Record";
+                                        color: Theme.m3-on-primary;
+                                        font-size: 14px;
+                                        font-weight: 500;
+                                        vertical-alignment: center;
+                                        accessible-role: none;
+                                    }
+                                }
+                                lt := TouchArea {
+                                    enabled: available;
+                                    mouse-cursor: pointer;
+                                    clicked => { root.record(); }
+                                }
                             }
-                            tr := TouchArea {
-                                enabled: available;
-                                mouse-cursor: pointer;
-                                clicked => { menu-open = !menu-open; }
+                            Rectangle {
+                                x: lead.width + 2px;
+                                width: 40px;
+                                height: 40px;
+                                property <length> inner: menu-open ? 20px : tr.pressed ? 8px : 4px;
+                                border-top-left-radius: inner;
+                                border-bottom-left-radius: inner;
+                                border-top-right-radius: 20px;
+                                border-bottom-right-radius: 20px;
+                                // (springPress 7.5 / 0.3: ω 21.7, ζ 0.43)
+                                animate border-top-left-radius, border-bottom-left-radius { duration: Theme.motion(290ms); easing: spring(0.57); }
+                                background: Theme.m3-primary.mix(Theme.m3-on-primary, tr.pressed ? 0.9 : tr.has-hover ? 0.92 : 1);
+                                animate background { duration: Theme.hover; }
+                                transform-scale: tr.pressed ? 1 + min(0.06, 10px / max(1px, max(self.width, self.height))) : 1;
+                                animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
+                                accessible-role: button;
+                                accessible-label: "More record options";
+                                accessible-action-default => { menu-open = !menu-open; }
+                                // (the caret-down turned: up while closed, a half turn
+                                // more as the menu opens, popover OutCubic)
+                                StIcon {
+                                    icon: ic-caret-down;
+                                    size: 18px;
+                                    color: Theme.m3-on-primary;
+                                    turn: menu-open ? 360deg : 180deg;
+                                    animate turn { duration: Theme.move-standard; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+                                }
+                                tr := TouchArea {
+                                    enabled: available;
+                                    mouse-cursor: pointer;
+                                    clicked => { menu-open = !menu-open; }
+                                }
                             }
                         }
                     }

@@ -1088,6 +1088,9 @@ impl Service for Bridges {
         let arg = |i: usize| args.get(i).cloned().unwrap_or_default();
         match (target, func) {
             ("lock", "lock") => self.set_locked(h, true),
+            // Is it locked? Only asked, nothing changed: the release builder's
+            // test checks a lock really locks and unlocks (audit #719)
+            ("lock", "state") => return Some(lock_answer(self.lk.locked, self.lk.held, h.state("lockSecure").as_bool().unwrap_or(false)).to_string()),
             // Sandbox only: the sandbox user has no password
             ("lock", "unlock") => {
                 if sandboxed() {
@@ -1302,6 +1305,26 @@ mod tests {
     }
 
     #[test]
+    fn asked_whether_it_is_locked() {
+        assert_eq!(lock_answer(true, true, true), "locked");
+        assert_eq!(lock_answer(false, false, false), "unlocked");
+        // asked for but the compositor hasn't said so yet (or refused)
+        assert_eq!(lock_answer(true, true, false), "locking");
+        assert_eq!(lock_answer(true, false, false), "locking");
+        // the lift, or the compositor still holding it
+        assert_eq!(lock_answer(false, true, true), "unlocking");
+        assert_eq!(lock_answer(false, false, true), "unlocking");
+        // through a real lock and unlock
+        let mut lk = Lockstate::default();
+        lk.set_locked(true, "zoom", false, true);
+        assert_eq!(lock_answer(lk.locked, lk.held, true), "locked");
+        lk.unlocked(&json!({"unlocked": true}), "zoom", false, true);
+        assert_eq!(lock_answer(lk.locked, lk.held, true), "unlocking");
+        lk.leave(true);
+        assert_eq!(lock_answer(lk.locked, lk.held, false), "unlocked");
+    }
+
+    #[test]
     fn a_lock_holds_marks_and_lets_go_only_after_the_lift() {
         let (mut lk, mut r) = (Lockstate::default(), Rec::default());
         // lock: held at once, by the Rust lock, the mark written
@@ -1410,6 +1433,19 @@ enum UnlockStep {
     Reveal,
     Instant,
     Lift { zoom: bool },
+}
+
+/// `ipc call lock state`: "locked" once the shell means to be locked, holds
+/// the session lock and the compositor said it's locked (the lock part's
+/// `secure`); "unlocked" once none of that is left; "locking" or
+/// "unlocking" in between (audit #719)
+pub fn lock_answer(locked: bool, held: bool, secure: bool) -> &'static str {
+    match (locked, held, secure) {
+        (true, true, true) => "locked",
+        (false, false, false) => "unlocked",
+        (true, _, _) => "locking",
+        _ => "unlocking",
+    }
 }
 
 fn unlock_step(held: bool, transition: &str) -> UnlockStep {

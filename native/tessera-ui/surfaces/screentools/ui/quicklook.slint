@@ -522,7 +522,7 @@ export component QuickLook inherits Window {
             QlButton {
                 icon: ic-x;
                 tooltip: "Close";
-                shortcut: "Esc";
+                shortcut: Theme.key-esc;
                 clicked => { root.close-it(); }
                 other-key(e) => { root.key(e.text, e.modifiers.control) }
             }
@@ -580,7 +580,7 @@ export component QuickLook inherits Window {
                     done: copied;
                     tooltip: kind == "image" ? "Copy picture" : kind == "text" ? "Copy text" : kind == "folder" ? "Copy folder" : "Copy file";
                     done-tooltip: "Copied";
-                    shortcut: text-mode ? "" : "Ctrl+C";
+                    shortcut: text-mode ? "" : Theme.key-copy;
                     enabled: kind != "";
                     clicked => { root.copy-it(); }
                     other-key(e) => { root.key(e.text, e.modifiers.control) }
@@ -595,7 +595,7 @@ export component QuickLook inherits Window {
                     icon: ic-trash;
                     danger: true;
                     tooltip: "Move to Trash";
-                    shortcut: "Del";
+                    shortcut: Theme.key-del;
                     clicked => { root.delete-it(); }
                     other-key(e) => { root.key(e.text, e.modifiers.control) }
                 }

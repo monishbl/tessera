@@ -1,6 +1,7 @@
 // The update screen (shell/assets/updater/shell.qml): "Tessera is updating",
 // a progress bar and the step; "Tessera is up to date"; or what went wrong,
-// that nothing was lost, and Close. One per display, all the same.
+// that nothing was lost (when the updater says so) or where the backup is,
+// and Close. One per display, all the same.
 // (Its own colours, as the QML's: it's drawn the same in both looks.)
 
 export global Up {
@@ -10,6 +11,11 @@ export global Up {
     in property <string> step: "Preparing";
     in property <string> detail;
     in property <string> backup;
+    // the updater put everything back as it was: only then Nothing was lost (audit #697)
+    in property <bool> restored;
+    // the one bar, 0…100: the update's percent with a build drawn into the
+    // room ahead of it; it only rises (lib.rs bar_value; audit #694)
+    in property <float> bar: 0;
     // shown: on (fades in) once the window is up; leaving: fades out
     in property <bool> opened;
     in property <bool> leaving;
@@ -27,6 +33,8 @@ export global Up {
     // Show details: the update's output (its log), last lines, following the end
     in property <bool> details;
     in property <string> log;
+    // Copy, then Copied or Couldn't copy for 2 s (audit #696)
+    in property <string> copy-word: "Copy";
     callback close();
     callback toggle-details();
     callback copy-log();
@@ -58,20 +66,15 @@ export component UpdateScreen inherits Window {
             }
         }
     ]
-    property <float> pct: Up.percent;
+    property <float> pct: Up.bar;
     animate pct {
         duration: 400ms;
         easing: cubic-bezier(0.3333, 1, 0.6667, 1);
     }
     property <bool> building: Up.build && Up.phase == "run";
     property <bool> sweep: root.building && Up.build-fraction < 0;
-    property <float> bpct: max(0, Up.build-fraction) * 100;
-    animate bpct {
-        duration: 400ms;
-        easing: cubic-bezier(0.3333, 1, 0.6667, 1);
-    }
-    // (wider for an error: its message and the backup's path)
-    property <length> col-w: min(root.error ? 520px : Up.details ? 640px : 360px, self.width - 64px);
+    // (wider for the output, and for an error: its message and the backup's path)
+    property <length> col-w: min(Up.details ? 640px : root.error ? 520px : 360px, self.width - 64px);
     // What takes clicks while it works (Show details, the log and Copy);
     // everything else passes through. Read by the screen for its input region.
     out property <length> hit-x: col.x + toggle-row.x;
@@ -158,7 +161,7 @@ export component UpdateScreen inherits Window {
                 height: 14px;
             }
 
-            // Progress: the update's, or the build's while one runs
+            // Progress: the update's, a build's drawn into it while one runs
             if !root.error: Rectangle {
                 height: 4px;
                 bar := Rectangle {
@@ -172,7 +175,7 @@ export component UpdateScreen inherits Window {
                     if !root.sweep: Rectangle {
                         x: 0;
                         y: 0;
-                        width: max(self.height, parent.width * (root.building ? root.bpct : root.pct) / 100);
+                        width: max(self.height, parent.width * root.pct / 100);
                         height: parent.height;
                         border-radius: 2px;
                         background: #EDEDEF;
@@ -212,12 +215,44 @@ export component UpdateScreen inherits Window {
                 font-size: 12px;
             }
 
-            // Show details: the update's output, as it comes
-            if !root.error && Up.phase != "done": Rectangle {
+            // Something went wrong: what, that nothing was lost (only when the
+            // updater put it all back) or where the backup is; then the output, and Close
+            if root.error: Text {
+                horizontal-alignment: center;
+                wrap: word-wrap;
+                text: Up.detail;
+                color: #A1A1AA;
+                font-family: "Inter";
+                font-size: 13px;
+            }
+            if root.error: Rectangle {
+                height: 8px;
+            }
+            if root.error && (Up.restored || Up.backup != ""): Text {
+                horizontal-alignment: center;
+                wrap: word-wrap;
+                text: Up.restored ? "Nothing was lost." + (Up.backup != "" ? " Your settings and shortcuts were backed up to:" : "") : "Your settings and shortcuts were backed up to:";
+                color: #A1A1AA;
+                font-family: "Inter";
+                font-size: 13px;
+            }
+            // (the path on its own line, broken anywhere: it has no spaces)
+            if root.error && Up.backup != "": Text {
+                horizontal-alignment: center;
+                wrap: char-wrap;
+                text: Up.backup;
+                color: #A1A1AA;
+                font-family: "Inter";
+                font-size: 13px;
+            }
+
+            // Show details: the update's output, as it comes (and still there
+            // on an error, to read and copy; audit #695)
+            if Up.phase != "done": Rectangle {
                 height: 16px;
             }
             toggle-row := Rectangle {
-                visible: !root.error && Up.phase != "done";
+                visible: Up.phase != "done";
                 height: self.visible ? 32px : 0px;
                 toggle := Rectangle {
                     x: (parent.width - self.width) / 2;
@@ -249,11 +284,11 @@ export component UpdateScreen inherits Window {
                     accessible-action-default => { Up.toggle-details(); }
                 }
             }
-            if Up.details && !root.error && Up.phase != "done": Rectangle {
+            if Up.details && Up.phase != "done": Rectangle {
                 height: 8px;
             }
             log-box := Rectangle {
-                visible: Up.details && !root.error && Up.phase != "done";
+                visible: Up.details && Up.phase != "done";
                 height: self.visible ? 240px : 0px;
                 border-radius: 14px;
                 background: #1A1A1D;
@@ -295,7 +330,7 @@ export component UpdateScreen inherits Window {
                     copy-text := Text {
                         x: (parent.width - self.width) / 2;
                         y: (parent.height - self.height) / 2;
-                        text: "Copy";
+                        text: Up.copy-word;
                         color: #EDEDEF;
                         font-family: "Inter";
                         font-size: 12px;
@@ -313,35 +348,6 @@ export component UpdateScreen inherits Window {
                 }
             }
 
-            // Something went wrong: what, that nothing was lost, and Close
-            if root.error: Text {
-                horizontal-alignment: center;
-                wrap: word-wrap;
-                text: Up.detail;
-                color: #A1A1AA;
-                font-family: "Inter";
-                font-size: 13px;
-            }
-            if root.error: Rectangle {
-                height: 8px;
-            }
-            if root.error: Text {
-                horizontal-alignment: center;
-                wrap: word-wrap;
-                text: "Nothing was lost." + (Up.backup != "" ? " Your settings and shortcuts were backed up to:" : "");
-                color: #A1A1AA;
-                font-family: "Inter";
-                font-size: 13px;
-            }
-            // (the path on its own line, broken anywhere: it has no spaces)
-            if root.error && Up.backup != "": Text {
-                horizontal-alignment: center;
-                wrap: char-wrap;
-                text: Up.backup;
-                color: #A1A1AA;
-                font-family: "Inter";
-                font-size: 13px;
-            }
             if root.error: Rectangle {
                 height: 24px;
             }

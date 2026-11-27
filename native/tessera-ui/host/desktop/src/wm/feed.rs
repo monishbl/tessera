@@ -88,7 +88,7 @@ impl Feed {
     pub fn build(&self, h: &Host) -> Value {
         let cfg = h.cfg();
         let now = now_ms();
-        let clock24 = cfg["appearance"]["clock24"].as_bool().unwrap_or(false);
+        let clock24 = tessera_core::locale::clock24(&cfg);
         let t = cal::local(now);
         let (first, next) = (cal::make(t.y, t.mo, 1, 0, 0, 0), cal::make(t.y, t.mo + 1, 1, 0, 0, 0));
         let calendar = h.st.shell.get::<Calendar>().cloned().unwrap_or_default();

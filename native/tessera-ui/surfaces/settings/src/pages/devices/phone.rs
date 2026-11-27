@@ -243,7 +243,7 @@ pub fn sharing(cx: &mut Ctx, p: &mut Page) {
             .detail(match level {
                 "off" => "You can still send; phones and computers nearby can't see this computer".to_string(),
                 "10min" if left > 0 => format!("Android phones and LocalSend devices nearby, for {left} more min; you're asked before anything is saved"),
-                _ => "Android phones and LocalSend devices nearby; you're asked before anything is saved".to_string(),
+                _ => "Android phones and LocalSend devices nearby; you're asked before anything is saved. Your computer's name is broadcast, so it can be recognised wherever you take it; paused while locked, its ids renewed daily".to_string(),
             })
             .segmented(&["No one", "Everyone for 10 min", "Everyone"], rv.iter().position(|v| *v == level).unwrap_or(0) as i32, rp)
             .width(320.0))

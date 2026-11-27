@@ -401,14 +401,16 @@ pub fn saved_chats(count: i64, pinned: i64, confirming: bool) -> String {
 
 /// The sidebar's options (sidebar.qml)
 pub fn sidebar(cx: &mut Ctx, p: &mut Page) {
-    // (only whether a key is there: it's never shown)
-    let has = !cx.get("emoji.klipyKey").as_str().unwrap_or("").is_empty();
+    // (only whether a key is there: it's never shown, and it's kept in the
+    // keyring by the shell, not in config.json: #965)
+    let has = feed(cx)["ai"]["klipySaved"].as_bool().unwrap_or(false) || cx.local_b("ai.klipySaved") || !cx.get("emoji.klipyKey").as_str().unwrap_or("").is_empty();
     let mut key = field(cx, "ai.klipy", "KLIPY app key", if has { "Replace key" } else { "Paste key" }, 240.0, true, None).detail(if has { "Key saved" } else { "No key" });
     let kid = cx.on(|cx, a| {
         if a.i == 1 {
             let t = a.s.trim().to_string();
             if !t.is_empty() {
-                cx.set("emoji.klipyKey", t);
+                cx.ask("accounts", "klipySave", json!([t]));
+                cx.local_set("ai.klipySaved", true);
                 cx.local_set("ai.klipy", "");
                 return;
             }

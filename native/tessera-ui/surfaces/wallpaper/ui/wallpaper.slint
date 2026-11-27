@@ -14,6 +14,7 @@ export struct Thumb {
     name: string, // the file's name, for screen readers
     image: image,
     ready: bool, // decoded (it fades in)
+    failed: bool, // couldn't be read: a broken-picture mark and its name
 }
 
 export component WallpaperPicker inherits Window {
@@ -252,7 +253,8 @@ export component WallpaperPicker inherits Window {
                 x: 14px;
                 y: parent.height - 14px - self.height;
                 width: parent.width - 28px;
-                height: thumb-h + 8px;
+                // (and a line under the thumbnails for the current one's name)
+                height: thumb-h + 8px + 20px;
                 clip: true;
                 accessible-role: list;
                 accessible-label: "Wallpapers";
@@ -273,9 +275,9 @@ export component WallpaperPicker inherits Window {
                 for t[i] in thumbs: Rectangle {
                     x: 4px + i * step - list-offset;
                     width: thumb-w;
-                    height: thumb-h + 8px;
+                    height: thumb-h + 8px + 20px;
                     accessible-role: list-item;
-                    accessible-label: t.name;
+                    accessible-label: t.failed ? t.name + ", can't be read" : t.name;
                     accessible-item-selectable: true;
                     accessible-item-selected: i == applied;
                     accessible-item-index: i;
@@ -317,6 +319,30 @@ export component WallpaperPicker inherits Window {
                                 animate opacity { duration: Theme.popover; }
                                 accessible-role: none;
                             }
+                            // (a picture that couldn't be read: a mark and its
+                            // name, not a blank tile for ever; #554)
+                            if t.failed: VerticalLayout {
+                                alignment: center;
+                                spacing: 6px;
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                Text {
+                                    text: "\u{e7a8}"; // image-broken
+                                    font-family: "Phosphor";
+                                    font-size: 28px;
+                                    color: Theme.tertiary;
+                                    horizontal-alignment: center;
+                                    accessible-role: none;
+                                }
+                                Text {
+                                    text: t.name;
+                                    color: Theme.secondary;
+                                    font-size: Theme.small;
+                                    horizontal-alignment: center;
+                                    overflow: elide;
+                                    accessible-role: none;
+                                }
+                            }
                         }
                         touch := TouchArea {
                             mouse-cursor: pointer;
@@ -334,6 +360,20 @@ export component WallpaperPicker inherits Window {
                                 accept
                             }
                         }
+                    }
+                    // (the current one's name under it, so two alike can be told apart)
+                    if i == current && !t.failed: Text {
+                        x: 0;
+                        y: frame.y + frame.height + 4px;
+                        width: parent.width;
+                        height: 16px;
+                        text: t.name;
+                        color: Theme.secondary;
+                        font-size: Theme.small;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        accessible-role: none;
                     }
                 }
 

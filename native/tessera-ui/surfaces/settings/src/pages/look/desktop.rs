@@ -126,7 +126,20 @@ pub fn desktop(cx: &mut Ctx, p: &mut Page) {
         Some(s) if !feed(cx)["weather"].is_object() => serde_json::json!({"ready": s.ready, "place": s.place, "temp": s.temp, "condition": s.condition, "error": s.error}),
         _ => feed(cx)["weather"].clone(),
     };
-    let footer = if w["ready"].as_bool().unwrap_or(false) {
+    let on = cx.b("weather.enabled");
+    let et = cx.toggle("weather.enabled");
+    // (what shows it, with Config.qml's defaults: weather::wanted)
+    let wanted = crate::services::weather::wanted(&serde_json::json!({
+        "weather": {"enabled": on},
+        "menubar": {"weather": cx.get("menubar.weather")},
+        "desktop": {"widgets": cx.get("desktop.widgets")},
+        "controlCenter": {"layout": cx.get("controlCenter.layout")},
+    }));
+    let footer = if !on {
+        "Off: nothing is asked of wttr.in, and no weather shows.".to_string()
+    } else if !wanted {
+        "Nothing shows the weather now (the menu bar's item, a desktop widget or Control Center's), so it isn't fetched.".to_string()
+    } else if w["ready"].as_bool().unwrap_or(false) {
         format!("Showing {}: {}°, {}.", w["place"].as_str().unwrap_or(""), w["temp"].as_i64().unwrap_or(0), w["condition"].as_str().unwrap_or("").to_lowercase())
     } else {
         w["error"].as_str().filter(|e| !e.is_empty()).unwrap_or("Loading…").to_string()
@@ -143,8 +156,9 @@ pub fn desktop(cx: &mut Ctx, p: &mut Page) {
     let up = cx.on(|cx, a| cx.set("weather.units", if a.i == 1 { "imperial" } else { "metric" }));
     p.group("Weather")
         .footer(footer)
-        .row(Row::new("Location").detail("Leave empty to detect it from your network.").field(cx.s("weather.location"), "City, e.g. Bengaluru", loc).width(220.0))
-        .row(Row::new("Units").segmented(&["Celsius", "Fahrenheit"], if units == "imperial" { 1 } else { 0 }, up).width(200.0));
+        .row(Row::new("Weather").detail("From wttr.in, which sees your IP address (and the location below)").switch(on, et))
+        .row(Row::new("Location").visible(on).detail("Leave empty to detect it from your network.").field(cx.s("weather.location"), "City, e.g. Bengaluru", loc).width(220.0))
+        .row(Row::new("Units").visible(on).segmented(&["Celsius", "Fahrenheit"], if units == "imperial" { 1 } else { 0 }, up).width(200.0));
 
     // Hot corners
     let labels: Vec<String> = CORNER_ACTIONS.iter().map(|a| a.1.to_string()).collect();

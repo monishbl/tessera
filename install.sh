@@ -1357,7 +1357,10 @@ if style:
     part("lock")["loginStyle"] = style
 if ui_source:
     part("rust")["uiSource"] = ui_source
-with open(path + ".tmp", "w") as f:
+# (private to you, as the shell keeps it: #965)
+fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+os.fchmod(fd, 0o600)
+with os.fdopen(fd, "w") as f:
     json.dump(c, f, indent=4)
 os.replace(path + ".tmp", path)
 PY

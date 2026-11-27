@@ -206,10 +206,19 @@ pub fn reveal(items: &[Placed], sel: usize, scroll: f32, height: f32, bottom: f3
 }
 
 /// The keys it takes from the field (the rest edit the search): Left and
-/// Right only in the grid (in the list they move the cursor)
+/// Right only in the grid (in the list they move the cursor); Delete only
+/// as `delete_removes` says
 pub fn handles(text: &str, ctrl: bool, grid: bool) -> bool {
     let k = |key: Key| text == SharedString::from(key).as_str();
-    k(Key::Escape) || k(Key::Return) || k(Key::UpArrow) || k(Key::DownArrow) || k(Key::Tab) || k(Key::Delete) || (grid && (k(Key::LeftArrow) || k(Key::RightArrow))) || (ctrl && text.eq_ignore_ascii_case("p"))
+    k(Key::Escape) || k(Key::Return) || k(Key::UpArrow) || k(Key::DownArrow) || k(Key::Tab) || (grid && (k(Key::LeftArrow) || k(Key::RightArrow))) || (ctrl && text.eq_ignore_ascii_case("p"))
+}
+
+/// Does Delete remove the selected entry (#1035)? Shift+Delete always; plain
+/// Delete only with nothing in the search or the caret at its end with no
+/// text selected, where it would delete nothing: else it edits the search
+/// (it removed the entry, with no undo, while a typo was being fixed)
+pub fn delete_removes(shift: bool, search: &str, caret: i32, anchor: i32) -> bool {
+    shift || search.is_empty() || (caret == anchor && usize::try_from(caret).is_ok_and(|c| c >= search.len()))
 }
 
 // ── The part ─────────────────────────────────────────────────────────────
@@ -289,9 +298,9 @@ impl Clipboard {
         let to = st.shell.sender(NAME);
         {
             let (to, weak) = (to.clone(), ui.as_weak());
-            ui.on_key(move |text, shift, alt, ctrl| {
+            ui.on_key(move |text, shift, alt, ctrl, search, caret, anchor| {
                 let grid = weak.upgrade().is_some_and(|u| u.get_grid());
-                let ok = handles(&text, ctrl, grid);
+                let ok = if text == SharedString::from(Key::Delete) { delete_removes(shift, &search, caret, anchor) } else { handles(&text, ctrl, grid) };
                 if ok {
                     to(Box::new(M::Key(text.to_string(), shift, alt, ctrl)));
                 }
@@ -331,7 +340,8 @@ impl Clipboard {
             return;
         }
         st.shell.want("clipboard");
-        crate::perf::time(|| "clip open refresh".into(), clip::refresh);
+        // (its pictures are decoded now, and only while it's open: #844)
+        crate::perf::time(|| "clip open refresh".into(), || clip::panel_open(true));
         // (the shell's Clipboard stamps new entries with the time they came)
         crate::shell::ask("clipboard.refresh", serde_json::json!([]));
         if let Some(h) = st.shell.get::<History>() {
@@ -384,6 +394,8 @@ impl Clipboard {
             return;
         }
         self.open = false;
+        // (its pictures go a while after: clip::KEEP_AFTER_CLOSE)
+        clip::panel_open(false);
         // (closed before it showed: no closing animation will ever call
         // closed(), so it's hidden here; it stayed mapped, an invisible layer
         // taking every click; audit #136)
@@ -1070,9 +1082,25 @@ mod tests {
     }
 
     #[test]
+    fn delete_removes_an_entry_only_where_it_edits_nothing() {
+        // nothing typed, or Shift+Delete: the entry goes
+        assert!(delete_removes(false, "", 0, 0));
+        assert!(delete_removes(true, "hello", 1, 1));
+        // the caret at the end of the search: nothing to delete there
+        assert!(delete_removes(false, "hello", 5, 5));
+        // the caret inside it, or letters selected: Delete edits the search
+        assert!(!delete_removes(false, "hello", 2, 2));
+        assert!(!delete_removes(false, "hello", 5, 2));
+        // (byte offsets: "café" is 5 bytes)
+        assert!(!delete_removes(false, "café", 4, 4) && delete_removes(false, "café", 5, 5));
+    }
+
+    #[test]
     fn keys_it_takes_from_the_field() {
         let k = |key: Key| SharedString::from(key).to_string();
-        assert!(handles(&k(Key::Return), false, false) && handles(&k(Key::Delete), false, false) && handles(&k(Key::Tab), false, false));
+        assert!(handles(&k(Key::Return), false, false) && handles(&k(Key::Tab), false, false));
+        // Delete: by delete_removes, never here
+        assert!(!handles(&k(Key::Delete), false, false));
         assert!(handles("p", true, false) && !handles("p", false, false));
         // left and right move the text cursor, except in the grid
         assert!(!handles(&k(Key::LeftArrow), false, false) && handles(&k(Key::LeftArrow), false, true));

@@ -28,6 +28,7 @@ import sys
 import time
 
 from . import ble_format, debuglog, endpoint, links, wifi
+from . import identity as identity_mod
 from .connection import Connection, ProtocolError
 from .sharing import Cancelled, Declined, Pace, Receive, Send, Timeline
 from .transport import READ_LIMIT, StreamTransport, TransportClosed
@@ -67,7 +68,7 @@ class Unreachable(OSError):
 
 class QuickShareService:
     def __init__(self, emit, discovery=None, folder=None, name=None, ble=None, helper=None, net_probe=None,
-                 memory=None, identity=None):
+                 memory=None, identity=None, renew=None):
         self.emit = emit
         self.memory = memory if memory is not None else links.LinkMemory(path="")  # (the daemon's is kept on disk)
         self.discovery = discovery
@@ -78,15 +79,18 @@ class QuickShareService:
         self.name = name or socket.gethostname()
         # The same device to phones every time (identity.py: the daemon's is
         # kept on disk; tests get a fresh one)
+        self.info = None  # our endpoint info: one for mDNS and Bluetooth (a phone sees one device)
+        # renew() → a new identity once this one is a day old (identity.py,
+        # #1009: while visible, between transfers); None: kept as it is
+        self.renew = renew
+        self._renewer = None
         if identity:
-            self.endpoint_id = identity["endpoint_id"]
-            self.device_token = bytes.fromhex(identity["token"])
-            self.salt = bytes.fromhex(identity["salt"])
+            self._use_identity(identity)
         else:
             self.endpoint_id = endpoint.new_endpoint_id()
             self.device_token = ble_format.new_device_token()
             self.salt = os.urandom(16)
-        self.info = None  # our endpoint info: one for mDNS and Bluetooth (a phone sees one device)
+            self.identity = None
         self.visible = False
         self.looking = False
         self.server = None
@@ -114,6 +118,34 @@ class QuickShareService:
 
     def _log(self, what):
         debuglog.log("service", what)
+
+    def _use_identity(self, d):
+        self.identity = d
+        self.endpoint_id = d["endpoint_id"]
+        self.device_token = bytes.fromhex(d["token"])
+        self.salt = bytes.fromhex(d["salt"])
+        self.info = None
+
+    def _identity_due(self):
+        return self.renew is not None and self.identity is not None and identity_mod.seconds_left(self.identity) <= 0 \
+            and not self.sessions
+
+    def _renew_identity(self):
+        self._use_identity(self.renew()[0])
+        self._log("identity renewed (a day old)")
+
+    async def _renew_loop(self):
+        """While visible: a day-old identity renewed, announced and
+        advertised afresh (after any transfer under way)."""
+        try:
+            while self.visible:
+                await asyncio.sleep(max(60, identity_mod.seconds_left(self.identity or {})))
+                if self.visible and self._identity_due():
+                    self._renew_identity()
+                    await self._announce()
+                    await self._advertise()
+        except asyncio.CancelledError:
+            pass
 
     def _step(self, what):
         """A link negotiation step, always in the shell's log (stderr goes
@@ -168,10 +200,14 @@ class QuickShareService:
                                                  f"so it uses {self.port}: a firewall rule for {self.preferred_port} "
                                                  "won't cover it. Quit whatever holds it and turn visibility off and on."})
         self.visible = True
+        if self._identity_due():
+            self._renew_identity()
         await self._announce()
         await self._advertise()
         if self.ble is not None and self._refresher is None:
             self._refresher = asyncio.ensure_future(self._refresh_loop())
+        if self.renew is not None and self._renewer is None:
+            self._renewer = asyncio.ensure_future(self._renew_loop())
 
     async def _announce(self):
         if self.discovery is None:
@@ -234,6 +270,9 @@ class QuickShareService:
         if self._refresher is not None:
             self._refresher.cancel()
             self._refresher = None
+        if self._renewer is not None:
+            self._renewer.cancel()
+            self._renewer = None
         if self.discovery is not None:
             try:
                 await self.discovery.unpublish()

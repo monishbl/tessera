@@ -64,7 +64,7 @@ pub fn focus(cx: &mut Ctx, p: &mut Page) {
     let modes: Vec<Value> = f["modes"].as_array().cloned().unwrap_or_default();
     let active = f["active"].as_str().unwrap_or("").to_string();
     let status = f["statusText"].as_str().unwrap_or("").to_string();
-    let h24 = cx.b("appearance.clock24");
+    let h24 = cx.clock24();
 
     // A mode just added is the one shown (the shell said its id)
     let added = f["added"].as_str().unwrap_or("").to_string();

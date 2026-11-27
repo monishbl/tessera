@@ -156,9 +156,10 @@ enum M {
     Position(String, Option<f64>, Option<f64>),
     /// ResourceHover: (output, key, open, x, y)
     ResPopover(String, String, bool, f32, f32),
-    Art(String, Option<std::path::PathBuf>),
-    /// an island picture fetched off the loop (web art: Self::picture)
-    Picture(String, Option<std::path::PathBuf>),
+    /// the art's file and its pixels, decoded and shrunk off the loop (#369)
+    Art(String, Option<std::path::PathBuf>, Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>>),
+    /// an island picture fetched and decoded off the loop (Self::picture)
+    Picture(String, Option<std::path::PathBuf>, Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>>),
 }
 
 struct BarEntry {
@@ -519,7 +520,8 @@ impl Menubar {
             return hit.clone();
         }
         // (web art is fetched on the pool, never here: it shows once it's
-        // here, M::Picture. A fetch here froze the shell up to 8 s, audit #12)
+        // here, M::Picture. A fetch here froze the shell up to 8 s, audit #12;
+        // a file on this computer is decoded there too, #369)
         let path = match mpris::art_now(src) {
             mpris::ArtNow::Ready(p) => p.or_else(|| src.starts_with('/').then(|| std::path::PathBuf::from(src))),
             mpris::ArtNow::Fetch => {
@@ -527,18 +529,26 @@ impl Menubar {
                     let url = src.to_string();
                     tessera_core::work::spawn(move || {
                         let path = mpris::art_file(&url);
-                        let _ = tx.send(crate::Msg::Part(NAME, Box::new(M::Picture(url, path))));
+                        let px = path.as_deref().and_then(|p| tessera_core::picture::decode_rgba(p, tessera_core::picture::RGBA_MOST));
+                        let _ = tx.send(crate::Msg::Part(NAME, Box::new(M::Picture(url, path, px))));
                     });
                 }
-                None
+                return None;
             }
         };
-        let img = path.filter(|p| p.is_file()).and_then(|p| load(&p));
         if self.pictures.len() > 64 {
             self.pictures.clear();
         }
-        self.pictures.insert(src.to_string(), img.clone());
-        img
+        // (none until it's decoded: M::Picture puts it here)
+        self.pictures.insert(src.to_string(), None);
+        let path = path.filter(|p| p.is_file())?;
+        let tx = tessera_core::shell::loop_sender()?;
+        let url = src.to_string();
+        tessera_core::work::spawn(move || {
+            let px = tessera_core::picture::decode_rgba(&path, tessera_core::picture::RGBA_MOST);
+            let _ = tx.send(crate::Msg::Part(NAME, Box::new(M::Picture(url, Some(path), px))));
+        });
+        None
     }
 
     fn tray_image(&mut self, item: &tray::TrayItem) -> slint::Image {
@@ -605,7 +615,9 @@ impl Menubar {
         let tx = st.tx.clone();
         std::thread::spawn(move || {
             let path = mpris::art_file(&url);
-            let _ = tx.send(crate::Msg::Part(NAME, Box::new(M::Art(url, path))));
+            // (decoded and shrunk here, not on the loop: #369)
+            let px = path.as_deref().and_then(|p| tessera_core::picture::decode_rgba(p, tessera_core::picture::RGBA_MOST));
+            let _ = tx.send(crate::Msg::Part(NAME, Box::new(M::Art(url, path, px))));
         });
     }
 
@@ -1312,7 +1324,7 @@ impl Menubar {
         // the Recent list (the host's history, newest first; eight lines)
         let list = shell.get("island.list").as_array().cloned().unwrap_or_default();
         let now_s = ms_now();
-        let h24 = st.shell.cfg["appearance"]["clock24"].as_bool().unwrap_or(false);
+        let h24 = tessera_core::locale::clock24(&st.shell.cfg);
         let rows: Vec<ui::RecentRow> = list
             .iter()
             .take(8)
@@ -2507,16 +2519,17 @@ impl Menubar {
                 bridge::call(&["rustui", "act", "islandHold", if on { "1" } else { "0" }]);
                 self.arm_sweep(st);
             }
-            M::Picture(url, path) => {
-                let img = path.filter(|p| p.is_file()).and_then(|p| load(&p));
+            M::Picture(url, path, px) => {
+                // (what the decoder couldn't read, an SVG, is loaded here)
+                let img = px.map(slint::Image::from_rgba8).or_else(|| path.filter(|p| p.is_file()).and_then(|p| load(&p)));
                 if img.is_some() {
                     self.pictures.insert(url, img);
                     self.refresh(st);
                 }
             }
-            M::Art(url, path) => {
+            M::Art(url, path, px) => {
                 if url == self.art.0 {
-                    self.art.1 = path.as_deref().and_then(load);
+                    self.art.1 = px.map(slint::Image::from_rgba8).or_else(|| path.as_deref().and_then(load));
                     self.bg_art.0.clear();
                     self.refresh(st);
                 }

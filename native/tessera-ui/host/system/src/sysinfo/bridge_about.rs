@@ -454,7 +454,7 @@ impl About {
         let drives = obj("clouddrives");
         let km = obj("keymap");
         // (TimeFormat.hm: the 24-hour setting, as the QML's "Checked at")
-        let clock24 = h.cfg()["appearance"]["clock24"].as_bool().unwrap_or(false);
+        let clock24 = tessera_core::locale::clock24(&h.cfg());
         json!({
             // (Software Update's pages; About's Version row reads its channel too)
             "upd": if self.page().starts_with("update") || self.page() == "about" {

@@ -149,9 +149,72 @@ pub fn bind_keys(modmask: u32, key: &str, keycode: i64, release: bool) -> Vec<St
     keys
 }
 
+/// How key hints are written (Settings → Appearance → Shortcut symbols,
+/// appearance.keySymbols; KeyNames.style): mac | windows | linux, "auto"
+/// mac with the Command menu icon, linux otherwise
+pub fn style(cfg: &serde_json::Value) -> &'static str {
+    match cfg["appearance"]["keySymbols"].as_str().unwrap_or("auto") {
+        "mac" => "mac",
+        "windows" => "windows",
+        "linux" => "linux",
+        _ if cfg["appearance"]["menuIcon"].as_str() == Some("command") => "mac",
+        _ => "linux",
+    }
+}
+
+/// One key of a hint in a style: modifiers and the named keys, else as given
+fn hint_key(style: &str, k: &str) -> String {
+    let up = k.to_uppercase();
+    let mac = style == "mac";
+    let t = match up.as_str() {
+        "SUPER" => if mac { "⌘" } else if style == "windows" { "Win" } else { "Super" },
+        "CTRL" => if mac { "⌃" } else { "Ctrl" },
+        "ALT" => if mac { "⌥" } else { "Alt" },
+        "SHIFT" => if mac { "⇧" } else { "Shift" },
+        "ESCAPE" => if mac { "⎋" } else { "Esc" },
+        "RETURN" => if mac { "↩" } else { "Enter" },
+        "DELETE" => if mac { "⌦" } else { "Del" },
+        "BACKSPACE" => if mac { "⌫" } else { "Backspace" },
+        "TAB" => if mac { "⇥" } else { "Tab" },
+        "SPACE" => "Space",
+        _ => return if k.chars().count() == 1 { up } else { k.to_string() },
+    };
+    t.to_string()
+}
+
+/// A key hint as the style writes it, modifiers in the platform's order:
+/// "CTRL SHIFT Z" → "⌃⇧Z" (mac) | "Ctrl+Shift+Z"; "ESCAPE" → "⎋" | "Esc"
+/// (tooltips, buttons and footers: one way everywhere; audit #1047)
+pub fn combo(style: &str, spec: &str) -> String {
+    let keys: Vec<&str> = spec.split_whitespace().collect();
+    let mods = ["CTRL", "ALT", "SHIFT", "SUPER"];
+    let order: &[&str] = if style == "mac" { &mods } else { &["SUPER", "CTRL", "ALT", "SHIFT"] };
+    let mut out: Vec<String> = order.iter().filter(|m| keys.iter().any(|k| k.eq_ignore_ascii_case(m))).map(|m| hint_key(style, m)).collect();
+    out.extend(keys.iter().filter(|k| !mods.iter().any(|m| k.eq_ignore_ascii_case(m))).map(|k| hint_key(style, k)));
+    out.join(if style == "mac" { "" } else { "+" })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hints_follow_the_shortcut_symbols_setting() {
+        use serde_json::json;
+        assert_eq!(style(&json!({})), "linux");
+        assert_eq!(style(&json!({"appearance": {"menuIcon": "command"}})), "mac");
+        assert_eq!(style(&json!({"appearance": {"keySymbols": "windows", "menuIcon": "command"}})), "windows");
+        assert_eq!(combo("linux", "CTRL S"), "Ctrl+S");
+        assert_eq!(combo("windows", "CTRL SHIFT Z"), "Ctrl+Shift+Z");
+        assert_eq!(combo("mac", "CTRL SHIFT Z"), "⌃⇧Z");
+        assert_eq!(combo("mac", "CTRL RETURN"), "⌃↩");
+        assert_eq!(combo("linux", "CTRL RETURN"), "Ctrl+Enter");
+        assert_eq!(combo("mac", "ESCAPE"), "⎋");
+        assert_eq!(combo("linux", "ESCAPE"), "Esc");
+        assert_eq!(combo("linux", "DELETE"), "Del");
+        assert_eq!(combo("mac", "RETURN"), "↩");
+        assert_eq!(combo("windows", "SUPER c"), "Win+C");
+    }
 
     #[test]
     fn media_keys_read_as_words() {

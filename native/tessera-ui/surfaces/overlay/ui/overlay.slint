@@ -609,13 +609,21 @@ export component OverlayUi inherits Window {
         moved(x, y, w, h) => { root.moved("notes", x, y, w, h); }
         saved => { root.saved("notes"); }
         flag(f) => { root.flag("notes", f); }
-        sb-list612 := Flickable {
+        notes-flick := Flickable {
             content-height: max(self.height, notes-input.preferred-height);
             notes-input := TextInput {
                 width: parent.width;
                 height: max(self.preferred-height, parent.height);
                 single-line: false;
                 wrap: word-wrap;
+                // (the box follows the caret: typing past the last line it went out of sight; #429)
+                cursor-position-changed(p) => {
+                    if p.y < -notes-flick.content-y {
+                        notes-flick.content-y = -p.y;
+                    } else if p.y + 20px > -notes-flick.content-y + notes-flick.height {
+                        notes-flick.content-y = -(p.y + 20px - notes-flick.height);
+                    }
+                }
                 text <=> root.notes-text;
                 color: Theme.label;
                 font-size: Theme.body;
@@ -633,12 +641,12 @@ export component OverlayUi inherits Window {
             // (the kit's scroll indicator, held still over the list's right
             // edge while the content moves under it, #358 #1037)
             ScrollIndicator {
-                x: sb-list612.width - self.width;
-                y: -sb-list612.content-y;
-                height: sb-list612.height;
-                content-y: sb-list612.content-y;
-                content-height: sb-list612.content-height;
-                view-height: sb-list612.height;
+                x: notes-flick.width - self.width;
+                y: -notes-flick.content-y;
+                height: notes-flick.height;
+                content-y: notes-flick.content-y;
+                content-height: notes-flick.content-height;
+                view-height: notes-flick.height;
             }
         }
     }

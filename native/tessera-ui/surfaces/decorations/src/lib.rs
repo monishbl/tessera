@@ -157,6 +157,11 @@ impl Decorations {
         if c.monitor != m.id || c.fullscreen >= 2 || !c.mapped || c.hidden {
             return None;
         }
+        // (another window over the pill's place, a floating or pinned one:
+        // hidden, rather than drawn over that window and taking its clicks)
+        if layout::covered(c, &w.clients, layout::pill_rect(c.at, c.size, st.shell.look.material)) {
+            return None;
+        }
         Some((c.address.clone(), layout::place(c.at, c.size, (m.x, m.y), size.0 as f32)))
     }
 

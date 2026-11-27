@@ -82,7 +82,7 @@ pub fn hex(s: &str) -> slint::Color {
 /// ("9:05", "4:41"; TimeFormat.hmShort's "h:mm" gave the 24-hour hour,
 /// "16:41" beside a menu bar saying 4:41 PM: audit #862)
 pub fn hm_short(cfg: &serde_json::Value) -> String {
-    let h24 = cfg["appearance"]["clock24"].as_bool().unwrap_or(false);
+    let h24 = crate::locale::clock24(&cfg);
     hm_short_of(&crate::util::now("%H:%M"), h24)
 }
 

@@ -2,17 +2,19 @@ pragma Singleton
 import QtQuick
 import Quickshell
 import qs.common
+import qs.services
 
 // GIFs from KLIPY (docs.klipy.com): trending and search, 24 at a time.
 //   GET https://api.klipy.com/api/v1/{app_key}/gifs/trending?page&per_page&customer_id&locale&content_filter&format_filter
 //   GET https://api.klipy.com/api/v1/{app_key}/gifs/search?q&page&per_page&customer_id&locale&content_filter&format_filter
 // → { result, data: { data: [{ id, slug, title, type, file: { hd|md|sm|xs: { gif|jpg: { url, width, height } } } }], current_page, has_next } }
 // The app key is the user's own (partner.klipy.com/api-keys): KLIPY_API_KEY,
-// else Config emoji.klipyKey. Nothing is fetched without one.
+// else the keyring's (where the Rust shell's Settings keeps it: AiKeys slot
+// "klipy"), else Config emoji.klipyKey. Nothing is fetched without one.
 Singleton {
     id: root
 
-    readonly property string key: Quickshell.env("KLIPY_API_KEY") || (Config.options.emoji?.klipyKey ?? "")
+    readonly property string key: Quickshell.env("KLIPY_API_KEY") || (AiKeys.keys.klipy ?? "") || (Config.options.emoji?.klipyKey ?? "")
     readonly property bool hasKey: key.trim() !== ""
     readonly property string filter: Config.options.emoji?.gifFilter ?? "medium" // off | low | medium | high
 

@@ -150,6 +150,10 @@ impl<'a> Ctx<'a> {
     pub fn list(&self, path: &str) -> Vec<String> {
         self.cfg.list(path)
     }
+    /// 24-hour clocks: appearance.clockHours, else the system language's (tessera_core::locale)
+    pub fn clock24(&self) -> bool {
+        tessera_core::locale::clock24(&serde_json::json!({"appearance": {"clockHours": self.get("appearance.clockHours"), "clock24": self.get("appearance.clock24")}}))
+    }
     /// Change a setting (written to config.json a moment later)
     pub fn set(&mut self, path: &str, value: impl Into<Value>) {
         self.cfg.set(path, value.into());
