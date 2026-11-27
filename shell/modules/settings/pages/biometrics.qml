@@ -24,7 +24,7 @@ Column {
         width: parent.width
         visible: Fingerprint.hasReader
         title: "Fingerprint"
-        footer: !Fingerprint.ready ? "" : "Password prompts, sudo and the login screen wait a few seconds for a finger, then ask for your password. Changing them asks for your password."
+        footer: !Fingerprint.ready ? "" : "Password prompts and sudo wait a few seconds for a finger, then ask for your password, every time. The login screen always asks for your password: it unlocks your saved passwords. Changing these asks for your password."
             + (Fingerprint.pamError !== "" ? " " + Fingerprint.pamError : "")
 
         // 1. What the reader still needs
@@ -129,9 +129,11 @@ Column {
         Repeater {
             model: Fingerprint.ready ? [
                 { key: "polkit", label: "Password prompts", detail: "When an app or Tessera asks for an administrator's password" },
-                { key: "sudo", label: "sudo in terminals", detail: "sudo asks for a finger first" },
-                { key: "login", label: "Login screen", detail: Fingerprint.info.gdm ? "GDM asks for a finger by itself. For greetd, ly, SDDM, LightDM or LXDM: your password is still needed once after a restart (it unlocks your saved passwords)" : "Your password is still needed once after a restart: it unlocks your saved passwords" }
-            ] : []
+                { key: "sudo", label: "sudo in terminals", detail: "sudo asks for a finger first" }
+            ].concat(Fingerprint.pam.login ? [
+                // (the root helper no longer puts a finger at the login screen: only taking out an older one)
+                { key: "login", label: "Login screen", detail: "Now always asks for your password. Switch this off to take out the finger an older Tessera added" }
+            ] : []) : []
             Row {
                 required property var modelData
                 label: modelData.label

@@ -265,6 +265,30 @@ fn camera_row(cx: &mut Ctx, face: &Value, camera: &str, rgb: bool, busy: &str) -
     row.segmented(&["Infrared", "Regular"], if rgb { 1 } else { 0 }, id).width(200.0).enabled(busy.is_empty())
 }
 
+/// The fingerprint group's footer: every prompt takes a finger or the
+/// password, the login screen the password (audit #795: no "password once
+/// per boot" mode any more)
+fn finger_footer(pam_error: &str) -> String {
+    format!(
+        "Password prompts and sudo wait a few seconds for a finger, then ask for your password, every time. The login screen always asks for your password: it unlocks your saved passwords. Changing these asks for your password.{}",
+        if pam_error.is_empty() { String::new() } else { format!(" {pam_error}") }
+    )
+}
+
+/// Where a finger can work: (setPam key, label, detail). The login screen
+/// only while an older Tessera's finger is still in its PAM file (the next
+/// update takes it out; switching it off here does it now)
+fn finger_places(login_left: bool) -> Vec<(&'static str, &'static str, String)> {
+    let mut places = vec![
+        ("polkit", "Password prompts", "When an app or Tessera asks for an administrator's password: a finger or your password".to_string()),
+        ("sudo", "sudo in terminals", "sudo asks for a finger first, then your password".to_string()),
+    ];
+    if login_left {
+        places.push(("login", "Login screen", "Now always asks for your password. Switch this off to take out the finger an older Tessera added".to_string()));
+    }
+    places
+}
+
 /// Fingerprint and Face (biometrics.qml)
 pub fn biometrics(cx: &mut Ctx, p: &mut Page) {
     let feed = cx.feed;
@@ -277,14 +301,7 @@ pub fn biometrics(cx: &mut Ctx, p: &mut Page) {
     if fp["hasReader"].as_bool().unwrap_or(false) {
         let ready = fp["ready"].as_bool().unwrap_or(false);
         let pam_error = s(&fp["pamError"]);
-        let footer = if !ready {
-            String::new()
-        } else {
-            format!(
-                "Password prompts, sudo and the login screen wait a few seconds for a finger, then ask for your password. Changing them asks for your password.{}",
-                if pam_error.is_empty() { String::new() } else { format!(" {pam_error}") }
-            )
-        };
+        let footer = if !ready { String::new() } else { finger_footer(&pam_error) };
         let mut rows: Vec<Row> = Vec::new();
 
         // 1. What the reader still needs
@@ -388,21 +405,7 @@ pub fn biometrics(cx: &mut Ctx, p: &mut Page) {
             let t = cx.toggle("lock.fingerprint");
             rows.push(Row::new("Unlock the lock screen").detail("Touch the reader or type your password").switch(lock, t));
             let pam_busy = s(&fp["pamBusy"]);
-            let gdm = fp["gdm"].as_bool().unwrap_or(false);
-            let places = [
-                ("polkit", "Password prompts", "When an app or Tessera asks for an administrator's password".to_string()),
-                ("sudo", "sudo in terminals", "sudo asks for a finger first".to_string()),
-                (
-                    "login",
-                    "Login screen",
-                    if gdm {
-                        "GDM asks for a finger by itself. For greetd, ly, SDDM, LightDM or LXDM: your password is still needed once after a restart (it unlocks your saved passwords)".to_string()
-                    } else {
-                        "Your password is still needed once after a restart: it unlocks your saved passwords".to_string()
-                    },
-                ),
-            ];
-            for (key, label, detail) in places {
+            for (key, label, detail) in finger_places(fp["pam"]["login"].as_bool().unwrap_or(false)) {
                 let on = fp["pam"][key].as_bool().unwrap_or(false);
                 let id = cx.on(move |cx, _| cx.ask("system", "fpSetPam", json!([key, !on])));
                 rows.push(Row::new(label).detail(if pam_busy == key { "Changing…".to_string() } else { detail }).switch(on, id).enabled(pam_busy.is_empty()));
@@ -662,6 +665,21 @@ pub fn security(cx: &mut Ctx, p: &mut Page) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_finger_works_at_every_prompt_and_never_at_the_login_screen() {
+        let f = finger_footer("");
+        assert!(f.contains("every time") && f.contains("login screen always asks for your password"), "{f}");
+        assert!(!f.contains("once"), "{f}");
+        assert!(finger_footer("Cancelled").ends_with(" Cancelled"));
+        let keys: Vec<&'static str> = finger_places(false).into_iter().map(|p| p.0).collect();
+        assert_eq!(keys, ["polkit", "sudo"]);
+        // (an older Tessera's finger still there: only a way to take it out)
+        let left = finger_places(true);
+        assert_eq!(left.last().map(|p| p.0), Some("login"));
+        assert!(left.last().unwrap().2.contains("always asks for your password"));
+        assert!(left.iter().all(|p| !p.2.contains("once after a restart")));
+    }
 
     #[test]
     fn the_firewall_says_where_it_stands() {

@@ -34,17 +34,16 @@ Without a password, for an administrator (wheel) at this computer
                      in /etc/ananicy.d (on), or none and a marker in
                      /etc/tessera that keeps updates from putting it back (off)
 With the password:
-  fingerprint on|off polkit|sudo|login
-      a finger is (or isn't) accepted for password prompts (polkit), sudo, or
-      the login screen (greetd, ly, SDDM): one marked line, `auth sufficient
-      pam_fprintd.so`, first in that PAM file (greetd, ly, SDDM, LightDM or
-      LXDM for the login screen; a vendor file in /usr/lib/pam.d
-      is copied to /etc/pam.d first). "sufficient": no finger in time, or no
+  fingerprint on|off polkit|sudo | fingerprint off login
+      a finger is (or isn't) accepted for password prompts (polkit) or sudo,
+      at every prompt: one marked line, `auth sufficient pam_fprintd.so`,
+      first in that PAM file (a vendor file in /usr/lib/pam.d is copied to
+      /etc/pam.d first). "sufficient": no finger in time, no reader, or no
       pam_fprintd, and the password is asked as before. The login screen
-      takes a finger only after a password login this boot, while that
-      keyring still runs (/usr/lib/tessera/fingerprint-login), so the
-      keyring is always opened by the password. Tessera's own lock
-      screen needs none of this (its PAM file is in the shell).
+      always takes the password (it opens the keyring); off login takes out
+      the finger an older Tessera put there (greetd, ly, SDDM, LightDM or
+      LXDM), as every setup does. Tessera's own lock screen needs none of
+      this (its PAM file is in the shell).
   face setup <camera> | add | clear | list
       face unlock for Tessera's lock screen, with Howdy (howdy-next): setup
       downloads Howdy's face models (once) and sets the camera, infrared or
@@ -154,7 +153,7 @@ With the password, once, at the start:
            [--login-look <json>] [--shell <folder>]
       what root does for Tessera's features (features.py; the installer's
       Features step, with sudo): a comma list of fingerprint (pam_fprintd
-      for password prompts, sudo and the login screen; --fprintd-wait: the
+      for password prompts and sudo, never the login screen; --fprintd-wait: the
       "fprintd" fix first), face (Howdy's models and that camera, as face
       setup), bluetooth (bluetoothd's Experimental = true in main.conf, kept
       once as .pre-tessera, and the "btpairing" fix), power
@@ -313,10 +312,8 @@ def migrate_old_names(prefix, run=subprocess.run, src=None):
                 text = text.replace(OLD_FP_MARK, FP_MARK)
                 write_root(p, text.encode(), 0o644)
                 done.append(os.path.join(PAM_ETC, name))
-    # The login screen's finger from before 22 Nov (any time, so the
-    # keyring stayed locked): now only after a password login this boot;
-    # and every marked line as this helper writes it today
-    done += fingerprint_refresh(prefix)
+    # (then setup's fingerprint_refresh: every marked line as this helper
+    # writes it today, the login screen's finger out)
     # The boot animation in use, under its new name (the boot image keeps
     # the old copy, the same animation, until it's next rebuilt)
     current = current_theme(prefix)
@@ -593,9 +590,10 @@ def write_root(dest, data, mode):
 # ── fingerprint (Settings → Lock Screen → Fingerprint) ─────────────────
 FP_MARK = "# Tessera fingerprint"
 # max-tries / timeout: a finger, or the password after a few seconds (PAM
-# asks one thing at a time; the login screen waits longest). Five tries: some
-# readers (Broadcom's) answer "no match" at once for a finger still resting
-# on them, which used up two tries before a real touch
+# asks one thing at a time). Five tries: some readers (Broadcom's) answer
+# "no match" at once for a finger still resting on them, which used up two
+# tries before a real touch. Every prompt (sudo, polkit, the admin dialog)
+# takes a finger or the password; none remembers an earlier one.
 # Every line Tessera adds to a PAM file starts with "-": Linux-PAM then
 # doesn't log a module that isn't installed (fprintd, pam-u2f or Howdy
 # removed later). The dash changes only the logging: a missing module gives
@@ -604,38 +602,29 @@ FP_MARK = "# Tessera fingerprint"
 # the password's own lines, which follow, decide (pam_problem checks it with
 # the real Linux-PAM before any edit is written)
 FP_LINES = {"polkit": "-auth      sufficient   pam_fprintd.so max-tries=5 timeout=10   " + FP_MARK,
-            "sudo": "-auth      sufficient   pam_fprintd.so max-tries=5 timeout=10   " + FP_MARK,
-            "login": "-auth      sufficient   pam_fprintd.so max-tries=5 timeout=15   " + FP_MARK}
-# The login screen takes a finger only once your password has opened the
-# keyring this boot (a finger gives PAM no password, so the login keyring
-# stayed locked and apps asked for it: 22 Nov). FP_GATE checks: a password
-# login since boot (its mark in /run, made as the session opens) and your
-# keyring still running (a full logout ends it: the password again). Asked
-# first; no: the finger's line is skipped and the password is asked.
+            "sudo": "-auth      sufficient   pam_fprintd.so max-tries=5 timeout=10   " + FP_MARK}
+# The login screen takes the password only (27 Nov, audit #795). A finger
+# gives PAM no password, so the login keyring stayed locked (22 Nov); the
+# "password once per boot" gate added then could be satisfied without one
+# (its mark was made by any session that opened: autologin, a passkey).
+# What an older Tessera put in the login screens' PAM files for it (the
+# gate's check, the finger, the gate's mark at the session's end, all
+# marked) comes out at every setup (fingerprint_login_retire, each file
+# tried with the real Linux-PAM first), and the gate's script goes. Until
+# then those lines stay harmless to the password: the finger is
+# "sufficient", behind a gate whose "no" (or a missing script) skips it.
 FP_GATE = "/usr/lib/tessera/fingerprint-login"
-FP_GATE_TEXT = b"""#!/bin/sh
-# Tessera (tessera-root.py fingerprint on login): the login screen's finger,
-# only after a password login this boot, while that keyring still runs.
-#   check: may a finger log PAM_USER in?   mark: a session opened
-uid=$(/usr/bin/id -u -- "$PAM_USER" 2>/dev/null) || exit 1
-case "$1" in
-  check) [ -e "/run/tessera-login/$uid" ] && [ -S "/run/user/$uid/keyring/control" ] ;;
-  mark) /usr/bin/mkdir -p -m 0700 /run/tessera-login && : > "/run/tessera-login/$uid" ;;
-  *) exit 1 ;;
-esac
-"""
 # A gate's control: skip the next line unless the gate says yes. Only while
 # authenticating (type=auth), and "ignore=ignore": pam_setcred without an
 # authentication first (greetd starting its greeter, autologin) otherwise
 # came back PAM_IGNORE through the skip, and greetd wouldn't start the login
 # screen at all (22 Nov: system1 couldn't log out or boot; pam_start_confdir
-# reproduces it, tests/test_root_helper.py)
+# reproduces it, tests/test_root_helper.py). Only in what an older Tessera
+# wrote now (the passkeys' gate and the login finger's, both retired).
 GATE_CONTROL = "-auth      [success=ignore ignore=ignore default=1] pam_exec.so quiet type=auth "
-# (the line before 22 Nov's fix, rewritten on update: migrate_old_names;
-# and every marked line in the form before the dash: pam_refresh)
+# (the line before 22 Nov's fix: the boot check, the rescue and setup's
+# retirement take it out with the rest of the marked lines)
 OLD_GATE_CONTROL = "auth       [success=ignore default=1] pam_exec.so quiet "
-FP_LOGIN_HEAD = [GATE_CONTROL + FP_GATE + " check   " + FP_MARK]
-FP_LOGIN_TAIL = ["-session   optional     pam_exec.so quiet " + FP_GATE + " mark   " + FP_MARK]
 # (GDM isn't here: it asks for a finger by itself, gdm-fingerprint, once one is added)
 FP_FILES = {"polkit": ["polkit-1"], "sudo": ["sudo"], "login": ["greetd", "ly", "sddm", "lightdm", "lxdm"]}
 PAM_ETC, PAM_VENDOR = "/etc/pam.d", "/usr/lib/pam.d"
@@ -657,10 +646,6 @@ def pam_with_fingerprint(text, line, head=(), tail=()):
     if lines and not lines[-1].endswith("\n"):
         lines[-1] += "\n"
     return "".join(lines[:at] + [l + "\n" for l in (*head, line)] + lines[at:] + [l + "\n" for l in tail])
-
-
-def pam_login_fingerprint(text):
-    return pam_with_fingerprint(text, FP_LINES["login"], FP_LOGIN_HEAD, FP_LOGIN_TAIL)
 
 
 PAM_SUCCESS, PAM_SYSTEM_ERR, PAM_PERM_DENIED = 0, 4, 6
@@ -1017,15 +1002,17 @@ def write_pam(etc, name, text, vendor=PAM_VENDOR, check=True, removal_of=None):
     return dest
 
 
-def refresh_pam_file(etc, name, text, new, vendor=PAM_VENDOR):
+def refresh_pam_file(etc, name, text, new, vendor=PAM_VENDOR, removal=False):
     """An update's rewrite of Tessera's marked lines in ETC/NAME (TEXT now,
     NEW as this helper writes them): only when the real Linux-PAM finds no
     problem with NEW (else it stays as it is, and the boot check after the
-    update decides about it). Returns True when written."""
+    update decides about it). REMOVAL: NEW only takes Tessera's lines out,
+    so a problem TEXT has just the same (the system's own) doesn't stop it.
+    Returns True when written."""
     if new == text:
         return False
     try:
-        write_pam(etc, name, new, vendor)
+        write_pam(etc, name, new, vendor, removal_of=text if removal else None)
         return True
     except Refused as e:
         print(f"tessera-root: {e}", file=sys.stderr)
@@ -1033,38 +1020,49 @@ def refresh_pam_file(etc, name, text, new, vendor=PAM_VENDOR):
 
 
 def fingerprint_refresh(prefix="/"):
-    """setup's part, at each update: the fingerprint's marked lines (and the
-    login screen's gate) as this helper writes them today, wherever they're
-    on: the lines from before 22 Nov's gate, and those before the dash.
-    Each file tried with the real Linux-PAM first (write_pam). Returns what
-    it wrote."""
+    """setup's part, at each update: the fingerprint's marked lines in
+    sudo's and polkit's PAM files as this helper writes them today (those
+    before the dash), and the login screen's finger from an older Tessera
+    taken out (fingerprint_login_retire). Each file tried with the real
+    Linux-PAM first (write_pam). Returns what it wrote or removed."""
     etc = _at(prefix, PAM_ETC)
     done = []
-    for kind, names in FP_FILES.items():
-        for name in names:
+    for kind in FP_LINES:
+        for name in FP_FILES[kind]:
             text = read_text(os.path.join(etc, name))
             if not text or FP_MARK not in text:
                 continue
-            new = pam_login_fingerprint(text) if kind == "login" else pam_with_fingerprint(text, FP_LINES[kind])
-            if new == text:
-                continue
-            if kind == "login" and write_fp_gate(_at(prefix, FP_GATE)):
-                done.append(FP_GATE)
+            new = pam_with_fingerprint(text, FP_LINES[kind])
             if refresh_pam_file(etc, name, text, new, _at(prefix, PAM_VENDOR)):
                 done.append(os.path.join(PAM_ETC, name))
+    return done + fingerprint_login_retire(prefix)
+
+
+def fingerprint_login_retire(prefix="/"):
+    """The login screen's finger from an older Tessera out (see FP_GATE):
+    every marked line in the login screens' PAM files (the gate's check,
+    the finger, the gate's mark), through write_pam (the real Linux-PAM
+    first; a file it refuses keeps its lines, which never stand in the
+    password's way, and is tried again at the next setup), an /etc copy
+    that is the package's file again removed; then the gate's script.
+    Returns what it rewrote or removed."""
+    etc, vendor = _at(prefix, PAM_ETC), _at(prefix, PAM_VENDOR)
+    done = []
+    for name in FP_FILES["login"]:
+        text = read_text(os.path.join(etc, name))
+        if not text or (FP_MARK not in text and OLD_FP_MARK not in text):
+            continue
+        try:
+            done += [os.path.join(PAM_ETC, os.path.basename(d)) for d in fingerprint_file(False, "login", name, etc, vendor)]
+        except (Refused, OSError) as e:
+            print(f"tessera-root: {e}", file=sys.stderr)
+    # (the gate's script: with no line left to run it, it goes; a line a
+    # refused file still has then finds no script, and its "no" skips the
+    # finger: the password, as before)
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(_at(prefix, FP_GATE))
+        done.append(FP_GATE)
     return done
-
-
-def write_fp_gate(gate=FP_GATE):
-    """FP_GATE as it should be; True when written."""
-    try:
-        with open(gate, "rb") as f:
-            if f.read() == FP_GATE_TEXT:
-                return False
-    except OSError:
-        pass
-    write_root(gate, FP_GATE_TEXT, 0o755)
-    return True
 
 
 # Features that need hardware never touch the login without it: a reader
@@ -1090,40 +1088,52 @@ def fingerprint_reader(prefix="/"):
     return any(files for _, _, files in os.walk(_at(prefix, FP_STORE)))
 
 
-def fingerprint(on, where, etc=PAM_ETC, vendor=PAM_VENDOR, module=PAM_FPRINTD, gate=FP_GATE, reader=None):
-    """Returns the files changed."""
+FP_LOGIN_GONE = "the login screen always takes your password (it opens your saved passwords); " \
+                "a finger works for sudo and password prompts"
+
+
+def fingerprint(on, where, etc=PAM_ETC, vendor=PAM_VENDOR, module=PAM_FPRINTD, reader=None):
+    """Returns the files changed. (login: off only, for what an older
+    Tessera put there; on is refused: FP_LOGIN_GONE)"""
     if where not in FP_FILES:
-        raise Refused("fingerprint: polkit, sudo or login")
+        raise Refused("fingerprint: polkit or sudo (or off login)")
+    if on and where == "login":
+        raise Refused(FP_LOGIN_GONE)
     if on and not any(os.path.exists(m) for m in module):
         raise Refused("pam_fprintd isn't installed (fprintd)")
     if on and not (fingerprint_reader() if reader is None else reader):
         raise Refused("there's no fingerprint reader here, so no PAM file is changed")
     changed = []
-    if on and where == "login" and write_fp_gate(gate):
-        changed.append(gate)
     for name in FP_FILES[where]:
-        dest = os.path.join(etc, name)
-        src = dest if os.path.exists(dest) else os.path.join(vendor, name)
-        if not os.path.exists(src):
-            continue  # (that login screen isn't installed)
-        with open(src) as f:
-            text = f.read()
-        new = (pam_login_fingerprint(text) if where == "login" else pam_with_fingerprint(text, FP_LINES[where])) if on \
-            else pam_without_fingerprint(text)
-        # Off, and /etc's copy is the package's file again (it was copied
-        # here to turn this on): removed, so the package's updates apply
-        vsrc = os.path.join(vendor, name)
-        if not on and src == dest and os.path.exists(vsrc):
-            with open(vsrc) as f:
-                if f.read() == new:
-                    os.unlink(dest)
-                    changed.append(dest)
-                    continue
-        if new != text or (on and src != dest):
-            # (tried with the real Linux-PAM first: the login screen still
-            # starts, a password still reaches the password's check)
-            changed.append(write_pam(etc, name, new, vendor, removal_of=None if on else text))
+        changed += fingerprint_file(on, where, name, etc, vendor)
     return changed
+
+
+def fingerprint_file(on, where, name, etc=PAM_ETC, vendor=PAM_VENDOR):
+    """One PAM file's part of fingerprint(): the finger's line first in it
+    (on), or every marked line out (off). Returns the files changed."""
+    if on and where not in FP_LINES:
+        raise Refused(FP_LOGIN_GONE)
+    dest = os.path.join(etc, name)
+    src = dest if os.path.exists(dest) else os.path.join(vendor, name)
+    if not os.path.exists(src):
+        return []  # (that login screen isn't installed)
+    with open(src) as f:
+        text = f.read()
+    new = pam_with_fingerprint(text, FP_LINES[where]) if on else pam_without_fingerprint(text)
+    # Off, and /etc's copy is the package's file again (it was copied
+    # here to turn this on): removed, so the package's updates apply
+    vsrc = os.path.join(vendor, name)
+    if not on and src == dest and os.path.exists(vsrc):
+        with open(vsrc) as f:
+            if f.read() == new:
+                os.unlink(dest)
+                return [dest]
+    if new != text or (on and src != dest):
+        # (tried with the real Linux-PAM first: the login screen still
+        # starts, a password still reaches the password's check)
+        return [write_pam(etc, name, new, vendor, removal_of=None if on else text)]
+    return []
 
 
 # ── passkeys: removed (Nov 2026) ─────────────────────────────────────────
@@ -3638,6 +3648,8 @@ def rescue_undo(prefix, run, say):
         text = read_text(copy_path)
         if text is None:
             continue
+        if name in FP_FILES["login"]:
+            text = pam_without_fingerprint(text)  # (a login screen's finger isn't put back: audit #795)
         if text == read_text(os.path.join(etc, name)):
             continue
         why = pam_problem(etc, name, text, login=name in LOGIN_PAMS.values() or name == "greetd-greeter", vendor=vendor)
@@ -3739,6 +3751,13 @@ def setup(src, uid, prefix=None, run=subprocess.run):
         with contextlib.suppress(OSError, Refused):
             written.append(write_login_trust(prefix))
     written += migrate_old_names(prefix, run, src)
+    # (the fingerprint's marked lines as this helper writes them today; the
+    # login screen's finger from an older Tessera out, audit #795: each file
+    # tried with the real Linux-PAM first. Never fails the setup)
+    try:
+        written += [os.path.join(prefix, d.lstrip("/")) for d in fingerprint_refresh(prefix)]
+    except Exception as e:
+        print(f"tessera-root setup: fingerprint lines not refreshed: {e!r}", file=sys.stderr)
     # (Passkeys are gone: an older Tessera's pam_u2f lines, gate, key list and udev rule out)
     written += [os.path.join(prefix, d.lstrip("/")) for d in passkeys_retire(prefix, run)]
     # (the login rescue, wherever greetd is installed: tessera-login-rescue.service)
@@ -4498,7 +4517,7 @@ def features(p, uid, say, run=subprocess.run):
                     # (a reader whose driver updates its firmware as fprintd
                     # first starts: fprintd gets the time it needs)
                     run(FIXES["fprintd"], capture_output=True, text=True)
-                for where in ("polkit", "sudo", "login"):
+                for where in FP_LINES:  # (polkit, sudo: the login screen takes the password)
                     for d in fingerprint(True, where):
                         say("changed " + d)
                 for d in face_admin_refresh(run=run):

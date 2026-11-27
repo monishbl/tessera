@@ -36,6 +36,19 @@ def legacy_passkey_lines():
             " cue nouserok userverification=1   " + R.PK_MARK]
 
 
+# The login screen's finger an older Tessera wrote (removed 27 Nov, audit
+# #795: the login screen takes the password only): behind its "password
+# once per boot" gate. Still on machines until the next setup takes it out,
+# so it must stay harmless too.
+LEGACY_LOGIN_LINE = "-auth      sufficient   pam_fprintd.so max-tries=5 timeout=15   " + R.FP_MARK
+
+
+def legacy_login_finger(text):
+    gate = "/usr/lib/tessera/fingerprint-login"
+    return R.pam_with_fingerprint(text, LEGACY_LOGIN_LINE, [R.GATE_CONTROL + gate + " check   " + R.FP_MARK],
+                                  ["-session   optional     pam_exec.so quiet " + gate + " mark   " + R.FP_MARK])
+
+
 def with_legacy_passkey(text):
     lines = R.pam_without_passkey(text).splitlines(keepends=True)
     at = 0
@@ -128,13 +141,13 @@ class BootCheck(Machine):
         self.assertTrue(run.ran("/usr/bin/Hyprland", "--version"))
 
     def test_tessera_lines_that_skip_the_password(self):
-        bad = R.pam_with_fingerprint(GREETD_PAM, R.FP_LINES["login"].replace("sufficient", "[success=done default=2]"))
+        bad = R.pam_with_fingerprint(GREETD_PAM, LEGACY_LOGIN_LINE.replace("sufficient", "[success=done default=2]"))
         (self.etc / "greetd").write_text(bad)
         c = self.check()
         self.assertEqual([p["id"] for p in c["problems"]], ["pam:greetd"])
 
     def test_the_helpers_own_lines_are_fine(self):
-        (self.etc / "greetd").write_text(R.pam_login_fingerprint(with_legacy_passkey(R.pam_with_keyring(GREETD_PAM))))
+        (self.etc / "greetd").write_text(legacy_login_finger(with_legacy_passkey(R.pam_with_keyring(GREETD_PAM))))
         (self.etc / "sudo").write_text(R.pam_with_fingerprint(with_legacy_passkey("auth include system-auth\n"), R.FP_LINES["sudo"]))
         self.assertTrue(self.check()["ok"])
 
@@ -158,7 +171,10 @@ class BootCheck(Machine):
 
 class Repair(Machine):
     def test_tessera_lines_out_then_back_only_when_fixed(self):
-        bad = R.pam_with_fingerprint(R.pam_with_keyring(GREETD_PAM), R.FP_LINES["login"].replace("sufficient", "[success=done default=2]"))
+        # (a marked line that skips the password; not a login finger, which
+        # a Restore never puts back at all: audit #795)
+        bad = with_legacy_passkey(R.pam_with_keyring(GREETD_PAM)).replace("sufficient   pam_u2f.so", "[success=done default=2] pam_u2f.so")
+        self.assertIn("[success=done default=2] pam_u2f.so", bad)
         (self.etc / "greetd").write_text(bad)
         rec = R.boot_check_and_repair(self.root, run=Recorder(), which=which_with("Hyprland"))
         self.assertTrue(rec["ok"], rec)
@@ -176,15 +192,16 @@ class Repair(Machine):
         self.assertEqual(R.rescue_undo(self.root, Recorder(), said.append), 1)
         self.assertEqual((self.etc / "greetd").read_text(), GREETD_PAM)
         self.assertIn("Not put back", said[0])
-        # once the copy is one that works (the line fixed), it goes back
-        good = R.pam_login_fingerprint(GREETD_PAM)
-        Path(saved).write_text(good)
+        # once the copy is one that works (the line fixed), it goes back,
+        # without a login finger an older Tessera wrote (audit #795)
+        good = R.pam_with_keyring(GREETD_PAM)
+        Path(saved).write_text(legacy_login_finger(good))
         self.assertEqual(R.rescue_undo(self.root, Recorder(), said.append), 0)
         self.assertEqual((self.etc / "greetd").read_text(), good)
         self.assertFalse(self.p(R.RESCUE_NOTE).exists())
 
     def test_a_backup_from_before_tessera_when_stripping_isnt_enough(self):
-        broken = "auth required pam_missing_thing.so\n" + R.pam_login_fingerprint(GREETD_PAM)
+        broken = "auth required pam_missing_thing.so\n" + legacy_login_finger(GREETD_PAM)
         (self.etc / "greetd").write_text(broken)
         backups = Path(R.pam_backup_dir(str(self.etc)))
         backups.mkdir(parents=True)
@@ -361,7 +378,7 @@ class LoginRescue(Machine):
         self.run = Recorder({"journalctl": (0, "greetd[1]: error: PAM 'greetd' authentication error\n")})
         # (the Tessera lines of the 22 Nov fault: the old gate, which only the
         # real PAM finds (as root); unprivileged, step 1's strip "anyway" does)
-        self.old = R.pam_login_fingerprint(GREETD_PAM).replace(R.GATE_CONTROL, R.OLD_GATE_CONTROL)
+        self.old = legacy_login_finger(GREETD_PAM).replace(R.GATE_CONTROL, R.OLD_GATE_CONTROL)
         (self.etc / "greetd").write_text(self.old)
 
     def test_the_steps(self):
@@ -586,8 +603,11 @@ class HardwareGates(unittest.TestCase):
         module = Path(self.root, "pam_fprintd.so")
         module.write_text("")
         with self.assertRaises(self.r.Refused):
+            self.r.fingerprint(True, "sudo", etc=str(etc), vendor=str(Path(self.root, "vendor")), module=(str(module),),
+                               reader=False)
+        with self.assertRaises(self.r.Refused):
             self.r.fingerprint(True, "login", etc=str(etc), vendor=str(Path(self.root, "vendor")), module=(str(module),),
-                               gate=str(Path(self.root, "gate")), reader=False)
+                               reader=True)  # (never at the login screen: audit #795)
         self.assertEqual((etc / "greetd").read_text(), GREETD_PAM)
         # (off still works without one)
         self.r.fingerprint(False, "login", etc=str(etc), vendor=str(Path(self.root, "vendor")), module=(), reader=False)

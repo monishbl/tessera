@@ -256,7 +256,7 @@ class RootPart(unittest.TestCase):
         self.assertIn("@@feature face failed Howdy isn't installed (howdy-next)", lines)
         for ok in ("fingerprint", "bluetooth", "quickshare", "power"):
             self.assertIn(f"@@feature {ok} ok", lines)
-        self.assertEqual([d for d in did if d[0] == "fp"], [("fp", "polkit"), ("fp", "sudo"), ("fp", "login")])
+        self.assertEqual([d for d in did if d[0] == "fp"], [("fp", "polkit"), ("fp", "sudo")])  # (never the login screen: audit #795)
         self.assertIn(("face-admin",), did)  # (face admin's copy of polkit's PAM file follows it)
         self.assertIn(R.FIXES["fprintd"], ran)  # (--fprintd-wait: the fix first)
         self.assertIn(["systemctl", "enable", "--now", "power-profiles-daemon"], ran)

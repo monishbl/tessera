@@ -597,6 +597,18 @@ class AurHelperChoice(unittest.TestCase):
         self.assertEqual(self.su.aur_command("pamac", {"aur_install": [], "ignore": ["hyprland", "mesa"]})[-2:], ["--ignore", "hyprland,mesa"])
 
 
+# What an older Tessera wrote in a login screen's PAM file (removed 27 Nov,
+# audit #795): the finger before 22 Nov, then behind its "password once per
+# boot" gate. Every setup takes them out (fingerprint_login_retire).
+LEGACY_LOGIN_LINE = "-auth      sufficient   pam_fprintd.so max-tries=5 timeout=15   # Tessera fingerprint"
+
+
+def legacy_login_finger(r, text):
+    gate = "/usr/lib/tessera/fingerprint-login"
+    return r.pam_with_fingerprint(text, LEGACY_LOGIN_LINE, [r.GATE_CONTROL + gate + " check   " + r.FP_MARK],
+                                  ["-session   optional     pam_exec.so quiet " + gate + " mark   " + r.FP_MARK])
+
+
 class FingerprintPam(unittest.TestCase):
     """tessera-root.py fingerprint: one marked line, first among the rules."""
 
@@ -619,8 +631,7 @@ class FingerprintPam(unittest.TestCase):
         self.dir.cleanup()
 
     def run_fp(self, on, where):
-        return self.r.fingerprint(on, where, etc=str(self.etc), vendor=str(self.vendor), module=(str(self.module),),
-                                  gate=str(Path(self.dir.name) / "fingerprint-login"))
+        return self.r.fingerprint(on, where, etc=str(self.etc), vendor=str(self.vendor), module=(str(self.module),))
 
     def test_sudo_on_and_off(self):
         original = "#%PAM-1.0\nauth\t\tinclude\t\tsystem-auth\naccount\t\tinclude\t\tsystem-auth\n"
@@ -663,72 +674,86 @@ class FingerprintPam(unittest.TestCase):
         self.assertEqual(self.run_fp(False, "polkit"), [str(self.etc / "polkit-1")])
         self.assertFalse((self.etc / "polkit-1").exists())
 
-    def test_login_covers_the_login_screens_installed(self):
-        (self.etc / "ly").write_text("#%PAM-1.0\nauth include login\n")
-        (self.etc / "sddm").write_text("#%PAM-1.0\nauth include system-login\n")
-        gate = str(Path(self.dir.name) / "fingerprint-login")
-        self.assertEqual(sorted(self.run_fp(True, "login")), sorted([str(self.etc / "ly"), str(self.etc / "sddm"), gate]))
-
-    def test_login_takes_a_finger_only_after_a_password_this_boot(self):
+    def test_the_login_screen_never_takes_a_finger(self):
+        # (audit #795: no "password once per boot" mode; the login screen
+        # always takes the password, so nothing is written for it)
         original = "#%PAM-1.0\n\nauth include system-local-login\nsession include system-local-login\n"
         (self.etc / "greetd").write_text(original)
-        gate = Path(self.dir.name) / "fingerprint-login"
-        self.assertIn(str(gate), self.r.fingerprint(True, "login", etc=str(self.etc), vendor=str(self.vendor),
-                                                    module=(str(self.module),), gate=str(gate)))
-        lines = (self.etc / "greetd").read_text().splitlines()
-        # the gate first (no: skip the finger), then the finger, the mark last
-        self.assertIn("[success=ignore ignore=ignore default=1] pam_exec.so quiet type=auth " + self.r.FP_GATE + " check", lines[2])
-        self.assertIn("pam_fprintd.so", lines[3])
-        self.assertIn("pam_exec.so quiet " + self.r.FP_GATE + " mark", lines[-1])
-        self.assertTrue(lines[-1].startswith("-session"))
-        self.assertEqual(gate.read_bytes(), self.r.FP_GATE_TEXT)
-        self.run_fp(True, "login")  # (again: no doubles)
-        self.assertEqual((self.etc / "greetd").read_text().count("pam_exec"), 2)
-        self.run_fp(False, "login")
+        (self.etc / "ly").write_text(original)
+        with self.assertRaisesRegex(self.r.Refused, "always takes your password"):
+            self.run_fp(True, "login")
         self.assertEqual((self.etc / "greetd").read_text(), original)
+        self.assertEqual((self.etc / "ly").read_text(), original)
+        self.assertNotIn("login", self.r.FP_LINES)
+        with self.assertRaises(self.r.Refused):
+            self.r.fingerprint_file(True, "login", "greetd", str(self.etc), str(self.vendor))
+        # (sudo and polkit: a finger or the password, at every prompt: one
+        # sufficient line, nothing remembered between prompts)
+        for where in ("sudo", "polkit"):
+            self.assertIn("sufficient   pam_fprintd.so", self.r.FP_LINES[where])
+            self.assertNotIn("pam_exec", self.r.FP_LINES[where])
 
-    def test_the_gate(self):
-        d = Path(self.dir.name)
-        script = d / "gate.sh"
-        run_dir = d / "run"
-        script.write_bytes(self.r.FP_GATE_TEXT.replace(b"/run/", str(run_dir).encode() + b"/"))
-        script.chmod(0o755)
-        env = {"PAM_USER": os.environ.get("USER") or pwd.getpwuid(os.getuid()).pw_name, "PATH": "/usr/bin:/bin"}
-        uid = str(os.getuid())
+    def test_off_login_takes_out_what_an_older_tessera_wrote(self):
+        original = "#%PAM-1.0\n\nauth include system-local-login\nsession include system-local-login\n"
+        (self.etc / "greetd").write_text(legacy_login_finger(self.r, original))
+        (self.etc / "sddm").write_text(original)
+        self.assertEqual(self.run_fp(False, "login"), [str(self.etc / "greetd")])
+        self.assertEqual((self.etc / "greetd").read_text(), original)
+        self.assertEqual((self.etc / "sddm").read_text(), original)
 
-        def gate(*a):
-            return subprocess.run(["/bin/sh", str(script), *a], env=env).returncode
-        self.assertNotEqual(gate("check"), 0)  # (no password login yet)
-        keyring = run_dir / "user" / uid / "keyring"
-        keyring.mkdir(parents=True)
-        sock = socket.socket(socket.AF_UNIX)
-        sock.bind(str(keyring / "control"))
-        self.addCleanup(sock.close)
-        self.assertNotEqual(gate("check"), 0)  # (a keyring, but no password login this boot)
-        self.assertEqual(gate("mark"), 0)
-        self.assertEqual(gate("check"), 0)
-        (keyring / "control").unlink()
-        self.assertNotEqual(gate("check"), 0)  # (logged out: the keyring ended)
-        env["PAM_USER"] = "no-such-user-here"
-        self.assertNotEqual(gate("check"), 0)
-
-    def test_an_old_login_finger_is_moved_behind_the_gate_on_update(self):
-        etc = Path(self.dir.name) / "root/etc/pam.d"
+    def test_setup_retires_the_login_finger_and_its_gate(self):
+        # (every form an older Tessera wrote: before 22 Nov's gate, the old
+        # gate's control, and the gated finger of 22-27 Nov)
+        root = Path(self.dir.name) / "root"
+        etc = root / "etc/pam.d"
         etc.mkdir(parents=True)
-        old = "#%PAM-1.0\n\n" + self.r.FP_LINES["login"] + "\nauth include system-local-login\n"
-        (etc / "greetd").write_text(old)
+        base = "#%PAM-1.0\n\nauth include system-local-login\nsession include system-local-login\n"
+        sudo = "#%PAM-1.0\nauth include system-auth\n"
+        (etc / "greetd").write_text(legacy_login_finger(self.r, base))
+        (etc / "ly").write_text(legacy_login_finger(self.r, base).replace(self.r.GATE_CONTROL, self.r.OLD_GATE_CONTROL))
+        (etc / "sddm").write_text("#%PAM-1.0\n\n" + LEGACY_LOGIN_LINE + "\nauth include system-login\n")
+        (etc / "sudo").write_text(self.r.pam_with_fingerprint(sudo, self.r.FP_LINES["sudo"]))
+        gate = root / self.r.FP_GATE.lstrip("/")
+        gate.parent.mkdir(parents=True)
+        gate.write_bytes(b"#!/bin/sh\nexit 1\n")
         r = self.r
 
         def write(dest, data, mode):
             Path(dest).parent.mkdir(parents=True, exist_ok=True)
             Path(dest).write_bytes(data)
         r.write_root = write
-        done = r.migrate_old_names(str(Path(self.dir.name) / "root"), run=lambda *a, **k: None)
-        self.assertIn("/etc/pam.d/greetd", done)
-        self.assertIn(r.FP_GATE, (etc / "greetd").read_text())
-        self.assertEqual((etc / "greetd").read_text().count("pam_fprintd"), 1)
-        self.assertTrue((Path(self.dir.name) / ("root" + r.FP_GATE)).exists())
-        self.assertNotIn("/etc/pam.d/greetd", r.migrate_old_names(str(Path(self.dir.name) / "root"), run=lambda *a, **k: None))
+        done = r.fingerprint_refresh(str(root))
+        self.assertEqual(sorted(done), sorted(["/etc/pam.d/greetd", "/etc/pam.d/ly", "/etc/pam.d/sddm", r.FP_GATE]))
+        self.assertEqual((etc / "greetd").read_text(), base)
+        self.assertEqual((etc / "ly").read_text(), base)
+        self.assertEqual((etc / "sddm").read_text(), "#%PAM-1.0\n\nauth include system-login\n")
+        self.assertFalse(gate.exists())
+        # (sudo's finger stays: a finger or the password, every time)
+        self.assertEqual((etc / "sudo").read_text(), self.r.pam_with_fingerprint(sudo, self.r.FP_LINES["sudo"]))
+        self.assertEqual(r.fingerprint_refresh(str(root)), [])  # (once)
+
+    def test_a_refused_login_file_keeps_its_lines_and_setup_goes_on(self):
+        root = Path(self.dir.name) / "root"
+        etc = root / "etc/pam.d"
+        etc.mkdir(parents=True)
+        base = "#%PAM-1.0\n\nauth include system-local-login\n"
+        (etc / "greetd").write_text(legacy_login_finger(self.r, base))
+        (etc / "ly").write_text(legacy_login_finger(self.r, base))
+        r = self.r
+        r.write_root = lambda dest, data, mode: Path(dest).write_bytes(data)
+        # (a problem only without our lines: the removal is refused there)
+        r.pam_problem = lambda etc, name, text, **k: "greetd: a problem" if name == "greetd" and "pam_fprintd" not in text else ""
+        done = r.fingerprint_refresh(str(root))
+        self.assertIn("/etc/pam.d/ly", done)
+        self.assertNotIn("/etc/pam.d/greetd", done)
+        self.assertEqual((etc / "greetd").read_text(), legacy_login_finger(self.r, base))
+        self.assertEqual((etc / "ly").read_text(), base)
+
+    def test_rescue_undo_puts_back_no_login_finger(self):
+        src = (SCRIPTS / "tessera-root.py").read_text()
+        at = src.index("def rescue_undo(")
+        body = src[at:src.index("\ndef ", at + 10)]
+        self.assertIn('if name in FP_FILES["login"]:\n            text = pam_without_fingerprint(text)', body)
 
     def test_refused_without_fprintd_or_for_anything_else(self):
         (self.etc / "sudo").write_text("#%PAM-1.0\nauth include system-auth\n")

@@ -338,8 +338,8 @@ for f in "$S/etc/pam.d/greetd" "$S/etc/pam.d/login"; do
         fi
     done
 done
-# A finger for sudo, administrator prompts and the login screen (the root
-# helper's lines, each marked; the helper took them out above when it could)
+# A finger for sudo and administrator prompts (and the login screen's, from an older
+# Tessera: root helper lines, each marked; the helper took them out above when it could)
 for f in polkit-1 sudo greetd ly sddm lightdm lxdm; do
     for mark in "# Tessera fingerprint" "# Tessera passkey" "$OLD_FP_MARK"; do
         if grep -qF "$mark" "$S/etc/pam.d/$f" 2>/dev/null; then
