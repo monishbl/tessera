@@ -289,3 +289,6 @@ Removed: the passkeys daemon, its Settings group, its polkit-dialog requests and
 | Sound: outputs that need a card switch (a monitor's speakers) appear and go while the Sound page or menu is open, and a pick names its card and profile, never its place in the list (#601) | 27 Nov | done, unchecked | (this commit) |
 | OSD: brightness keys on an external monitor (DDC) show its level with its name, and the Displays list has every monitor with its own slider (#401) | 27 Nov | done, unchecked | (this commit) |
 | Tray menus: "Loading…" until the app answers and "No menu" when it doesn't (never an empty box), and an open menu follows the app's changes live (LayoutUpdated / ItemsPropertiesUpdated) (#366) | 27 Nov | done, unchecked | (this commit) |
+| Banners fanned out: as many as fit on the screen, "+N more" (opens Notification Center) with Clear all / Show less always visible (#212) | 27 Nov | done, unchecked | (this commit) |
+| Banners: swipe sideways to dismiss, both looks, touch or drag (#397) | 27 Nov | done, unchecked | (this commit) |
+| Notification Center: a body cut at four lines shows whole on a click on it, with Show more / Show less (#396) | 27 Nov | done, unchecked | (this commit) |

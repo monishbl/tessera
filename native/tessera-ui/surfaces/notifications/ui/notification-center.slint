@@ -680,6 +680,8 @@ export component Center inherits Window {
                                                 width: content-w;
                                                 b: r.b;
                                                 hovered: gtouch.has-hover;
+                                                // (a long body: a click on it shows it whole)
+                                                expandable: r.count <= 1 || r.open;
                                                 // a folded stack: "2 more"; a click fans it
                                                 // out, close clears the group
                                                 more: r.count > 1 && !r.open ? r.count - 1 : 0;
@@ -789,6 +791,7 @@ export component Center inherits Window {
                                                 width: content-w;
                                                 b: r.b;
                                                 hovered: mtouch.has-hover;
+                                                expandable: r.count <= 1 || r.open;
                                                 group-count: r.count;
                                                 group-open: r.open;
                                                 tap-expands: r.count > 1;
