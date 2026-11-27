@@ -6,7 +6,9 @@
 //! restarts; src/main.rs hands over to it before anything else.
 //!
 //! <dir> is the update's copy of the screen (`$T/ui`); like the QML, it reads
-//!   <dir>/../status     update-run.sh's: state \t percent \t text \t detail[\x1f backup folder]
+//!   <dir>/../status     update-run.sh's: state \t percent \t text \t detail[\x1f backup folder[\x1f restored]]
+//!                       (restored: yes when the updater put everything back; only then
+//!                       "Nothing was lost.", audit #697)
 //!                       (state run | restart | done: fade out, quit | error: wait for Close)
 //!   <dir>/../log        the update's whole output (Show details: its last lines)
 //!   $XDG_STATE_HOME/tessera/build-progress.json  while the shell (or the
@@ -23,9 +25,8 @@
 //!
 //! As the QML: up at least 5 s; the status read every 250 ms until done or
 //! error; done: 600 ms or more of "up to date", then a 400 ms fade and quit;
-//! error: the keyboard (Return, Escape) and the pointer (Close), else clicks
-//! pass through but for Show details (and the output and its Copy, once
-//! open); gone after 15 minutes unless it's showing an error (or a build
+//! error: the keyboard (Return, Escape) and the pointer (Close), with Show
+//! details and the output still there to read and copy (audit #695); gone after 15 minutes unless it's showing an error (or a build
 //! is still going: the first build of the shell can take longer).
 
 pub mod ui {
@@ -79,11 +80,13 @@ pub struct Status {
     pub step: String,
     pub detail: String,
     pub backup: String,
+    /// the updater said it put everything back as it was (audit #697)
+    pub restored: bool,
 }
 
 impl Default for Status {
     fn default() -> Self {
-        Status { phase: "run".into(), percent: 0.0, step: "Preparing".into(), detail: String::new(), backup: String::new() }
+        Status { phase: "run".into(), percent: 0.0, step: "Preparing".into(), detail: String::new(), backup: String::new(), restored: false }
     }
 }
 
@@ -121,9 +124,34 @@ pub fn read_status(text: &str, prev: &Status, home: &str) -> Option<Status> {
     let mut d = f.get(3).copied().unwrap_or("").split('\u{1f}');
     let detail = d.next().unwrap_or("").to_string();
     let backup = d.next().unwrap_or("");
+    let restored = d.next().unwrap_or("").trim() == "yes";
     // (JavaScript's replace: the first one only)
     let backup = if home.is_empty() { backup.to_string() } else { backup.replacen(home, "~", 1) };
-    Some(Status { phase: f[0].to_string(), percent: prev.percent.max(pct.min(100.0)), step: f[2].to_string(), detail, backup })
+    Some(Status { phase: f[0].to_string(), percent: prev.percent.max(pct.min(100.0)), step: f[2].to_string(), detail, backup, restored })
+}
+
+/// The one bar: the update's percent, and while a build runs (its 0…1
+/// fraction), the build drawn in the room ahead of it (half of what's left
+/// before 99), so a build no longer sends the bar back to 0 and its end
+/// forward to the next step. Never goes back: a build's own fraction that
+/// dips (its ETA comes or goes) or a step after the build that's below
+/// where the build got to holds the bar where it is (audit #694)
+pub fn bar_value(prev: f32, percent: f32, build: Option<f32>) -> f32 {
+    let pct = percent.clamp(0.0, 100.0);
+    let v = match build {
+        Some(f) => pct + f.clamp(0.0, 1.0) * (99.0 - pct).max(0.0) / 2.0,
+        None => pct,
+    };
+    prev.max(v).min(100.0)
+}
+
+/// The Copy button's word: Copy, then Copied or Couldn't copy for 2 s (audit #696)
+pub fn copy_word(copied: Option<bool>) -> &'static str {
+    match copied {
+        None => "Copy",
+        Some(true) => "Copied",
+        Some(false) => "Couldn't copy",
+    }
 }
 
 /// How long "up to date" stays before the fade: the screen is up at least
@@ -143,6 +171,9 @@ enum M {
     Fade,
     Quit,
     GiveUp,
+    /// wl-copy's answer (true: it copied)
+    Copied(bool),
+    CopyReset,
 }
 
 struct Win {
@@ -175,6 +206,11 @@ pub struct UpdateScreen {
     details: bool,
     log: String,
     polls: u32,
+    /// the bar as drawn (bar_value: only rises)
+    bar: f32,
+    /// Copy's answer, for 2 s
+    copied: Option<bool>,
+    copy_reset: slint::Timer,
     /// since when update-run.sh (../pid) has been gone with the status still
     /// working: after a few seconds, the error screen with Close (audit #70)
     gone_since: Option<Instant>,
@@ -225,6 +261,9 @@ impl UpdateScreen {
             details: false,
             log: String::new(),
             polls: 0,
+            bar: 0.0,
+            copied: None,
+            copy_reset: slint::Timer::default(),
             gone_since: None,
         }
     }
@@ -261,7 +300,7 @@ impl UpdateScreen {
             let since = *self.gone_since.get_or_insert_with(Instant::now);
             if since.elapsed() >= Duration::from_secs(8) {
                 s = Status { phase: "error".into(), percent: s.percent, step: "The update stopped unexpectedly".into(),
-                             detail: "Close this, then run Software Update again.".into(), backup: String::new() };
+                             detail: "Close this, then run Software Update again.".into(), backup: String::new(), restored: false };
             }
         } else {
             self.gone_since = None;
@@ -273,6 +312,10 @@ impl UpdateScreen {
             self.restart_only = s.phase == "restart";
         }
         self.status = s;
+        // (the error screen keeps the output: read to its end once more)
+        if self.error() && !was_error && self.details {
+            self.log = tessera_core::build_progress::tail(&self.dir.join("../log"), 200);
+        }
         self.push();
         if self.error() != was_error {
             self.input(st);
@@ -287,7 +330,9 @@ impl UpdateScreen {
         }
     }
 
-    fn push(&self) {
+    fn push(&mut self) {
+        let frac = self.build.as_ref().filter(|_| self.status.phase == "run").and_then(|b| b.fraction);
+        self.bar = bar_value(self.bar, self.status.percent, frac);
         for w in &self.wins {
             let g = w.ui.global::<ui::Up>();
             g.set_phase(self.status.phase.clone().into());
@@ -295,14 +340,17 @@ impl UpdateScreen {
             g.set_step(self.status.step.clone().into());
             g.set_detail(self.status.detail.clone().into());
             g.set_backup(self.status.backup.clone().into());
+            g.set_restored(self.status.restored);
             g.set_build(self.build.is_some());
             if let Some(b) = &self.build {
                 g.set_build_step(build_line(b).into());
                 g.set_build_time(b.time.clone().into());
                 g.set_build_fraction(b.fraction.unwrap_or(-1.0));
             }
+            g.set_bar(self.bar);
             g.set_details(self.details);
             g.set_log(self.log.clone().into());
+            g.set_copy_word(copy_word(self.copied).into());
         }
     }
 
@@ -339,6 +387,23 @@ impl UpdateScreen {
             w.ui.invoke_focus_keys();
         }
     }
+}
+
+/// The update's output onto the clipboard: wl-copy with the file on its
+/// stdin; false when there's no file, no wl-copy, or it failed
+fn copy_file(log: &Path) -> bool {
+    use std::os::unix::process::CommandExt;
+    let Ok(f) = std::fs::File::open(log) else { return false };
+    let mut c = std::process::Command::new("wl-copy");
+    c.stdin(f).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    // (signals unblocked in the child, as bridge::run's; audit #104)
+    unsafe {
+        c.pre_exec(|| {
+            tessera_core::util::child_signals();
+            Ok(())
+        });
+    }
+    c.status().is_ok_and(|s| s.success())
 }
 
 /// update-run.sh still running: its pid file names a live process (no pid
@@ -442,8 +507,23 @@ impl Part for UpdateScreen {
                 self.push();
             }
             M::Copy => {
-                let log = self.dir.join("../log").to_string_lossy().into_owned();
-                tessera_core::services::bridge::run(&["sh", "-c", "wl-copy < \"$1\"", "sh", &log]);
+                // (on a thread; its exit status says Copied or Couldn't copy)
+                let log = self.dir.join("../log");
+                let tx = st.tx.clone();
+                std::thread::spawn(move || {
+                    let ok = copy_file(&log);
+                    let _ = tx.send(Msg::Part(NAME, Box::new(M::Copied(ok))));
+                });
+            }
+            M::Copied(ok) => {
+                self.copied = Some(ok);
+                self.push();
+                let to = Self::send(st);
+                self.copy_reset.start(slint::TimerMode::SingleShot, Duration::from_secs(2), move || to(M::CopyReset));
+            }
+            M::CopyReset => {
+                self.copied = None;
+                self.push();
             }
             M::GiveUp => {
                 // (a build still going: the first one of the shell can take longer)
@@ -614,6 +694,48 @@ mod tests {
         assert_eq!(read_status("", &s, ""), None);
         let e = read_status("error\t100\tThe update didn't finish\tIt broke.\u{1f}/home/ada/.local/state/tessera/backup-1\n", &s, "/home/ada").unwrap();
         assert_eq!((e.phase.as_str(), e.detail.as_str(), e.backup.as_str()), ("error", "It broke.", "~/.local/state/tessera/backup-1"));
+        // (no word from the updater: not said to be restored)
+        assert!(!e.restored);
+    }
+
+    #[test]
+    fn nothing_was_lost_only_when_the_updater_says_so() {
+        let s0 = Status::default();
+        let yes = read_status("error\t100\tThe update didn't finish\tNo network.\u{1f}/home/ada/b\u{1f}yes\n", &s0, "/home/ada").unwrap();
+        assert!(yes.restored);
+        assert_eq!(yes.backup, "~/b");
+        let no = read_status("error\t100\tThe update didn't finish\tIt couldn't all be put back.\u{1f}/home/ada/b\u{1f}no", &s0, "/home/ada").unwrap();
+        assert!(!no.restored);
+        let none = read_status("error\t100\tThe update stopped unexpectedly\tSee the log.", &s0, "").unwrap();
+        assert!(!none.restored && none.backup.is_empty());
+    }
+
+    #[test]
+    fn the_bar_never_jumps_back_for_a_build() {
+        // 45 % then a build: it starts at 45, not 2, and moves into the room ahead
+        let b = bar_value(0.0, 45.0, None);
+        assert_eq!(b, 45.0);
+        let b = bar_value(b, 45.0, Some(0.02));
+        assert!(b >= 45.0 && b < 46.0, "{b}");
+        let b = bar_value(b, 45.0, Some(0.97));
+        assert!(b > 70.0 && b < 72.0, "{b}");
+        // (the build's fraction dips when its ETA comes: the bar holds)
+        let held = bar_value(b, 45.0, Some(0.5));
+        assert_eq!(held, b);
+        // the build over, the next step at 60: held, not sent back
+        assert_eq!(bar_value(b, 60.0, None), b);
+        // and on to the next step past it
+        assert_eq!(bar_value(b, 85.0, None), 85.0);
+        assert_eq!(bar_value(85.0, 100.0, None), 100.0);
+        assert!(bar_value(0.0, 99.0, Some(1.0)) <= 100.0);
+    }
+
+    #[test]
+    fn copy_says_how_it_went() {
+        assert_eq!(copy_word(None), "Copy");
+        assert_eq!(copy_word(Some(true)), "Copied");
+        assert_eq!(copy_word(Some(false)), "Couldn't copy");
+        assert!(!copy_file(Path::new("/nonexistent/tessera-update-log")));
     }
 
     #[test]

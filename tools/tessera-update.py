@@ -821,8 +821,19 @@ def packages_step(vdir, system, say=None, install=(), lock=True, remove=()):
 # apply: "check", no password can be asked then: it stops, and Software
 # Update installs them). The decision is tools/tessera_deps.py's.
 
+class UpdateFailed(SystemExit):
+    """An update that stopped, saying whether everything was put back as it
+    was (restored: the update screen says "Nothing was lost." only then;
+    audit #697)"""
+
+    def __init__(self, message, restored):
+        super().__init__(message)
+        self.restored = bool(restored)
+
+
 class DepsUnmet(SystemExit):
     """The new version's packages aren't all there: nothing was changed"""
+    restored = True
 
 
 def _load_deps():
@@ -1077,9 +1088,11 @@ def bundle_finish(config_dir, s):
                 if os.path.exists(os.path.join(backup, name)):
                     shutil.copy2(os.path.join(backup, name), os.path.join(config_dir, name))
             restored = " Nothing was changed: Tessera and your settings are as they were."
+            back = True
         except Exception as e2:
             restored = f" It couldn't all be put back ({e2}). Your settings backup is in {backup}."
-        raise SystemExit("The update didn't finish: " + why + "." + restored)
+            back = False
+        raise UpdateFailed("The update didn't finish: " + why + "." + restored, back)
     progress(85, "Finishing up")
     try:
         B.prune(keep=[vid])
@@ -1830,6 +1843,7 @@ def apply(config_dir, choices, extra=(), channel=None, staged=None):
         # your settings (from the backup made above)
         why = str(e) or e.__class__.__name__
         restored = ""
+        back = False
         try:
             untake(undo, old_head)
             # (the build for the old version back too, when it was replaced:
@@ -1843,12 +1857,13 @@ def apply(config_dir, choices, extra=(), channel=None, staged=None):
                 if os.path.exists(os.path.join(backup, name)):
                     shutil.copy2(os.path.join(backup, name), os.path.join(config_dir, name))
             restored = " Nothing was changed: Tessera, your edits and your settings are as they were."
+            back = True
         except Exception as e2:
             restored = (" It couldn't all be put back (" + str(e2) + ")." +
                         (" Your edits are kept in git stash " + stash + " (git stash pop to get them back)." if stash else "") +
                         " Your settings backup is in " + backup + ".")
         journal.done()
-        raise SystemExit("The update didn't finish: " + why + "." + restored)
+        raise UpdateFailed("The update didn't finish: " + why + "." + restored, back)
     # The commit point: the checkout and its programs are the new version
     # together. The parts and the move from the old name come after it, and
     # are best effort: a cut-off from here on leaves the new version in
@@ -3079,6 +3094,9 @@ def main():
             out = apply(a.config, load_json(a.choices, {}) if a.choices else {}, [r for r in a.rebuild.split(",") if r], a.channel)
     except (RuntimeError, SystemExit) as e:
         out = {"error": str(e)}
+        # (said only when the updater knows: everything back as it was, or not)
+        if isinstance(getattr(e, "restored", None), bool):
+            out["restored"] = e.restored
     except Exception as e:  # anything unexpected still answers in JSON
         out = {"error": "The updater stopped: " + (str(e) or e.__class__.__name__)}
     health_record(a.command, out)
