@@ -1024,7 +1024,8 @@ impl Spotlight {
                     crate::services::apps::launch(e);
                 }
             }
-            Run::Url(u) => crate::shell::ask("launch.open", json!([u])),
+            // (a web result: where Settings says, tessera-web or your browser)
+            Run::Url(u) => crate::shell::ask("launch.openLink", json!([u])),
             Run::Terminal(c) => crate::shell::ask("search.command", json!([c])),
             Run::File(p) => crate::shell::ask("files.open", json!([p])),
             Run::Action(t) => crate::shell::ask("search.action", json!([t])),
@@ -1294,7 +1295,8 @@ impl Part for Spotlight {
                 crate::util::pipe_to(&["wl-copy"], self.quick.answer.clone().into_bytes());
                 self.close(true);
             }
-            M::Link(l) => crate::shell::ask("launch.open", serde_json::json!([l])),
+            // (a link in the answer: where Settings says, tessera-web or your browser)
+            M::Link(l) => crate::shell::ask("launch.openLink", serde_json::json!([l])),
             M::Dismissed => self.close(true),
             M::Closed => self.closed(st),
             M::AskAnswer => {

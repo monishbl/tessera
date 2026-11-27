@@ -84,6 +84,8 @@ enum M {
     Cancel(i32),
     Other(i32),
     JoinOther,
+    /// "Sign in to network": the Wi-Fi sign-in page (tessera-web --portal)
+    SignIn,
     Notice,
     SpeedAct,
     Details,
@@ -188,6 +190,7 @@ impl Network {
         on!(on_cancel_ask, |i| M::Cancel(i));
         on!(on_other_options, |i| M::Other(i));
         on!(on_join_other, | | M::JoinOther);
+        on!(on_sign_in, | | M::SignIn);
         on!(on_notice_act, | | M::Notice);
         on!(on_speed_act, | | M::SpeedAct);
         on!(on_details, | | M::Details);
@@ -364,6 +367,17 @@ impl Network {
             self.rows.set_vec(rows);
         }
         let n = nets.len() as i32;
+        // (a sign-in page in the way: its row above the networks)
+        ui.set_show_sign_in(wifi.portal && !wifi.unmanaged);
+        ui.set_sign_in_row(ui::NetRow {
+            name: "Sign in to network".into(),
+            status: "This network asks you to sign in".into(),
+            icon: crate::icons::glyph("sign-in").into(),
+            hl: true,
+            first: true,
+            last: true,
+            ..Default::default()
+        });
         ui.set_show_join(self.show_join());
         ui.set_join_row(ui::NetRow {
             name: "Join other network…".into(),
@@ -688,6 +702,10 @@ impl Part for Network {
                 shell::ask("network", json!(["settings"]));
             }
             M::Notice => shell::ask("network", json!(["fix"])),
+            M::SignIn => {
+                shell::ask("network", json!(["signIn"]));
+                self.close(st, true);
+            }
             M::SpeedAct => self.speed_act(),
             M::MenuPick(j) => self.menu_pick(j),
             M::MenuClose => self.close_menu(),

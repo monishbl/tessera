@@ -682,6 +682,14 @@ pub fn network(cx: &mut Ctx, p: &mut Page) {
         for r in rows {
             g.row(r);
         }
+
+        // ── Sign-in pages (captive portals: CaptivePortal, tessera-web --portal) ──
+        // (on unless turned off: read with its default, network.portalAuto)
+        let auto = cx.get("network.portalAuto").as_bool().unwrap_or(true);
+        let id = cx.on(move |cx, _| cx.set("network.portalAuto", !auto));
+        p.group("")
+            .footer("Hotels, cafés and airports often ask you to sign in or accept their terms before you can go online. Their page opens by itself, once each time you join, and closes once you're online.")
+            .row(Row::new("Open Wi-Fi sign-in pages automatically").switch(auto, id));
     }
 
     // ── The speed test ──

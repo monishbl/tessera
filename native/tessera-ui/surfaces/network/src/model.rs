@@ -40,6 +40,8 @@ pub struct Wifi {
     /// connected first, then known, then by signal, at most 30 (the feed's
     /// snapshot: sortedNow())
     pub networks: Vec<Net>,
+    /// a Wi-Fi sign-in page is in the way: "Sign in to network" (CaptivePortal)
+    pub portal: bool,
 }
 
 /// Download, upload or ping in the speed test card
@@ -102,6 +104,7 @@ pub fn wifi_from(v: &Value) -> Wifi {
         unmanaged: b(v, "unmanaged"),
         notice: Notice { title: s(n, "title"), text: s(n, "text"), action: s(n, "action"), busy: b(n, "busy") },
         networks: v["networks"].as_array().map(|a| a.iter().map(net_from).filter(|n| !n.name.is_empty()).take(30).collect()).unwrap_or_default(),
+        portal: b(v, "portal"),
     }
 }
 
@@ -376,6 +379,8 @@ mod tests {
         assert_eq!(w.networks.len(), 2);
         assert!(w.networks[0].open && !w.networks[0].secured);
         assert_eq!(w.networks[1].status, "Known network");
+        assert!(!w.portal);
+        assert!(wifi_from(&json!({"enabled": true, "portal": true})).portal);
         let sp = speed_from(&json!({"running": true, "stage": "download", "stats": [{"label": "Download", "icon": "arrow-down", "value": "88.2 Mbps", "active": true}]}));
         assert!(sp.running && sp.stats[0].active);
         assert_eq!(speed_from(&json!({})).action, "Test speed");

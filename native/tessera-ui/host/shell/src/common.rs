@@ -284,6 +284,28 @@ pub fn launch_open(url: &str) {
     launch_run(&["xdg-open", url], "open");
 }
 
+/// Launch.openLink: a web link where Settings → Default apps says ("Open
+/// links from Tessera in": tessera-web, Tessera's quick-look browser, or
+/// your browser; tessera_core::weblink), anything else (mail) in its
+/// default app; your browser too when tessera-web is missing or fails to start
+pub fn open_link(url: &str) {
+    use tessera_core::weblink;
+    let u = url.trim().to_string();
+    if u.is_empty() {
+        return;
+    }
+    // (the settings file and the PATH looked at off the UI thread)
+    std::thread::spawn(move || {
+        let cfg = tessera_core::cfgfile::config_value();
+        if weblink::route(&u, weblink::links_in_tessera(&cfg), weblink::bin().is_some()) == weblink::Route::Web {
+            let back = u.clone();
+            weblink::start_or(vec![u], move || launch_open(&back));
+        } else {
+            launch_open(&u);
+        }
+    });
+}
+
 /// Launch.linkAllowed: only web and mail links from outside
 pub fn link_allowed(url: &str) -> bool {
     let u = url.trim().to_ascii_lowercase();

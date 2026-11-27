@@ -1119,13 +1119,12 @@ impl Notifications {
     }
 }
 
-/// A link in a notification's body (http(s) and mailto only: markup.rs)
+/// A link in a notification's body (http(s) and mailto only: markup.rs):
+/// a web link where Settings says (tessera-web, Tessera's quick-look
+/// browser, or your browser), mail in its app (tessera_core::weblink)
 fn open_link(url: &str) {
     if markup::link_allowed(url) {
-        let url = url.trim().to_string();
-        std::thread::spawn(move || {
-            let _ = std::process::Command::new("xdg-open").arg(url).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().and_then(|mut c| c.wait());
-        });
+        tessera_core::weblink::open(url.trim());
     }
 }
 

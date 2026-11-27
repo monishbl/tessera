@@ -62,6 +62,7 @@ pub mod touch; // (wl_touch as the pointer: taps, drags, long presses; every sur
 pub mod util;
 pub mod wallpaper;
 pub mod wayland;
+pub mod weblink; // (web links: tessera-web, Tessera's quick-look browser, or the default browser)
 pub mod wm;
 pub mod work; // (blocking work off the UI thread: a fixed pool and ordered lanes)
 

@@ -341,7 +341,7 @@ impl Service for CloudAccounts {
         self.read_cfg(h.cfg());
         self.publish();
     }
-    fn call(&mut self, _h: &mut Host, call: &str, args: &Value) {
+    fn call(&mut self, h: &mut Host, call: &str, args: &Value) {
         let a = |i: usize| args.get(i).cloned().unwrap_or(Value::Null);
         let s = |i: usize| args.get(i).and_then(Value::as_str).unwrap_or("").to_string();
         match call.split('.').nth(1).unwrap_or("") {
@@ -434,8 +434,18 @@ impl Service for CloudAccounts {
                 self.last_error.clear();
                 self.ms_running = true;
                 let shell_dir = crate::util::root().join("shell").to_string_lossy().into_owned();
-                let sh = "exe=\"$1/native/build/goa-signin\"; [ -x \"$exe\" ] || exe=$(command -v tessera-goa-signin) || { echo '{\"error\":\"Connecting needs Tessera\\u2019s native helpers. Run Software Update, then try again.\"}'; exit 1; }; exec \"$exe\" ms_graph";
-                let cmd = vec!["sh".to_string(), "-c".into(), sh.into(), "sh".into(), shell_dir];
+                // (Microsoft's page in tessera-web, Tessera's quick-look
+                // browser, while links open there and it's installed:
+                // web-signin.py runs goa-signin with web links sent to it;
+                // else the default browser, as before. Google's sign-in
+                // never does: it refuses embedded web views, 403
+                // disallowed_useragent, google.rs)
+                let (script, web) = match (tessera_core::weblink::links_in_tessera(h.cfg()), tessera_core::weblink::bin()) {
+                    (true, Some(web)) => (crate::util::root().join("shell/assets/scripts/web-signin.py").to_string_lossy().into_owned(), web.to_string_lossy().into_owned()),
+                    _ => (String::new(), String::new()),
+                };
+                let sh = "exe=\"$1/native/build/goa-signin\"; [ -x \"$exe\" ] || exe=$(command -v tessera-goa-signin) || { echo '{\"error\":\"Connecting needs Tessera\\u2019s native helpers. Run Software Update, then try again.\"}'; exit 1; }; [ -n \"$2\" ] && [ -f \"$2\" ] && exec python3 -I \"$2\" goa \"$exe\" ms_graph \"$3\"; exec \"$exe\" ms_graph";
+                let cmd = vec!["sh".to_string(), "-c".into(), sh.into(), "sh".into(), shell_dir, script, web];
                 let tx = self.tx();
                 std::thread::spawn(move || {
                     let (_, out, _) = run_full(&cmd, None);

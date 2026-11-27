@@ -91,6 +91,15 @@ pub struct Wifi {
     pub enabled: bool,
     pub ssid: String,  // "" not connected
     pub strength: u8,  // 0..100
+    /// NetworkManager's Connectivity: 0 unknown, 1 none, 2 a sign-in page
+    /// in the way (weblink::PORTAL), 3 limited, 4 full; any link, not only Wi-Fi
+    pub connectivity: u32,
+    /// its PrimaryConnection (an active connection's D-Bus path, a new one
+    /// each time a network is joined; "" none): Wi-Fi sign-in pages open
+    /// once per connection
+    pub primary: String,
+    /// its ConnectivityCheckUri ("" when it has none, or is older than 1.20)
+    pub check_uri: String,
 }
 
 /// What the Wi-Fi pages say when NetworkManager isn't running and no other
@@ -305,6 +314,14 @@ fn radio(conn: &Connection, d: &OwnedObjectPath) -> zbus::Result<Option<Radio>> 
 fn wifi(conn: &Connection) -> zbus::Result<Wifi> {
     let nm = proxy(conn, "/org/freedesktop/NetworkManager", "org.freedesktop.NetworkManager", NM)?;
     let mut out = Wifi { enabled: nm.get_property("WirelessEnabled")?, ..Default::default() };
+    // (the connection's state, for Wi-Fi sign-in pages: weblink::PortalOnce;
+    // each read on its own, an older NetworkManager lacks the check address)
+    out.connectivity = nm.get_property::<u32>("Connectivity").unwrap_or(0);
+    out.primary = nm.get_property::<OwnedObjectPath>("PrimaryConnection").map(|p| p.as_str().to_string()).unwrap_or_default();
+    if out.primary == "/" {
+        out.primary.clear();
+    }
+    out.check_uri = nm.get_property::<String>("ConnectivityCheckUri").unwrap_or_default();
     let devices: Vec<OwnedObjectPath> = nm.call("GetDevices", &())?;
     // (a device that goes while it's read, a USB stick pulled out, is
     // skipped: the others still count, and its removal brings a new reading)

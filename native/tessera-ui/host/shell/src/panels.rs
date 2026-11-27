@@ -326,6 +326,12 @@ impl Panels {
             "openAppStore" => self.m.open_app_store(a.get(0).cloned().unwrap_or(Value::Null), now),
             "closeAppStore" => self.m.app_store_open = false,
             "quickLook" | "quicklook" => {
+                // (a web link or an HTML file: tessera-web --quicklook, the
+                // page read-only, Space or Esc closes it; a link without it
+                // opens in your browser, an HTML file shows as text below)
+                if tessera_core::weblink::quicklook(str_arg(a, 0)) {
+                    return;
+                }
                 if func == "quicklook" {
                     self.m.quick_look_path = str_arg(a, 0).to_string();
                 } else {

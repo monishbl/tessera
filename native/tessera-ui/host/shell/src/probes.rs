@@ -910,8 +910,9 @@ impl Service for Probes {
                 let r = if a[0].is_object() { a[0].clone() } else { self.report_now() };
                 let script = script("bug-report.py").to_string_lossy().into_owned();
                 run_with_input(vec!["python3".into(), "-I".into(), script, "github-url".into()], format!("{r}\n"), |_, out| {
+                    // (the issue page: where Settings says, tessera-web or your browser)
                     if out.trim().starts_with("https://") {
-                        launch_open(out.trim());
+                        open_link(out.trim());
                     }
                 });
             }

@@ -390,6 +390,14 @@ pub fn weather_note(ready: bool, error: &str) -> String {
     }
 }
 
+/// The weather menu's "Full forecast" link: wttr.in's page for Settings'
+/// location (empty: wttr.in finds you, as the menu's own reading does), in
+/// Settings' units
+pub fn forecast_url(location: &str, metric: bool) -> String {
+    let place = tessera_core::util::encode(location.trim());
+    format!("https://wttr.in/{place}{}", if metric { "?m" } else { "?u" })
+}
+
 // ── Now Playing ──────────────────────────────────────────────────────────
 
 /// NowPlaying.qml's fmt(): "3:07"
@@ -502,6 +510,8 @@ mod tests {
         assert!(weather_note(false, "Offline").starts_with("Offline."));
         // (curl missing: say so, not "offline")
         assert_eq!(weather_note(false, "Weather needs curl"), "The weather needs curl. Install curl to see it.");
+        assert_eq!(forecast_url("New York", true), "https://wttr.in/New%20York?m");
+        assert_eq!(forecast_url("", false), "https://wttr.in/?u");
         assert_eq!((mmss(187.9), mmss(-3.0)), ("3:07".to_string(), "0:00".to_string()));
         assert_eq!(byline("A", ""), "A");
         assert_eq!(byline("A", "B"), "A — B");

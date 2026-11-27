@@ -104,6 +104,8 @@ enum M {
     Mode(i32),
     StopSharing,
     PowerSettings,
+    /// the weather menu's "Full forecast…"
+    WeatherDetails,
     Np(String),
     Seek(f32),
     Pick(i32),
@@ -334,6 +336,7 @@ impl StatusMenus {
         on!(on_mode, |i| M::Mode(i));
         on!(on_stop_sharing, | | M::StopSharing);
         on!(on_power_settings, | | M::PowerSettings);
+        on!(on_weather_details, | | M::WeatherDetails);
         on!(on_np_do, |w| M::Np(w.to_string()));
         on!(on_np_seek, |v| M::Seek(v));
         on!(on_np_pick, |i| M::Pick(i));
@@ -1029,6 +1032,12 @@ impl Part for StatusMenus {
             M::StopSharing => shell::ask("statusmenus", json!(["stopSharing"])),
             M::PowerSettings => {
                 shell::ask("panels.openSettings", json!(["power", ""]));
+                self.close(st, true);
+            }
+            M::WeatherDetails => {
+                let (place, metric) = tessera_core::services::weather::settings(&st.shell.cfg);
+                // (where Settings says links open: tessera-web or your browser)
+                shell::ask("launch.openLink", json!([model::forecast_url(&place, metric)]));
                 self.close(st, true);
             }
             M::Np(w) => self.np_do(st, &w),

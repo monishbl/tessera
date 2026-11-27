@@ -8,6 +8,7 @@ pub mod audio_profiles;
 pub mod audio_streams;
 pub mod battery_health;
 pub mod brightness;
+pub mod captive_portal;
 pub mod common;
 pub mod network_alerts;
 pub mod network_feed;
@@ -28,6 +29,7 @@ pub fn services() -> Vec<Box<dyn Service>> {
         Box::new(wifi_share::WifiShare::default()),
         Box::new(speed_test::SpeedTest::default()),
         Box::new(network_feed::NetworkFeed::default()),
+        Box::new(captive_portal::CaptivePortal::default()),
         Box::new(statusmenus_feed::StatusMenusFeed::default()),
         Box::new(audio::Audio::default()),
         Box::new(audio_profiles::AudioProfiles::default()),

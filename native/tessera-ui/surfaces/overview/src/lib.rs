@@ -987,7 +987,8 @@ impl Overview {
                     crate::services::apps::launch(e);
                 }
             }
-            Run::Url(u) => crate::shell::ask("launch.open", json!([u])),
+            // (a web result: where Settings says, tessera-web or your browser)
+            Run::Url(u) => crate::shell::ask("launch.openLink", json!([u])),
             Run::Terminal(c) => crate::shell::ask("search.command", json!([c])),
             Run::File(p) => crate::shell::ask("files.open", json!([p])),
             Run::Action(t) => crate::shell::ask("search.action", json!([t])),
