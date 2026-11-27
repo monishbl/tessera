@@ -461,7 +461,8 @@ export component Center inherits Window {
                         width: clear-l.preferred-width + 20px;
                         height: 26px;
                         border-radius: 13px;
-                        background: clear-t.has-hover ? Theme.fill-hover : Theme.fill;
+                        background: clear-t.pressed ? Theme.fill-pressed : clear-t.has-hover ? Theme.fill-hover : Theme.fill; // (pressed too, #438)
+                        animate background { duration: Theme.hover; }
                         accessible-role: button;
                         accessible-label: "Clear all notifications";
                         accessible-action-default => { clear-all(); }
@@ -600,7 +601,8 @@ export component Center inherits Window {
                                             width: less-l.preferred-width + 18px;
                                             height: 22px;
                                             border-radius: 11px;
-                                            background: less-t.has-hover ? Theme.fill-hover : Theme.fill;
+                                            background: less-t.pressed ? Theme.fill-pressed : less-t.has-hover ? Theme.fill-hover : Theme.fill; // (pressed too, #438)
+                                            animate background { duration: Theme.hover; }
                                             accessible-role: button;
                                             accessible-label: "Show less";
                                             accessible-action-default => { toggle-group(r.gkey); }
