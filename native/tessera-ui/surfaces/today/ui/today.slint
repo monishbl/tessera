@@ -41,6 +41,8 @@ export global Day {
     in property <[TTodo]> todos;
     in property <string> todos-empty;
     in property <bool> weather-ready;
+    // (Settings' weather on, and something else showing it: else no card; #320)
+    in property <bool> weather-shown: true;
     in property <string> weather-icon;
     in property <string> weather-temp;
     in property <string> weather-condition;
@@ -234,7 +236,7 @@ component GlassDay inherits Rectangle {
     // The weather now, top right
     now := Rise {
         order: 0;
-        visible: Day.weather-ready;
+        visible: Day.weather-ready && Day.weather-shown;
         width: now-row.preferred-width;
         height: now-row.preferred-height;
         x: parent.width - pad - self.width;
@@ -384,7 +386,7 @@ component GlassDay inherits Rectangle {
     }
 
     // ── Right: the weather through the day ──
-    VerticalLayout {
+    if Day.weather-shown: VerticalLayout {
         x: parent.width - pad - 240px;
         y: col-y;
         width: 240px;
@@ -646,6 +648,7 @@ component MaterialDay inherits Rectangle {
     // ── The weather now: tertiaryContainer around a sunny shape ──
     wcard := Rise {
         order: 1;
+        visible: Day.weather-shown;
         x: pad + main-w + gap;
         y: pad;
         width: side-w;
@@ -846,6 +849,7 @@ component MaterialDay inherits Rectangle {
     property <int> hour-fits: max(1, floor((lower-h - 60px) / 44px));
     Rise {
         order: 4;
+        visible: Day.weather-shown;
         x: pad + main-w + gap;
         y: lower-y;
         width: side-w;

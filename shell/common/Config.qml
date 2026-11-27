@@ -420,6 +420,7 @@ Singleton {
                 property string name: "" // what the greeting calls you (Settings → About); empty = your account's name
             }
             property JsonObject weather: JsonObject {
+                property bool enabled: true // (Rust shell) off: wttr.in is never asked and no weather shows
                 property string location: "" // empty = detect from IP
                 property string units: "metric" // metric | imperial
             }
