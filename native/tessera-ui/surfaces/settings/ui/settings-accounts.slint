@@ -14,7 +14,7 @@
 //   "removed" (a block): "Removed “…”" with Undo (calendar.qml)
 
 import { Theme } from "@tessera/theme.slint";
-import { SIc, SOpt, SetRow, SBlock, SBus, SG, SM, SIcon, SFocusRing, SSwitch, SSlider, SSegmented, SChoice, SButton, SField, SChip, SSwatch, SFilled } from "settings-kit.slint";
+import { SIc, SOpt, SetRow, SBlock, SBus, SG, SM, SIcon, SFocusRing, SKeyStop, SSwitch, SSlider, SSegmented, SChoice, SButton, SField, SChip, SSwatch, SFilled } from "settings-kit.slint";
 
 // A text field whose text follows the row's (TextField.qml's look)
 component SyncField {
@@ -134,6 +134,10 @@ export component AccountsBlock inherits VerticalLayout {
             TouchArea {
                 mouse-cursor: pointer;
                 clicked => { SBus.act(b.id, 0, 0, ""); }
+            }
+            SKeyStop {
+                radius: 4px;
+                activated => { SBus.act(b.id, 0, 0, ""); }
             }
         }
     }

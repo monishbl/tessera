@@ -10,7 +10,7 @@
 
 import { Theme } from "@tessera/theme.slint";
 import { Busy } from "@tessera/widgets.slint";
-import { SIc, SOpt, SetRow, SBlock, SBus, SG, SM, SIcon, SFocusRing, SSwitch, SSlider, SSegmented, SChoice, SButton, SField, SChip, SSwatch, SFilled, SWavy, SWrap } from "settings-kit.slint";
+import { SIc, SOpt, SetRow, SBlock, SBus, SG, SM, SIcon, SFocusRing, SKeyStop, SSwitch, SSlider, SSegmented, SChoice, SButton, SField, SChip, SSwatch, SFilled, SWavy, SWrap } from "settings-kit.slint";
 
 // Glyphs drawn here (phosphor.js / material-symbols.js codes)
 global DG {
@@ -643,6 +643,27 @@ component Arrangement inherits Rectangle {
                 }
             }
         }
+        // The keys (#940): Tab reaches each display, Enter or Space selects
+        // it, the arrows move it to that side of the others (dropped one and
+        // a half of its own size that way; the drop snaps it to an edge)
+        tk := FocusScope {
+            focus-on-click: false;
+            key-pressed(e) => {
+                if !e.repeat && (e.text == " " || e.text == Key.Return) {
+                    SBus.act(root.b.id, i, 0, "select|" + m.id);
+                    return accept;
+                }
+                let h = e.text == Key.LeftArrow ? -1 : e.text == Key.RightArrow ? 1 : 0;
+                let v = e.text == Key.UpArrow ? -1 : e.text == Key.DownArrow ? 1 : 0;
+                if root.b.on && (h != 0 || v != 0) {
+                    SBus.act(root.b.id, i, 0, "select|" + m.id);
+                    SBus.act(root.b.id, i, 0, "drop|" + m.id + "|" + (m.from + h * 1.5 * m.step) + "|" + (m.to + v * 1.5 * m.num));
+                    return accept;
+                }
+                reject
+            }
+        }
+        SFocusRing { shown: tk.has-focus; radius: parent.border-radius; }
     }
 }
 
@@ -943,6 +964,10 @@ export component DevicesCtl inherits VerticalLayout {
                     ota := TouchArea {
                         mouse-cursor: pointer;
                         clicked => { SBus.act(r.id, 0, 0, "other"); }
+                    }
+                    SKeyStop {
+                        radius: 4px;
+                        activated => { SBus.act(r.id, 0, 0, "other"); }
                     }
                 }
             }

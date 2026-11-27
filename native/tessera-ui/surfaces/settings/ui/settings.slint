@@ -9,7 +9,7 @@
 
 import { Theme } from "@tessera/theme.slint";
 import { Busy } from "@tessera/widgets.slint";
-import { SIc, SOpt, SetRow, SBlock, SPage, SSection, SResult, SBus, SG, SM, SIcon, SFocusRing, SSwitch, SSlider, SWordSlider, SSegmented, SChoice, SButton, SField, SChip, SSwatch, SFilled } from "settings-kit.slint";
+import { SIc, SOpt, SetRow, SBlock, SPage, SSection, SResult, SBus, SG, SM, SIcon, SFocusRing, SKeyStop, SSwitch, SSlider, SWordSlider, SSegmented, SChoice, SButton, SField, SChip, SSwatch, SFilled } from "settings-kit.slint";
 import { LookBlock, LookCtl } from "settings-look.slint";
 import { NotifyBlock, NotifyCtl } from "settings-notify.slint";
 import { DevicesBlock, DevicesCtl } from "settings-devices.slint";
@@ -1026,7 +1026,16 @@ export component SettingsWindow inherits Window {
                         accessible-action-default => { search-input.text = ""; root.query(""); }
                         SIcon { g: SG.x; size: Theme.material ? 20px : 12px; color: Theme.material ? Theme.m3-on-surface-variant : Theme.secondary; }
                         clear-ta := TouchArea {
+                            mouse-cursor: pointer;
                             clicked => {
+                                search-input.text = "";
+                                root.query("");
+                                search-input.focus();
+                            }
+                        }
+                        SKeyStop {
+                            radius: parent.border-radius;
+                            activated => {
                                 search-input.text = "";
                                 root.query("");
                                 search-input.focus();
@@ -1361,6 +1370,10 @@ export component SettingsWindow inherits Window {
                                 mouse-cursor: pointer;
                                 clicked => { root.crumb-clicked(); }
                             }
+                            SKeyStop {
+                                radius: 4px;
+                                activated => { root.crumb-clicked(); }
+                            }
                         }
                     }
                     headline := HorizontalLayout {
@@ -1444,7 +1457,13 @@ export component SettingsWindow inherits Window {
                         }
                         ata := TouchArea {
                             enabled: usable;
+                            mouse-cursor: pointer;
                             clicked => { if d < 0 { root.back(); } else { root.forward(); } }
+                        }
+                        SKeyStop {
+                            enabled: usable;
+                            radius: parent.border-radius;
+                            activated => { if d < 0 { root.back(); } else { root.forward(); } }
                         }
                     }
                 }
@@ -1468,6 +1487,11 @@ export component SettingsWindow inherits Window {
                             enabled: is-sub;
                             mouse-cursor: pointer;
                             clicked => { root.crumb-clicked(); }
+                        }
+                        SKeyStop {
+                            enabled: is-sub;
+                            radius: 4px;
+                            activated => { root.crumb-clicked(); }
                         }
                         // (in the crumb, not the layout: a third item took a
                         // second spacing before the caret)
@@ -1575,6 +1599,10 @@ export component SettingsWindow inherits Window {
                         uta := TouchArea {
                             mouse-cursor: pointer;
                             clicked => { root.undo(); }
+                        }
+                        SKeyStop {
+                            radius: parent.border-radius;
+                            activated => { root.undo(); }
                         }
                     }
                 }

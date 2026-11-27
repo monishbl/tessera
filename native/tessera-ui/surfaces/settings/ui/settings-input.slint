@@ -9,7 +9,7 @@
 
 import { Theme } from "@tessera/theme.slint";
 import { Keycap } from "@tessera/widgets.slint";
-import { SIc, SOpt, SetRow, SBlock, SBus, SG, SM, SIcon, SFocusRing, SSwitch, SSlider, SSegmented, SChoice, SButton, SField, SChip, SSwatch, SFilled, STip } from "settings-kit.slint";
+import { SIc, SOpt, SetRow, SBlock, SBus, SG, SM, SIcon, SFocusRing, SKeyStop, SSwitch, SSlider, SSegmented, SChoice, SButton, SField, SChip, SSwatch, SFilled, STip } from "settings-kit.slint";
 
 global IG {
     out property <SIc> arrow-right: { p: "\u{e06c}", m: "\u{e5c8}" };
@@ -678,6 +678,10 @@ export component InputBlock inherits VerticalLayout {
                 bta := TouchArea {
                     mouse-cursor: pointer;
                     clicked => { SBus.act(b.id, 0, 0, ""); }
+                }
+                SKeyStop {
+                    radius: parent.border-radius;
+                    activated => { SBus.act(b.id, 0, 0, ""); }
                 }
             }
         }

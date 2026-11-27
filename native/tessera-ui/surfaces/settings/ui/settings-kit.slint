@@ -249,6 +249,34 @@ export component SFocusRing inherits Rectangle {
     FocusRing { shown: root.lit; radius: root.radius; }
 }
 
+// Makes a link or a small pointer-only button a Tab stop (@tessera/focus.slint's
+// KeyStop with this window's ring: scrolled to, keyboard only): lay it last
+// inside it. Enter or Space `activated`; with `arrows`, Left/Up and
+// Right/Down `nudged(-1 / 1)` (audit #940)
+export component SKeyStop inherits FocusScope {
+    in property <length> radius: 8px;
+    in property <bool> arrows;
+    callback activated();
+    callback nudged(int);
+    focus-on-click: false;
+    key-pressed(e) => {
+        if !e.repeat && (e.text == " " || e.text == Key.Return) {
+            activated();
+            return accept;
+        }
+        if arrows && (e.text == Key.LeftArrow || e.text == Key.UpArrow) {
+            nudged(-1);
+            return accept;
+        }
+        if arrows && (e.text == Key.RightArrow || e.text == Key.DownArrow) {
+            nudged(1);
+            return accept;
+        }
+        reject
+    }
+    SFocusRing { shown: root.has-focus; radius: root.radius; }
+}
+
 // ── Switch (Switch.qml) ─────────────────────────────────────────────────
 export component SSwitch {
     in property <bool> on;

@@ -15,7 +15,7 @@
 
 import { Theme } from "@tessera/theme.slint";
 import { Busy } from "@tessera/widgets.slint";
-import { SIc, SOpt, SetRow, SBlock, SBus, SG, SM, SIcon, SFocusRing, SSwitch, SSlider, SSegmented, SChoice, SButton, SField, SChip, SSwatch, SFilled, STip } from "settings-kit.slint";
+import { SIc, SOpt, SetRow, SBlock, SBus, SG, SM, SIcon, SFocusRing, SKeyStop, SSwitch, SSlider, SSegmented, SChoice, SButton, SField, SChip, SSwatch, SFilled, STip } from "settings-kit.slint";
 
 global LG {
     out property <SIc> reset: { p: "\u{e038}", m: "\u{e166}" };
@@ -1315,6 +1315,13 @@ export component LookCtl inherits VerticalLayout {
                     mouse-cursor: pointer;
                     clicked => {
                         // (its popover opens by it: settings-popover.slint)
+                        SBus.anchor(adv.absolute-position.x, adv.absolute-position.y, adv.width, adv.height);
+                        SBus.act(r.id, 100, 0, "");
+                    }
+                }
+                SKeyStop {
+                    radius: parent.border-radius;
+                    activated => {
                         SBus.anchor(adv.absolute-position.x, adv.absolute-position.y, adv.width, adv.height);
                         SBus.act(r.id, 100, 0, "");
                     }

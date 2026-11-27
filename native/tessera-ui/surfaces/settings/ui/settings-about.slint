@@ -12,7 +12,7 @@
 // Markdown shows as plain text (links not clickable).
 
 import { Theme } from "@tessera/theme.slint";
-import { SIc, SOpt, SetRow, SBlock, SBus, SG, SM, SIcon, SFocusRing, SSwitch, SSlider, SSegmented, SChoice, SButton, SField, SChip, SSwatch, SFilled, STip, SWavy, SWrap, SWrapStyled } from "settings-kit.slint";
+import { SIc, SOpt, SetRow, SBlock, SBus, SG, SM, SIcon, SFocusRing, SKeyStop, SSwitch, SSlider, SSegmented, SChoice, SButton, SField, SChip, SSwatch, SFilled, STip, SWavy, SWrap, SWrapStyled } from "settings-kit.slint";
 
 // A sheet's head (Software Update's sheets, in the page's place: a log,
 // What's new, the packages, the decisions before Tessera updates): b.title,
@@ -370,6 +370,10 @@ export component AboutCtl {
                         mouse-cursor: pointer;
                         clicked => { SBus.act(r.id, 0, 0, ""); }
                     }
+                    SKeyStop {
+                        radius: 4px;
+                        activated => { SBus.act(r.id, 0, 0, ""); }
+                    }
                 }
             }
         }
@@ -466,6 +470,10 @@ export component AboutCtl {
                         TouchArea {
                             mouse-cursor: pointer;
                             clicked => { SBus.act(r.id, 0, l.num, ""); }
+                        }
+                        SKeyStop {
+                            radius: 4px;
+                            activated => { SBus.act(r.id, 0, l.num, ""); }
                         }
                     }
                 }
