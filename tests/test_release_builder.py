@@ -117,7 +117,7 @@ class Release(unittest.TestCase):
         os.chmod(self.pr.PASSWORD, mode)
 
     def build_set(self):
-        built = os.path.join(self.rb.BUILT, self.tree)
+        built = self.rb.built_dir(self.tree, "beta")
         os.makedirs(built, exist_ok=True)
         variants = {v: self.rb.pack(built, self.tree, v, self.epoch) for v, _ in self.rb.VARIANTS}
         self.rb.make_set(self.target, self.tree, variants)
@@ -154,7 +154,7 @@ class Release(unittest.TestCase):
                              ("ready-made", variant, "tessera-ui-beta"))
             self.assertEqual(sorted(got["files"]), ["tessera-events", "tessera-ui"])
         # Packing is reproducible: the same programs give the same archive
-        again = self.rb.pack(os.path.join(self.rb.BUILT, t), t, "generic", self.epoch)
+        again = self.rb.pack(self.rb.built_dir(t, "beta"), t, "generic", self.epoch)
         self.assertEqual(again["sha256"], m["variants"]["generic"]["sha256"])
 
     def test_patches_from_the_build_before_are_made_checked_signed_and_used(self):
@@ -164,7 +164,7 @@ class Release(unittest.TestCase):
         for variant, _ in rb.VARIANTS:
             rel = Path(rb.TARGETS) / variant / "release"
             fake_program(rel / "tessera-ui", "tessera-ui 0.4.1 " + "x" * 2000)
-        old_variants = {v: rb.pack(os.path.join(rb.BUILT, old), old, v, self.epoch) for v, _ in rb.VARIANTS}
+        old_variants = {v: rb.pack(rb.built_dir(old, "beta"), old, v, self.epoch) for v, _ in rb.VARIANTS}
         for v, vj in old_variants.items():  # (pack names files by tree; keep them under the old tree)
             self.assertTrue(vj["file"].startswith(f"tessera-ui-{old}"))
         pub = Path(rb.OUT, "tessera-ui-beta", old)
@@ -173,7 +173,7 @@ class Release(unittest.TestCase):
         keep_old = {v: Path(self.d, "old-" + v) for v, _ in rb.VARIANTS}
         for v, d in keep_old.items():
             d.mkdir()
-            rb.unpack_programs(os.path.join(rb.BUILT, old, old_variants[v]["file"]), str(d))
+            rb.unpack_programs(os.path.join(rb.built_dir(old, "beta"), old_variants[v]["file"]), str(d))
         # This build: tessera-ui changed, tessera-events didn't
         for variant, _ in rb.VARIANTS:
             fake_program(Path(rb.TARGETS) / variant / "release" / "tessera-ui", "tessera-ui 0.4.2 " + "x" * 2000)
@@ -461,7 +461,7 @@ class Trigger(unittest.TestCase):
 
     def test_the_builder_tests_before_it_offers(self):
         rb = (ROOT / "tools/release-builder/tessera-release").read_text()
-        self.assertLess(rb.index("pretest(tree, variants)"), rb.index("make_set(t, tree, variants)"))
+        self.assertLess(rb.index('\n    pretest(tree, variants, t["channel"])'), rb.index("\n    make_set(t, tree, variants)"))
         pt = (ROOT / "tools/release-builder/pretest.sh").read_text()
         for check in ("within 30 s", "lock lock", "lock unlock", "shell ready", "radios"):
             self.assertIn(check, pt)
@@ -561,7 +561,7 @@ class Bundles(unittest.TestCase):
         self.commit = git(src, "rev-parse", "HEAD")
         self.tree = git(src, "rev-parse", "HEAD:native")
         self.target = {"name": "beta", "kind": "branch", "tag": "tessera-ui-beta", "channel": "beta", "commit": self.commit}
-        built = Path(rb.BUILT, self.tree)
+        built = Path(rb.built_dir(self.tree, "beta"))
         built.mkdir(parents=True)
         for variant, _ in rb.VARIANTS:
             rel = Path(rb.TARGETS) / variant / "release"
@@ -677,6 +677,44 @@ class Units(unittest.TestCase):
             v["profile"] = "release"
             (Path(d) / "variant-generic.json").write_text(json.dumps(v))
             self.assertIsNotNone(rb.variant_ok(d, "generic", "local"))  # (a release build will do for beta)
+
+    def test_builds_are_kept_apart_per_channel(self):
+        # (audit #725: a beta set packed from main's build said "Stable")
+        rb = self.rb
+        tree = "a" * 40
+        with tempfile.TemporaryDirectory() as d:
+            rb.BUILT = d
+            self.assertNotEqual(rb.built_dir(tree, "beta"), rb.built_dir(tree, "stable"))
+            self.assertEqual(os.path.basename(rb.built_dir(tree, "beta")), tree + "-beta")
+            with self.assertRaises(rb.Stop):
+                rb.built_dir("../x", "beta")
+            with self.assertRaises(rb.Stop):
+                rb.built_dir(tree, "../beta")
+            # a build kept for stable is never one for beta
+            st = Path(rb.built_dir(tree, "stable"))
+            st.mkdir()
+            (st / "x.tar.zst").write_bytes(b"x")
+            v = {"file": "x.tar.zst", "size": 1, "sha256": rb.sha256_of(str(st / "x.tar.zst")), "profile": "release"}
+            (st / "variant-generic.json").write_text(json.dumps(v))
+            self.assertIsNotNone(rb.variant_ok(str(st), "generic"))
+            self.assertIsNone(rb.variant_ok(rb.built_dir(tree, "beta"), "generic"))
+        src = BUILDER.read_text()
+        self.assertNotIn("os.path.join(BUILT, tree", src)
+        self.assertNotIn("os.path.join(BUILT, old", src)
+        self.assertIn('outdir = built_dir(tree, t["channel"])', src)
+
+    def test_patches_only_from_the_same_channels_builds(self):
+        rb = self.rb
+        with tempfile.TemporaryDirectory() as d:
+            rb.BUILT, rb.OUT = os.path.join(d, "built"), os.path.join(d, "out")
+            old = "b" * 40
+            pub = Path(rb.OUT, "tessera-ui-beta", old)
+            pub.mkdir(parents=True)
+            (pub / "PUBLISHED").write_text(json.dumps({"tag": "tessera-ui-beta", "tree": old, "channel": "beta", "published": "2026-11-18T10:00:00+0000"}))
+            ok = lambda outdir, v, profile=None: {"file": "f"} if outdir == rb.built_dir(old, "beta") else None
+            with mock.patch.object(rb, "variant_ok", ok):
+                self.assertEqual(rb.earlier_trees("tessera-ui-beta", "c" * 40, "beta"), [old])
+                self.assertEqual(rb.earlier_trees("tessera-ui-beta", "c" * 40, "stable"), [])
 
     def test_server1_never_signs_or_publishes(self):
         src = BUILDER.read_text()

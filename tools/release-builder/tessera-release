@@ -35,8 +35,13 @@ so `tessera-ui --version` reads e.g. "tessera-ui 0.1.0 (stable, 7baa48d,
 with a READY file (JSON: what it is, and each file's size and sha256), written
 last. The laptop's --mark-published renames READY to PUBLISHED.
 
-Built variants are kept per tree in ~/tessera-release/built/<tree> (the newest
-six), so a tree promoted from beta to main is only packed again.
+Built variants are kept per tree and channel in
+~/tessera-release/built/<tree>-<channel> (the newest six), so a tree built
+again for the same channel is only packed again. Channels never share one:
+tessera-ui carries its channel, commit and date (build_env), and a beta
+set packed from a build made for main said "Stable" (and patches were made
+from programs beta installs never had; audit #725). A tree promoted from
+beta to main is built again for main.
 
 Tested before it's offered: each variant is installed in a hidden sandbox
 arena here (tools/release-builder/pretest.sh, installed as
@@ -46,7 +51,7 @@ and the status (the laptop's publisher says so in a notification).
 TESSERA_RELEASE_NO_PRETEST=1 skips it (tests).
 
 Patches: each set also carries zstd --patch-from patches from the last three
-published builds of the same release (built/<tree> keeps their archives) to
+published builds of the same release (built/<tree>-<channel> keeps their archives) to
 this one, per variant and program (a program that didn't change gets none:
 an install keeps it). The manifest lists each (file, size, sha256 and the
 sha256 of the program it starts from); the laptop signs them like the rest,
@@ -163,6 +168,8 @@ PRETEST = os.environ.get("TESSERA_PRETEST") or os.path.join(HOME, "bin", "tesser
 PATCH_RE = re.compile(r"^tessera-ui-([0-9a-f]{40})-(x86-64-v3|generic)\.(tessera-ui|tessera-events)\.from-([0-9a-f]{12})\.zst$")
 KEEP_BUILT = 6  # built trees kept in built/
 TREE_HEX = re.compile(r"^[0-9a-f]{40}$")
+# built/<tree>-<channel> (built/<tree> alone: from before channels were kept apart)
+BUILT_RE = re.compile(r"^([0-9a-f]{40})(?:-([a-z]+))?$")
 TAG_RE = re.compile(r"^v[0-9A-Za-z._-]+$")
 
 
@@ -405,6 +412,14 @@ def cargo(args, variant, rustflags, label, logf, extra=None):
     status(progress={"done": done, "about": about}, step=f"{variant}: {label} linked")
 
 
+def built_dir(tree, channel):
+    """Where TREE's programs built for CHANNEL are kept: one folder per
+    channel, never shared (the programs carry the channel; audit #725)"""
+    if not TREE_HEX.match(tree or "") or not re.match(r"^[a-z]+$", channel or ""):
+        raise Stop(f"no build folder for tree {tree!r} on channel {channel!r}")
+    return os.path.join(BUILT, f"{tree}-{channel}")
+
+
 def variant_ok(outdir, variant, profile=None):
     """The packed variant in OUTDIR when it's whole (and, given PROFILE
     "release", built with the release profile: a beta build isn't packed for
@@ -421,9 +436,10 @@ def variant_ok(outdir, variant, profile=None):
 
 
 def build(t, tree):
-    """Both variants of TREE in built/<tree> (kept from an earlier run when
-    they're there and whole). Returns {variant: variant-json}."""
-    outdir = os.path.join(BUILT, tree)
+    """Both variants of TREE in built/<tree>-<channel> (kept from an earlier
+    run for the same channel when they're there and whole). Returns
+    {variant: variant-json}."""
+    outdir = built_dir(tree, t["channel"])
     os.makedirs(outdir, exist_ok=True)
     os.makedirs(LOGS, exist_ok=True)
     epoch = git("log", "-1", "--format=%ct", t["commit"])
@@ -502,7 +518,7 @@ def pack(outdir, tree, variant, epoch, profile="release"):
 
 # ── Tested before it's offered ───────────────────────────────────────────
 
-def pretest(tree, variants):
+def pretest(tree, variants, channel):
     """Each variant's tessera-ui in a sandbox arena (pretest.sh): it must
     start, answer, draw, lock and unlock. Raises Stop with why."""
     if os.environ.get("TESSERA_RELEASE_NO_PRETEST") == "1":
@@ -514,7 +530,7 @@ def pretest(tree, variants):
         work = os.path.join(ROOT, "pretest", variant)
         shutil.rmtree(work, ignore_errors=True)
         os.makedirs(work)
-        unpack_programs(os.path.join(BUILT, tree, v["file"]), work)
+        unpack_programs(os.path.join(built_dir(tree, channel), v["file"]), work)
         r = subprocess.run([PRETEST, os.path.join(work, "tessera-ui"), SRC, "71" if variant == "x86-64-v3" else "72"],
                            capture_output=True, text=True, timeout=600)
         last = (r.stdout.strip().splitlines() or ["no answer"])[-1]
@@ -535,27 +551,31 @@ def unpack_programs(tarball, into):
 
 # ── Patches from the builds before ───────────────────────────────────────
 
-def earlier_trees(tag, tree):
+def earlier_trees(tag, tree, channel):
     """The last PATCH_FROM builds published in TAG (newest first) whose
-    archives are still kept here"""
+    archives are still kept here, built for CHANNEL: the programs that
+    channel's installs have (a patch from another channel's build never
+    applies; audit #725)"""
     out = []
     for _, _, _, info in sorted(sets("PUBLISHED"), key=lambda s: s[3].get("published", ""), reverse=True):
         old = info.get("tree")
         if info.get("type") == "bundle" or info.get("tag") != tag or old == tree or old in out:
             continue
-        if all(variant_ok(os.path.join(BUILT, old), v) for v, _ in VARIANTS):
+        if info.get("channel", channel) != channel or not TREE_HEX.match(old or ""):
+            continue
+        if all(variant_ok(built_dir(old, channel), v) for v, _ in VARIANTS):
             out.append(old)
         if len(out) == PATCH_FROM:
             break
     return out
 
 
-def make_patches(tag, tree, variants, dest):
-    """Patches into DEST from each earlier build to this one; each variant's
-    manifest entry gets "patches": {from tree: {program: {file, size,
-    sha256, from_sha256}}}. Returns the patch files' names."""
+def make_patches(tag, tree, variants, dest, channel):
+    """Patches into DEST from each earlier build to this one (the same
+    channel's); each variant's manifest entry gets "patches": {from tree:
+    {program: {file, size, sha256, from_sha256}}}. Returns the patch files' names."""
     names = []
-    olds = earlier_trees(tag, tree)
+    olds = earlier_trees(tag, tree, channel)
     if not olds:
         return names
     work = os.path.join(ROOT, "patching")
@@ -563,13 +583,13 @@ def make_patches(tag, tree, variants, dest):
     for variant, v in variants.items():
         new_dir = os.path.join(work, "new-" + variant)
         os.makedirs(new_dir)
-        unpack_programs(os.path.join(BUILT, tree, v["file"]), new_dir)
+        unpack_programs(os.path.join(built_dir(tree, channel), v["file"]), new_dir)
         entry = {}
         for old in olds:
-            ov = variant_ok(os.path.join(BUILT, old), variant)
+            ov = variant_ok(built_dir(old, channel), variant)
             old_dir = os.path.join(work, old[:12] + "-" + variant)
             os.makedirs(old_dir, exist_ok=True)
-            unpack_programs(os.path.join(BUILT, old, ov["file"]), old_dir)
+            unpack_programs(os.path.join(built_dir(old, channel), ov["file"]), old_dir)
             for prog in ("tessera-ui", "tessera-events"):
                 a, b = os.path.join(old_dir, prog), os.path.join(new_dir, prog)
                 fa, fb = sha256_of(a), sha256_of(b)
@@ -601,14 +621,14 @@ def make_set(t, tree, variants):
     """Both archives and the manifest (as the workflow writes it) in
     out/<tag>/<tree>/, READY written last. Nothing is signed here."""
     commit, tag = t["commit"], t["tag"]
-    built = os.path.join(BUILT, tree)
+    built = built_dir(tree, t["channel"])
     dest = os.path.join(OUT, tag, tree)
     shutil.rmtree(dest, ignore_errors=True)
     os.makedirs(dest)
     for v in variants.values():
         os.link(os.path.join(built, v["file"]), os.path.join(dest, v["file"]))
     variants = {k: dict(v) for k, v in variants.items()}
-    patches = make_patches(tag, tree, variants, dest)
+    patches = make_patches(tag, tree, variants, dest, t["channel"])
     with open(os.path.join(SRC, "native", "tessera-ui", "Cargo.toml")) as f:
         version = next((m[1] for m in (re.match(r'^version = "(.*)"$', l.rstrip("\n")) for l in f) if m), "")
     manifest = {"format": 1, "name": "tessera-ui", "commit": commit, "tree": tree, "version": version,
@@ -675,7 +695,7 @@ def build_parts(plugin_dir, logf):
 def make_bundle(t, tree, variants):
     """The commit's bundle, both variants, and its manifest, in
     out/<tag>/<commit>/ with READY ("type": "bundle") written last.
-    VARIANTS: the programs' packed variants (built/<tree>). Unsigned."""
+    VARIANTS: the programs' packed variants (built/<tree>-<channel>). Unsigned."""
     commit, tag = t["commit"], t["tag"]
     dest = os.path.join(OUT, tag, commit)
     shutil.rmtree(dest, ignore_errors=True)
@@ -696,7 +716,7 @@ def make_bundle(t, tree, variants):
             status(step=f"bundle: packing {variant}", progress=None)
             progs = os.path.join(work, "programs-" + variant)
             os.makedirs(progs)
-            unpack_programs(os.path.join(BUILT, tree, v["file"]), progs)
+            unpack_programs(os.path.join(built_dir(tree, t["channel"]), v["file"]), progs)
             entries[variant] = B.pack_variant(SRC, commit, variant, {n: os.path.join(progs, n) for n in ("tessera-ui", "tessera-events")},
                                               plugin, dest, epoch)
         with open(os.path.join(SRC, "native", "tessera-ui", "Cargo.toml")) as f:
@@ -723,7 +743,7 @@ def make_bundle(t, tree, variants):
 
 def do_bundle(t, tree, build_only):
     """The commit's bundle, unless it's ready, published, or the commit has
-    no tools/tessera-bundle.py. The programs come from built/<tree> (built
+    no tools/tessera-bundle.py. The programs come from built/<tree>-<channel> (built
     now when they aren't kept)."""
     if os.environ.get("TESSERA_RELEASE_NO_BUNDLE") == "1":
         return
@@ -856,13 +876,14 @@ def prune():
         for _, path in sorted(items, reverse=True)[KEEP_PUBLISHED:]:
             shutil.rmtree(path, ignore_errors=True)
     try:
-        trees = sorted((d for d in os.listdir(BUILT) if TREE_HEX.match(d)),
+        trees = sorted((d for d in os.listdir(BUILT) if BUILT_RE.match(d)),
                        key=lambda d: os.path.getmtime(os.path.join(BUILT, d)), reverse=True)
     except OSError:
         return
     waiting = {info.get("tree") or tree for _, tree, _, info in sets()}
     for d in trees[KEEP_BUILT:]:
-        if d in waiting:
+        # (built/<tree>-<channel>; an old built/<tree> is never used again: it goes in turn)
+        if BUILT_RE.match(d).group(1) in waiting:
             continue
         shutil.rmtree(os.path.join(BUILT, d), ignore_errors=True)
         for v, _ in VARIANTS:
@@ -914,7 +935,7 @@ def programs_target(t, build_only):
     if build_only:
         target_result(name, result="built", tree=tree, commit=commit, seconds=int(time.time() - t0))
         return tree
-    pretest(tree, variants)
+    pretest(tree, variants, t["channel"])
     make_set(t, tree, variants)
     target_result(name, result="ready", tag=tag, tree=tree, commit=commit, dir=here, seconds=int(time.time() - t0))
     return tree

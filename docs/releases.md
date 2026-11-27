@@ -410,7 +410,7 @@ tools/tessera-bundle.py lock-check F    # is F a valid package lock
 ### The builder's part
 
 For each commit of `main`, `beta` and every tag (once its program set is
-built, or found in `built/<tree>`), `tessera-release` builds the commit's
+built, or found in `built/<tree>-<channel>`), `tessera-release` builds the commit's
 shaders, native helpers and glass plugin in its clone (so server1 needs
 Hyprland's headers, qt6-shadertools, cmake and Qt's development files; a
 plain Arch system, so the lock's versions are the Arch Linux Archive's),
@@ -622,7 +622,7 @@ For `main`, `beta` and every `v*` tag, each run:
    capped memory, paused by tgovernor when memory runs short), so the
    machine's own work always comes first. The first beta build took 27 + 25
    minutes, sharing the machine with another build. Built variants are kept in
-   `~/tessera-release/built/<tree>` (the newest six trees).
+   `~/tessera-release/built/<tree>-<channel>` (the newest six; one per channel, never shared: the programs carry their channel and commit).
 4. Packs and writes the manifest exactly like the workflow into
    `~/tessera-release/out/<release>/<tree>/` (both archives and the manifest,
    unsigned) and writes `READY` last: what the set is, and each file's size and
