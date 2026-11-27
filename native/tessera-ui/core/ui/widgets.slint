@@ -576,11 +576,12 @@ export component Switch inherits Rectangle {
     }
 }
 
-// Segmented.qml: Glass, a track with the chosen one on a light pill (the
-// others lighten under the pointer); Material, a connected button group
-// (2 px apart, round ends, 8 px inside; the chosen one fills and turns
+// Segmented.qml: Glass, a track with a light pill sliding to the chosen one
+// (the others lighten under the pointer); Material, a connected button
+// group (2 px apart, round ends, 8 px inside; the chosen one fills and turns
 // round). Each segment fits its label plus 24 px; the room to spare is
-// shared equally (too little shrinks them alike). Left and Right step it.
+// shared equally (too little shrinks them alike). The arrows step it, Home
+// and End take the first and the last.
 export component Segmented inherits Rectangle {
     in property <[string]> options;
     in property <int> current;
@@ -589,12 +590,16 @@ export component Segmented inherits Rectangle {
     callback selected(int);
     property <bool> m3: Theme.material;
     property <length> gap: m3 ? 2px : 0;
+    // (Glass: where the chosen segment is, for the sliding pill)
+    property <length> pill-x;
+    property <length> pill-w;
     height: m3 ? 36px : 30px;
     border-radius: self.height / 2;
     background: m3 ? transparent : Theme.toggle-off;
     opacity: enabled ? 1 : Theme.disabled-alpha;
     accessible-role: tab-list;
     accessible-label: label;
+    accessible-description: current >= 0 && current < options.length ? options[current] : "";
     accessible-enabled: enabled;
     forward-focus: keys;
     keys := FocusScope {
@@ -602,12 +607,33 @@ export component Segmented inherits Rectangle {
         focus-on-click: false;
         enabled: root.enabled;
         key-pressed(e) => {
-            if e.text == Key.LeftArrow && current > 0 { selected(current - 1); return accept; }
-            if e.text == Key.RightArrow && current < options.length - 1 { selected(current + 1); return accept; }
+            if e.text == Key.LeftArrow || e.text == Key.UpArrow {
+                if current > 0 { selected(current - 1); }
+                return accept;
+            }
+            if e.text == Key.RightArrow || e.text == Key.DownArrow {
+                if current < options.length - 1 { selected(current + 1); }
+                return accept;
+            }
+            if e.text == Key.Home { selected(0); return accept; }
+            if e.text == Key.End { selected(options.length - 1); return accept; }
             reject
         }
     }
     if keys.has-focus: FocusRing { pw: root.width; ph: root.height; radius: root.height / 2; }
+    // Glass: the selection pill, sliding to the chosen one
+    if !m3: Rectangle {
+        x: root.pill-x;
+        y: 2px;
+        width: root.pill-w;
+        height: root.height - 4px;
+        border-radius: self.height / 2;
+        background: Theme.dark ? #ffffff33 : #ffffff;
+        drop-shadow-blur: Theme.dark ? 0 : 2px;
+        drop-shadow-offset-y: 1px;
+        drop-shadow-color: #0000001f;
+        animate x, width { duration: Theme.move-standard; easing: Ease.standard; }
+    }
     HorizontalLayout {
         padding-left: 2px;
         padding-right: 2px;
@@ -620,22 +646,23 @@ export component Segmented inherits Rectangle {
             preferred-width: measure.preferred-width + 24px;
             horizontal-stretch: 1;
             height: parent.height;
+            init => { if chosen { root.pill-x = self.x; root.pill-w = self.width; } }
+            changed chosen => { if chosen { root.pill-x = self.x; root.pill-w = self.width; } }
+            changed x => { if chosen { root.pill-x = self.x; root.pill-w = self.width; } }
+            changed width => { if chosen { root.pill-x = self.x; root.pill-w = self.width; } }
             measure := Text {
                 visible: false;
                 text: o;
                 font-size: m3 ? Theme.body : Theme.small;
                 font-weight: m3 ? 500 : 600;
             }
-            // Glass: the selection pill on the chosen one, a light one under the pointer
-            if !m3: Rectangle {
+            // Glass: a light layer under the pointer on the others
+            if !m3 && !chosen: Rectangle {
                 y: 2px;
                 height: parent.height - 4px;
                 border-radius: self.height / 2;
-                background: chosen ? (Theme.dark ? #ffffff33 : #ffffff) : touch.pressed ? Theme.fill-pressed : touch.has-hover ? Theme.fill : transparent;
+                background: touch.pressed ? Theme.fill-pressed : touch.has-hover ? Theme.fill : transparent;
                 animate background { duration: Theme.hover; }
-                drop-shadow-blur: chosen && !Theme.dark ? 2px : 0;
-                drop-shadow-offset-y: 1px;
-                drop-shadow-color: #0000001f;
             }
             border-top-left-radius: !m3 ? 0 : i == 0 ? full : inner;
             border-bottom-left-radius: self.border-top-left-radius;
