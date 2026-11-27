@@ -114,6 +114,8 @@ impl Decorations {
         });
         let ui = ui::WindowControls::new().expect("WindowControls");
         st.shell.apply_theme(&ui.global::<ui::Theme>());
+        // (Material: the kit's icon buttons draw Material Symbols)
+        ui.global::<ui::Symbols>().on_of(|g| tessera_core::icons::symbol(&g).into());
         ui.set_tile_rows(tile_rows());
         ui.set_close_icon(gl("x"));
         ui.set_min_icon(gl("minus"));
