@@ -40,11 +40,13 @@
 //!   faillock --user (read-only): only when real, after a wrong password.
 //!   Idle inhibitor (zwp_idle_inhibit_v1) on a lock surface while Bedside
 //!     Mode shows: whenever it shows (demo too: the arena's compositor).
-//!   The on-screen keyboard (#763): the field's keyboard button asks Panels
-//!     for it (panels.toggle); it shows over the lock through Hyprland's
-//!     above_lock layer rule for "tessera:keyboard" only (rules.lua) and
-//!     types into the lock as a virtual keyboard; the sign-in lifts above it.
-//!     Under the field: Caps Lock and the layout (core::keystate, #761).
+//!   The on-screen keyboard (#763): drawn on the lock's own session-lock
+//!     surface (the keyboard's keys, core/ui/oskgrid.slint, with
+//!     tessera-osk's rows), its presses typed into the field here: nothing
+//!     else is ever drawn over the lock or given its input (an above_lock
+//!     layer rule would let any program take that namespace and phish the
+//!     password). The sign-in lifts above it. Under the field: Caps Lock and
+//!     the layout (core::keystate, #761).
 //!
 //! ── With the shell (Lock.qml, LoginIntro.qml; JSON lines) ─────────────────
 //!   stdin  {"to":"lock","held":…,"leaving":…,"finger":…,"face":…}
@@ -243,6 +245,8 @@ enum M {
     RevealNow,
     /// the on-screen keyboard's button on this screen (#763)
     Osk(String),
+    /// a key of the lock's own keyboard (the screen, row, column; held: a repeat)
+    OskKey(String, i32, i32, bool),
 }
 
 struct Win {
@@ -471,6 +475,12 @@ pub struct Lock {
     t_match: slint::Timer,
     /// stops a password check that never answers
     t_pass: slint::Timer,
+    /// the lock's own on-screen keyboard (#763): the screen it shows on,
+    /// its Shift and Caps, and its rows (every screen's, changed in place)
+    osk_on: Option<String>,
+    osk_mods: tessera_osk::keys::Mods,
+    osk_caps: bool,
+    osk_rows: Vec<Rows<ui::OskKey>>,
 }
 
 impl Default for Lock {
@@ -543,6 +553,10 @@ impl Default for Lock {
             t_retake: slint::Timer::default(),
             t_match: slint::Timer::default(),
             t_pass: slint::Timer::default(),
+            osk_on: None,
+            osk_mods: Default::default(),
+            osk_caps: false,
+            osk_rows: tessera_osk::keys::ROWS.iter().map(|_| Rows::new()).collect(),
         }
     }
 }
@@ -796,6 +810,10 @@ impl Lock {
         self.t_match.stop();
         self.t_pass.stop();
         self.pass_id = 0;
+        // (the keyboard starts put away, Shift and Caps off)
+        self.osk_on = None;
+        self.osk_mods = Default::default();
+        self.osk_caps = false;
         if held {
             eprintln!("tessera-ui: lock: held ({})", if self.demo { "demo: overlay surfaces" } else { "session lock" });
             self.leaving = false;
@@ -920,6 +938,13 @@ impl Lock {
             let on = name.to_string();
             d.on_osk(move || to(Box::new(M::Osk(on.clone()))));
         }
+        {
+            let (to, on) = (to.clone(), name.to_string());
+            d.on_osk_key(move |r, c| to(Box::new(M::OskKey(on.clone(), r, c, false))));
+            let (to, on) = (to.clone(), name.to_string());
+            d.on_osk_repeat(move |r, c| to(Box::new(M::OskKey(on.clone(), r, c, true))));
+        }
+        d.set_osk_rows(ModelRc::new(VecModel::from(self.osk_rows.iter().map(|r| ui::OskRow { keys: r.model() }).collect::<Vec<_>>())));
         on!(on_step, |i| M::Step(i));
         on!(on_player, |a| M::Player(a.to_string()));
         // (the lists, handed over once: every refresh after changes them in place)
@@ -946,7 +971,8 @@ impl Lock {
         self.player(st);
         self.field();
         self.keys();
-        self.osk_state(st);
+        self.osk_keys();
+        self.osk_state();
         self.bedside(st);
         if let Some((round, cookie)) = &self.avatar {
             let d = self.wins[i].ui.global::<ui::LockData>();
@@ -1013,6 +1039,7 @@ impl Lock {
             d.set_dark_ink_side(dark_side);
             d.set_osk_button(osk_button);
             d.set_osk_covers(crate::surfaces::kit::osk_covers(screen.0));
+            d.set_osk_unit(crate::surfaces::kit::osk_unit(screen.0));
             d.set_note_style(s(&c, "notifications", "shelf").into());
             d.set_previews(b(&c, "previews", false));
             d.set_lock_fx(s(&c, "lockTransition", "zoom").into());
@@ -1386,13 +1413,69 @@ impl Lock {
         });
     }
 
-    /// The on-screen keyboard is up on which screen (Panels, by the shell's
-    /// state): the sign-in lifts above it there (#763)
-    fn osk_state(&self, st: &State) {
-        let (open, screen) = st.shell.get::<crate::services::bridge::ShellState>().map(|s| s.keyboard()).unwrap_or_default();
+    /// The lock's own keyboard shows on which screen (#763): the sign-in
+    /// lifts above it there
+    fn osk_state(&self) {
         for w in &self.wins {
-            let up = open == "keyboard" && (screen.is_empty() || screen == w.output);
-            w.ui.global::<ui::LockData>().set_osk_up(up);
+            w.ui.global::<ui::LockData>().set_osk_up(self.osk_on.as_deref() == Some(w.output.as_str()));
+        }
+    }
+
+    /// Its caps as Shift and Caps have them now
+    fn osk_keys(&self) {
+        let (mods, caps) = (self.osk_mods, self.osk_caps);
+        for (rows, keys) in self.osk_rows.iter().zip(tessera_osk::keys::ROWS.iter()) {
+            rows.set(
+                keys.iter()
+                    .map(|k| ui::OskKey {
+                        text: k.text(mods, caps).into(),
+                        name: if k.sym == "space" { "Space".into() } else { k.text(mods, caps).into() },
+                        units: k.units,
+                        modifier: k.is_mod(),
+                        wide: k.wide(),
+                        action: k.action(),
+                        latched: k.latched(mods, caps),
+                        long: k.label.chars().count() > 1,
+                    })
+                    .collect(),
+            );
+        }
+    }
+
+    /// A key of the lock's own keyboard: typed into the field here (never a
+    /// virtual keyboard), Return unlocks
+    fn osk_key(&mut self, st: &mut State, on: String, r: i32, c: i32, repeat: bool) {
+        use tessera_osk::keys::{in_field, InField, ROWS};
+        if !self.held || self.leaving || self.busy {
+            return;
+        }
+        let Some(key) = usize::try_from(r).ok().and_then(|r| ROWS.get(r)).and_then(|row| usize::try_from(c).ok().and_then(|c| row.get(c))) else { return };
+        // (held: only what types again; a held Return doesn't submit twice)
+        if repeat && (key.is_mod() || key.action()) {
+            return;
+        }
+        let (out, mods, caps) = in_field(key, self.osk_mods, self.osk_caps);
+        match out {
+            InField::Text(t) => {
+                let mut text = self.password.clone();
+                text.push_str(&t);
+                self.set_password(st, on, text);
+            }
+            InField::Backspace => {
+                let mut text = self.password.clone();
+                text.pop();
+                self.set_password(st, on, text);
+            }
+            InField::Enter if self.typing_counts() => self.submit(st),
+            InField::Enter | InField::Nothing => {}
+        }
+        // (typed here, not in that screen's field: every field shows it)
+        self.typed_on = None;
+        self.field();
+        if (mods, caps) != (self.osk_mods, self.osk_caps) {
+            self.osk_mods = mods;
+            self.osk_caps = caps;
+            self.osk_keys();
         }
     }
 
@@ -2262,8 +2345,6 @@ impl Part for Lock {
             self.player(st);
         } else if what == TypeId::of::<crate::services::wallpaper::WallTop>() {
             self.settings(st);
-        } else if what == TypeId::of::<crate::services::bridge::ShellState>() {
-            self.osk_state(st);
         }
     }
 
@@ -2710,13 +2791,17 @@ impl Part for Lock {
                 }
             }
             M::RevealNow => self.wins.iter_mut().for_each(reveal),
-            // (Panels brings it up or puts it away; over the lock it shows
-            // through Hyprland's above_lock layer rule, hypr/tessera/rules.lua)
+            // (the lock's own keyboard, on its own surface: no other
+            // program's window is ever shown over the lock)
             M::Osk(on) => {
                 if self.held && !self.leaving {
-                    crate::shell::ask("panels.toggle", serde_json::json!(["keyboard", on]));
+                    self.osk_on = logic::osk_toggle(self.osk_on.as_deref(), &on);
+                    self.osk_mods = Default::default();
+                    self.osk_keys();
+                    self.osk_state();
                 }
             }
+            M::OskKey(on, r, c, repeat) => self.osk_key(st, on, r, c, repeat),
             M::Retake => {
                 if self.held && self.lock.is_none() && !self.demo {
                     eprintln!("tessera-ui: lock: taking the session lock again (try {})", self.retakes);

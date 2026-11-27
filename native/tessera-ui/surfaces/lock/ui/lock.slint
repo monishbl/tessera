@@ -11,6 +11,7 @@ import { Theme, Icon } from "@tessera/theme.slint";
 import { SymIcon, Symbols } from "@tessera/symbols.slint";
 import { Busy } from "@tessera/widgets.slint";
 import { CapsHint, OskButton } from "@tessera/password.slint";
+import { KeyGrid, OskRow } from "@tessera/oskgrid.slint";
 
 export struct LNote {
     icon: image,
@@ -157,6 +158,12 @@ export global LockData {
     in property <bool> osk-up;
     in property <length> osk-covers: 360px;
     callback osk();
+    // its keys, drawn on this surface (nothing else may draw over the
+    // lock), their size, and a press (row, column) or a held key's repeat
+    in property <[OskRow]> osk-rows;
+    in property <length> osk-unit: 58px;
+    callback osk-key(int, int);
+    callback osk-repeat(int, int);
     in property <string> error;
     in property <int> error-count;
     in property <bool> busy;
@@ -2909,6 +2916,33 @@ export component LockScreen inherits Window {
         exit: root.exit;
         sb: root.sb;
         morph-on: root.morph-on;
+    }
+
+    // ── The on-screen keyboard (#763), on the lock's own surface, as the
+    // keyboard's window draws it (core/ui/oskgrid.slint): its presses type
+    // into the field (Rust), and it never takes the field's focus
+    if LockData.osk-up && !LockData.standby: Rectangle {
+        property <length> u: LockData.osk-unit;
+        x: (W - self.width) / 2;
+        y: H - self.height - 8px;
+        width: u * 15.6 + 24px;
+        height: u * 5 + 4 * 6px + 24px;
+        opacity: 1 - exit;
+        border-radius: Theme.material ? 28px : 26px;
+        background: Theme.material ? Theme.m3-surface-container : Theme.panel.with-alpha(0.94);
+        border-width: Theme.material ? 0 : 0.5px;
+        border-color: Theme.separator;
+        drop-shadow-blur: 20px;
+        drop-shadow-offset-y: 6px;
+        drop-shadow-color: #00000040;
+        // (a touch between the keys reaches nothing under it)
+        TouchArea { }
+        KeyGrid {
+            rows: LockData.osk-rows;
+            unit: parent.u;
+            pressed(r, c) => { LockData.osk-key(r, c); }
+            repeat(r, c) => { LockData.osk-repeat(r, c); }
+        }
     }
 
     bedside := Bedside {

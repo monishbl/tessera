@@ -112,6 +112,33 @@ impl Key {
 }
 
 
+/// What a key does in the lock's own password field (#763: the lock draws
+/// the keys on its surface and types into its field itself, never through a
+/// virtual keyboard or a window over the lock)
+#[derive(Clone, Debug, PartialEq)]
+pub enum InField {
+    Text(String),
+    Backspace,
+    Enter,
+    /// a modifier, Tab, an arrow, Esc: nothing in a password
+    Nothing,
+}
+
+/// A press in the field: what it does, and Shift and Caps after it (Shift
+/// latches for one character, Caps stays; Ctrl, Alt and Super do nothing)
+pub fn in_field(key: &Key, mods: Mods, caps: bool) -> (InField, Mods, bool) {
+    match key.sym {
+        "@caps" => (InField::Nothing, mods, !caps),
+        "@shift" => (InField::Nothing, mods.toggled("shift"), caps),
+        s if s.starts_with('@') => (InField::Nothing, mods, caps),
+        "BackSpace" => (InField::Backspace, mods, caps),
+        "Return" => (InField::Enter, Mods::default(), caps),
+        "space" => (InField::Text(" ".into()), Mods::default(), caps),
+        "Tab" | "Left" | "Right" | "Up" | "Down" | "Escape" => (InField::Nothing, mods, caps),
+        _ => (InField::Text(key.text(mods, caps)), Mods::default(), caps),
+    }
+}
+
 /// xkb's real modifier bits (wtype's -M)
 pub const SHIFT: u32 = 1;
 pub const CTRL: u32 = 4;
@@ -362,5 +389,25 @@ mod tests {
         assert_eq!(window_size(1920.0, 20.0), ((58.0f32 * 15.6 + 64.0).round() as u32, 58 * 5 + 24 + 24 + 40));
         // a narrow screen: the keys shrink
         assert!((unit(800.0) - 680.0 / 15.6).abs() < 1e-4);
+    }
+
+    #[test]
+    fn keys_in_the_locks_own_field() {
+        let none = Mods::default();
+        assert_eq!(in_field(&find("a"), none, false), (InField::Text("a".into()), none, false));
+        // Shift for one character, then off; Caps stays
+        let (_, shifted, _) = in_field(&find("Shift"), none, false);
+        assert!(shifted.shift);
+        assert_eq!(in_field(&find("1"), shifted, false), (InField::Text("!".into()), none, false));
+        let (_, _, caps) = in_field(&find("Caps"), none, false);
+        assert!(caps);
+        assert_eq!(in_field(&find("q"), none, true), (InField::Text("Q".into()), none, true));
+        assert_eq!(in_field(&find("⌫"), none, false).0, InField::Backspace);
+        assert_eq!(in_field(&find("Return"), shifted, false), (InField::Enter, none, false));
+        assert_eq!(in_field(&find(""), none, false).0, InField::Text(" ".into()));
+        // (nothing a password has a use for)
+        for k in ["Ctrl", "Alt", "Super", "Tab", "←", "Esc"] {
+            assert_eq!(in_field(&find(k), none, false), (InField::Nothing, none, false), "{k}");
+        }
     }
 }

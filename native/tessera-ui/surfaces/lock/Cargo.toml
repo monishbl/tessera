@@ -11,6 +11,8 @@ doctest = false # (comments' code blocks are prose, not examples)
 
 [dependencies]
 tessera-core.workspace = true
+# (the on-screen keyboard's keys, drawn on the lock's own surface: #763)
+tessera-osk.workspace = true
 slint.workspace = true
 smithay-client-toolkit.workspace = true
 image.workspace = true
