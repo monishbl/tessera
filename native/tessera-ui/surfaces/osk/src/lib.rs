@@ -50,6 +50,23 @@ const NAME: &str = "osk";
 pub const NS: &str = "tessera:keyboard";
 const M: f32 = tessera_core::surfaces::kit::OSK_SHADOW; // room for the shadow round the keyboard
 
+/// Whether the keyboard is up now, and on which screen (None: down),
+/// published (Msg::Data) on every change, whatever opened or closed it: the
+/// login screen's lift follows it, not its own button's presses (#763)
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct OskShown(pub Option<String>);
+
+impl OskShown {
+    /// Up on this screen (one said for none: up wherever it is)
+    pub fn up_on(&self, output: &str) -> bool {
+        self.0.as_deref().is_some_and(|o| o.is_empty() || o == output)
+    }
+}
+
+fn publish(st: &State, shown: Option<String>) {
+    let _ = st.tx.send(tessera_core::Msg::Data(Box::new(OskShown(shown))));
+}
+
 enum Msg {
     Press(i32, i32),
     /// still held: the same stroke again (#1051)
@@ -146,6 +163,7 @@ impl Osk {
         tessera_core::touch::press_at_once(NS);
         ui.show().expect("show keyboard");
         let a11y = crate::a11y::A11y::new(&surface, st.tx.clone());
+        publish(st, Some(output.clone()));
         self.win = Some(Win { output, surface, ui, a11y, size, glass_sent: String::new(), settled: false, rows });
         self.refresh();
         if self.typist.is_none() {
@@ -160,6 +178,7 @@ impl Osk {
             w.surface.layer.set_exclusive_zone(0);
             w.surface.hide(); // (unmapped now: dropping the window alone leaves it on screen)
             st.drop_surface(&w.surface);
+            publish(st, None);
         }
         // (a modifier latched and forgotten must not ride on the first key of
         // the next opening; Caps is a lock, kept as it is)
@@ -295,5 +314,20 @@ impl Part for Osk {
         if let Some(w) = &self.win {
             crate::services::hypr::Glass::clear_now(&w.output, NS);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OskShown;
+
+    #[test]
+    fn the_login_screen_lifts_only_while_the_keyboard_is_up_on_its_screen() {
+        // (#763: closed any way, by its button or not, the screen drops back)
+        assert!(!OskShown(None).up_on("DP-1"));
+        assert!(!OskShown::default().up_on(""));
+        assert!(OskShown(Some("DP-1".into())).up_on("DP-1"));
+        assert!(!OskShown(Some("HDMI-A-1".into())).up_on("DP-1"));
+        assert!(OskShown(Some(String::new())).up_on("DP-1"));
     }
 }

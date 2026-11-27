@@ -653,6 +653,13 @@ impl Part for Greeter {
         self.aids(st);
     }
 
+    fn data(&mut self, st: &mut State, what: std::any::TypeId) {
+        // (the on-screen keyboard came up or went, #763)
+        if what == std::any::TypeId::of::<tessera_osk::OskShown>() {
+            self.aids(st);
+        }
+    }
+
     fn start(&mut self, st: &mut State) {
         self.style = Style::pick(&self.opts.style, st.shell.look.material);
         self.h24 = view::h24(crate::env::var("GREETER_CLOCK24").as_deref(), &st.shell.cfg);
@@ -831,6 +838,8 @@ impl Greeter {
             g.set_osk_button(button);
             let screen = crate::surfaces::kit::screen_named(st, &w.output).unwrap_or((1920.0, 1080.0));
             g.set_osk_covers(crate::surfaces::kit::osk_covers(screen.0));
+            // (up or down as the keyboard really is: closed any way, the screen drops back)
+            g.set_osk_up(st.shell.get::<tessera_osk::OskShown>().is_some_and(|s| s.up_on(&w.output)));
             // (the keyboard part of this process: it opens where the field has the keyboard)
             let tx = st.tx.clone();
             g.on_osk(move || {

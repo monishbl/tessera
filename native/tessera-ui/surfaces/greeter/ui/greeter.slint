@@ -106,11 +106,12 @@ export global Greet {
     in property <bool> caps;
     in property <string> layout;
     in property <bool> osk-button;
-    in-out property <bool> osk-up;
+    // (osk-up: the keyboard's real state, from Rust, tessera_osk::OskShown;
+    // it may close without this button)
+    in property <bool> osk-up;
     in property <length> osk-covers: 360px;
     callback osk();
     public function toggle-osk() {
-        osk-up = !osk-up;
         osk();
     }
     // the fingerprint's phase, as the lock's: "" | waiting | miss | match
