@@ -286,3 +286,4 @@ Removed: the passkeys daemon, its Settings group, its polkit-dialog requests and
 | Ookla speed test: its licence and privacy notice shown once in Settings → Network (with links), used only after you accept; never accepted for you (#338) | 27 Nov | done, unchecked | (this commit) |
 | Report a bug: with the screenshot on, Send first asks "The screenshot will be public": send with it, without it, or cancel (#893) | 27 Nov | done, unchecked | (this commit) |
 | Circle to Search: "Search the web" asks once that the circled picture will be sent to Google (Send to Google), remembers the answer; Settings → Appearance → Circle to Search can hide the chip (#1058) | 27 Nov | done, unchecked | (this commit) |
+| Quick Share and LocalSend stop broadcasting while the screen is locked; Quick Share's ids renewed daily; Settings → Phone says "Everyone" makes the computer recognisable (#1009) | 27 Nov | done, unchecked | (this commit) |
