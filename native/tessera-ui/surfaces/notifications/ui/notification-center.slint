@@ -250,6 +250,16 @@ component FocusTab {
 export component Center inherits Window {
     in property <bool> shown;
     in property <bool> bare; // Glass without the panel: each piece its own glass
+    // bare: the wallpaper under the title is light (dark ink, as the bar's; #395)
+    in property <bool> title-dark;
+    // bare: Clear all's own chip of glass, where it is in the window (Rust's glass under it)
+    clear-measure := Text {
+        visible: false;
+        text: "Clear all";
+        font-size: Theme.small;
+        font-weight: 500;
+    }
+    out property <length> clear-w: clear-measure.preferred-width + 20px;
     in property <bool> glass-plugin;
     in property <[NcRow]> rows;
     in property <bool> anything;
@@ -304,6 +314,8 @@ export component Center inherits Window {
     out property <length> list-top: body.y + pad + outer.content-y + list-at.y;
     out property <length> list-scroll: -flick.content-y;
     out property <length> list-height: flick.height;
+    out property <length> clear-left: body.x + pad + content-w - clear-w;
+    out property <length> clear-top: body.y + pad + outer.content-y + 1px;
     out property <float> openness: shown ? 1 : 0;
     // the widgets' card, in the panel (Glass without the panel: its glass)
     out property <length> widgets-y: pad + outer.content-y + widgets.y;
@@ -449,21 +461,28 @@ export component Center inherits Window {
                     padding-left: 4px;
                     Text {
                         text: "Notifications";
-                        color: bare ? #ffffff : Theme.label;
+                        // (straight on the wallpaper: the bar's wallpaper-aware ink)
+                        color: bare ? (title-dark ? #000000d9 : #fffffff5) : Theme.label;
                         font-size: Theme.title;
                         font-weight: 600;
                         vertical-alignment: center;
                         horizontal-stretch: 1;
-                        stroke: bare ? #00000033 : transparent;
-                        stroke-width: bare ? 0.6px : 0;
+                        stroke: bare && !title-dark ? #00000033 : transparent;
+                        stroke-width: bare && !title-dark ? 0.6px : 0;
                     }
                     if anything: Rectangle {
                         y: 1px;
-                        width: clear-l.preferred-width + 20px;
+                        width: root.clear-w;
                         height: 26px;
                         border-radius: 13px;
-                        background: clear-t.pressed ? Theme.fill-pressed : clear-t.has-hover ? Theme.fill-hover : Theme.fill; // (pressed too, #438)
+                        // (bare: a chip of glass of its own, as the cards; the
+                        // plugin's glass under it, else the frost)
+                        // (pressed too, #438)
+                        background: bare ? (glass-plugin ? (Theme.dark ? #ffffff12 : #ffffff47) : Frost.tint).mix(Theme.label, clear-t.pressed ? 0.85 : clear-t.has-hover ? 0.9 : 1)
+                            : clear-t.pressed ? Theme.fill-pressed : clear-t.has-hover ? Theme.fill-hover : Theme.fill;
                         animate background { duration: Theme.hover; }
+                        border-width: bare ? 1px : 0;
+                        border-color: Theme.dark ? #ffffff0f : #ffffff4d;
                         accessible-role: button;
                         accessible-label: "Clear all notifications";
                         accessible-action-default => { clear-all(); }
@@ -683,6 +702,8 @@ export component Center inherits Window {
                                                 width: content-w;
                                                 b: r.b;
                                                 hovered: gtouch.has-hover;
+                                                // (a long body: a click on it shows it whole)
+                                                expandable: r.count <= 1 || r.open;
                                                 // a folded stack: "2 more"; a click fans it
                                                 // out, close clears the group
                                                 more: r.count > 1 && !r.open ? r.count - 1 : 0;
@@ -792,6 +813,7 @@ export component Center inherits Window {
                                                 width: content-w;
                                                 b: r.b;
                                                 hovered: mtouch.has-hover;
+                                                expandable: r.count <= 1 || r.open;
                                                 group-count: r.count;
                                                 group-open: r.open;
                                                 tap-expands: r.count > 1;

@@ -201,8 +201,8 @@ pub struct Sidebar {
     /// the streaming answer's blocks, changed in place: only the block that
     /// grew changes (a new model every 50 ms made every block again)
     stream: tessera_core::rows::Rows<ui::MdBlock>,
-    /// and the Markdown blocks they were made from (not styled again)
-    stream_memo: Vec<(markdown::Block, f32, ui::MdBlock)>,
+    /// and the Markdown blocks they were made from (not parsed or styled again)
+    stream_memo: MdMemo,
     tr: Tr,
     anime: Anime,
     undo_timer: slint::Timer,
@@ -316,24 +316,52 @@ fn styled(markup: &str) -> StyledText {
 
 /// Markdown blocks as Slint's
 fn md_blocks(text: &str) -> ModelRc<ui::MdBlock> {
-    tessera_core::rows::shared(md_blocks_memo(text, &mut Vec::new()))
+    tessera_core::rows::shared(md_blocks_memo(text, &mut MdMemo::default()))
 }
 
-/// Markdown blocks as Slint's, reusing those made last time (`memo`) for
-/// blocks that read the same: a streaming answer styles only what grew
-fn md_blocks_memo(text: &str, memo: &mut Vec<(markdown::Block, f32, ui::MdBlock)>) -> Vec<ui::MdBlock> {
-    let parsed = markdown::blocks(text);
-    let gaps = markdown::gaps(&parsed);
+/// What a streaming answer's last chunk left: its blocks, the Markdown they
+/// were made from, and its settled head (markdown::settled), which is not
+/// read again
+#[derive(Default)]
+struct MdMemo {
+    made: Vec<(markdown::Block, f32, ui::MdBlock)>,
+    /// the text up to the settled cut
+    head: String,
+    /// how many of `made` came from `head` (they don't change any more)
+    fixed: usize,
+}
+
+/// Markdown blocks as Slint's, reusing those made last time (`memo`): the
+/// answer's settled head isn't parsed again (a long reply was re-read from
+/// the start for every chunk), and blocks that read the same aren't styled
+/// again, so a streaming answer works only on what grew
+fn md_blocks_memo(text: &str, memo: &mut MdMemo) -> Vec<ui::MdBlock> {
+    if !text.starts_with(memo.head.as_str()) {
+        // (another text: from the start)
+        *memo = MdMemo::default();
+    }
+    let from = memo.head.len();
+    let cut = markdown::settled(text, from);
+    let mut parsed = markdown::blocks(&text[from..cut]);
+    let settled = parsed.len();
+    parsed.extend(markdown::blocks(&text[cut..]));
+    memo.head.push_str(&text[from..cut]);
+    let fixed = memo.fixed;
     let mut next: Vec<(markdown::Block, f32, ui::MdBlock)> = Vec::with_capacity(parsed.len());
-    for (i, (b, above)) in parsed.into_iter().zip(gaps).enumerate() {
-        let made = match memo.get(i) {
+    for (j, b) in parsed.into_iter().enumerate() {
+        let i = fixed + j;
+        let prev = if j > 0 { next.last().map(|e| &e.0) } else { i.checked_sub(1).and_then(|p| memo.made.get(p)).map(|e| &e.0) };
+        let above = markdown::gap(prev, &b);
+        let made = match memo.made.get(i) {
             Some((ob, oa, m)) if *ob == b && *oa == above => m.clone(),
             _ => md_block(b.clone(), above),
         };
         next.push((b, above, made));
     }
-    *memo = next;
-    memo.iter().map(|(_, _, m)| m.clone()).collect()
+    memo.made.truncate(fixed);
+    memo.made.extend(next);
+    memo.fixed = fixed + settled;
+    memo.made.iter().map(|(_, _, m)| m.clone()).collect()
 }
 
 /// One Markdown block as Slint's
@@ -350,6 +378,8 @@ fn md_block(b: markdown::Block, above: f32) -> ui::MdBlock {
             markdown::Kind::Rule => 6,
         },
         widths: tessera_core::rows::shared(if b.kind == markdown::Kind::Table { markdown::column_widths(&b.rows, 396.0) } else { Vec::new() }),
+        // (a table's columns: 0 left, 1 centred, 2 right, from its :--: row)
+        align: tessera_core::rows::shared(b.align.iter().map(|a| *a as i32).collect::<Vec<_>>()),
         level: b.level as i32,
         size: markdown::HEAD[b.level.min(6)],
         // (no "****" for an empty heading or header cell: CommonMark reads it as text)
@@ -1626,7 +1656,7 @@ mod tests {
 
     #[test]
     fn streaming_reuses_the_blocks_that_did_not_change() {
-        let mut memo = Vec::new();
+        let mut memo = MdMemo::default();
         let a = md_blocks_memo("# Plan\n\nfirst para", &mut memo);
         let b = md_blocks_memo("# Plan\n\nfirst paragraph grows", &mut memo);
         assert_eq!(a.len(), 2);
@@ -1634,11 +1664,36 @@ mod tests {
         // the heading block is the very same (its lists keep their models)
         assert!(a[0] == b[0]);
         assert!(a[1] != b[1]);
-        assert_eq!(memo.len(), 2);
+        assert_eq!(memo.made.len(), 2);
         // and the same as made afresh
         let fresh = md_blocks("# Plan\n\nfirst paragraph grows");
         assert_eq!(fresh.row_count(), 2);
         assert_eq!(fresh.row_data(1).unwrap().kind, b[1].kind);
+    }
+
+    #[test]
+    fn streaming_parses_only_past_the_settled_head() {
+        let full = "# Plan\n\nfirst para\n\n| n | price |\n|:-:|--:|\n| 1 | 2.50 |\n\n- a\n- b\n\nend of it";
+        let mut memo = MdMemo::default();
+        for k in (0..=full.len()).step_by(3).chain([full.len()]) {
+            let got = md_blocks_memo(&full[..k], &mut memo);
+            let fresh = md_blocks(&full[..k]);
+            assert_eq!(got.len(), fresh.row_count(), "at {k}");
+            for (i, g) in got.iter().enumerate() {
+                let f = fresh.row_data(i).unwrap();
+                assert_eq!((g.kind, g.above, g.code.clone()), (f.kind, f.above, f.code.clone()), "at {k} block {i}");
+            }
+        }
+        // the head is settled up to the table's blank line (a list holds it)
+        assert!(memo.head.ends_with("2.50 |\n\n"));
+        assert_eq!(memo.fixed, 3);
+        // a table's alignment reaches Slint
+        let t = md_blocks("| n | price |\n|:-:|--:|\n| 1 | 2.50 |").row_data(0).unwrap();
+        assert_eq!(t.align.iter().collect::<Vec<_>>(), [1, 2]);
+        // another text starts over
+        let other = md_blocks_memo("Hello", &mut memo);
+        assert_eq!(other.len(), 1);
+        assert_eq!(memo.fixed, 0);
     }
 
     #[test]

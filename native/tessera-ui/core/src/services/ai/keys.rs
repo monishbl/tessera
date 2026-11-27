@@ -96,12 +96,18 @@ impl Keys {
     /// Keep one (the composer's key field, /key): in memory now, in the
     /// keyring on a thread, the private file if the keyring can't
     pub fn set(&mut self, slot: &str, key: &str, label: &str) {
+        self.set_then(slot, key, label, |_| {});
+    }
+
+    /// set, then `done(kept)` on its thread: whether the keyring (or the
+    /// private file) really has it
+    pub fn set_then(&mut self, slot: &str, key: &str, label: &str, done: impl FnOnce(bool) + Send + 'static) {
         let key = key.trim().to_string();
         self.keys.insert(slot.to_string(), key.clone());
         self.edited.insert(slot.to_string());
         let (slot, label) = (slot.to_string(), label.to_string());
         std::thread::spawn(move || {
-            store(&slot, &key, &label);
+            done(store(&slot, &key, &label));
         });
     }
 

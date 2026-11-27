@@ -70,7 +70,13 @@ pub const HEAD: [f32; 7] = [0.0, 20.0, 18.0, 16.0, 15.0, 14.0, 14.0];
 /// a table 4 and 4; a quote and a rule 8 and 8) where two meet the larger
 /// one, as Qt's rich text lays them; a code block 8 from what's around it
 /// (ChatMessage.qml's column); the first block none
+#[cfg(test)]
 pub fn gaps(blocks: &[Block]) -> Vec<f32> {
+    blocks.iter().enumerate().map(|(i, b)| gap(i.checked_sub(1).map(|p| &blocks[p]), b)).collect()
+}
+
+/// The room above `b` with `prev` before it (none: the first block)
+pub fn gap(prev: Option<&Block>, b: &Block) -> f32 {
     let m = |b: &Block| match b.kind {
         Kind::Paragraph => (0.0, 8.0),
         Kind::Heading => (if b.level <= 2 { 10.0 } else { 8.0 }, 4.0),
@@ -79,7 +85,7 @@ pub fn gaps(blocks: &[Block]) -> Vec<f32> {
         Kind::Quote => (12.0, 8.0),
         Kind::Rule | Kind::Code => (8.0, 8.0),
     };
-    blocks.iter().enumerate().map(|(i, b)| if i == 0 { 0.0 } else { f32::max(m(&blocks[i - 1]).1, m(b).0) }).collect()
+    prev.map_or(0.0, |p| f32::max(m(p).1, m(b).0))
 }
 
 /// A table's columns as wide as their widest cell (Qt's rich text tables),
@@ -239,9 +245,18 @@ pub fn split(md: &str) -> Vec<Part> {
         prose.clear();
     };
     let mut i = 0;
+    // the last line that wasn't blank was a list item or its continuation
+    // (or a code block inside one): a fence indented to the item's text
+    // there is still a fence (models indent one 4+ spaces under "   - step")
+    let mut in_list = false;
     while i < lines.len() {
-        let Some((f, lang)) = fence(lines[i]) else {
-            prose.push(lines[i]);
+        let l = lines[i];
+        let found = fence(l).map(|f| (f, indent(l))).or_else(|| if in_list { fence(l.trim_start_matches(' ')).map(|f| (f, indent(l))) } else { None });
+        let Some(((f, lang), lead)) = found else {
+            if !l.trim().is_empty() {
+                in_list = list_item(l).is_some() || (in_list && continuation(l));
+            }
+            prose.push(l);
             i += 1;
             continue;
         };
@@ -258,12 +273,56 @@ pub fn split(md: &str) -> Vec<Part> {
                 closed = true;
                 break;
             }
-            code.push(l);
+            // (the item's indent off each code line, as far as it goes)
+            let cut = indent(l).min(lead);
+            code.push(&l[cut..]);
         }
         parts.push(Part::Code(lang, code.join("\n"), !closed));
     }
     flush(&mut prose, &mut parts);
     parts
+}
+
+/// Where the reply can be cut for good, at or after `from` (0, or an earlier
+/// such cut): just after the last finished blank line (a line break after
+/// it) that is outside a code fence and not under a list item (a fence
+/// indented under one reads otherwise). The text before it reads as the same
+/// blocks whatever is added after, so a streaming answer is parsed from
+/// there on only
+pub fn settled(md: &str, from: usize) -> usize {
+    let Some(rest) = md.get(from..) else { return from };
+    // (a lone \r is a line break to split(): no new cut past one)
+    if rest.contains('\r') {
+        return from;
+    }
+    let mut cut = from;
+    let mut off = from;
+    let mut open: Option<String> = None;
+    let mut in_list = false;
+    for piece in rest.split_inclusive('\n') {
+        off += piece.len();
+        // (the last line, not finished yet)
+        let Some(l) = piece.strip_suffix('\n') else { break };
+        if let Some(f) = &open {
+            let t = l.trim();
+            if t.starts_with(f.as_str()) && t.chars().all(|c| f.starts_with(c)) {
+                open = None;
+            }
+            continue;
+        }
+        if let Some((f, _)) = fence(l).or_else(|| if in_list { fence(l.trim_start_matches(' ')) } else { None }) {
+            open = Some(f);
+            continue;
+        }
+        if l.trim().is_empty() {
+            if !in_list {
+                cut = off;
+            }
+            continue;
+        }
+        in_list = list_item(l).is_some() || (in_list && continuation(l));
+    }
+    cut
 }
 
 /// The reply as blocks to draw
@@ -767,6 +826,37 @@ mod tests {
             slint_ok(&x.text);
             x.items.iter().for_each(|i| slint_ok(&i.text));
         }
+    }
+
+    #[test]
+    fn a_settled_head_reads_the_same_on_its_own() {
+        let md = "# Plan\n\nfirst para\n\n- a\n\n     ```\n     x\n\n     ```\n\n```\ncode\n\nmore\n```\n\n| a | b |\n|---|--:|\n| 1 | 2 |\n\nlast";
+        let cut = settled(md, 0);
+        // after the table's blank line; never inside the list or the fences
+        assert_eq!(&md[cut..], "last");
+        for k in 0..=md.len() {
+            let c = settled(&md[..k], 0);
+            assert!(c <= k);
+            let mut b = blocks(&md[..c]);
+            b.extend(blocks(&md[c..k]));
+            assert_eq!(b, blocks(&md[..k]), "cut {c} of {k}");
+            // and from an earlier cut on, the same
+            assert_eq!(settled(&md[..k], settled(&md[..k / 2], 0)), c);
+        }
+        // the last blank line isn't finished: no cut yet
+        assert_eq!(settled("para\n", 0), 0);
+        assert_eq!(settled("para\n\n", 0), 6);
+    }
+
+    #[test]
+    fn a_fence_inside_a_list_item_is_code() {
+        let md = "1. Install:\n   - step\n     ```bash\n     sudo pacman -S git\n       --needed\n     ```\n   - done";
+        let b = blocks(md);
+        assert_eq!(b.iter().map(|b| b.kind).collect::<Vec<_>>(), [Kind::List, Kind::Code, Kind::List]);
+        assert_eq!((b[1].lang.as_str(), b[1].code.as_str(), b[1].open), ("bash", "sudo pacman -S git\n  --needed", false));
+        assert_eq!(b[0].items.len(), 2);
+        // not under a list: four spaces in is still no fence
+        assert!(matches!(split("text\n\n    ```\n    x\n    ```")[..], [Part::Text(_)]));
     }
 
     #[test]

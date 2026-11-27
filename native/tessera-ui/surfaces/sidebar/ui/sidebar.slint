@@ -315,6 +315,8 @@ export struct MdBlock {
     rows: [MdRow],
     // a table's column widths (markdown::column_widths: its content's)
     widths: [length],
+    // and their alignment: 0 left, 1 centred, 2 right
+    align: [int],
     // room above it (markdown::gaps: Markdown.js's margins, the larger of
     // two that meet)
     above: length,
@@ -478,6 +480,7 @@ component Markdown inherits VerticalLayout {
                                 StyledText {
                                     // (its own width: a wrapped cell measures its height against it)
                                     width: b.widths[i] - 12px;
+                                    horizontal-alignment: b.align[i] == 2 ? TextHorizontalAlignment.right : b.align[i] == 1 ? TextHorizontalAlignment.center : TextHorizontalAlignment.left;
                                     text: c;
                                     default-color: ink;
                                     default-font-size: M.body;

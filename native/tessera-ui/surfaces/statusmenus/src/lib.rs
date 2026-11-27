@@ -245,6 +245,7 @@ fn block(b: &Block, first: bool, last: bool, material: bool, (caption, small): (
         cur: b.current,
         flag: b.flag,
         gap,
+        tw: width - 12.0,
         first,
         last,
         graph: b.graph.as_str().into(),
@@ -517,7 +518,7 @@ impl StatusMenus {
     fn profiles(&self) -> Vec<Profile> {
         self.feed["profiles"]
             .as_array()
-            .map(|a| a.iter().map(|p| Profile { name: p["name"].as_str().unwrap_or("").into(), kind: p["kind"].as_str().unwrap_or("").into(), busy: p["busy"].as_bool().unwrap_or(false) }).collect())
+            .map(|a| a.iter().map(|p| Profile { name: p["name"].as_str().unwrap_or("").into(), kind: p["kind"].as_str().unwrap_or("").into(), busy: p["busy"].as_bool().unwrap_or(false), id: p["id"].as_str().unwrap_or("").into() }).collect())
             .unwrap_or_default()
     }
 
@@ -866,8 +867,8 @@ impl StatusMenus {
             self.close(st, true);
             return;
         }
-        if let Some(n) = b.id.strip_prefix("prof:") {
-            shell::ask("statusmenus", json!(["profile", n.parse::<i64>().unwrap_or(-1)]));
+        if let Some(id) = b.id.strip_prefix("prof:") {
+            shell::ask("statusmenus", json!(["profile", id]));
         } else if let Some(name) = b.id.strip_prefix("out:") {
             audio::send(Cmd::DefaultSink(name.into()));
         } else if let Some(name) = b.id.strip_prefix("in:") {

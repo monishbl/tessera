@@ -106,6 +106,8 @@ enum M {
     Sweep,
     MusicLinger,
     TrayCollapse,
+    /// the bar's right side changed its squeeze: look again (#383)
+    Squeeze,
     Menu(String, String, f32),
     Clicked(String, String, bool, f32),
     MenuActivated(i32),
@@ -192,6 +194,11 @@ struct BarEntry {
     chips_key: String,
     live_key: String,
     alerts_key: String,
+    /// the right side over its room (items::squeeze_step), what each step
+    /// freed, and the width before the last one (measured on the next look)
+    squeeze: u8,
+    freed: [f32; items::SQUEEZE_MAX as usize],
+    squeeze_from: Option<f32>,
     /// the island has the keyboard (an alert clicked: Esc dismisses the newest)
     keys: bool,
     /// the island's width and height on Qt's spring (spring.rs), stepped
@@ -343,6 +350,20 @@ fn send(st: &State, m: M) {
 
 fn load(path: &std::path::Path) -> Option<slint::Image> {
     slint::Image::load_from_path(path).ok()
+}
+
+/// An alert's height in the open island (AlertView's, a notification card's
+/// at its usual two lines; a guess on the tall side)
+fn alert_h(a: &ui::AlertRow) -> f32 {
+    if a.hud {
+        34.0
+    } else if a.kind == "ringing" {
+        68.0
+    } else if a.card {
+        88.0 + if a.headline.is_empty() { 0.0 } else { 34.0 } + if slint::Model::row_count(&a.card_buttons) > 0 { 34.0 } else { 0.0 }
+    } else {
+        (if a.has_picture && !a.has_art { 60.0 } else { 52.0 }) + if slint::Model::row_count(&a.more) > 0 { 36.0 } else { 0.0 }
+    }
 }
 
 /// rgb luminance of a colour (is the bar's text dark?)
@@ -1196,7 +1217,14 @@ impl Menubar {
                 b.ui.set_card(card_live);
                 b.ui.set_card_on(card.is_some());
                 b.ui.set_all_mode(all_mode);
-                let rows = if all_mode { self.act_rows(material, &theme) } else { Vec::new() };
+                let mut rows = if all_mode { self.act_rows(material, &theme) } else { Vec::new() };
+                // (what fits under the card and above the status line; "+N more" for the rest, #363)
+                let card_h = if card.is_some() { if card.as_ref().is_some_and(|c| c.kind == "music") { 200.0 } else { 120.0 } + 10.0 } else { 0.0 };
+                let heights: Vec<f32> = rows.iter().map(|r| if r.kind == "captions" && slint::Model::row_count(&r.lines) > 0 { (20.0 + slint::Model::row_count(&r.lines) as f32 * 18.0).max(36.0) } else if r.progress >= 0.0 { 42.0 } else { 36.0 }).collect();
+                let keep = island::fit(&heights, 10.0, island::room(ISLAND_H as f32, false) - card_h - 32.0, 18.0);
+                let more = rows.len().saturating_sub(keep);
+                rows.truncate(keep);
+                b.ui.set_act_more(more as i32);
                 self.act_rows_model.set_keyed(rows, |r| r.kind.clone());
                 b.live_key = live_key;
             }
@@ -1204,11 +1232,36 @@ impl Menubar {
             // entrance again, nor lose a press, when it changes)
             let alerts_key = format!("{material}{:?}", self.island.alerts);
             if alerts_key != b.alerts_key {
-                let alerts = self.alert_rows(material, &theme);
+                let mut alerts = self.alert_rows(material, &theme);
+                // (what fits the open island; "+N more" for the rest, #363)
+                let heights: Vec<f32> = alerts.iter().map(alert_h).collect();
+                let keep = island::fit(&heights, 10.0, island::room(ISLAND_H as f32, true), 18.0);
+                let more = alerts.len().saturating_sub(keep);
+                alerts.truncate(keep);
+                b.ui.set_alerts_more(more as i32);
                 self.alert_rows.set_keyed(alerts, |a| a.uid);
                 b.alerts_key = alerts_key;
             }
-            // right
+            // right: within its room (#383): what it needs as last drawn
+            // gives the next step (one a look: the layout follows a frame later)
+            let need = b.ui.get_right_need();
+            if let Some(before) = b.squeeze_from.take() {
+                if b.squeeze > 0 {
+                    b.freed[b.squeeze as usize - 1] = (before - need).max(0.0);
+                }
+            }
+            let freed = if b.squeeze > 0 { b.freed[b.squeeze as usize - 1] } else { 0.0 };
+            let step = items::squeeze_step(b.squeeze, need, b.ui.get_side_room(), freed);
+            if step != b.squeeze {
+                if step > b.squeeze {
+                    b.squeeze_from = Some(need);
+                }
+                b.squeeze = step;
+                let tx = st.tx.clone();
+                slint::Timer::single_shot(std::time::Duration::from_millis(30), move || {
+                    let _ = tx.send(crate::Msg::Part(NAME, Box::new(M::Squeeze)));
+                });
+            }
             let entries = items::entries(&items::Inputs {
                 bar: &cfg,
                 material,
@@ -1224,6 +1277,7 @@ impl Menubar {
                 clock: &clock,
                 clock_long: &clock_long,
                 now_ms,
+                squeeze: b.squeeze,
             });
             let rows: Vec<ui::Entry> = entries.iter().map(|e| entry_struct(e, &tray_images)).collect();
             b.entries.set_keyed(rows, |r| r.id.clone());
@@ -1475,7 +1529,8 @@ impl Menubar {
                     .collect();
                 menus::space(*id, &here, &displays)
             }
-            MenuKind::Tray(..) => Vec::new(), // (rows come with the item's answer)
+            // (rows come with the item's answer: "Loading…" until then)
+            MenuKind::Tray(..) => menus::tray_waiting(false),
         }
     }
 
@@ -1584,6 +1639,8 @@ impl Menubar {
                 m.trail.clear();
             }
             tray::menu(key, path, st.shell.sender(NAME));
+            // (and kept up to date while it's open)
+            tray::follow(key, path, 0, st.shell.sender(NAME));
         }
         let m = self.menu.as_mut().unwrap();
         m.region_sent.clear();
@@ -1651,6 +1708,9 @@ impl Menubar {
                 m.region_sent = "closed".into();
             }
         }
+        if !self.tray_menu.is_empty() {
+            tray::unfollow();
+        }
         // (a tray menu closed: the tucked-away tray's 12 s start again)
         if !self.tray_menu.is_empty() && self.tray_open {
             let tx = st.tx.clone();
@@ -1689,6 +1749,7 @@ impl Menubar {
                         m.trail.push((id, label));
                     }
                     tray::submenu(&key, &path, id, st.shell.sender(NAME));
+                    tray::follow(&key, &path, id, st.shell.sender(NAME));
                 }
             }
             Action::TrayBack => {
@@ -1701,6 +1762,7 @@ impl Menubar {
                         Some(id) => tray::submenu(&key, &path, id, st.shell.sender(NAME)),
                         None => tray::menu(&key, &path, st.shell.sender(NAME)),
                     }
+                    tray::follow(&key, &path, up.unwrap_or(0), st.shell.sender(NAME));
                 }
             }
         }
@@ -2276,6 +2338,7 @@ impl Menubar {
     fn handle(&mut self, st: &mut State, m: M) {
         match m {
             M::Tick => self.tick(st),
+            M::Squeeze => self.refresh(st),
             M::PlaySettle => {
                 if self.play_shown.as_ref().is_some_and(|(_, _, t)| t.elapsed() >= std::time::Duration::from_millis(1400)) {
                     self.play_shown = None;
@@ -3005,6 +3068,9 @@ impl Part for Menubar {
             chips_key: String::new(),
             live_key: String::new(),
             alerts_key: String::new(),
+            squeeze: 0,
+            freed: [0.0; items::SQUEEZE_MAX as usize],
+            squeeze_from: None,
             keys: false,
             size: None,
             size_tick: Default::default(),
@@ -3232,9 +3298,18 @@ impl Part for Menubar {
                 if let Some(m) = self.menu.as_mut().filter(|m| m.open && matches!(&m.kind, MenuKind::Tray(k, _) if *k == t.key)) {
                     // (in a submenu: "‹ <the level above>" first)
                     let back_to = (!m.trail.is_empty()).then(|| if m.trail.len() >= 2 { m.trail[m.trail.len() - 2].1.clone() } else { String::new() });
-                    let rows = menus::tray_in(&t.root, back_to.as_deref());
+                    let rows = menus::tray_answer(&t.root, back_to.as_deref(), t.failed);
                     m.ui.set_can_back(back_to.is_some());
-                    Self::show_rows(m, rows, material);
+                    if t.live {
+                        // (the app changed it while open: in place, the highlight kept)
+                        if m.rows != rows {
+                            let current = m.ui.get_current();
+                            Self::show_rows(m, rows, material);
+                            m.ui.set_current(current);
+                        }
+                    } else {
+                        Self::show_rows(m, rows, material);
+                    }
                 }
                 return;
             }

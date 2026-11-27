@@ -153,10 +153,35 @@ fn save(cx: &mut Ctx) {
         return;
     }
     let cred = cx.local_s("ai.cred");
-    cx.ask("accounts", "aiSave", json!([raw, editing, cred]));
     let m = models::normalize(&raw);
+    // (a bridge that answers: the message waits for the shell's own, and the
+    // typed credential stays until it's saved)
+    if feed(cx)["ai"].get("save").is_some() {
+        let token = format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis()));
+        cx.ask("accounts", "aiSave", json!([raw, editing, cred, token]));
+        cx.local_set("ai.saving", token);
+        cx.local_set("ai.savingKey", m.key.clone());
+        cx.local_set("ai.msg", "Saving…");
+        cx.local_set("ai.msgErr", false);
+        return;
+    }
+    cx.ask("accounts", "aiSave", json!([raw, editing, cred]));
     edit(cx, Some(&m));
     cx.local_set("ai.msg", "Model saved and selected.");
+}
+
+/// The shell's answer to the save sent with `token` (feed.accounts.ai.save:
+/// {token, ok, error}): None while it hasn't come
+pub fn save_answer(save: &Value, token: &str) -> Option<Result<(), String>> {
+    if token.is_empty() || save["token"].as_str() != Some(token) {
+        return None;
+    }
+    if save["ok"].as_bool().unwrap_or(false) {
+        Some(Ok(()))
+    } else {
+        let e = save["error"].as_str().unwrap_or("").trim();
+        Some(Err(if e.is_empty() { "The model couldn't be saved. Try again.".to_string() } else { e.to_string() }))
+    }
 }
 
 /// A field of the form, its text in `ai.<k>`
@@ -173,6 +198,24 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
     let f = feed(cx);
     let ai = &f["ai"];
     let saved = models::read(&cx.get("ai.models"));
+    // The shell answered the last save: say what it said
+    if let Some(answer) = save_answer(&ai["save"], &cx.local_s("ai.saving")) {
+        let key = cx.local_s("ai.savingKey");
+        cx.local.remove("ai.saving");
+        cx.local.remove("ai.savingKey");
+        match answer {
+            Ok(()) => {
+                // (the form shows the model as kept, the credential field empty)
+                let m = saved.iter().find(|m| m.key == key).cloned().unwrap_or_else(|| models::normalize(&draft(cx)));
+                edit(cx, Some(&m));
+                cx.local_set("ai.msg", "Model saved and selected.");
+            }
+            Err(e) => {
+                cx.local_set("ai.msg", e);
+                cx.local_set("ai.msgErr", true);
+            }
+        }
+    }
     let selected = cx.s("ai.model");
     let model = saved.iter().find(|m| m.key == selected).or(saved.first()).cloned().unwrap_or_else(Model::none);
 
@@ -464,6 +507,17 @@ mod tests {
         assert_eq!(saved_chats(5, 2, false), "5 chats, 2 pinned");
         assert_eq!(saved_chats(3, 3, true), "Delete 3 chats? This can't be undone. They're all pinned, and go too.");
         assert_eq!(saved_chats(3, 1, true), "Delete 3 chats? This can't be undone. Your pinned chat goes too.");
+    }
+
+    #[test]
+    fn the_shells_answer_is_what_saving_says() {
+        let ok = json!({"token": "17", "ok": true, "error": ""});
+        assert_eq!(save_answer(&ok, "17"), Some(Ok(())));
+        // another save's answer, or none sent: still waiting
+        assert_eq!(save_answer(&ok, "18"), None);
+        assert_eq!(save_answer(&json!({"token": ""}), ""), None);
+        assert_eq!(save_answer(&json!({"token": "5", "ok": false, "error": "Couldn't save the key."}), "5"), Some(Err("Couldn't save the key.".into())));
+        assert_eq!(save_answer(&json!({"token": "5", "ok": false}), "5"), Some(Err("The model couldn't be saved. Try again.".into())));
     }
 
     #[test]

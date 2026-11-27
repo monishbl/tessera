@@ -283,9 +283,12 @@ component LeftItem inherits Rectangle {
     in property <bool> active;
     in property <color> ink;
     in property <string> label;
+    // its text no wider than this, then "…" (the app's name on a narrow bar; #383)
+    in property <length> max-text: 10000px;
+    out property <length> natural-w: row.preferred-width + 18px;
     callback clicked(length);
     height: 24px;
-    width: row.preferred-width + 18px;
+    width: natural-w;
     border-radius: Theme.material ? self.height / 2 : Theme.radius-item;
     background: ink.with-alpha(Theme.material ? (active ? 0.16 : t.pressed ? 0.1 : t.has-hover ? 0.08 : 0) : (active ? 0.22 : t.pressed ? 0.2 : t.has-hover ? 0.12 : 0));
     animate background { duration: Theme.hover; }
@@ -324,6 +327,8 @@ component LeftItem inherits Rectangle {
             font-size: Theme.material ? 14px : Theme.body;
             font-weight: bold ? (Theme.material ? 600 : 700) : 500;
             vertical-alignment: center;
+            max-width: root.max-text;
+            overflow: elide;
             accessible-role: none;
         }
     }
@@ -391,6 +396,9 @@ export component Bar inherits Window {
     in property <bool> card-on;
     in property <bool> all-mode;
     in property <[ActRow]> act-rows;
+    // past the open island's room: how many alerts / activity rows wait ("+N more"; #363)
+    in property <int> alerts-more;
+    in property <int> act-more;
     in property <[RecentRow]> recent;
     in property <int> recent-n;
     out property <bool> island-keys: island.wants-keys;
@@ -423,6 +431,13 @@ export component Bar inherits Window {
     out property <length> tip-h: tip.height;
     out property <float> tip-o: tip.opacity;
     out property <bool> hovered: reveal.has-hover || (island-on && island.island-hovered);
+    // Each side's room: up to the centre (the island at rest, or the spaces)
+    // and 8 px from it. The left's app name shortens with "…" to fit; Rust
+    // folds the right's tray and then drops its least important items while
+    // it needs more (#383)
+    out property <length> side-room: max(0px, (self.width - (island-on ? island.rest-w : spaces-shown ? spaces.width + 20px : 0px)) / 2 - 16px);
+    out property <length> right-need: right.preferred-width;
+    property <length> name-cap: max(48px, side-room - logo-item.width - win-item.width);
     callback menu(string, length); // system | app | window, at x
     callback clicked(string, PointerEventButton, length); // an entry: its id
     callback item-placed(string, length); // an entry's left edge, as laid out (menus opened by a shortcut go under it)
@@ -632,7 +647,7 @@ export component Bar inherits Window {
                 y: 3px;
                 height: 24px;
                 spacing: 0;
-                LeftItem {
+                logo-item := LeftItem {
                     icon: root.logo;
                     image: root.logo-image;
                     has-image: root.has-logo-image;
@@ -641,22 +656,28 @@ export component Bar inherits Window {
                     active: open-menu == "system";
                     clicked(x) => { root.menu("system", x); }
                 }
-                if app-menu: LeftItem {
+                // (always made, no width while off: the side's room counts them)
+                app-item := LeftItem {
+                    visible: app-menu;
+                    width: app-menu ? self.natural-w : 0px;
                     text: app-name;
                     bold: true;
                     ink: root.ink;
                     label: "Active app: " + app-name;
                     active: open-menu == "app";
+                    max-text: root.name-cap - 18px;
                     clicked(x) => { root.menu("app", x); }
                 }
-                if window-menu: LeftItem {
+                win-item := LeftItem {
+                    visible: window-menu;
+                    width: window-menu ? self.natural-w : 0px;
                     text: "Window";
                     ink: root.ink;
                     active: open-menu == "window";
                     clicked(x) => { root.menu("window", x); }
                 }
                 if window-title != "": Text {
-                    max-width: max(0px, root.width / 2 - 8px - 360px);
+                    max-width: max(0px, min(root.width / 2 - 8px - 360px, side-room - logo-item.width - app-item.width - win-item.width));
                     text: window-title;
                     color: root.ink.with-alpha(0.65);
                     font-size: Theme.body;
@@ -763,6 +784,8 @@ export component Bar inherits Window {
         level-set(id, v) => { root.level-set(id, v); }
         level-mute(id) => { root.level-mute(id); }
         act-rows: root.act-rows;
+        alerts-more: root.alerts-more;
+        act-more: root.act-more;
         recent: root.recent;
         recent-n: root.recent-n;
         recent-run(h) => { root.recent-run(h); }

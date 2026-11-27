@@ -16,7 +16,10 @@
 //! IPC `brightness rescan | status`. State on the bus as "brightness": {value,
 //! available, external, displayName, displays:[{id,name,value,builtIn}],
 //! ddcDisplays:[{output,bus,model}], ddcValues, ddcInstalled, ddcProblem,
-//! ddcScanned, ddcScanning, backlight}.
+//! ddcScanned, ddcScanning, backlight}. And in the host's state, for the
+//! surfaces: "displays" (each with its level) and "brightnessNow" {external,
+//! name, value, changes}: the display the keys move, and a count of the
+//! changes set on an external one (the OSD shows on each; #401).
 
 use super::common::*;
 use serde_json::{json, Map, Value};
@@ -122,6 +125,8 @@ pub struct Brightness {
     scan: slint::Timer,
     last: Value,
     installed: bool,
+    /// levels set on an external display (the OSD shows each)
+    changes: u64,
 }
 
 impl Brightness {
@@ -133,7 +138,7 @@ impl Brightness {
         h.st.shell.get::<Backlight>().map(|b| (b.present, b.value)).unwrap_or((false, 0.5))
     }
 
-    fn publish(&mut self, h: &Host) {
+    fn publish(&mut self, h: &mut Host) {
         let (present, bl) = Self::backlight(h);
         let t = self.target();
         let value = t.map(|d| self.values.get(&d.output).copied().unwrap_or(0.5)).unwrap_or(bl);
@@ -151,6 +156,9 @@ impl Brightness {
             "ddcValues": vals, "ddcInstalled": self.installed, "ddcProblem": self.problem, "ddcScanned": self.scanned, "ddcScanning": self.detecting,
             "backlight": present, "target": t.map(|d| json!({"output": d.output, "bus": d.bus, "model": d.model})),
         });
+        // (straight to the surfaces: the OSD follows an external display's level)
+        h.set_state("displays", v["displays"].clone());
+        h.set_state("brightnessNow", json!({"external": v["external"], "name": v["displayName"], "value": v["value"], "changes": self.changes}));
         if v != self.last {
             crate::bus::put(NAME, v.clone());
             self.last = v;
@@ -296,6 +304,7 @@ impl Service for Brightness {
                     Self::hush(h);
                 }
                 if let Some(o) = self.target().map(|d| d.output.clone()) {
+                    self.changes += 1;
                     self.set_ddc(h, &o, f(0));
                 } else if Self::backlight(h).0 {
                     self.set_backlight(f(0));
@@ -307,6 +316,7 @@ impl Service for Brightness {
                     Self::hush(h);
                 }
                 if id != "backlight" {
+                    self.changes += 1;
                     self.set_ddc(h, &id, f(1));
                 } else if Self::backlight(h).0 {
                     self.set_backlight(f(1));

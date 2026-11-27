@@ -2469,6 +2469,9 @@ export component Island inherits Rectangle {
     out property <float> below-o: below.opacity;
     out property <bool> island-hovered: hovering;
     in property <[ActRow]> act-rows;
+    // past the island's room (Rust's island::fit): how many more wait, "+N more"
+    in property <int> alerts-more;
+    in property <int> act-more;
     // the Recent list (IslandRecent): its lines (at most 8), how many alerts the history keeps
     in property <[RecentRow]> recent;
     in property <int> recent-n;
@@ -2579,10 +2582,14 @@ export component Island inherits Rectangle {
     // the size it's going to, and the size it is now on its spring (Rust's;
     // below zero: none yet, the target itself)
     out property <length> want-w: target-w;
+    // its width at rest (the pill or the dots, not open): the bar's sides keep clear of it (#383)
+    out property <length> rest-w: mode == 3 ? min(420px, pill-row.preferred-width + 28px) : compact ? compact-w : dots-w + 14px;
     out property <length> want-h: target-h;
     in property <length> spring-w: -1px;
     in property <length> spring-h: -1px;
-    property <length> target-h: expanded ? max(body.y + body.preferred-height + (event-inside ? 16px : 14px), recent-over && !event-inside ? recent-hold-h : 0) : mode == 3 ? 30px : 26px;
+    // (never past its window: the surface is a fixed height, and the glass
+    // was asked for more than shows; what doesn't fit is "+N more", #363)
+    property <length> target-h: expanded ? min(root.height - 8px, max(body.y + body.preferred-height + (event-inside ? 16px : 14px), recent-over && !event-inside ? recent-hold-h : 0)) : mode == 3 ? 30px : 26px;
     property <length> radius: min(Theme.radius-tile, shape.height / 2);
     property <length> group-left: shape.width / 2 - compact-w / 2 + pad;
     property <length> lead-x: layout == "split" ? shape.width / 2 - dots-w / 2 - 12px - lead-w : layout == "beside" ? group-left + dots-w + 21px : group-left;
@@ -2892,6 +2899,14 @@ export component Island inherits Rectangle {
                             act(u, w) => { root.act(u, w); }
                             dismiss(u) => { root.dismiss(u); }
                             set-level(v) => { root.set-level(v); }
+                        }
+                        if alerts-more > 0: Text {
+                            text: "+" + alerts-more + " more";
+                            color: root.ink2;
+                            font-size: Theme.caption;
+                            font-weight: 600;
+                            height: 18px;
+                            vertical-alignment: center;
                         }
                     }
                     // the focused activity, open (IslandFocusCard, simplified)
@@ -3427,6 +3442,14 @@ export component Island inherits Rectangle {
                             ink: root.ink;
                             ink2: root.ink2;
                             control(k, j) => { root.control(k, j, true); }
+                        }
+                        if act-more > 0: Text {
+                            text: "+" + act-more + " more";
+                            color: root.ink2;
+                            font-size: Theme.caption;
+                            font-weight: 600;
+                            height: 18px;
+                            vertical-alignment: center;
                         }
                     }
                     // (not under dictation: its live activity stays clean)
