@@ -12,6 +12,9 @@
 //! (src/args.rs, `tessera-web --help`). When this isn't installed or can't
 //! start (exit 1), the shell opens the default browser instead.
 //!
+//! --render draws a page out of sight for a picture of it (src/render.rs):
+//! Search's live web results, desktop web clips.
+//!
 //! Its data: $XDG_DATA_HOME/tessera/web (site data: cookies, storage; and
 //! history.json, the address field's local history: never sent anywhere),
 //! $XDG_CACHE_HOME/tessera/web (the web cache, the compiled ad blocker).
@@ -22,6 +25,7 @@ mod history;
 mod lens;
 mod nav;
 mod place;
+mod render;
 mod theme;
 
 use args::{Args, Mode, Parsed, Place, Rect};
@@ -40,6 +44,22 @@ use webkit6::{NavigationPolicyDecision, NetworkSession, PolicyDecision, PolicyDe
 /// when it changes) into the cache folder.
 const BLOCKLIST: &str = include_str!("blocklist.json");
 const READER_JS: &str = include_str!("reader.js");
+
+/// The page's selected text, told to this program as it changes (in a
+/// script world of its own: the page can't see or fake it), for the
+/// menu's "Search Google for “…”"
+const SELECTION_WORLD: &str = "tessera-selection";
+const SELECTION_HANDLER: &str = "tesseraSelection";
+const SELECTION_JS: &str = r#"(function () {
+  var t = null;
+  document.addEventListener('selectionchange', function () {
+    clearTimeout(t);
+    t = setTimeout(function () {
+      var s = String(window.getSelection() || '').slice(0, 2000);
+      try { window.webkit.messageHandlers.tesseraSelection.postMessage(s); } catch (e) {}
+    }, 120);
+  });
+})();"#;
 
 fn data_dir() -> PathBuf {
     tessera_core::util::xdg("XDG_DATA_HOME", ".local/share").join("tessera/web")
@@ -196,6 +216,8 @@ struct App {
     from_file: Cell<bool>,
     /// the --from/--at rule is on in Hyprland until the window is placed
     placing: Cell<bool>,
+    /// the page's selected text now (SELECTION_JS)
+    selection: RefCell<String>,
     main_loop: glib::MainLoop,
 }
 
@@ -511,6 +533,12 @@ impl App {
     }
 }
 
+/// The page menu's search item: "Search Google for “water lily”" (the
+/// selection cut short)
+fn search_label(engine_name: &str, selection: &str) -> String {
+    format!("Search {engine_name} for “{}”", tessera_core::weblink::search::short(selection, 28))
+}
+
 /// Two addresses that differ only after # are one page
 fn same_page(a: &str, b: &str) -> bool {
     let strip = |s: &str| s.split('#').next().unwrap_or("").to_string();
@@ -640,6 +668,11 @@ fn build(args: Args, main_loop: glib::MainLoop) -> Rc<App> {
     };
     session.set_itp_enabled(true);
     let content = UserContentManager::new();
+    if matches!(args.mode, Mode::Browse | Mode::Lens(_)) {
+        // (the selected text, for the menu's search: in a world of its own)
+        content.register_script_message_handler(SELECTION_HANDLER, Some(SELECTION_WORLD));
+        content.add_script(&webkit6::UserScript::for_world(SELECTION_JS, webkit6::UserContentInjectedFrames::AllFrames, webkit6::UserScriptInjectionTime::End, SELECTION_WORLD, &[], &[]));
+    }
     let settings = webkit6::Settings::new();
     settings.set_enable_developer_extras(false);
     settings.set_enable_back_forward_navigation_gestures(true);
@@ -800,6 +833,7 @@ fn build(args: Args, main_loop: glib::MainLoop) -> Rc<App> {
         begun: Cell::new(false),
         from_file: Cell::new(false),
         placing: Cell::new(false),
+        selection: RefCell::new(String::new()),
         main_loop,
     });
     wire(&app, &pill, &browser);
@@ -881,6 +915,30 @@ fn wire(app: &Rc<App>, pill: &gtk::Box, browser: &gtk::Button) {
                 view.load_uri(&uri);
             }
             None
+        });
+    }
+    {
+        // The selected text, and the page's menu: "Search Google for “…”"
+        // (the engine Settings chose) for a selection, here
+        let a = app.clone();
+        app.content.connect_script_message_received(Some(SELECTION_HANDLER), move |_, value| {
+            *a.selection.borrow_mut() = value.to_str().to_string();
+        });
+        let a = app.clone();
+        v.connect_context_menu(move |_, menu, hit| {
+            let words = tessera_core::weblink::search::words(&a.selection.borrow(), 400);
+            if !a.editable() || !hit.context_is_selection() || words.is_empty() {
+                return false;
+            }
+            let engine = nav::engine();
+            let label = search_label(tessera_core::weblink::search::name(engine), &a.selection.borrow());
+            let action = gio::SimpleAction::new("search-selection", None);
+            let a2 = a.clone();
+            let url = tessera_core::weblink::search::url_for(engine, &words);
+            action.connect_activate(move |_, _| a2.go(&url));
+            menu.append(&webkit6::ContextMenuItem::new_separator());
+            menu.append(&webkit6::ContextMenuItem::from_gaction(&action, &label, None));
+            false
         });
     }
     {
@@ -1136,6 +1194,17 @@ fn main() {
             println!("{}", version());
             return;
         }
+        Ok(Parsed::Render(r)) => {
+            // (its own class, should a window of it ever be mapped: the
+            // Hyprland rule hides it and the shell's lists leave it out)
+            glib::set_prgname(Some(tessera_core::weblink::RENDER_CLASS));
+            glib::set_application_name("Tessera Web");
+            if let Err(e) = gtk::init() {
+                emit(serde_json::json!({"event": "error", "message": format!("can't start: {e}"), "url": r.url}));
+                std::process::exit(1);
+            }
+            std::process::exit(render::run(r));
+        }
         Err(e) => {
             eprintln!("tessera-web: {e}\n\n{}", args::USAGE);
             std::process::exit(2);
@@ -1217,6 +1286,12 @@ mod tests {
         assert!(!p.to_string_lossy().contains("/../"));
         assert!(p.file_name().unwrap().to_string_lossy().contains("passwd"));
         assert_eq!(download_path("").file_name().unwrap(), "download");
+    }
+
+    #[test]
+    fn the_menus_search_item() {
+        assert_eq!(search_label("Google", "  water\n lily "), "Search Google for “water lily”");
+        assert_eq!(search_label("DuckDuckGo", "a very long piece of selected text indeed"), "Search DuckDuckGo for “a very long piece of selecte…”");
     }
 
     #[test]

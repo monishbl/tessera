@@ -139,6 +139,8 @@ pub struct Known<'a> {
     pub files: &'a [(bool, String)],
     pub contents: &'a [String],
     pub home: &'a str,
+    /// the web search engine (`search.engine`: weblink::search; "" Google)
+    pub engine: &'a str,
 }
 
 /// What the rows depend on that isn't known yet
@@ -564,6 +566,34 @@ pub fn calculate(q: &str) -> Option<f64> {
     r.is_finite().then_some(r)
 }
 
+/// Whether Search's live web results (Settings → Default apps, "Web results
+/// in Search") may look this text up: not a command, a path, emoji, the
+/// clipboard, a question for the AI or a sum; nothing for one letter
+pub fn wants_web(text: &str) -> bool {
+    let raw = text.trim();
+    if js_len(raw) < 2 || raw.len() > 300 {
+        return false;
+    }
+    if raw.starts_with(['?', '>', ':', '/', ';', '~', '$', '.']) {
+        return false;
+    }
+    // (a path anywhere in it, a file's place: "~/x", "./a", "a/b/c")
+    let pathish = raw.split_whitespace().any(|w| w.starts_with('/') || w.starts_with("~/") || w.starts_with("./") || w.matches('/').count() >= 2 && !w.contains("://"));
+    if pathish {
+        return false;
+    }
+    // (a shell command typed as one: "sudo …", "ls -la", "a | b")
+    let first = raw.split_whitespace().next().unwrap_or("");
+    let commandish = ["sudo", "systemctl", "pacman", "yay", "paru", "cd", "ls", "rm", "cp", "mv", "git", "cargo", "make", "chmod", "chown", "kill", "ps", "grep", "cat", "echo", "export"].contains(&first)
+        || raw.contains(" | ")
+        || raw.contains(" && ")
+        || raw.split_whitespace().any(|w| w.starts_with('-') && w.len() > 1 && w[1..].starts_with(|c: char| c.is_ascii_alphabetic()));
+    if commandish {
+        return false;
+    }
+    calculate(raw).is_none() && !raw.chars().all(|c| c.is_ascii_digit() || " .,+-*/^%()=".contains(c))
+}
+
 // ── Words: conversions and definitions ─────────────────────────────────────
 
 /// Search.looksLikeConversion: "10 km to mi", "$20 in eur", "72 f to c"
@@ -951,7 +981,7 @@ pub fn query(text: &str, k: &Known) -> (Vec<Row>, Wants) {
         section: "Web".into(),
         title: format!("Search the web for “{raw}”"),
         glyph: "globe".into(),
-        run: Run::Url(format!("https://duckduckgo.com/?q={}", crate::util::encode(raw))),
+        run: Run::Url(crate::weblink::search::url_for(k.engine, raw)),
         ..Default::default()
     });
     out.extend(x.contacts.iter().cloned());
@@ -1109,6 +1139,16 @@ mod tests {
     }
 
     #[test]
+    fn what_the_web_results_look_up() {
+        for q in ["water lily", "rust borrow checker", "weather paris", "covid-19 news", "1/2 cup in grams", "example.com"] {
+            assert!(wants_web(q), "{q}");
+        }
+        for q in ["", "a", "?why", ">ls", ":cat", "/notes", ";pass", "~/Documents", "./run.sh", "src/main/x", "2+2", "12 * 3", "2024", "sudo pacman -Syu", "ls -la", "cat a | grep b", "make && run"] {
+            assert!(!wants_web(q), "{q}");
+        }
+    }
+
+    #[test]
     fn emoji_by_name() {
         let e: Vec<(String, String)> = [("🐱", "cat face"), ("🐈", "cat"), ("😺", "grinning cat"), ("👍🏽", "thumbs up: medium skin tone"), ("🎉", "party popper"), ("🙀", "weary cat"), ("😸", "grinning cat with smiling eyes"), ("🛒", "shopping cart")]
             .iter()
@@ -1147,6 +1187,10 @@ mod tests {
         assert_eq!(t[1], ("Applications".into(), "Firefox".into()));
         assert_eq!(t[t.len() - 2], ("Ask AI".into(), "Set up AI…".into()));
         assert_eq!(t[t.len() - 1], ("Web".into(), "Search the web for “browser”".into()));
+        // (on Google unless Settings chose another engine)
+        assert_eq!(r[r.len() - 1].run, Run::Url("https://www.google.com/search?q=browser".into()));
+        let (r, _) = query("browser", &Known { engine: "duckduckgo", ..k });
+        assert_eq!(r[r.len() - 1].run, Run::Url("https://duckduckgo.com/?q=browser".into()));
         // an action named for it beats an app found only by keywords
         let (r, _) = query("lock", &k);
         assert_eq!(titles(&r[..1]), vec![("Top Hit".into(), "Lock screen".into())]);

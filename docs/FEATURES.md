@@ -165,6 +165,7 @@ Super is the key with the logo. Press **Super+/** for the full list, which is re
 | Super+Shift+X / Super+Shift+T | Copy text from the screen / translate text on the screen |
 | Super+Alt+A | Ask AI about part of the screen |
 | Super+Shift+A | Search an area with Google Lens (sends it to Google) |
+| Super+Shift+G | Search the web for the selected text (Google unless Settings chose another engine) |
 | Super+Shift+Space | Circle to search |
 | Super+Shift+R | Start or stop recording an area |
 | Super+G / Super+K | Overlay widgets / on-screen keyboard |

@@ -125,6 +125,7 @@ Singleton {
         { name: "ocr", label: "Copy text from the screen" },
         { name: "screenTranslate", label: "Translate text on the screen" },
         { name: "lens", label: "Search an area with Google Lens" },
+        { name: "searchSelection", label: "Search the web for the selected text" }, // (Rust shell)
         { name: "askScreen", label: "Ask AI about part of the screen" },
         { name: "circleSearch", label: "Circle to search" },
         { name: "volumeUp", label: "Volume up" },

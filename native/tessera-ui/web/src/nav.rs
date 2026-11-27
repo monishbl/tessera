@@ -2,8 +2,11 @@
 //! shown in the bar, and the sign-in mode's --done match. Plain string work,
 //! no URL crate: WebKit itself parses what it loads.
 
-/// Where a search goes (as Spotlight's "Search the web": services/Search.qml)
-pub const SEARCH: &str = "https://duckduckgo.com/?q=";
+/// The engine searches go to: Settings → Default apps' (`search.engine`,
+/// Google unless changed), as every search of Tessera's (tessera_core::weblink::search)
+pub fn engine() -> &'static str {
+    tessera_core::weblink::search::engine(&tessera_core::theme::read_json())
+}
 
 /// "scheme:" at the start (letters, then letters, digits, + - .)
 pub fn has_scheme(s: &str) -> bool {
@@ -21,9 +24,15 @@ fn is_ipv4(host: &str) -> bool {
     parts.len() == 4 && parts.iter().all(|p| !p.is_empty() && p.len() <= 3 && p.chars().all(|c| c.is_ascii_digit()) && p.parse::<u16>().is_ok_and(|n| n < 256))
 }
 
-/// What the address field's text means: an address to open, or a search.
-/// None for nothing typed.
+/// What the address field's text means: an address to open, or a search
+/// on the chosen engine. None for nothing typed.
 pub fn typed(input: &str) -> Option<String> {
+    typed_on(input, engine())
+}
+
+/// `typed` with searches on this engine
+pub fn typed_on(input: &str, engine: &str) -> Option<String> {
+    let search = |q: &str| search_on(engine, q);
     let s = input.trim();
     if s.is_empty() {
         return None;
@@ -60,8 +69,9 @@ pub fn typed(input: &str) -> Option<String> {
     Some(search(s))
 }
 
-pub fn search(q: &str) -> String {
-    format!("{SEARCH}{}", encode(q))
+/// The results page for these words on this engine
+pub fn search_on(engine: &str, q: &str) -> String {
+    tessera_core::weblink::search::url_for(engine, q)
 }
 
 /// Percent-encoding for a query value: everything but A-Z a-z 0-9 - _ . ~
@@ -100,6 +110,11 @@ pub fn decode(s: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// An http or https address (what --render may load)
+pub fn is_http(uri: &str) -> bool {
+    matches!(scheme_of(uri.trim()).as_str(), "http" | "https") && !host_of(uri.trim()).is_empty()
 }
 
 /// The scheme, lower case ("" for none)
@@ -240,10 +255,12 @@ mod tests {
         assert_eq!(typed("localhost:8080/x").as_deref(), Some("http://localhost:8080/x"));
         assert_eq!(typed("192.168.1.1").as_deref(), Some("http://192.168.1.1"));
         assert_eq!(typed("example.com:8443").as_deref(), Some("https://example.com:8443"));
-        assert_eq!(typed("water lily").as_deref(), Some("https://duckduckgo.com/?q=water%20lily"));
-        assert_eq!(typed("rust").as_deref(), Some("https://duckduckgo.com/?q=rust"));
-        assert_eq!(typed("3.14").as_deref(), Some("https://duckduckgo.com/?q=3.14"));
-        assert_eq!(typed("javascript:alert(1)").as_deref(), Some("https://duckduckgo.com/?q=javascript%3Aalert%281%29"));
+        // (searches: Google unless Settings chose another)
+        assert_eq!(typed_on("water lily", "google").as_deref(), Some("https://www.google.com/search?q=water%20lily"));
+        assert_eq!(typed_on("rust", "google").as_deref(), Some("https://www.google.com/search?q=rust"));
+        assert_eq!(typed_on("3.14", "google").as_deref(), Some("https://www.google.com/search?q=3.14"));
+        assert_eq!(typed_on("javascript:alert(1)", "google").as_deref(), Some("https://www.google.com/search?q=javascript%3Aalert%281%29"));
+        assert_eq!(typed_on("water lily", "duckduckgo").as_deref(), Some("https://duckduckgo.com/?q=water%20lily"));
         assert_eq!(typed("about:blank").as_deref(), Some("about:blank"));
         assert_eq!(typed("   "), None);
     }

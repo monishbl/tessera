@@ -81,6 +81,120 @@ pub fn portal_auto(cfg: &Value) -> bool {
     cfg["network"]["portalAuto"].as_bool().unwrap_or(true)
 }
 
+/// Web searches: every one Tessera makes (Search's web row and its live
+/// results, tessera-web's address field, a selection searched with the
+/// shortcut or a page's menu) goes to the engine Settings → Default apps
+/// chose (`search.engine`, Google unless changed), its address built here
+pub mod search {
+    use serde_json::Value;
+
+    /// (setting value, the name shown, the query address before the words)
+    pub const ENGINES: &[(&str, &str, &str)] = &[
+        ("google", "Google", "https://www.google.com/search?q="),
+        ("duckduckgo", "DuckDuckGo", "https://duckduckgo.com/?q="),
+        ("bing", "Bing", "https://www.bing.com/search?q="),
+        ("brave", "Brave Search", "https://search.brave.com/search?q="),
+        ("startpage", "Startpage", "https://www.startpage.com/do/search?q="),
+    ];
+
+    /// The engine chosen; anything unknown (an older config, a typo) is Google
+    pub fn engine(cfg: &Value) -> &'static str {
+        let e = cfg["search"]["engine"].as_str().unwrap_or("google");
+        ENGINES.iter().find(|x| x.0 == e).map_or("google", |x| x.0)
+    }
+
+    /// Its name, as menus write it ("Search Google for …")
+    pub fn name(engine: &str) -> &'static str {
+        ENGINES.iter().find(|x| x.0 == engine).map_or("Google", |x| x.1)
+    }
+
+    /// The query's words for an address: everything but A-Z a-z 0-9 - _ . ~
+    /// percent-encoded (so a "&", "#" or "+" stays part of the words)
+    pub fn encode(q: &str) -> String {
+        let mut out = String::with_capacity(q.len() * 3);
+        for b in q.bytes() {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                out.push(b as char);
+            } else {
+                out.push_str(&format!("%{b:02X}"));
+            }
+        }
+        out
+    }
+
+    /// The results page for these words on this engine (unknown: Google)
+    pub fn url_for(engine: &str, q: &str) -> String {
+        let base = ENGINES.iter().find(|x| x.0 == engine).map_or(ENGINES[0].2, |x| x.2);
+        format!("{base}{}", encode(q.trim()))
+    }
+
+    /// The results page for these words on the chosen engine
+    pub fn url(cfg: &Value, q: &str) -> String {
+        url_for(engine(cfg), q)
+    }
+
+    /// "Web results in Search": Search's live results panel (on unless
+    /// turned off)
+    pub fn web_results(cfg: &Value) -> bool {
+        cfg["search"]["webResults"].as_bool().unwrap_or(true)
+    }
+
+    /// Selected text as words to search for: spaces and lines run together,
+    /// at most `most` characters (cut at a word where it can be); "" for
+    /// nothing worth searching
+    pub fn words(text: &str, most: usize) -> String {
+        let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        if flat.chars().count() <= most {
+            return flat;
+        }
+        let cut: String = flat.chars().take(most).collect();
+        match cut.rfind(' ') {
+            Some(i) if i > most / 2 => cut[..i].to_string(),
+            _ => cut,
+        }
+    }
+
+    /// A short form for a menu's label: the first `most` characters and "…"
+    pub fn short(text: &str, most: usize) -> String {
+        let w = words(text, usize::MAX);
+        if w.chars().count() <= most {
+            w
+        } else {
+            format!("{}…", w.chars().take(most).collect::<String>().trim_end())
+        }
+    }
+}
+
+/// tessera-web --render's windows' class, should one ever be mapped (it
+/// renders out of sight, its window never shown: web/src/render.rs). The
+/// Hyprland rule for it keeps it on a hidden workspace, and the shell's
+/// window lists leave it out (`is_render_class`).
+pub const RENDER_CLASS: &str = "tessera-web-render";
+
+/// A window no list of the shell's shows (the dock, Alt-Tab, the Overview,
+/// All Windows, the window list): tessera-web --render's
+pub fn is_render_class(class: &str) -> bool {
+    class == RENDER_CLASS
+}
+
+/// Open a link in tessera-web, Tessera's quick-look browser, whatever
+/// "Open links from Tessera in" says (Search's web results panel: its
+/// results and Expand); the default browser when it isn't installed or
+/// fails to start
+pub fn open_quick(url: &str) {
+    let url = url.trim().to_string();
+    if !is_web(&url) {
+        return xdg_open(&url);
+    }
+    std::thread::spawn(move || {
+        if bin().is_none() {
+            return xdg_open(&url);
+        }
+        let u = url.clone();
+        start_or(vec![url], move || xdg_open(&u));
+    });
+}
+
 /// An http or https link (any case, spaces round it allowed)
 pub fn is_web(url: &str) -> bool {
     let u = url.trim();
@@ -181,12 +295,22 @@ pub fn bin() -> Option<PathBuf> {
 /// shell's apps: app-scope.sh) and a session of its own (setsid without -f
 /// execs in place, so the child here is tessera-web and its exit is seen)
 pub fn spawn(args: &[String]) -> std::io::Result<Child> {
+    spawn_with(args, Stdio::null())
+}
+
+/// `spawn` with its stdout piped: tessera-web --render, whose JSON lines
+/// say each picture is ready (Search's web results read them)
+pub fn spawn_render(args: &[String]) -> std::io::Result<Child> {
+    spawn_with(args, Stdio::piped())
+}
+
+fn spawn_with(args: &[String], stdout: Stdio) -> std::io::Result<Child> {
     let exe = bin().ok_or(std::io::ErrorKind::NotFound)?;
     let mut c = Command::new("setsid");
     if let Some(scope) = crate::util::asset("shell/assets/scripts/app-scope.sh") {
         c.arg(scope).args(["--id", BIN, "--"]);
     }
-    c.arg(exe).args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    c.arg(exe).args(args).stdin(Stdio::null()).stdout(stdout).stderr(Stdio::null());
     // (every signal unblocked in it: the shell's blocked ones are inherited)
     unsafe {
         c.pre_exec(|| {
@@ -409,6 +533,38 @@ mod tests {
         assert!(!links_in_tessera(&json!({"apps": {"webLinks": "browser"}})));
         assert!(portal_auto(&json!({})));
         assert!(!portal_auto(&json!({"network": {"portalAuto": false}})));
+    }
+
+    #[test]
+    fn searches_go_to_the_chosen_engine() {
+        assert_eq!(search::engine(&json!({})), "google");
+        assert_eq!(search::engine(&json!({"search": {"engine": "bing"}})), "bing");
+        assert_eq!(search::engine(&json!({"search": {"engine": "askjeeves"}})), "google");
+        assert_eq!(search::url(&json!({}), " water lily "), "https://www.google.com/search?q=water%20lily");
+        assert_eq!(search::url(&json!({"search": {"engine": "duckduckgo"}}), "a&b #1+"), "https://duckduckgo.com/?q=a%26b%20%231%2B");
+        assert_eq!(search::url_for("brave", "rust"), "https://search.brave.com/search?q=rust");
+        assert_eq!(search::url_for("startpage", "x"), "https://www.startpage.com/do/search?q=x");
+        assert_eq!(search::url_for("nonsense", "x"), "https://www.google.com/search?q=x");
+        assert_eq!(search::url_for("google", "é"), "https://www.google.com/search?q=%C3%A9");
+        assert_eq!(search::name("duckduckgo"), "DuckDuckGo");
+        assert_eq!(search::name(""), "Google");
+        assert!(search::web_results(&json!({})));
+        assert!(!search::web_results(&json!({"search": {"webResults": false}})));
+        // (every engine's address is https and ends where the words go)
+        for (_, _, base) in search::ENGINES {
+            assert!(base.starts_with("https://") && base.ends_with("q="), "{base}");
+        }
+    }
+
+    #[test]
+    fn selected_text_as_words() {
+        assert_eq!(search::words("  water\n\tlily  ", 100), "water lily");
+        assert_eq!(search::words("one two three four", 12), "one two");
+        assert_eq!(search::words("abcdefghijkl", 5), "abcde");
+        assert_eq!(search::words("   ", 10), "");
+        assert_eq!(search::short("a quite long piece of text", 10), "a quite lo…");
+        assert_eq!(search::short("short", 10), "short");
+        assert!(is_render_class("tessera-web-render") && !is_render_class("tessera-web"));
     }
 
     #[test]

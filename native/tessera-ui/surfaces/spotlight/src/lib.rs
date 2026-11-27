@@ -48,6 +48,7 @@ use tessera_core::*;
 
 pub mod layout;
 pub mod providers;
+pub mod web;
 // (Search's ranking lives in tessera-core: the Overview ranks with it too)
 pub use tessera_core::rank;
 
@@ -111,7 +112,45 @@ enum M {
     Prepare,
     /// a ranking from the rank lane (Spotlight::refresh), by its number
     Ranked(u64, Box<Ranked>),
+    /// the web results: typing paused (their number), a picture came (or
+    /// None: it couldn't be drawn), the render ended
+    WebGo(u64),
+    WebShot(u64, Option<Px>, Vec<web::Link>),
+    WebEnded(u64),
+    /// a click on the picture (fractions of it), its buttons, the note's "Turn off"
+    WebClick(f32, f32),
+    WebExpand,
+    WebBrowser,
+    WebNoticeOff,
 }
+
+/// Search's live web results now (src/web.rs)
+#[derive(Default)]
+struct Web {
+    /// the setting on and tessera-web there (read at each opening)
+    on: bool,
+    engine: &'static str,
+    /// the words they're for, and their results page
+    query: String,
+    url: String,
+    /// this query's number: anything for an older one is dropped
+    gen: u64,
+    /// being drawn (the shimmer)
+    loading: bool,
+    /// the picture (its pixels' width and height) and its links
+    shot: Option<(slint::Image, u32, u32)>,
+    links: Vec<web::Link>,
+    /// the links the arrow keys go through, and the one they're on
+    results: Vec<usize>,
+    sel: Option<usize>,
+    /// the one-time note: still to be seen, and shown at this opening
+    notice: bool,
+    noticed: bool,
+    renderer: web::Renderer,
+}
+
+/// The state key of the one-time note under the web results
+const WEB_NOTICE_KEY: &str = "searchWebNotice";
 
 /// What ranking reads, owned: a keystroke's rows are worked out on the rank
 /// lane (tessera_core::work), not the UI thread, which only applies them
@@ -130,6 +169,8 @@ struct Inputs {
     contents: Vec<String>,
     home: String,
     material: bool,
+    /// the web search engine (the web row's address)
+    engine: &'static str,
 }
 
 /// The rows for one ranking, laid out
@@ -159,6 +200,7 @@ impl Inputs {
             files: &self.files,
             contents: &self.contents,
             home: &self.home,
+            engine: self.engine,
         };
         let (rows, wants) = rank::query(&self.text, &k);
         let (entries, content_h) = if self.material { layout::material(&rows) } else { layout::glass(&rows) };
@@ -363,7 +405,7 @@ pub struct Spotlight {
     plocate: bool,
     rg: bool,
     home: String,
-    timers: [slint::Timer; 8],
+    timers: [slint::Timer; 9],
     // pictures
     icons: HashMap<IconKey, slint::Image>,
     /// each row's icon render
@@ -372,6 +414,8 @@ pub struct Spotlight {
     pictures: HashMap<String, Option<slint::Image>>,
     /// App Store logos on the web (AppStore.iconFor's URL), fetched once into the cache
     remote: HashMap<String, Option<PathBuf>>,
+    /// the live web results under the rows
+    web: Web,
 }
 
 impl Default for Spotlight {
@@ -421,6 +465,7 @@ impl Default for Spotlight {
             pending: HashSet::new(),
             pictures: HashMap::new(),
             remote: HashMap::new(),
+            web: Web::default(),
         }
     }
 }
@@ -434,6 +479,7 @@ const T_HOLD: usize = 4;
 const T_INTRO: usize = 5;
 const T_IDLE: usize = 6;
 const T_PREP: usize = 7;
+const T_WEB: usize = 8;
 
 fn glyph(name: &str, material: bool, fill: bool, bold: bool) -> ui::SGlyph {
     let (text, family, scale) = providers::glyph(name, material, fill, bold);
@@ -505,6 +551,10 @@ impl Spotlight {
         on!(on_link, |l| M::Link(l.to_string()));
         on!(on_dismissed, | | M::Dismissed);
         on!(on_closed, | | M::Closed);
+        on!(on_web_click, |x, y| M::WebClick(x, y));
+        on!(on_web_expand, | | M::WebExpand);
+        on!(on_web_browser, | | M::WebBrowser);
+        on!(on_web_notice_off, | | M::WebNoticeOff);
         let rows = Rows::new();
         ui.set_rows(rows.model());
         ui.show().expect("show spotlight");
@@ -527,6 +577,7 @@ impl Spotlight {
         ui.set_g_back(glyph("caret-left", m, false, false));
         ui.set_g_eye(glyph("eye", m, false, false));
         ui.set_g_spark(glyph("sparkle", false, true, false));
+        ui.set_g_globe(glyph("globe", m, false, false));
         ui.set_cookie9(shapes::outline("cookie9").into());
         ui.set_cookie12(shapes::outline("cookie12").into());
         ui.set_sunny(shapes::outline("sunny").into());
@@ -580,6 +631,13 @@ impl Spotlight {
         self.focus = 0;
         self.had_rows = false;
         self.asked = None;
+        // (the web results: the setting, the engine, tessera-web there; the note once)
+        self.web_stop();
+        let cfg = &st.shell.cfg;
+        self.web.on = tessera_core::weblink::search::web_results(cfg) && tessera_core::weblink::bin().is_some();
+        self.web.engine = tessera_core::weblink::search::engine(cfg);
+        self.web.notice = !tessera_core::cfgfile::state_get(WEB_NOTICE_KEY).as_bool().unwrap_or(false);
+        self.web.noticed = false;
         // (a ranking still on its way is for the text before)
         self.rank_gen += 1;
         self.rank_latest.store(self.rank_gen, Ordering::SeqCst);
@@ -611,6 +669,13 @@ impl Spotlight {
         }
         self.answering = false;
         self.quick = Quick::default();
+        // (the web results' render stops with it; the note, once seen, is done)
+        self.web_stop();
+        if self.web.noticed {
+            self.web.notice = false;
+            self.web.noticed = false;
+            tessera_core::cfgfile::set_state(WEB_NOTICE_KEY, serde_json::json!(true));
+        }
         // (a lookup stopped before it was asked is forgotten too: else the
         // same text typed again never asks it, as the query looks seen)
         for t in [T_ANSWER, T_CONV, T_DEF, T_FILES] {
@@ -671,6 +736,7 @@ impl Spotlight {
             contents: self.contents.clone(),
             home: self.home.clone(),
             material: Self::material(st),
+            engine: tessera_core::weblink::search::engine(&st.shell.cfg),
         }
     }
 
@@ -960,7 +1026,8 @@ impl Spotlight {
         let Some(w) = &self.win else { return };
         let ui = &w.ui;
         let m = Self::material(st);
-        ui.set_sel(self.sel as i32);
+        // (the arrow keys in the web results: no row looks selected)
+        ui.set_sel(if self.web.sel.is_some() { -1 } else { self.sel as i32 });
         ui.set_answering(self.answering);
         ui.set_button_focus(if m { 0 } else { self.focus });
         ui.set_quick_busy(self.quick.busy);
@@ -972,8 +1039,158 @@ impl Spotlight {
         ui.set_model_name(self.ai.name.as_str().into());
         let short = rank::ai_row("", Some(&self.ai)).title;
         ui.set_ask_label(if self.ai.configured { short.into() } else { "Set up AI".into() });
-        let has_path = self.rows.get(self.sel).is_some_and(|r| !r.path.is_empty());
+        let has_path = self.web.sel.is_none() && self.rows.get(self.sel).is_some_and(|r| !r.path.is_empty());
         self.key_ctx.set(KeyCtx { material: m, has_path, focus: if m { 0 } else { self.focus } });
+        // The live web results
+        let wv = &self.web;
+        let shown = wv.loading || wv.shot.is_some();
+        ui.set_web_shown(shown);
+        ui.set_web_loading(wv.loading);
+        ui.set_web_name(tessera_core::weblink::search::name(wv.engine).into());
+        match &wv.shot {
+            Some((img, w, h)) => {
+                ui.set_web_shot(img.clone());
+                ui.set_web_has_shot(true);
+                ui.set_web_aspect(if *w > 0 { *h as f32 / *w as f32 } else { 0.0 });
+            }
+            None => {
+                ui.set_web_has_shot(false);
+                ui.set_web_shot(slint::Image::default());
+                ui.set_web_aspect(0.0);
+            }
+        }
+        let hl = match (wv.sel.and_then(|i| wv.results.get(i)).and_then(|i| wv.links.get(*i)), &wv.shot) {
+            (Some(l), Some((_, w, h))) if *w > 0 && *h > 0 => Some((l.x / *w as f32, l.y / *h as f32, l.w / *w as f32, l.h / *h as f32)),
+            _ => None,
+        };
+        ui.set_web_hl(hl.is_some());
+        if let Some((x, y, w, h)) = hl {
+            ui.set_web_hl_x(x);
+            ui.set_web_hl_y(y);
+            ui.set_web_hl_w(w);
+            ui.set_web_hl_h(h);
+        }
+        ui.set_web_notice(shown && wv.notice);
+        if shown && wv.notice {
+            self.web.noticed = true;
+        }
+    }
+
+    // ── The live web results (src/web.rs) ──
+
+    /// Stop the render under way (its process killed)
+    fn web_stop(&mut self) {
+        self.timers[T_WEB].stop();
+        self.web.renderer.stop();
+        self.web.gen += 1;
+        self.web.loading = false;
+        self.web_clear();
+        self.web.query.clear();
+        self.web.url.clear();
+    }
+
+    fn web_clear(&mut self) {
+        self.web.shot = None;
+        self.web.links.clear();
+        self.web.results.clear();
+        self.web.sel = None;
+    }
+
+    /// The text changed: the web results for it once typing pauses (a
+    /// panel already there shimmers meanwhile); none for a path, a command
+    /// or a sum, or with the setting off
+    fn web_typed(&mut self, st: &State) {
+        let q = self.text.trim().to_string();
+        let want = self.web.on && self.open && !self.answering && rank::wants_web(&q);
+        if !want {
+            if self.web.loading || self.web.shot.is_some() || !self.web.query.is_empty() {
+                self.web_stop();
+            }
+            return;
+        }
+        if q == self.web.query {
+            return;
+        }
+        let was_shown = self.web.loading || self.web.shot.is_some();
+        self.timers[T_WEB].stop();
+        self.web.renderer.stop();
+        self.web.gen += 1;
+        self.web.query = q;
+        self.web.url.clear();
+        self.web_clear();
+        self.web.loading = was_shown;
+        let gen = self.web.gen;
+        self.after(st, T_WEB, web::DEBOUNCE_MS, move || M::WebGo(gen));
+    }
+
+    /// Typing paused: draw the results page (one render at a time)
+    fn web_go(&mut self, st: &State, gen: u64) {
+        if gen != self.web.gen || !self.open || self.web.query.is_empty() {
+            return;
+        }
+        let url = tessera_core::weblink::search::url_for(self.web.engine, &self.web.query);
+        let out = web::out_dir();
+        let _ = std::fs::create_dir_all(&out);
+        let scale = self.win.as_ref().map_or(1.0, |w| w.ui.window().scale_factor());
+        let args = web::args(self.web.engine, &url, &out, scale);
+        self.web.url = url;
+        let to = Self::send(st);
+        let to2 = to.clone();
+        let started = self.web.renderer.start(
+            args,
+            move |v| {
+                // (read here, off the UI thread: the picture and its links)
+                match v["event"].as_str() {
+                    Some("rendered") => {
+                        let png = v["png"].as_str().unwrap_or("").to_string();
+                        let px = image::open(&png).ok().map(|i| {
+                            let t = i.to_rgba8();
+                            let mut b = Px::new(t.width(), t.height());
+                            b.make_mut_bytes().copy_from_slice(t.as_raw());
+                            b
+                        });
+                        let links = std::fs::read_to_string(v["links"].as_str().unwrap_or("")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).map(|j| web::parse_links(&j)).unwrap_or_default();
+                        to(Box::new(M::WebShot(gen, px, links)));
+                    }
+                    Some("error") => to(Box::new(M::WebShot(gen, None, Vec::new()))),
+                    _ => {}
+                }
+            },
+            move || to2(Box::new(M::WebEnded(gen))),
+        );
+        self.web.loading = started;
+        if !started {
+            self.web_clear();
+        }
+        self.push(st);
+    }
+
+    /// Expand: the results page in the quick-look browser
+    fn web_expand(&mut self) {
+        if self.web.url.is_empty() {
+            return;
+        }
+        let u = self.web.url.clone();
+        self.close(true);
+        tessera_core::weblink::open_quick(&u);
+    }
+
+    /// The arrow keys in the web results: Down from the last row goes in,
+    /// Up from their first comes back out. True: it moved there
+    fn web_step(&mut self, st: &State, down: bool) -> bool {
+        let n = self.web.results.len();
+        if n == 0 || self.web.loading {
+            return false;
+        }
+        match (self.web.sel, down) {
+            (None, true) if self.sel + 1 >= self.rows.len() => self.web.sel = Some(0),
+            (Some(i), true) => self.web.sel = Some((i + 1).min(n - 1)),
+            (Some(0), false) => self.web.sel = None,
+            (Some(i), false) => self.web.sel = Some(i - 1),
+            _ => return false,
+        }
+        self.push(st);
+        true
     }
 
     fn reveal(&mut self, st: &State) {
@@ -1089,14 +1306,28 @@ impl Spotlight {
                 }
                 2 => self.ask_button(st),
                 _ if self.answering => crate::shell::ask("ai.continueQuick", serde_json::json!([])),
+                // (a web result picked with the arrow keys: the quick-look browser there)
+                _ if self.web.sel.is_some() => {
+                    let u = self.web.sel.and_then(|i| self.web.results.get(i)).and_then(|i| self.web.links.get(*i)).map(|l| l.target().to_string());
+                    if let Some(u) = u {
+                        self.close(true);
+                        tessera_core::weblink::open_quick(&u);
+                    }
+                }
                 _ => self.run(st, self.sel),
             }
         } else if is(Key::DownArrow) {
             self.focus = 0;
+            if self.web_step(st, true) {
+                return;
+            }
             let i = (self.sel + 1).min(self.rows.len().saturating_sub(1));
             self.select(st, i);
         } else if is(Key::UpArrow) {
             self.focus = 0;
+            if self.web_step(st, false) {
+                return;
+            }
             let i = self.sel.saturating_sub(1);
             self.select(st, i);
         } else if is(Key::Tab) || is(Key::Backtab) {
@@ -1129,7 +1360,9 @@ impl Spotlight {
             crate::shell::ask("ai.stopQuick", serde_json::json!([]));
         }
         self.text = t;
+        self.web.sel = None;
         self.refresh(st, true);
+        self.web_typed(st);
     }
 
     fn find_files(&mut self, st: &State) {
@@ -1390,6 +1623,53 @@ impl Part for Spotlight {
                     self.rebuild(st);
                 }
             }
+            M::WebGo(gen) => self.web_go(st, gen),
+            M::WebShot(gen, px, links) => {
+                if gen == self.web.gen && self.web.loading {
+                    self.web.loading = false;
+                    match px {
+                        Some(px) => {
+                            let (w, h) = (px.width(), px.height());
+                            self.web.shot = Some((slint::Image::from_rgba8(px), w, h));
+                            self.web.results = web::results(&links);
+                            self.web.links = links;
+                            self.web.sel = None;
+                        }
+                        // (it couldn't be drawn: no panel, no noise)
+                        None => self.web_clear(),
+                    }
+                    self.push(st);
+                }
+            }
+            M::WebEnded(gen) => {
+                // (ended without a picture: the shimmer goes)
+                if gen == self.web.gen && self.web.loading {
+                    self.web.loading = false;
+                    if self.web.shot.is_none() {
+                        self.web_clear();
+                    }
+                    self.push(st);
+                }
+            }
+            M::WebClick(fx, fy) => {
+                let link = self.web.shot.as_ref().and_then(|(_, w, h)| web::link_at(&self.web.links, fx * *w as f32, fy * *h as f32)).map(|l| l.target().to_string());
+                if let Some(u) = link {
+                    self.close(true);
+                    tessera_core::weblink::open_quick(&u);
+                }
+            }
+            M::WebExpand => self.web_expand(),
+            M::WebBrowser => {
+                if !self.web.url.is_empty() {
+                    let u = self.web.url.clone();
+                    self.close(true);
+                    tessera_core::weblink::xdg_open(&u);
+                }
+            }
+            M::WebNoticeOff => {
+                self.close(true);
+                crate::shell::ask("panels.openSettings", serde_json::json!(["defaultapps"]));
+            }
             M::Picture(p, px) => {
                 self.pictures.insert(p, px.map(slint::Image::from_rgba8));
                 if self.pictures.len() > 200 {
@@ -1442,6 +1722,11 @@ impl Part for Spotlight {
         if bh > 0.0 {
             shapes.push(theme::glass_shape(&st.shell.look, x, y + 64.0, 680.0, bh, 24.0, o, 1.0));
         }
+        // (the live web results' panel, under them)
+        let wh = ui.get_g_web_h();
+        if wh > 0.0 {
+            shapes.push(theme::glass_shape(&st.shell.look, x, y + ui.get_g_web_y(), 680.0, wh, 24.0, o, 1.0));
+        }
         let key = tessera_core::theme::glass_key(&shapes);
         if key != w.glass_sent {
             st.shell.glass.set(&w.output, NS, if o > 0.002 { &shapes } else { &[] });
@@ -1461,6 +1746,7 @@ impl Part for Spotlight {
 
     fn quit(&mut self, _: &mut State) {
         self.answerer.stop();
+        self.web_stop();
         if let Some(w) = &self.win {
             Glass::clear_now(&w.output, NS);
         }
@@ -1521,6 +1807,7 @@ mod tests {
             contents: Vec::new(),
             home: "/home/x".into(),
             material: false,
+            engine: "",
         };
         let r = std::thread::spawn(move || inputs.rank()).join().unwrap();
         let k = Known { apps: &apps, actions: &actions, ai: Some(&AiMeta::default()), home: "/home/x", ..Default::default() };

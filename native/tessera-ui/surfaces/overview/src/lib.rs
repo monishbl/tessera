@@ -920,11 +920,14 @@ impl Overview {
 
     fn edited(&mut self, st: &mut State, t: String) {
         self.text = t;
+        // (the web row on the engine Settings chose: Google unless changed)
+        let engine = tessera_core::weblink::search::engine(&st.shell.cfg);
         let k = Known {
             apps: &self.apps,
             actions: &self.actions,
             emoji: if self.text.trim().starts_with(':') { crate::rank::emoji() } else { &[] },
             home: &self.home,
+            engine,
             ..Default::default()
         };
         self.results = rank::query(&self.text, &k).0.into_iter().filter(|r| !r.ai && !r.loading).collect();

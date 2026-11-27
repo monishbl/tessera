@@ -630,6 +630,161 @@ component MHero inherits Rectangle {
     }
 }
 
+// ── Live web results (src/web.rs) ─────────────────────────────────────────
+
+// Under the local results, a moment after typing stops: the top of the
+// engine's results page, drawn by tessera-web out of sight, a picture here.
+// A click goes to the link under it (Rust maps it through links.json);
+// Expand opens the page in the quick-look browser, Open in browser in
+// yours. A shimmer while it's drawn; the one-time note under it.
+component WebResults inherits Rectangle {
+    in property <bool> loading;
+    in property <bool> has-shot;
+    in property <image> shot;
+    in property <float> aspect; // the picture's height / width
+    in property <length> pic-h; // what's shown of it (its top)
+    in property <string> name; // the engine's ("Google")
+    in property <SGlyph> glyph;
+    // the arrow keys' result, as fractions of the picture
+    in property <bool> hl;
+    in property <float> hl-x;
+    in property <float> hl-y;
+    in property <float> hl-w;
+    in property <float> hl-h;
+    in property <bool> notice;
+    callback click(float, float); // where, as fractions of the picture
+    callback expand();
+    callback browser();
+    callback notice-off();
+    property <color> ink: Theme.material ? Theme.m3-on-surface-variant : Theme.secondary;
+    property <color> mark: Theme.material ? Theme.m3-primary : Theme.accent;
+    property <length> full-h: self.width * aspect;
+    accessible-role: groupbox;
+    accessible-label: name + " results";
+
+    HorizontalLayout {
+        y: 0;
+        height: 36px;
+        spacing: 8px;
+        alignment: start;
+        SIcon {
+            width: 20px;
+            glyph: glyph;
+            size: 16px;
+            tint: ink;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: name;
+            color: ink;
+            font-size: Theme.material ? 14px : Theme.caption;
+            font-weight: Theme.material ? 500 : 600;
+            vertical-alignment: center;
+            overflow: elide;
+            accessible-role: none;
+        }
+        if !Theme.material: GButton {
+            text: "Expand";
+            clicked => { expand(); }
+        }
+        if !Theme.material: GButton {
+            text: "Open in browser";
+            clicked => { browser(); }
+        }
+        if Theme.material: MButton {
+            height: 32px;
+            text: "Expand";
+            clicked => { expand(); }
+        }
+        if Theme.material: MButton {
+            height: 32px;
+            text: "Open in browser";
+            clicked => { browser(); }
+        }
+    }
+    pic := Rectangle {
+        y: 40px;
+        height: pic-h;
+        border-radius: Theme.material ? 16px : 12px;
+        clip: true;
+        background: Theme.material ? Theme.m3-surface-container-highest : Theme.fill;
+        if has-shot: Image {
+            width: parent.width;
+            height: root.full-h;
+            source: shot;
+            image-fit: fill;
+            opacity: loading ? 0.45 : 1;
+            animate opacity { duration: Theme.hover; }
+            accessible-role: image;
+            accessible-label: name + " results page";
+        }
+        if has-shot && hl && !loading: Rectangle {
+            x: hl-x * parent.width - 4px;
+            y: hl-y * root.full-h - 4px;
+            width: hl-w * parent.width + 8px;
+            height: hl-h * root.full-h + 8px;
+            border-radius: 10px;
+            border-width: 2px;
+            border-color: mark;
+            background: mark.with-alpha(0.08);
+        }
+        // (while it's drawn: bars, a light passing over them)
+        if loading && !has-shot: Rectangle {
+            for i in 3: Rectangle {
+                x: 16px;
+                y: 18px + i * 46px;
+                width: (parent.width - 32px) * (i == 2 ? 0.55 : 0.85);
+                height: 14px;
+                border-radius: 7px;
+                background: Theme.material ? Theme.m3-surface-container-high : Theme.fill-hover;
+            }
+        }
+        if loading: Rectangle {
+            property <duration> t: animation-tick();
+            property <float> p: mod(t / 1300ms, 1);
+            x: (p * 1.6 - 0.4) * parent.width;
+            width: parent.width * 0.4;
+            background: @linear-gradient(90deg, #ffffff00 0%, #ffffff2e 50%, #ffffff00 100%);
+        }
+        TouchArea {
+            enabled: has-shot && !loading && aspect > 0;
+            mouse-cursor: pointer;
+            clicked => { root.click(self.mouse-x / parent.width, self.mouse-y / max(1px, root.full-h)); }
+        }
+    }
+    if notice: HorizontalLayout {
+        y: 40px + pic-h + 6px;
+        height: 22px;
+        spacing: 6px;
+        alignment: start;
+        Text {
+            text: "What you type goes to " + name + " after a pause.";
+            color: Theme.material ? Theme.m3-on-surface-variant : Theme.tertiary;
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Rectangle {
+            width: off.preferred-width;
+            off := Text {
+                text: "Turn off";
+                color: mark;
+                font-size: 12px;
+                font-weight: 500;
+                vertical-alignment: center;
+                accessible-role: none;
+            }
+            accessible-role: button;
+            accessible-label: "Turn off web results";
+            accessible-action-default => { notice-off(); }
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => { notice-off(); }
+            }
+        }
+    }
+}
+
 // ── The window ────────────────────────────────────────────────────────────
 
 export component SpotlightPanel inherits Window {
@@ -672,12 +827,29 @@ export component SpotlightPanel inherits Window {
     in property <color> glass-fill: Theme.panel;
     // Material's rows come in one after another as the list appears
     in property <bool> introducing;
+    // Live web results (src/web.rs): shown, being drawn, the picture
+    in property <bool> web-shown;
+    in property <bool> web-loading;
+    in property <bool> web-has-shot;
+    in property <image> web-shot;
+    in property <float> web-aspect;
+    in property <string> web-name: "Google";
+    in property <SGlyph> g-globe;
+    in property <bool> web-hl;
+    in property <float> web-hl-x;
+    in property <float> web-hl-y;
+    in property <float> web-hl-w;
+    in property <float> web-hl-h;
+    in property <bool> web-notice;
 
     out property <float> openness: shown ? 1 : 0;
     // Glass: where the glass shapes are (for the plugin)
     out property <length> g-x: round((root.width - 680px) / 2 / 1px) * 1px;
     out property <length> g-top: round(root.height * 0.2 / 1px) * 1px + (1 - openness) * -10px;
     out property <length> g-body-h: !Theme.material && answering ? g-answer.height : !Theme.material && rows.length > 0 ? g-results.height : 0;
+    // (the web results' glass panel, under the results; 0 high when hidden)
+    out property <length> g-web-y: g-web.y;
+    out property <length> g-web-h: !Theme.material && web-on ? g-web.height : 0;
     out property <length> text-w: field.width;
 
     property <length> m-w: min(720px, root.width - 64px);
@@ -687,12 +859,20 @@ export component SpotlightPanel inherits Window {
     // The lists' most, kept on a short screen (#1078): 440 / 480 px, or what
     // is left below the field and 24 px from the bottom edge; Rust's
     // keyboard scrolling reads it (list-max)
-    property <length> g-list-max: max(120px, min(440px, root.height - round(root.height * 0.2 / 1px) * 1px - 64px - 16px - 24px));
-    property <length> m-list-max: max(120px, min(480px, root.height - m-top - 56px - 20px - 24px));
+    // The web results: what's shown of the picture (its top, less on a
+    // short screen) and the room they take under the results
+    property <bool> web-on: web-shown && !answering;
+    property <length> web-w: Theme.material ? m-w - 40px : 680px - 24px;
+    property <length> web-pic-max: max(120px, min(380px, root.height * 0.3));
+    property <length> web-pic-h: web-has-shot ? min(web-w * web-aspect, web-pic-max) : min(150px, web-pic-max);
+    property <length> web-block: 40px + web-pic-h + (web-notice ? 30px : 0) + 6px;
+    property <length> web-room: web-on ? web-block + (Theme.material ? 12px : 28px) : 0;
+    property <length> g-list-max: max(120px, min(440px, root.height - round(root.height * 0.2 / 1px) * 1px - 64px - 16px - 24px - web-room));
+    property <length> m-list-max: max(120px, min(480px, root.height - m-top - 56px - 20px - 24px - web-room));
     out property <length> list-max: Theme.material ? m-list-max : g-list-max;
     // (an inline answer's text: 360 px at most, less on a short screen)
     property <length> answer-max: max(100px, min(360px, list-max - 80px));
-    property <length> m-body: answering ? m-answer-h + 28px : min(content-h, m-list-max) + 20px;
+    property <length> m-body: answering ? m-answer-h + 28px : min(content-h, m-list-max) + 20px + web-room;
     property <length> m-answer-h;
     property <length> m-view-h: 56px + (m-open ? m-body : 0);
     // (springDefault 6.08 / 0.5: ω 19.5, ζ 0.80)
@@ -712,6 +892,10 @@ export component SpotlightPanel inherits Window {
     callback link(string);
     callback dismissed(); // a click outside
     callback closed(); // the close animation ended
+    callback web-click(float, float); // a click on the web results' picture (fractions of it)
+    callback web-expand();
+    callback web-browser();
+    callback web-notice-off();
 
     background: transparent;
     no-frame: true;
@@ -909,6 +1093,41 @@ export component SpotlightPanel inherits Window {
             }
         }
 
+        // ── Glass: the live web results, a glass panel of their own below ──
+        g-web := Rectangle {
+            visible: !Theme.material && web-on;
+            y: 64px + (rows.length > 0 ? g-results.height + 8px : 0);
+            height: web-block + 20px;
+            border-radius: 24px;
+            background: glass-fill;
+            border-width: 0.5px;
+            border-color: Theme.separator;
+            TouchArea { }
+            WebResults {
+                x: 12px;
+                y: 10px;
+                width: parent.width - 24px;
+                height: web-block;
+                loading: web-loading;
+                has-shot: web-has-shot;
+                shot: web-shot;
+                aspect: web-aspect;
+                pic-h: web-pic-h;
+                name: web-name;
+                glyph: g-globe;
+                hl: web-hl;
+                hl-x: web-hl-x;
+                hl-y: web-hl-y;
+                hl-w: web-hl-w;
+                hl-h: web-hl-h;
+                notice: web-notice;
+                click(x, y) => { root.web-click(x, y); }
+                expand => { root.web-expand(); }
+                browser => { root.web-browser(); }
+                notice-off => { root.web-notice-off(); }
+            }
+        }
+
         // ── Material: the search view, the bar on top, the results below ──
         if Theme.material: Rectangle {
             border-radius: 28px;
@@ -987,6 +1206,30 @@ export component SpotlightPanel inherits Window {
                         content-height: sb-list895.content-height;
                         view-height: sb-list895.height;
                     }
+                }
+                // The live web results, under the list
+                if web-on: WebResults {
+                    x: 20px;
+                    y: 8px + min(content-h, m-list-max) + 12px;
+                    width: parent.width - 40px;
+                    height: web-block;
+                    loading: web-loading;
+                    has-shot: web-has-shot;
+                    shot: web-shot;
+                    aspect: web-aspect;
+                    pic-h: web-pic-h;
+                    name: web-name;
+                    glyph: g-globe;
+                    hl: web-hl;
+                    hl-x: web-hl-x;
+                    hl-y: web-hl-y;
+                    hl-w: web-hl-w;
+                    hl-h: web-hl-h;
+                    notice: web-notice;
+                    click(x, y) => { root.web-click(x, y); }
+                    expand => { root.web-expand(); }
+                    browser => { root.web-browser(); }
+                    notice-off => { root.web-notice-off(); }
                 }
                 // Inline AI answer
                 if answering: m-body := VerticalLayout {

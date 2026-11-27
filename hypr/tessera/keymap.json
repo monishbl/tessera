@@ -285,6 +285,15 @@
   }
  },
  {
+  "id": "search-selection",
+  "keys": "$MOD + SHIFT + G",
+  "group": "Screen",
+  "label": "Search the web for the selected text",
+  "action": {
+   "shell": "searchSelection"
+  }
+ },
+ {
   "id": "dictate",
   "keys": "$MOD + H",
   "group": "Shell",

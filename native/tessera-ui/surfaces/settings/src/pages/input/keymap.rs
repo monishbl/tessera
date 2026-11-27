@@ -45,6 +45,7 @@ pub const SHELL_ACTIONS: &[(&str, &str)] = &[
     ("ocr", "Copy text from the screen"),
     ("screenTranslate", "Translate text on the screen"),
     ("lens", "Search an area with Google Lens"),
+    ("searchSelection", "Search the web for the selected text"),
     ("askScreen", "Ask AI about part of the screen"),
     ("circleSearch", "Circle to search"),
     ("volumeUp", "Volume up"),

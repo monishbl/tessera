@@ -132,7 +132,9 @@ fn snapshot() -> Option<Snapshot> {
     let workspaces: Vec<Workspace> = serde_json::from_str(&request("j/workspaces").ok()?).ok()?;
     let monitors: Vec<Monitor> = serde_json::from_str(&request("j/monitors").ok()?).ok()?;
     let client: Client = serde_json::from_str(&request("j/activewindow").ok()?).unwrap_or_default();
-    let clients: Vec<Client> = request("j/clients").ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let mut clients: Vec<Client> = request("j/clients").ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    // (tessera-web --render's, should one ever be mapped: in no list of the shell's)
+    clients.retain(|c| !crate::weblink::is_render_class(&c.class));
     Some(Snapshot {
         workspaces,
         focused: monitors.iter().find(|m| m.focused).map(|m| m.name.clone()).unwrap_or_default(),

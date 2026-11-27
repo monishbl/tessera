@@ -161,7 +161,9 @@ struct Active {
 }
 
 fn snapshot(urgent: &BTreeSet<String>) -> Option<Windows> {
-    let clients: Vec<Client> = serde_json::from_str(&request("j/clients").ok()?).ok()?;
+    let mut clients: Vec<Client> = serde_json::from_str(&request("j/clients").ok()?).ok()?;
+    // (tessera-web --render's, should one ever be mapped: in no list of the shell's)
+    clients.retain(|c| !crate::weblink::is_render_class(&c.class));
     let monitors: Vec<Monitor> = serde_json::from_str(&request("j/monitors").ok()?).ok()?;
     let active: Active = serde_json::from_str(&request("j/activewindow").ok()?).unwrap_or_default();
     let urgent = urgent.iter().filter(|a| clients.iter().any(|c| &c.address == *a)).cloned().collect();

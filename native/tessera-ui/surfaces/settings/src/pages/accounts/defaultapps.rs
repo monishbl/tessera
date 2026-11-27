@@ -67,6 +67,30 @@ fn web(cx: &mut Ctx, p: &mut Page) {
     g.row(Row::new("Clear history and website data").button("Clear", clear).danger());
 }
 
+/// Search on the web (tessera_core::weblink::search): the engine every
+/// web search of Tessera's goes to (`search.engine`, Google unless
+/// changed), and Search's live web results under yours (`search.webResults`, on)
+pub fn engine_index(v: &Value) -> i32 {
+    let e = v.as_str().unwrap_or("google");
+    tessera_core::weblink::search::ENGINES.iter().position(|x| x.0 == e).map_or(0, |i| i as i32)
+}
+
+fn search(cx: &mut Ctx, p: &mut Page) {
+    use tessera_core::weblink::search::{name, ENGINES};
+    let cur = engine_index(&cx.get("search.engine"));
+    let values: Vec<&str> = ENGINES.iter().map(|x| x.0).collect();
+    let pick = cx.pick("search.engine", &values);
+    let labels: Vec<String> = ENGINES.iter().map(|x| x.1.to_string()).collect();
+    let engine = ENGINES.get(cur.max(0) as usize).map_or("google", |x| x.0);
+    // (on unless turned off: read with its default, search.webResults)
+    let live = cx.get("search.webResults").as_bool().unwrap_or(true);
+    let flip = cx.on(move |cx, _| cx.set("search.webResults", !live));
+    let g = p.group("Search");
+    g.footer(format!("Web results in Search send what you type to {} after a short pause in typing. Paths, commands and sums never leave this computer.", name(engine)));
+    g.row(Row::new("Search engine").detail("Search, the quick-look browser, selected text and AI links").choice(&labels, cur, pick).width(220.0));
+    g.row(Row::new("Web results in Search").detail("The top of the results page, under your apps and files").switch(live, flip));
+}
+
 /// "Open links from Tessera in" (`apps.webLinks`): Tessera's quick-look
 /// browser, tessera-web (the default), or your browser (tessera_core::weblink)
 pub fn web_links_index(v: &Value) -> i32 {
@@ -98,6 +122,7 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
     for r in rows {
         g.row(r);
     }
+    search(cx, p);
     web(cx, p);
     p.more(cx);
     let rows = vec![
@@ -123,6 +148,15 @@ mod tests {
         let c = choices("Automatic", &["foot", "kitty -e btop"], |p| p == "foot" || p == "btop");
         assert_eq!(c.iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), ["", "foot"]);
         assert_eq!(c[0].1, "Automatic");
+    }
+
+    #[test]
+    fn the_search_engine_shown() {
+        assert_eq!(engine_index(&Value::Null), 0);
+        assert_eq!(engine_index(&Value::from("google")), 0);
+        assert_eq!(engine_index(&Value::from("duckduckgo")), 1);
+        assert_eq!(engine_index(&Value::from("startpage")), 4);
+        assert_eq!(engine_index(&Value::from("nonsense")), 0);
     }
 
     #[test]

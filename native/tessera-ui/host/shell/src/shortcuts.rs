@@ -27,7 +27,7 @@ const SNAPS: &[&str] = &["left", "right", "top", "bottom", "fill", "center"];
 /// GlobalShortcut items are (TesseraShell.qml, Osd.qml)
 const OTHERS: &[&str] = &[
     "reset", "lock", "reportBug", "appExpose", "showDesktop", "settings", "screenshotScreen", "screenshotRegion", "ocr", "screenTranslate", "record",
-    "askScreen", "circleSearch", "circleSearchPointer", "lens", "darkMode", "caffeine", "replyLatest", "shareSelection", "shelf", "pointerDown", "pointerUp", "dictate",
+    "askScreen", "circleSearch", "circleSearchPointer", "lens", "searchSelection", "darkMode", "caffeine", "replyLatest", "shareSelection", "shelf", "pointerDown", "pointerUp", "dictate",
     "dictateRelease", "dictateEscape", "tabs", "pip", "snap-restore", "switcher", "switcherBack", "switcherCommit", "captions", "findPointer", "superTap",
     "superTapCancel", "superTapRelease", "closeFront", "dismiss", "volumeUp", "volumeDown", "volumeMute", "micMute", "brightnessUp", "brightnessDown",
 ];
@@ -64,6 +64,46 @@ pub fn space_key(name: &str) -> Option<(&str, &str)> {
 /// The names registered with Hyprland
 pub fn names() -> Vec<String> {
     PANELS.iter().map(|p| p.to_string()).chain(SNAPS.iter().map(|l| format!("snap-{l}"))).chain(OTHERS.iter().map(|n| n.to_string())).chain(space_names()).collect()
+}
+
+/// What a selection's search looks for: the primary selection (the text
+/// selected anywhere), else the clipboard's text when nothing is selected;
+/// the words run together, at most 400 characters ("": nothing to search)
+pub fn selection_words(primary: &str, clipboard: &str) -> String {
+    let w = tessera_core::weblink::search::words(primary, 400);
+    if !w.is_empty() {
+        return w;
+    }
+    tessera_core::weblink::search::words(clipboard, 400)
+}
+
+/// A selection's text from wl-paste (`--primary` for the selection), ""
+/// when there's none or it isn't text; never waits long
+fn paste_text(primary: bool) -> String {
+    let mut c = std::process::Command::new("timeout");
+    c.args(["2", "wl-paste", "--no-newline", "--type", "text"]);
+    if primary {
+        c.arg("--primary");
+    }
+    c.stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    match c.output() {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+        _ => String::new(),
+    }
+}
+
+/// Search the web for the selected text (Super+Shift+G): the chosen
+/// engine's results (Google unless Settings chose another), where links
+/// from Tessera open (the quick-look browser unless Settings chose yours)
+fn search_selection(cfg: &Value) {
+    let primary = paste_text(true);
+    let words = selection_words(&primary, &if primary.trim().is_empty() { paste_text(false) } else { String::new() });
+    if words.is_empty() {
+        tessera_core::util::notify("Tessera", "edit-find", "low", "Nothing to search for", "Select some text, then press Super+Shift+G.");
+        return;
+    }
+    let url = tessera_core::weblink::search::url(cfg, &words);
+    tessera_core::weblink::open_with(cfg, &url);
 }
 
 #[derive(Default)]
@@ -177,6 +217,11 @@ impl Shortcuts {
             // (the trackpad's gesture for it, gestures.lua: it ripples out from the pointer)
             "circleSearchPointer" => h.ask("screen.select", json!(["circle", "pointer"])),
             "lens" => launch_run(&[&script("lens-search.sh").to_string_lossy()], "lens"),
+            // Super+Shift+G: the text selected anywhere, searched on the web
+            "searchSelection" => {
+                let cfg = h.cfg().clone();
+                std::thread::spawn(move || search_selection(&cfg));
+            }
             "darkMode" => h.ask("system.toggleDarkMode", json!([])),
             "caffeine" => h.ask("system.toggleCaffeine", json!([])),
             "replyLatest" => h.ask("notify.replyLatest", json!([])),
@@ -290,6 +335,15 @@ impl Service for Shortcuts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_selection_is_searched_else_the_clipboard() {
+        assert_eq!(selection_words("  water\n lily ", "ignored"), "water lily");
+        assert_eq!(selection_words("", "copied words"), "copied words");
+        assert_eq!(selection_words(" \n ", "  "), "");
+        assert_eq!(selection_words(&"word ".repeat(200), "").chars().count(), 399);
+        assert!(names().contains(&"searchSelection".to_string()));
+    }
 
     #[test]
     fn volume_steps_stay_inside_the_range() {

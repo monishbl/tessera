@@ -86,6 +86,9 @@ b("repair-escape", "$MOD + CTRL + Escape", "Shell", "Restart the shell (alternat
 # ── Screen ─────────────────────────────────────────────────────────────────
 b("snip", "$MOD + SHIFT + S", "Screen", "Screenshot of an area", shell("screenshotRegion"))
 b("lens", "$MOD + SHIFT + A", "Screen", "Search an area with Google Lens", shell("lens"))
+# (the text selected anywhere, or what was copied when nothing is: the web
+# search engine's results in the quick-look browser)
+b("search-selection", "$MOD + SHIFT + G", "Screen", "Search the web for the selected text", shell("searchSelection"))
 # (held down, Dictation listens until the key is let go: keybinds.lua binds the release too)
 b("dictate", "$MOD + H", "Shell", "Dictation (tap to start and stop, or hold while you speak)", {"shell": "dictate", "release": "dictateRelease"})
 b("captions", "$MOD + CTRL + L", "Shell", "Live captions on or off", shell("captions"))
@@ -242,6 +245,7 @@ DOC_KEYS = [
     (["ocr", "translate"], "Copy text from the screen / translate text on the screen"),
     (["ask-screen"], "Ask AI about part of the screen"),
     (["lens"], "Search an area with Google Lens (sends it to Google)"),
+    (["search-selection"], "Search the web for the selected text (Google unless Settings chose another engine)"),
     (["circle-search"], "Circle to search"),
     (["record"], "Start or stop recording an area"),
     (["overlay", "keyboard"], "Overlay widgets / on-screen keyboard"),

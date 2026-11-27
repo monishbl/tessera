@@ -111,6 +111,8 @@
  "screenshot.markup": false,
  "screenshot.textSearch": true,
  "screenshot.thumbnail": true,
+ "search.engine": "google",
+ "search.webResults": true,
  "sharing.name": "",
  "shelf.edge": true,
  "sidebar.booru": false,

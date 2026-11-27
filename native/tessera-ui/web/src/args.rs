@@ -9,6 +9,10 @@
 //!     --signin URL --done PREFIX   sign-in mode: prints the final URL when navigation reaches PREFIX
 //!     --quicklook            Quick Look mode: read-only preview, Space/Esc closes
 //!     --title TEXT           a title for the bar when there's no page title yet
+//!
+//!   tessera-web --render URL --out DIR [--width W] [--height H]
+//!               [--clip X,Y,W,H | --selector CSS] [--every SECONDS] [--scale S]
+//!     renders the page out of sight (src/render.rs): DIR/shot.png, DIR/links.json
 
 use std::path::{Path, PathBuf};
 
@@ -60,9 +64,40 @@ pub struct Args {
     pub target: Option<String>,
 }
 
+/// The part of a rendered page the picture shows
+#[derive(Clone, Debug, PartialEq)]
+pub enum Area {
+    /// the page's top, the width of the window and --height tall
+    Top,
+    /// this rectangle of the page (CSS px from its top-left)
+    Clip(Rect),
+    /// this element's box (its top at the picture's top), at most --height tall
+    Selector(String),
+}
+
+/// --render: a page drawn out of sight, for a picture of it (Search's web
+/// results, a desktop web clip)
+#[derive(Clone, Debug, PartialEq)]
+pub struct Render {
+    pub url: String,
+    pub out: PathBuf,
+    /// the page's width and the picture's most height, CSS px
+    pub width: i32,
+    pub height: i32,
+    pub area: Area,
+    /// stay and draw it again this often (seconds); None: once, then exit
+    pub every: Option<u64>,
+    /// pixels per CSS px in the picture (2 for a sharp one on a 2× screen)
+    pub scale: f64,
+}
+
+pub const RENDER_DEFAULT_W: i32 = 1024;
+pub const RENDER_DEFAULT_H: i32 = 768;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Parsed {
     Run(Args),
+    Render(Render),
     Help,
     Version,
 }
@@ -81,6 +116,16 @@ usage: tessera-web [OPTIONS] [URL|FILE]
   --quicklook            read-only preview: Space or Esc closes
   --title TEXT           a title for the bar until the page has one
   --version              which build this is
+
+usage: tessera-web --render URL --out DIR [--width W] [--height H]
+                   [--clip X,Y,W,H | --selector CSS] [--every SECONDS] [--scale S]
+  renders the page out of sight (never on screen) in this program's own
+  session, writes DIR/shot.png and DIR/links.json ([{x,y,w,h,href,title}]
+  in the picture's pixels; a search result's also has result, url, snippet)
+  and prints {\"event\":\"rendered\",\"png\":…,\"links\":…}; with --every it
+  stays and renders again every SECONDS. W×H: the page's width and the
+  picture's most height, CSS px (1024×768); --scale 2 for a sharp picture
+  on a 2× screen.
 
 Esc closes the window. --signin and --portal print one JSON line on stdout:
 {\"event\":\"done\",\"url\":…} (signed in, or online) or {\"event\":\"closed\"}.
@@ -117,6 +162,13 @@ pub fn parse(argv: &[String]) -> Result<Parsed, String> {
     let mut quicklook = false;
     let mut title: Option<String> = None;
     let mut target: Option<String> = None;
+    let mut render: Option<String> = None;
+    let mut out: Option<PathBuf> = None;
+    let (mut width, mut height): (Option<i32>, Option<i32>) = (None, None);
+    let mut clip: Option<Rect> = None;
+    let mut selector: Option<String> = None;
+    let mut every: Option<u64> = None;
+    let mut scale: Option<f64> = None;
     let mut i = 0;
     let mut only_positional = false;
     while i < argv.len() {
@@ -165,11 +217,54 @@ pub fn parse(argv: &[String]) -> Result<Parsed, String> {
             "--done" => done = Some(value("a URL prefix")?),
             "--quicklook" => quicklook = true,
             "--title" => title = Some(value("a title")?),
+            "--render" => render = Some(value("a URL")?),
+            "--out" => out = Some(PathBuf::from(value("a folder")?)),
+            "--width" | "--height" => {
+                let v = value("a number")?;
+                let n: i32 = v.trim().parse().ok().filter(|n| (16..=8192).contains(n)).ok_or_else(|| format!("{name}: {v:?} isn't a size from 16 to 8192"))?;
+                if name == "--width" {
+                    width = Some(n);
+                } else {
+                    height = Some(n);
+                }
+            }
+            "--clip" => clip = Some(parse_rect(&value("X,Y,W,H")?).map_err(|e| format!("--clip: {e}"))?),
+            "--selector" => selector = Some(value("a CSS selector")?).filter(|s| !s.trim().is_empty()),
+            "--every" => {
+                let v = value("seconds")?;
+                every = Some(v.trim().parse::<u64>().ok().filter(|n| *n >= 5).ok_or_else(|| format!("--every: {v:?} isn't a number of seconds, 5 or more"))?);
+            }
+            "--scale" => {
+                let v = value("a number")?;
+                scale = Some(v.trim().parse::<f64>().ok().filter(|n| n.is_finite() && (0.5..=4.0).contains(n)).ok_or_else(|| format!("--scale: {v:?} isn't from 0.5 to 4"))?);
+            }
             _ => return Err(format!("unknown option {name}")),
         }
         if inline.is_some() && matches!(name, "--portal" | "--quicklook") {
             return Err(format!("{name} takes no value"));
         }
+    }
+    let render_opts = out.is_some() || width.is_some() || height.is_some() || clip.is_some() || selector.is_some() || every.is_some() || scale.is_some();
+    if let Some(url) = render {
+        if lens.is_some() || portal || signin.is_some() || done.is_some() || quicklook || place != Place::Rules || title.is_some() || target.is_some() {
+            return Err("--render takes only its own options".into());
+        }
+        if !crate::nav::is_http(&url) {
+            return Err(format!("--render: {url:?} isn't an http or https address"));
+        }
+        let out = out.ok_or("--render needs --out DIR")?;
+        if clip.is_some() && selector.is_some() {
+            return Err("--clip and --selector: one of them".into());
+        }
+        let area = match (clip, selector) {
+            (Some(r), _) => Area::Clip(r),
+            (_, Some(s)) => Area::Selector(s),
+            _ => Area::Top,
+        };
+        return Ok(Parsed::Render(Render { url: url.trim().to_string(), out, width: width.unwrap_or(RENDER_DEFAULT_W), height: height.unwrap_or(RENDER_DEFAULT_H), area, every, scale: scale.unwrap_or(1.0) }));
+    }
+    if render_opts {
+        return Err("--out, --width, --height, --clip, --selector, --every and --scale go with --render".into());
     }
     let modes = [lens.is_some(), portal, signin.is_some(), quicklook].iter().filter(|x| **x).count();
     if modes > 1 {
@@ -294,6 +389,32 @@ mod tests {
         assert_eq!(p(&["--version"]), Ok(Parsed::Version));
         // (after --, a name starting with -- is a file)
         assert_eq!(run(&["--", "--odd.html"]).target.as_deref(), Some("--odd.html"));
+    }
+
+    #[test]
+    fn render_as_the_spec_writes_it() {
+        let r = |a: &[&str]| match p(a) {
+            Ok(Parsed::Render(r)) => r,
+            other => panic!("{a:?}: {other:?}"),
+        };
+        let x = r(&["--render", "https://www.google.com/search?q=x", "--out", "/tmp/o"]);
+        assert_eq!((x.width, x.height, x.area.clone(), x.every, x.scale), (1024, 768, Area::Top, None, 1.0));
+        assert_eq!(x.out, PathBuf::from("/tmp/o"));
+        let x = r(&["--render", "https://a.b", "--out", "/tmp/o", "--width", "640", "--height", "480", "--selector", "#rso", "--every", "300", "--scale", "2"]);
+        assert_eq!((x.width, x.height, x.area, x.every, x.scale), (640, 480, Area::Selector("#rso".into()), Some(300), 2.0));
+        let x = r(&["--render=https://a.b", "--out=/tmp/o", "--clip", "0,100,600,300"]);
+        assert_eq!(x.area, Area::Clip(Rect { x: 0, y: 100, w: 600, h: 300 }));
+        // (mistakes)
+        assert!(p(&["--render", "https://a.b"]).is_err());
+        assert!(p(&["--render", "file:///etc/passwd", "--out", "/tmp/o"]).is_err());
+        assert!(p(&["--render", "javascript:1", "--out", "/tmp/o"]).is_err());
+        assert!(p(&["--render", "https://a.b", "--out", "/tmp/o", "--clip", "0,0,1,1", "--selector", "x"]).is_err());
+        assert!(p(&["--render", "https://a.b", "--out", "/tmp/o", "--every", "1"]).is_err());
+        assert!(p(&["--render", "https://a.b", "--out", "/tmp/o", "--width", "0"]).is_err());
+        assert!(p(&["--render", "https://a.b", "--out", "/tmp/o", "--scale", "9"]).is_err());
+        assert!(p(&["--render", "https://a.b", "--out", "/tmp/o", "--portal"]).is_err());
+        assert!(p(&["--render", "https://a.b", "--out", "/tmp/o", "https://c.d"]).is_err());
+        assert!(p(&["--out", "/tmp/o", "https://c.d"]).is_err());
     }
 
     #[test]

@@ -48,6 +48,19 @@ hl.window_rule({
     opacity = "1.0 override 1.0 override"
 })
 
+-- tessera-web --render (Search's live web results, desktop web clips) draws
+-- pages out of sight in a window that is never shown, so it never maps one.
+-- Should one ever be mapped, it goes straight to a hidden workspace: no
+-- focus, no animation, no blur or shadow (and the shell's window lists
+-- leave its class out: tessera_core::weblink::is_render_class). (pcall: a
+-- Hyprland without one of these never loses the rules after it)
+pcall(hl.window_rule, {
+    name = "tessera-web-render",
+    match = { class = "^tessera-web-render$" },
+    workspace = "special:tessera-render silent", float = true,
+    no_focus = true, no_initial_focus = true, no_anim = true, no_blur = true, no_shadow = true
+})
+
 -- File pickers and account dialogs float, centred, on top. Opened from a
 -- floating window (Settings' "Choose…", Connect Google), a tiled one would
 -- sit behind it, as floating windows stay above tiled ones. The portals'

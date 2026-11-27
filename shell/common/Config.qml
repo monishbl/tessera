@@ -514,6 +514,10 @@ Singleton {
                 property string mixer: ""
                 property string tasks: ""
             }
+            property JsonObject search: JsonObject {
+                property string engine: "google" // (Rust shell) where every web search of Tessera's goes: google | duckduckgo | bing | brave | startpage
+                property bool webResults: true // (Rust shell) Search shows the engine's results page under yours, a moment after you stop typing
+            }
             property JsonObject apps: JsonObject {
                 property string webLinks: "tessera" // (Rust shell) links from Tessera open in: tessera (its quick-look browser, tessera-web; your browser when it isn't installed) | browser
             }
