@@ -266,21 +266,39 @@ component GlassDay inherits Rectangle {
     }
 
     // ── Left: events and to-dos ──
+    // (as many rows as fit above the buttons, each list ending in "+N more"
+    // when some don't, as Material's do: five events and five to-dos ran
+    // under Options, and on a short screen rows were cut off; #447)
     property <length> col-y: head.y + head.height + 32px;
-    property <int> nev: min(5, Day.events.length);
-    VerticalLayout {
+    property <length> col-h: parent.height - pad - 36px - 16px - col-y;
+    // (rows of 40 px: 36 and the 4 between; the titles and the gap 68 px)
+    property <int> rows-fit: max(2, floor((col-h - 68px) / 40px));
+    property <int> ev-need: Day.events.length == 0 ? 1 : Day.events.length > 5 ? 6 : Day.events.length;
+    property <int> todo-need: max(1, Day.todos.length);
+    // (the to-dos keep up to half the rows; the events take the rest, then
+    // the to-dos whatever the events left)
+    property <int> ev-rows: max(1, min(ev-need, rows-fit - min(todo-need, max(1, floor(rows-fit / 2)))));
+    property <int> todo-rows: max(1, min(todo-need, rows-fit - ev-rows));
+    property <int> ev-show: ev-rows >= ev-need ? min(5, Day.events.length) : max(1, ev-rows - 1);
+    property <int> ev-more: Day.events.length - ev-show;
+    property <int> todo-show: todo-rows >= todo-need ? Day.todos.length : max(1, todo-rows - 1);
+    property <int> todo-more: Day.todos.length - todo-show;
+    property <int> nev: ev-show + (ev-more > 0 ? 1 : 0);
+    property <length> todo-y: 24px + max(1, nev) * 40px + 24px;
+    Rectangle {
         x: pad;
         y: col-y;
         width: parent.width - 2 * pad - 240px - 32px;
-        height: self.preferred-height;
-        spacing: 4px;
+        height: max(0px, col-h);
         Rise {
             order: 1;
+            y: 0;
             height: 20px;
             SectionTitle { x: 0; y: 0; text: "Today"; }
         }
         if Day.events.length == 0: Rise {
             order: 2;
+            y: 24px;
             height: 36px;
             Text {
                 x: 0;
@@ -291,7 +309,9 @@ component GlassDay inherits Rectangle {
         }
         for e[i] in Day.events-five: Rise {
             order: 2 + i;
+            visible: i < ev-show;
             dim: e.past ? 0.5 : 1;
+            y: 24px + i * 40px;
             height: 36px;
             accessible-role: AccessibleRole.text;
             accessible-label: e.time + ", " + e.title;
@@ -322,14 +342,28 @@ component GlassDay inherits Rectangle {
                 accessible-role: none;
             }
         }
-        Rectangle { height: 20px; }
+        if ev-more > 0: Rise {
+            order: 2 + ev-show;
+            y: 24px + ev-show * 40px;
+            height: 36px;
+            Text {
+                x: 0;
+                text: "+" + ev-more + " more";
+                color: Theme.secondary;
+                font-size: Theme.body;
+                font-weight: 500;
+                vertical-alignment: center;
+            }
+        }
         Rise {
             order: 3 + nev;
+            y: todo-y;
             height: 20px;
             SectionTitle { x: 0; y: 0; text: "To-dos"; }
         }
         if Day.todos.length == 0: Rise {
             order: 4 + nev;
+            y: todo-y + 24px;
             height: 36px;
             Text {
                 x: 0;
@@ -340,6 +374,8 @@ component GlassDay inherits Rectangle {
         }
         for t[i] in Day.todos: Rise {
             order: 4 + nev + i;
+            visible: i < todo-show;
+            y: todo-y + 24px + i * 40px;
             height: 36px;
             tick := Rectangle {
                 x: 0;
@@ -378,6 +414,19 @@ component GlassDay inherits Rectangle {
                 overflow: elide;
                 color: Theme.label;
                 font-size: 14px;
+                vertical-alignment: center;
+            }
+        }
+        if todo-more > 0: Rise {
+            order: 4 + nev + todo-show;
+            y: todo-y + 24px + todo-show * 40px;
+            height: 36px;
+            Text {
+                x: 0;
+                text: "+" + todo-more + " more";
+                color: Theme.secondary;
+                font-size: Theme.body;
+                font-weight: 500;
                 vertical-alignment: center;
             }
         }
