@@ -472,7 +472,8 @@ Singleton {
             }
             property JsonObject emoji: JsonObject {
                 property string style: "android" // emoji drawn by the shell: android (Noto) | apple | windows (Fluent)
-                property string klipyKey: "" // your KLIPY app key for the picker's GIF tab (partner.klipy.com/api-keys); KLIPY_API_KEY in the environment wins
+                property string klipyKey: "" // your KLIPY app key for the picker's GIF tab (partner.klipy.com/api-keys); KLIPY_API_KEY in the environment wins. The Rust shell moves it into the keyring
+                property int klipyKeySaved: 0 // (Rust shell) counts up each time a KLIPY key is saved in the keyring; never the key
                 property string gifFilter: "medium" // GIF safety filter: off | low | medium | high
             }
             property JsonObject resources: JsonObject {

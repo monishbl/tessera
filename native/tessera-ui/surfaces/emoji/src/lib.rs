@@ -81,6 +81,8 @@ enum M {
     GifActivate(i32, bool),
     GifScrolled(f32, f32),
     GifPage(u64, u32, Result<(Vec<klipy::Gif>, bool), klipy::Status>),
+    /// the keyring's KLIPY key, read for this marker (klipy::marker)
+    KlipyKey(String, String),
     GifPreview(u64, usize, slint::SharedPixelBuffer<slint::Rgba8Pixel>),
     StateAct(bool),
     /// closed long enough (its opening's number): the window goes
@@ -236,11 +238,15 @@ struct Gifs {
     model: Rc<VecModel<ui::GifCell>>,
     /// the KLIPY key the list was fetched with (a new one starts over)
     key: String,
+    /// the keyring's key and the marker it was read for (#965)
+    saved: Option<(String, String)>,
+    /// the marker a keyring reading is on its way for
+    looking: Option<String>,
 }
 
 impl Default for Gifs {
     fn default() -> Self {
-        Self { status: klipy::Status::Idle, list: Vec::new(), query: None, page: 0, has_next: false, loading_more: false, serial: 0, gen: 0, sel: 0, model: Rc::new(VecModel::default()), key: String::new() }
+        Self { status: klipy::Status::Idle, list: Vec::new(), query: None, page: 0, has_next: false, loading_more: false, serial: 0, gen: 0, sel: 0, model: Rc::new(VecModel::default()), key: String::new(), saved: None, looking: None }
     }
 }
 
@@ -732,7 +738,7 @@ impl Emoji {
         let (kind, spin, icon, title, body, action, secondary): (&str, bool, &str, String, String, &str, &str) = if gif {
             let g = &self.gifs;
             match g.status {
-                _ if klipy::key(&st.shell.cfg).is_empty() => {
+                _ if self.klipy_key(st).is_empty() && g.looking.is_none() => {
                     ("noKey", false, "\u{e274}", "Add a KLIPY key to use GIFs".into(), "Get a free app key at partner.klipy.com, then paste it in Settings.".into(), "Open Settings", "Get a key")
                 }
                 klipy::Status::Idle => ("gifLoading", true, "", "Loading trending GIFs…".into(), String::new(), "", ""),
@@ -1030,9 +1036,59 @@ impl Emoji {
 
     // ── GIFs ──────────────────────────────────────────────────────────────
 
+    /// The KLIPY key now: the environment's, the keyring's, an old one in
+    /// config.json
+    fn klipy_key(&self, st: &State) -> String {
+        klipy::key(&st.shell.cfg, self.gifs.saved.as_ref().map_or("", |s| s.1.as_str()))
+    }
+
+    /// A new KLIPY key: start over (Klipy.qml's onKeyChanged)
+    fn key_changed(&mut self, st: &State) {
+        let key = self.klipy_key(st);
+        if key != self.gifs.key {
+            let g = &mut self.gifs;
+            g.key = key;
+            g.serial += 1; // (an answer for the old key is dropped)
+            g.gen += 1;
+            g.list.clear();
+            g.model.set_vec(Vec::new());
+            g.query = None;
+            g.status = klipy::Status::Idle;
+            g.loading_more = false;
+            g.has_next = false;
+            g.sel = 0;
+            if self.open && self.mode() == Mode::Gif {
+                let q = self.query.clone();
+                self.gif_fetch(st, &q);
+            }
+            self.push(st);
+        }
+    }
+
+    /// Reads the keyring's KLIPY key on a thread, once per marker (Settings
+    /// counts it up on every new key); only for the GIF tab, so the keyring
+    /// isn't asked before GIFs are wanted
+    fn look_key(&mut self, st: &State) {
+        if klipy::env_key().is_some() {
+            return;
+        }
+        let m = klipy::marker(&st.shell.cfg);
+        let g = &mut self.gifs;
+        if g.saved.as_ref().is_some_and(|s| s.0 == m) || g.looking.as_ref() == Some(&m) {
+            return;
+        }
+        g.looking = Some(m.clone());
+        let to = Self::send(st);
+        std::thread::spawn(move || {
+            let k = tessera_core::services::ai::keys::Keys::lookup(tessera_core::services::ai::keys::KLIPY);
+            to(Box::new(M::KlipyKey(m, k)));
+        });
+    }
+
     /// Trending (q = "") or a search; keeps what's loaded for the same one
     fn gif_fetch(&mut self, st: &State, q: &str) {
-        let key = klipy::key(&st.shell.cfg);
+        self.look_key(st);
+        let key = self.klipy_key(st);
         let q = q.trim().to_string();
         if key.is_empty() {
             self.gifs.status = klipy::Status::Idle;
@@ -1066,7 +1122,7 @@ impl Emoji {
     }
 
     fn gif_get(&mut self, st: &State, page: u32) {
-        let key = klipy::key(&st.shell.cfg);
+        let key = self.klipy_key(st);
         let filter = st.shell.cfg["emoji"]["gifFilter"].as_str().unwrap_or("medium").to_string();
         let g = &mut self.gifs;
         g.key = key.clone();
@@ -1198,26 +1254,11 @@ impl Part for Emoji {
             }
         }
         self.settings(st);
-        // A new KLIPY key: start over (Klipy.qml's onKeyChanged)
-        let key = klipy::key(&st.shell.cfg);
-        if key != self.gifs.key {
-            let g = &mut self.gifs;
-            g.key = key;
-            g.serial += 1; // (an answer for the old key is dropped)
-            g.gen += 1;
-            g.list.clear();
-            g.model.set_vec(Vec::new());
-            g.query = None;
-            g.status = klipy::Status::Idle;
-            g.loading_more = false;
-            g.has_next = false;
-            g.sel = 0;
-            if self.open && self.mode() == Mode::Gif {
-                let q = self.query.clone();
-                self.gif_fetch(st, &q);
-            }
-            self.push(st);
+        // (a new key saved in Settings: read again, once GIFs were wanted)
+        if self.gifs.saved.is_some() {
+            self.look_key(st);
         }
+        self.key_changed(st);
     }
 
     fn plugin_changed(&mut self, st: &mut State) {
@@ -1338,6 +1379,14 @@ impl Part for Emoji {
                 }
             }
             M::GifPage(s, p, r) => self.gif_page(st, s, p, r),
+            M::KlipyKey(m, k) => {
+                if self.gifs.looking.as_ref() == Some(&m) {
+                    self.gifs.looking = None;
+                }
+                self.gifs.saved = Some((m, k));
+                self.key_changed(st);
+                self.push(st);
+            }
             M::GifPreview(gen, i, px) => {
                 if gen == self.gifs.gen {
                     if let Some(mut c) = self.gifs.model.row_data(i) {
