@@ -948,16 +948,25 @@ component NotesW inherits Rectangle {
         font-size: Theme.body;
         font-weight: 600;
     }
-    Rectangle {
+    // (scrolls, following the caret: text past the widget's height and the
+    // caret were cut off, with no way to reach the end; #514)
+    note-flick := Flickable {
         y: 36px;
         height: root.height - 36px;
-        clip: true;
+        content-height: max(self.height, edit.preferred-height);
         edit := TextInput {
             y: 0;
             width: parent.width;
             height: max(parent.height, self.preferred-height);
             single-line: false;
             wrap: word-wrap;
+            cursor-position-changed(p) => {
+                if p.y < -note-flick.content-y {
+                    note-flick.content-y = -p.y;
+                } else if p.y + 20px > -note-flick.content-y + note-flick.height {
+                    note-flick.content-y = -(p.y + 20px - note-flick.height);
+                }
+            }
             text: w.note;
             color: Theme.material ? Theme.m3-on-tertiary-container : Theme.label;
             selection-background-color: Theme.material ? Theme.m3-tertiary.with-alpha(0.3) : Theme.accent.with-alpha(0.4);

@@ -1569,7 +1569,7 @@ component Translate inherits Rectangle {
         border-radius: Theme.material ? 24px : 18px;
         background: Theme.platter;
         clip: true;
-        Flickable {
+        input-flick := Flickable {
             x: Theme.material ? 16px : 12px;
             y: self.x;
             width: parent.width - 2 * self.x;
@@ -1580,6 +1580,14 @@ component Translate inherits Rectangle {
                 height: max(self.preferred-height, parent.height);
                 single-line: false;
                 wrap: word-wrap;
+                // (the box follows the caret: typing past the last line it went out of sight; #429)
+                cursor-position-changed(p) => {
+                    if p.y < -input-flick.content-y {
+                        input-flick.content-y = -p.y;
+                    } else if p.y + 26px > -input-flick.content-y + input-flick.height {
+                        input-flick.content-y = -(p.y + 26px - input-flick.height);
+                    }
+                }
                 color: Theme.label;
                 font-size: Theme.title;
                 accessible-label: "Text to translate";
@@ -2532,7 +2540,7 @@ export component Sidebar inherits Window {
                                 clicked => { circle(); }
                             }
                         }
-                        Flickable {
+                        composer-flick := Flickable {
                             x: tools.x + tools.width + 6px;
                             y: Theme.material ? 16px : 11px;
                             width: send-button.x - 6px - self.x;
@@ -2543,6 +2551,15 @@ export component Sidebar inherits Window {
                                 height: max(self.preferred-height, parent.height);
                                 single-line: false;
                                 wrap: word-wrap;
+                                // (the box follows the caret: past about eight lines the
+                                // text went below its edge; #429)
+                                cursor-position-changed(p) => {
+                                    if p.y < -composer-flick.content-y {
+                                        composer-flick.content-y = -p.y;
+                                    } else if p.y + 22px > -composer-flick.content-y + composer-flick.height {
+                                        composer-flick.content-y = -(p.y + 22px - composer-flick.height);
+                                    }
+                                }
                                 color: Theme.label;
                                 selection-background-color: Theme.material ? Theme.m3-primary.with-alpha(0.3) : Theme.accent.with-alpha(0.4);
                                 font-size: M.body;
