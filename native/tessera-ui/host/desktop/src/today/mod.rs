@@ -284,7 +284,7 @@ impl Service for Hub {
             "alarms" => timers::call(call, args),
             "notifications" => {
                 let e = event_of(args);
-                self.notif.from_surface(h, &e["list"], &mut self.calls);
+                self.notif.from_surface(h, &e["list"], &e["dismissed"], &mut self.calls);
             }
             "nc" => {
                 let e = event_of(args);

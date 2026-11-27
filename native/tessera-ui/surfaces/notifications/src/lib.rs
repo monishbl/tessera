@@ -20,7 +20,11 @@
 //! part's list instead of running its own server:
 //!   - out, on stdout (RustUi.qml passes it on), whenever the list changes,
 //!     once the shell said hello:
-//!       {"src":"ui","kind":"notifications","list":[Note…]}
+//!       {"src":"ui","kind":"notifications","list":[Note…],"dismissed":[N…]}
+//!     `dismissed`: the ids that left the list since the last one because
+//!     the user closed them (Clear All, a close button, an action that
+//!     ends it), not the app nor their time (a call's card: declined, not
+//!     missed; audit #481);
 //!     each Note with Quickshell's names (model.rs) and `route`, where it went
 //!     as it arrived: "banner" (drawn here; the shell plays its sound),
 //!     "island" (the shell posts the island's card), "call" (the island's
@@ -202,6 +206,8 @@ pub struct Notifications {
     banners: Vec<Shown>,
     expanded: bool,
     hovered: bool,
+    /// the ids the user closed since the list was last told (`dismissed`)
+    gone_dismissed: Vec<u32>,
     heights: HashMap<u32, f32>,
     moved: HashMap<u32, [f32; 5]>,
     drafts: HashMap<u32, String>,
@@ -538,11 +544,12 @@ impl Notifications {
         BUS_ID.with(|b| b.borrow().clone())
     }
 
-    fn publish(&self) {
+    fn publish(&mut self) {
+        let dismissed = std::mem::take(&mut self.gone_dismissed);
         if !self.shell {
             return;
         }
-        crate::shell::tell("notifications", serde_json::json!({"list": self.store.list}));
+        crate::shell::tell("notifications", serde_json::json!({"list": self.store.list, "dismissed": dismissed}));
     }
 
     fn arrived(&mut self, st: &mut State, mut n: Note) {
@@ -585,6 +592,10 @@ impl Notifications {
     fn forget(&mut self, id: u32, reason: u32) {
         if let Some(b) = notify::bus() {
             b.closed(id, reason);
+        }
+        // (the shell tells a declined call from a missed one by this)
+        if reason == notify::DISMISSED && !self.gone_dismissed.contains(&id) {
+            self.gone_dismissed.push(id);
         }
         self.drafts.remove(&id);
         for s in self.banners.iter_mut().filter(|s| s.id == id) {

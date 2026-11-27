@@ -156,8 +156,10 @@ impl Notif {
 
     // ── tessera-ui's list ───────────────────────────────────────────────
 
-    /// The surface's list changed (`fromRust`)
-    pub fn from_surface(&mut self, h: &mut Host, items: &Value, calls: &mut super::calls::Calls) {
+    /// The surface's list changed (`fromRust`); `dismissed`: the ids it
+    /// says the user closed (the rest that left, the app or their time did)
+    pub fn from_surface(&mut self, h: &mut Host, items: &Value, dismissed: &Value, calls: &mut super::calls::Calls) {
+        self.dismissed_here.extend(dismissed_ids(dismissed));
         let new: Vec<Note> = items.as_array().map(|a| a.iter().filter_map(|x| serde_json::from_value::<Note>(x.clone()).ok()).collect()).unwrap_or_default();
         let old: HashSet<u32> = self.list.iter().map(|n| n.id).collect();
         let now_ids: HashSet<u32> = new.iter().map(|n| n.id).collect();
@@ -188,6 +190,8 @@ impl Notif {
             let dismissed = self.dismissed_here.remove(&id);
             calls.note_gone(h, id, dismissed);
         }
+        // (only for this list: an id left over must not mark a later one)
+        self.dismissed_here.clear();
         let primed = self.primed;
         self.primed = true;
         if primed {
@@ -526,6 +530,11 @@ pub fn calendar_payload(c: &Calendar, todo_list: &[todos::Item], raw: &[Value], 
            "targets": targets, "target": target.0, "targetLabel": target.1, "defaultAlert": default_alert})
 }
 
+/// The ids in the surface's `dismissed` (closed by the user: audit #481)
+pub fn dismissed_ids(v: &Value) -> HashSet<u32> {
+    v.as_array().map(|a| a.iter().filter_map(Value::as_u64).filter_map(|x| u32::try_from(x).ok()).collect()).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -610,5 +619,15 @@ mod tests {
         assert!(m["info"].as_str().unwrap().ends_with("Change repeating events on your phone or on the web."));
         assert_eq!(v["targets"][1]["value"], "g|c");
         assert_eq!((v["target"].as_str(), v["targetLabel"].as_str()), (Some("g|c"), Some("Work")));
+    }
+
+    #[test]
+    fn dismissed_ids_say_who_closed_it() {
+        use serde_json::json;
+        // closed by the user: a ringing call's card left as declined, not missed
+        assert_eq!(super::dismissed_ids(&json!([7, 9])), HashSet::from([7u32, 9]));
+        // an older shell or surface says nothing: none (the app or time took them)
+        assert!(super::dismissed_ids(&Value::Null).is_empty());
+        assert!(super::dismissed_ids(&json!(["7", -1, 1u64 << 40])).is_empty());
     }
 }
