@@ -16,11 +16,11 @@
 //! the island show is in the host state, `dictation`.
 //!
 //! The island's live activity (dictation_live.rs): while you speak, the
-//! microphone's level (told to the menu bar, 20 a second) and the words so
-//! far (drafts, in the state as `partial`); after you stop, "Writing…"; then,
-//! for a moment, the first words it typed (stage `done`).
+//! level of your voice (told to the menu bar, 20 a second; no words until
+//! the end); after you stop, "Writing…"; then, for a moment, the words it
+//! typed (stage `done`), revealed one after another.
 
-use super::dictation_live::{self as live, Tap};
+use super::dictation_live::Tap;
 use super::util;
 use serde_json::{json, Value};
 use std::process::{Command, Stdio};
@@ -29,9 +29,13 @@ use tessera_core::host::{Host, Service};
 const HOLD_MS: i64 = 400; // held longer than this: it stops on release
 const MAX_SECONDS: u64 = 120;
 /// How long the island shows the first words it typed
-const DONE_MS: u64 = 1400;
+const DONE_MS: u64 = 1600;
+/// The island reveals the typed words one after another: each this much
+/// after the last, each taking REVEAL_MS (its moment waits for them)
+const WORD_STAGGER_MS: u64 = 50;
+const REVEAL_MS: u64 = 220;
 /// How many of them
-const DONE_WORDS: usize = 6;
+const DONE_WORDS: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Stage {
@@ -67,6 +71,11 @@ pub fn first_words(text: &str, n: usize) -> String {
     }
 }
 
+/// How long the typed words show: the moment, after the last one is revealed
+pub fn done_ms(words: u64) -> u64 {
+    DONE_MS + REVEAL_MS + WORD_STAGGER_MS * words.saturating_sub(1)
+}
+
 /// A language code the island may set: "" (the system's), "auto" or a code
 fn language_ok(code: &str) -> bool {
     code.len() <= 8 && code.chars().all(|c| c.is_ascii_lowercase() || c == '-')
@@ -96,12 +105,11 @@ pub struct DictationSvc {
     last_download: String,
     /// the screen was locked when last looked (dictation stops on lock)
     locked: bool,
-    /// each dictation's number (its level and drafts say which they're for)
+    /// each dictation's number (the island tells them apart by it)
     session: u64,
-    /// the live side while listening: levels and drafts (stopped when dropped)
+    /// the live side while listening: the level (stopped when dropped)
     tap: Option<Tap>,
-    /// the words so far (a draft) and, once typed, the first few
-    partial: String,
+    /// once typed, the first words of it (the island shows them)
     typed: String,
     /// a language picked in the island, until the settings file says it too
     lang_now: Option<String>,
@@ -132,7 +140,6 @@ impl DictationSvc {
             locked: false,
             session: 0,
             tap: None,
-            partial: String::new(),
             typed: String::new(),
             lang_now: None,
         }
@@ -200,7 +207,7 @@ impl DictationSvc {
                 "session": self.session,
                 // (the shortcut still held: it stops when let go; else a second press stops it)
                 "mode": if self.stage == Stage::Listening && self.pressed_at != 0 { "hold" } else { "toggle" },
-                "partial": self.partial, "typed": self.typed,
+                "typed": self.typed,
                 "language": self.language(h), "languageSet": self.language_set(h),
                 "info": self.info, "ready": ready, "hasBinary": self.has_binary(), "model": self.model(h),
                 "error": self.error, "downloading": self.downloading, "downloadProgress": self.progress,
@@ -294,11 +301,7 @@ impl DictationSvc {
         self.gen += 1;
         // the live side: the level for the island's wave, the words so far
         self.session += 1;
-        self.partial.clear();
         self.typed.clear();
-        let pick = live::Pick { model: live::draft_model(&self.model(h), &self.info["models"]), lang: self.language(h) };
-        let helper: Vec<String> = ["setpriv", "--pdeathsig", "TERM", "--", "python3", "-I"].iter().map(|s| s.to_string()).chain([util::script("dictate.py"), "stream".to_string()]).collect();
-        let draft = format!("{}/tessera/dictation-partial-{}.wav", util::runtime(), self.session);
         // (the levels go straight to the menu bar's part, 20 a second: not
         // through this service, which would make each a host turn and run
         // every service's `settled`; a stale one after a stop is ignored there)
@@ -306,7 +309,7 @@ impl DictationSvc {
         let level_to = move |l: f32| {
             let _ = tx.send(tessera_core::Msg::Part("menubar", Box::new(json!({"dictation": {"level": l}}))));
         };
-        self.tap = Some(Tap::spawn(self.wav.clone(), self.session, pick, h.sender("Dictation"), level_to, helper, draft));
+        self.tap = Some(Tap::spawn(self.wav.clone(), level_to));
         self.tick(h);
         util::later(h.sender("Dictation"), MAX_SECONDS * 1000, Box::new(Limit(self.gen)));
         self.publish(h);
@@ -318,12 +321,11 @@ impl DictationSvc {
             return;
         }
         self.gen += 1; // (the limit timer is void)
-        self.tap = None; // (no more levels or drafts: the words are written from the whole recording)
+        self.tap = None; // (no more levels: the words are written from the whole recording)
         self.stage = Stage::Writing;
         self.tick(h);
         if tessera_core::util::now_ms() - self.started_at < 500 || self.rec_pid.is_none() {
             self.stage = Stage::Idle; // (too short to hold any words: dropped quietly)
-            self.partial.clear();
         }
         if let Some(p) = self.rec_pid {
             unsafe { libc::kill(p, libc::SIGINT) };
@@ -338,7 +340,6 @@ impl DictationSvc {
         }
         self.gen += 1;
         self.tap = None;
-        self.partial.clear();
         self.typed.clear();
         if let Some(p) = self.rec_pid {
             self.cancelled = true;
@@ -397,7 +398,6 @@ impl DictationSvc {
 
     /// Type it where the cursor is
     fn finish(&mut self, h: &mut Host, text: String) {
-        self.partial.clear();
         if text.is_empty() {
             self.stage = Stage::Idle;
             self.publish(h);
@@ -408,7 +408,8 @@ impl DictationSvc {
         self.stage = Stage::Done;
         self.typed = first_words(&text, DONE_WORDS);
         self.publish(h);
-        util::later(h.sender("Dictation"), DONE_MS, Box::new(DoneEnd(self.session)));
+        let words = self.typed.split_whitespace().count() as u64;
+        util::later(h.sender("Dictation"), done_ms(words), Box::new(DoneEnd(self.session)));
         // (through wl-copy's input: a command line can be read by any
         // program; waited for, so the paste gets these words)
         let send = h.sender("Dictation");
@@ -433,7 +434,6 @@ impl DictationSvc {
     fn fail(&mut self, h: &mut Host, why: &str) {
         self.stage = Stage::Idle;
         self.tap = None;
-        self.partial.clear();
         self.typed.clear();
         self.error = why.into();
         util::island_post(h, json!({"kind": "custom", "icon": "microphone-slash", "title": "Dictation didn't work", "subtitle": why, "color": "danger"}), 6000);
@@ -549,17 +549,12 @@ impl Service for DictationSvc {
             "cancel" => self.cancel(h),
             "pressed" => self.pressed(h),
             "released" => self.released(h),
-            // the island's mic and language line: the language picked there
-            // (kept in the settings, used for these words and the next ones)
+            // a language picked (kept in the settings, used for these words and the next ones)
             "language" => {
                 let code = args.first().cloned().unwrap_or_default();
                 if language_ok(&code) {
                     util::cfg_set("dictation.language", json!(code));
                     self.lang_now = Some(code);
-                    let lang = self.language(h);
-                    if let Some(t) = &self.tap {
-                        t.set_lang(&lang);
-                    }
                     self.publish(h);
                 }
             }
@@ -608,17 +603,6 @@ impl Service for DictationSvc {
         None
     }
     fn message(&mut self, h: &mut Host, msg: Box<dyn std::any::Any + Send>) {
-        let msg = match msg.downcast::<live::Partial>() {
-            Ok(p) => {
-                // (a draft still on its way when you stopped is newer than the last: kept)
-                if p.0 == self.session && matches!(self.stage, Stage::Listening | Stage::Writing) && p.1 != self.partial {
-                    self.partial = p.1;
-                    self.publish(h);
-                }
-                return;
-            }
-            Err(m) => m,
-        };
         let msg = match msg.downcast::<DoneEnd>() {
             Ok(d) => {
                 if d.0 == self.session && self.stage == Stage::Done {
@@ -702,6 +686,13 @@ impl Service for DictationSvc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_typed_words_show_until_revealed_and_a_moment_more() {
+        assert_eq!(done_ms(1), 1600 + 220);
+        assert_eq!(done_ms(16), 1600 + 220 + 15 * 50);
+        assert_eq!(done_ms(0), 1600 + 220);
+    }
 
     #[test]
     fn the_first_words_typed() {

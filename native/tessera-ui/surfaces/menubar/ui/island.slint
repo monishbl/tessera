@@ -2045,29 +2045,24 @@ export struct DictView {
     hint: string, // "Release to type · Esc to cancel" (the same)
 }
 
-// One word of what you said: `fresh` ones arrive blurred and sharpen into
-// place; `settled` ones are in the ink, the ones still being guessed dim
+// One word of what was typed: `fresh` ones arrive blurred and sharpen into
+// place, `delay` after the card shows them (one after another)
 export struct DictWord {
     id: int,
     text: string,
     fresh: bool,
-    settled: bool,
-    index: int, // its place in all the words (the writing shimmer runs along them)
+    delay: int, // ms
 }
 
 // A word arriving "blur to sharp": Slint has no blur, so it's faked with six
 // faint copies a pixel or two apart that close in on the word (≈220 ms) as
-// it comes up from nothing. Reduce motion: it only fades in. Writing: a soft
-// highlight runs along the words (their ink brightening in turn), no box.
+// it comes up from nothing, after its delay. Reduce motion: it only fades in.
 component DictWordItem inherits Rectangle {
     in property <string> text;
     in property <bool> fresh;
-    in property <bool> settled;
-    in property <int> index;
-    in property <bool> writing;
+    in property <int> delay;
     in property <bool> reduce-motion;
     in property <color> ink;
-    in property <color> ink2;
     in property <length> font-size;
     width: word.preferred-width;
     height: word.preferred-height;
@@ -2075,20 +2070,18 @@ component DictWordItem inherits Rectangle {
     property <bool> revealing;
     init => {
         if fresh {
-            t0 = animation-tick();
+            t0 = animation-tick() + delay * 1ms;
             revealing = true;
         }
     }
     // (done: no longer bound to the clock)
     Timer {
-        interval: 260ms;
+        interval: 260ms + delay * 1ms;
         running: revealing;
         triggered => { revealing = false; }
     }
     property <float> lin: !revealing ? 1 : max(0, min(1, (animation-tick() - t0) / 220ms));
     property <float> e: 1 - (1 - lin) * (1 - lin) * (1 - lin);
-    property <color> c: settled ? ink : ink2;
-    property <float> glow: writing && !reduce-motion ? Math.pow(max(0, Math.sin(animation-tick() / 1600ms * 360deg - index * 24deg)), 6) : 0;
     accessible-role: none;
     if revealing && !reduce-motion: Rectangle {
         for g in [{ dx: -2, dy: 0 }, { dx: 2, dy: 0 }, { dx: 0, dy: -1.5 }, { dx: 0, dy: 1.5 }, { dx: -1.4, dy: 1.1 }, { dx: 1.4, dy: -1.1 }]: Text {
@@ -2097,18 +2090,19 @@ component DictWordItem inherits Rectangle {
             width: root.width;
             height: root.height;
             text: root.text;
-            color: root.c;
+            color: root.ink;
             font-size: root.font-size;
-            opacity: 0.22 * (1 - e) + 0.08;
+            font-weight: 500;
+            // (nothing before its turn; then faint copies fading as they meet)
+            opacity: lin <= 0 ? 0 : 0.22 * (1 - e) + 0.06;
         }
     }
     word := Text {
         text: root.text;
-        color: root.c;
+        color: root.ink;
         font-size: root.font-size;
-        font-weight: settled ? 500 : 400;
-        opacity: (reduce-motion ? lin : e * e) * (writing ? 0.62 + 0.38 * glow : 1);
-        animate color { duration: Theme.hover; }
+        font-weight: 500;
+        opacity: reduce-motion ? lin : e * e;
     }
 }
 
@@ -2271,12 +2265,9 @@ component DictCard inherits VerticalLayout {
                 for w in root.top: DictWordItem {
                     text: w.text;
                     fresh: w.fresh;
-                    settled: w.settled;
-                    index: w.index;
-                    writing: root.writing;
+                    delay: w.delay;
                     reduce-motion: root.reduce-motion;
                     ink: root.ink;
-                    ink2: root.ink2;
                     font-size: root.word-size;
                 }
             }
@@ -2293,12 +2284,9 @@ component DictCard inherits VerticalLayout {
                 for w in root.bottom: DictWordItem {
                     text: w.text;
                     fresh: w.fresh;
-                    settled: w.settled;
-                    index: w.index;
-                    writing: root.writing;
+                    delay: w.delay;
                     reduce-motion: root.reduce-motion;
                     ink: root.ink;
-                    ink2: root.ink2;
                     font-size: root.word-size;
                 }
             }

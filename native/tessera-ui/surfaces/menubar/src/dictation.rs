@@ -1,14 +1,16 @@
 //! Dictation's live activity in the island (host/desktop dictation.rs and
 //! dictation_live.rs say what's happening), as iOS's recorder in the Dynamic
 //! Island: one slim row (a tile with your voice as bars, the time in bold
-//! with "Listening" / "Writing…" / "Typed" under it, Cancel and Done) and
-//! under it up to two lines of your words, each word arriving blurred and
-//! sharpening into place. It opens by itself as you start and shrinks to the
+//! with "Listening" / "Writing…" / "Typed" under it, Cancel and Done). No
+//! words while you speak; once typed, up to two lines of them, each word
+//! arriving blurred and sharpening into place, one after another. It opens
+//! by itself as you start and shrinks to the
 //! pill after 3 s of you speaking (a hover or a click opens it again);
 //! "Writing…" and "Typed" open it again.
 //!
-//! The level comes 20 times a second; it's eased (quick up, slow down) and
-//! the newest few are the bars (the tile's seven, the pill's five).
+//! The level comes 20 times a second, already a voice's (the host's
+//! VoiceMeter: the room is 0, its attack and release done there); the
+//! newest few are the bars (the tile's seven, the pill's five).
 
 use std::collections::VecDeque;
 
@@ -26,11 +28,11 @@ pub const SHRINK_AFTER_MS: f64 = 3000.0;
 /// The last seconds of the time limit, warned about
 pub const WARN_S: f64 = 10.0;
 /// The words: characters a line (a little more than fit: the oldest end of a
-/// line that's too long is cut off on the left), and how long a word is new
-/// (it arrives blurred) or still a guess (dim)
+/// line that's too long is cut off on the left), how long a word is new (it
+/// arrives blurred), and how long after the one before it each is revealed
 pub const LINE_CHARS: usize = 50;
 pub const FRESH_MS: f64 = 600.0;
-pub const SETTLE_MS: f64 = 1500.0;
+pub const STAGGER_MS: u64 = 50;
 
 /// The levels heard, newest last
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -43,8 +45,9 @@ impl Wave {
     /// A new level (0..1): eased, kept, and the eased one back
     pub fn push(&mut self, raw: f32) -> f32 {
         let raw = if raw.is_finite() { raw.clamp(0.0, 1.0) } else { 0.0 };
-        // (up quickly, as a voice starts; down slowly, so it doesn't flicker between words)
-        let k = if raw > self.eased { 0.65 } else { 0.25 };
+        // (the host's meter already rises at once and falls over ~250 ms:
+        // only a little smoothing here, so a bar doesn't step)
+        let k = if raw > self.eased { 0.8 } else { 0.6 };
         self.eased += (raw - self.eased) * k;
         self.hist.push_back(self.eased);
         while self.hist.len() > KEEP {
@@ -208,6 +211,11 @@ pub fn two_lines(words: &[Word], per_line: usize) -> (Vec<usize>, Vec<usize>) {
     (top, bottom)
 }
 
+/// When the `k`th word shown (top line first) is revealed, in ms after it appears
+pub fn reveal_delay(k: usize) -> u64 {
+    STAGGER_MS * k as u64
+}
+
 /// In the last WARN_S seconds: how many are left ("8 s left")
 pub fn left(elapsed_s: f64, max_s: f64) -> Option<String> {
     let rest = (max_s - elapsed_s).max(0.0);
@@ -240,9 +248,9 @@ mod tests {
     fn levels_are_eased_and_kept() {
         let mut w = Wave::default();
         let up = w.push(1.0);
-        assert!(up > 0.6 && up < 0.7, "{up}");
+        assert!(up > 0.75 && up < 0.85, "{up}");
         let down = w.push(0.0);
-        assert!(down < up && down > 0.4, "slow down: {down}");
+        assert!(down < up && down > 0.3, "a little slower down: {down}");
         let nonsense = w.push(f32::NAN); // (is silence)
         assert!(nonsense < down && nonsense == w.level());
         for _ in 0..200 {
@@ -350,6 +358,14 @@ mod tests {
         assert_eq!(two_lines(&words("a b c d e f g"), 3), (vec![3, 4], vec![5, 6]));
         // a word longer than a line still shows (cut on the left)
         assert_eq!(two_lines(&words("x extraordinarily"), 5), (vec![0], vec![1]));
+    }
+
+    #[test]
+    fn the_typed_words_are_revealed_one_after_another() {
+        assert_eq!(reveal_delay(0), 0);
+        assert_eq!(reveal_delay(1), STAGGER_MS);
+        assert_eq!(reveal_delay(10), 10 * STAGGER_MS);
+        assert!((40..=60).contains(&STAGGER_MS));
     }
 
     #[test]

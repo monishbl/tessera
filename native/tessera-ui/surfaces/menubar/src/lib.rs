@@ -298,6 +298,8 @@ pub struct Menubar {
     dict: dictation::Card,
     dict_wave: dictation::Wave,
     dict_words: dictation::Words,
+    /// the time shown (it stops counting when you stop)
+    dict_secs: i64,
     /// the tile's seven bars and the pill's five, and the two lines of
     /// words (changed in place: a word keeps its element while it stays)
     dict_tile: Rows<f32>,
@@ -2112,33 +2114,36 @@ impl Menubar {
         let started = dc["startedAt"].as_f64().unwrap_or(0.0);
         let max = dc["maxSeconds"].as_f64().unwrap_or(120.0);
         let elapsed = if started > 0.0 { ((now_ms - started) / 1000.0).max(0.0) } else { 0.0 };
-        let said = match stage.as_str() {
-            "done" => s("typed"),
-            "listening" | "writing" => s("partial"),
-            _ => String::new(),
-        };
-        if stage.is_empty() {
+        // (no words while you speak: only the typed ones, once it's done,
+        // revealed one after another, the top line first)
+        let said = if stage == "done" { s("typed") } else { String::new() };
+        if said.is_empty() {
             self.dict_words.clear();
         } else {
             self.dict_words.update(&said, now_ms);
         }
         let list = self.dict_words.list();
         let (top, bottom) = dictation::two_lines(list, dictation::LINE_CHARS);
-        let word = |i: usize| {
+        let n_top = top.len();
+        let word = |(k, i): (usize, usize)| {
             let w = &list[i];
             ui::DictWord {
                 id: w.id as i32,
                 text: w.text.as_str().into(),
                 fresh: now_ms - w.born < dictation::FRESH_MS,
-                settled: stage == "done" || now_ms - w.born >= dictation::SETTLE_MS,
-                index: i as i32,
+                delay: dictation::reveal_delay(k) as i32,
             }
         };
-        let (top, bottom): (Vec<ui::DictWord>, Vec<ui::DictWord>) = (top.into_iter().map(word).collect(), bottom.into_iter().map(word).collect());
-        self.dict_top.set_keyed(top, |w| w.id);
-        self.dict_bottom.set_keyed(bottom, |w| w.id);
+        let top_rows: Vec<ui::DictWord> = top.into_iter().enumerate().map(word).collect();
+        let bottom_rows: Vec<ui::DictWord> = bottom.into_iter().enumerate().map(|(k, i)| word((n_top + k, i))).collect();
+        self.dict_top.set_keyed(top_rows, |w| w.id);
+        self.dict_bottom.set_keyed(bottom_rows, |w| w.id);
         let left = if listening { dictation::left(elapsed, max) } else { None };
-        let secs = elapsed.floor() as i64;
+        // (the time stops where you stopped)
+        if listening || stage.is_empty() {
+            self.dict_secs = elapsed.floor() as i64;
+        }
+        let secs = self.dict_secs;
         let time = format!("{}:{:02}", secs / 60, secs % 60);
         ui::DictView {
             stage: stage.as_str().into(),

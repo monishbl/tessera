@@ -12,14 +12,6 @@ the computer.
                                    the words in a recording (16 kHz mono WAV):
                                    {"ok", "text", "error"}; LANG is a code
                                    ("en") or "auto". The recording is deleted.
-  dictate.py stream                the live words while you speak: one process
-                                   for the whole dictation, fed requests on
-                                   stdin, one JSON line each:
-                                   {"id", "wav", "model", "lang"}; answers each
-                                   with {"id", "ok", "text"} (the words so far:
-                                   a draft, the final transcription is the
-                                   `transcribe` above). Each recording is
-                                   deleted; it ends when stdin closes.
 
 Models live in $XDG_DATA_HOME/tessera/whisper (ggml-MODEL.bin), downloaded
 from whisper.cpp's own Hugging Face repository.
@@ -152,26 +144,17 @@ def clean(out):
     return re.sub(r"\s+", " ", text).strip()
 
 
-def threads_for(partial):
-    """whisper-cli's threads: all but one core (at most 8) for the words you
-    asked for; half that for a live draft, which mustn't slow the computer
-    (or the final words) down."""
-    full = max(1, min(8, (os.cpu_count() or 4) - 1))
-    return max(1, full // 2) if partial else full
-
-
-def transcribe(wav, name, lang, run=subprocess.run, partial=False):
+def transcribe(wav, name, lang, run=subprocess.run):
     try:
         exe = binary()
         if not exe:
             return {"ok": False, "text": "", "error": "Dictation needs whisper-cpp. Install it in Settings → Dictation."}
         if name not in MODELS or not os.path.isfile(model_path(name)):
             return {"ok": False, "text": "", "error": "Download a speech model in Settings → Dictation."}
-        threads = str(threads_for(partial))
+        threads = str(max(1, min(8, (os.cpu_count() or 4) - 1)))
         cmd = [exe, "-m", model_path(name), "-f", wav, "-l", lang or "auto", "-t", threads, "-nt", "-np"]
         try:
-            # (a draft that takes this long is out of date anyway)
-            r = run(cmd, capture_output=True, text=True, timeout=20 if partial else 180)
+            r = run(cmd, capture_output=True, text=True, timeout=180)
         except subprocess.TimeoutExpired:
             return {"ok": False, "text": "", "error": "That took too long. Try a smaller model."}
         if r.returncode != 0:
@@ -183,96 +166,6 @@ def transcribe(wav, name, lang, run=subprocess.run, partial=False):
             os.unlink(wav)  # (the recording isn't kept)
         except OSError:
             pass
-
-
-# A draft's recording: only ever the shell's own, in its runtime folder
-PARTIAL_NAME = re.compile(r"^dictation-partial-[0-9]+\.wav$")
-
-
-def stream_one(line, run=subprocess.run):
-    """One live-words request (a JSON line) and its answer (a dict, or None
-    for a line that isn't a request)."""
-    try:
-        req = json.loads(line)
-    except ValueError:
-        return None
-    if not isinstance(req, dict):
-        return None
-    rid = req.get("id", 0)
-    wav = req.get("wav")
-    if not isinstance(wav, str) or not PARTIAL_NAME.match(os.path.basename(wav)):
-        return {"id": rid, "ok": False, "text": ""}
-    name, lang = str(req.get("model") or ""), str(req.get("lang") or "auto")
-    r = transcribe(wav, name, lang, run=run, partial=True)
-    return {"id": rid, "ok": r["ok"], "text": r["text"]}
-
-
-def stream(inp=None, out=None, run=subprocess.run):
-    """Answers requests one at a time until stdin closes. The shell sends
-    the next only after this one's answer, so they never pile up; if several
-    wait anyway, only the newest is worth the work (the others are older
-    drafts of the same words) and theirs are answered as skipped."""
-    inp = inp or sys.stdin
-    out = out or sys.stdout
-    pending = []
-    for line in inp:
-        line = line.strip()
-        if not line:
-            continue
-        pending.append(line)
-        # (whatever else is already waiting, without blocking for more)
-        pending.extend(more_waiting(inp))
-        *older, newest = pending
-        pending = []
-        for o in older:
-            skip = stream_one_skip(o)
-            if skip:
-                out.write(json.dumps(skip) + "\n")
-        r = stream_one(newest, run=run)
-        if r is not None:
-            out.write(json.dumps(r) + "\n")
-        out.flush()
-    return 0
-
-
-def more_waiting(inp):
-    """Lines already waiting on a pipe (none for anything else)."""
-    lines = []
-    try:
-        import select
-        fd = inp.fileno()
-    except (AttributeError, OSError, ValueError):
-        return lines
-    while True:
-        try:
-            ready, _, _ = select.select([fd], [], [], 0)
-        except (OSError, ValueError):
-            break
-        if not ready:
-            break
-        line = inp.readline()
-        if not line:
-            break
-        if line.strip():
-            lines.append(line.strip())
-    return lines
-
-
-def stream_one_skip(line):
-    """An older request passed over: its recording deleted, answered as skipped."""
-    try:
-        req = json.loads(line)
-    except ValueError:
-        return None
-    if not isinstance(req, dict):
-        return None
-    wav = req.get("wav")
-    if isinstance(wav, str) and PARTIAL_NAME.match(os.path.basename(wav)):
-        try:
-            os.unlink(wav)
-        except OSError:
-            pass
-    return {"id": req.get("id", 0), "ok": False, "text": "", "skipped": True}
 
 
 class Stopped(BaseException):
@@ -295,13 +188,11 @@ def main(argv):
         r = remove(argv[1])
         print(json.dumps(r))
         return 0 if r["ok"] else 1
-    if argv == ["stream"]:
-        return stream()
     if len(argv) == 4 and argv[0] == "transcribe":
         r = transcribe(argv[1], argv[2], argv[3])
         print(json.dumps(r))
         return 0 if r["ok"] else 1
-    print(json.dumps({"ok": False, "error": "usage: dictate.py status | download MODEL | remove MODEL | transcribe WAV MODEL LANG | stream"}))
+    print(json.dumps({"ok": False, "error": "usage: dictate.py status | download MODEL | remove MODEL | transcribe WAV MODEL LANG"}))
     return 2
 
 
