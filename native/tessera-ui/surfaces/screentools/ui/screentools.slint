@@ -7,6 +7,7 @@
 // icon, the spinner) are here and used by shoteditor.slint and quicklook.slint.
 
 import { Theme } from "@tessera/theme.slint";
+import { Switch, Segmented } from "@tessera/widgets.slint";
 
 // An icon: Phosphor, or in Material the matching Material Symbols glyph (s)
 export struct StIc {
@@ -395,114 +396,6 @@ export struct StOpt {
     checked: bool,
 }
 
-// A toggle switch (Switch.qml): macOS's, or Material 3 Expressive's (a
-// 52 × 32 outlined track, the handle growing as it turns on)
-component StSwitch inherits Rectangle {
-    in property <bool> checked;
-    in property <string> label;
-    callback toggled();
-    width: Theme.material ? 52px : 38px;
-    height: Theme.material ? 32px : 22px;
-    border-radius: self.height / 2;
-    background: Theme.material ? (checked ? Theme.m3-primary : Theme.m3-surface-container-highest) : checked ? Theme.accent : Theme.toggle-off;
-    border-width: Theme.material && !checked ? 2px : 0;
-    border-color: Theme.m3-outline;
-    animate background { duration: Theme.hover; }
-    accessible-role: checkbox;
-    accessible-checkable: true;
-    accessible-checked: checked;
-    accessible-label: label;
-    accessible-action-default => { toggled(); }
-    property <length> knob: !Theme.material ? self.height - 4px : touch.pressed ? 28px : checked ? 24px : 16px;
-    if Theme.material && (touch.has-hover || touch.pressed): Rectangle {
-        width: 40px;
-        height: 40px;
-        border-radius: 20px;
-        x: handle.x + handle.width / 2 - 20px;
-        y: (root.height - 40px) / 2;
-        background: (checked ? Theme.m3-primary : Theme.m3-on-surface).with-alpha(touch.pressed ? 0.1 : 0.08);
-    }
-    handle := Rectangle {
-        width: knob;
-        height: knob;
-        border-radius: knob / 2;
-        y: (root.height - self.height) / 2;
-        x: Theme.material ? (checked ? root.width - 16px - knob / 2 : 16px - knob / 2) : checked ? root.width - self.width - 2px : 2px;
-        animate x, width, height { duration: Theme.motion(Theme.material ? 300ms : Theme.popover); easing: Theme.material ? spring(0.54) : cubic-bezier(0.2, 0.9, 0.1, 1.0); }
-        background: !Theme.material ? #ffffff : checked ? Theme.m3-on-primary : touch.has-hover || touch.pressed ? Theme.m3-on-surface-variant : Theme.m3-outline;
-        if Theme.material && checked: Text {
-            text: "\u{e182}";
-            font-family: "Phosphor-Bold";
-            font-size: 13px;
-            color: Theme.m3-on-primary-container;
-            accessible-role: none;
-        }
-    }
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.toggled(); }
-    }
-}
-
-// Segmented.qml: Glass, a track with a sliding pill; Material, a connected
-// button group (the chosen one fills and turns round)
-component StSegmented inherits Rectangle {
-    in property <[string]> options;
-    in property <int> current;
-    in property <string> label;
-    callback selected(int);
-    property <length> gap: Theme.material ? 2px : 0;
-    property <length> seg: (self.width - 4px - gap * (options.length - 1)) / max(1, options.length);
-    height: Theme.material ? 36px : 30px;
-    border-radius: self.height / 2;
-    background: Theme.material ? transparent : Theme.toggle-off;
-    accessible-role: tab-list;
-    accessible-label: label;
-    if !Theme.material: Rectangle {
-        x: 2px + current * seg;
-        y: 2px;
-        width: seg;
-        height: parent.height - 4px;
-        border-radius: self.height / 2;
-        background: Theme.dark ? #ffffff33 : #ffffff;
-        animate x { duration: Theme.motion(280ms); easing: cubic-bezier(0.2, 0, 0, 1); }
-    }
-    for o[i] in options: Rectangle {
-        property <bool> chosen: i == current;
-        property <length> full: self.height / 2;
-        property <length> inner: chosen ? full : touch.pressed ? 4px : 8px;
-        x: 2px + i * (seg + gap);
-        width: seg;
-        height: parent.height;
-        border-top-left-radius: !Theme.material ? 0 : i == 0 ? full : inner;
-        border-bottom-left-radius: self.border-top-left-radius;
-        border-top-right-radius: !Theme.material ? 0 : i == options.length - 1 ? full : inner;
-        border-bottom-right-radius: self.border-top-right-radius;
-        animate border-top-left-radius, border-top-right-radius { duration: Theme.motion(200ms); easing: spring(0.6); }
-        background: !Theme.material ? transparent : chosen ? Theme.m3-primary.mix(Theme.m3-on-primary, touch.pressed ? 0.9 : touch.has-hover ? 0.92 : 1)
-            : Theme.m3-surface-container-highest.mix(Theme.m3-on-surface-variant, touch.pressed ? 0.9 : touch.has-hover ? 0.92 : 1);
-        animate background { duration: Theme.hover; }
-        accessible-role: tab;
-        accessible-label: o;
-        accessible-checked: chosen;
-        accessible-action-default => { selected(i); }
-        Text {
-            text: o;
-            color: Theme.material ? (chosen ? Theme.m3-on-primary : Theme.m3-on-surface-variant) : chosen ? Theme.label : Theme.secondary;
-            font-size: Theme.material ? Theme.body : Theme.small;
-            font-weight: Theme.material ? 500 : 600;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            overflow: elide;
-            accessible-role: none;
-        }
-        touch := TouchArea {
-            mouse-cursor: pointer;
-            clicked => { root.selected(i); }
-        }
-    }
-}
-
 // The options' small heading (8 in, 2 above, 4 below)
 component Caption inherits Rectangle {
     in property <string> text;
@@ -587,7 +480,7 @@ component SwitchRow inherits Rectangle {
         vertical-alignment: center;
         accessible-role: none;
     }
-    StSwitch {
+    Switch {
         x: parent.width - self.width;
         checked: root.checked;
         label: root.text;
@@ -612,7 +505,7 @@ component SegmentRow inherits Rectangle {
         vertical-alignment: center;
         accessible-role: none;
     }
-    StSegmented {
+    Segmented {
         x: parent.width - self.width;
         width: segment-width;
         options: root.options;
