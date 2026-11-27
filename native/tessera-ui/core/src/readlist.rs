@@ -170,7 +170,8 @@ pub fn host(url: &str) -> String {
     let rest = u.split_once("://").map_or(u, |(_, r)| r);
     let h = rest.split(['/', '?', '#']).next().unwrap_or("");
     let h = h.rsplit_once('@').map_or(h, |(_, h)| h);
-    h.strip_prefix("www.").unwrap_or(h).to_ascii_lowercase()
+    let h = h.to_ascii_lowercase();
+    h.strip_prefix("www.").map(String::from).unwrap_or(h)
 }
 
 /// A title from the link alone: its last path part, words for the dashes
