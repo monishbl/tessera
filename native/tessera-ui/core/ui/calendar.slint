@@ -1571,8 +1571,7 @@ export component TodoTab {
     function menu-do(i: int) {
         let k = menu-key;
         menu-key = "";
-        if i == 0 { renaming = k; }
-        if i == 1 { remove(k); }
+        if i == 0 { renaming = k; } else if i == 1 { remove(k); }
     }
     if menu-key != "": Rectangle {
         TouchArea {

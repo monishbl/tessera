@@ -235,7 +235,7 @@ impl Default for Sidebar {
             loading: Default::default(),
             tx: None,
             stream: Default::default(),
-            stream_memo: Vec::new(),
+            stream_memo: MdMemo::default(),
             tr: Tr { source: "auto".into(), ..Default::default() },
             anime: Anime::default(),
             undo_timer: Default::default(),
@@ -470,7 +470,7 @@ impl Sidebar {
         // (a model of its own for the next streaming answer: the rows
         // holding this one keep it as it is)
         self.stream = Default::default();
-        self.stream_memo.clear();
+        self.stream_memo = MdMemo::default();
         let wanted = self.pictures_shown();
         keep_pictures(&mut self.images, &wanted);
         let new: Vec<ui::ChatRow> = rows.iter().map(|r| self.chat_row(r, true)).collect();

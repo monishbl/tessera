@@ -633,6 +633,7 @@ impl Notifications {
             let rect = (ui.get_body_x() + 16.0, ui.get_body_y() + 16.0, (ui.get_body_width() - 32.0).max(1.0), 28.0);
             ui.set_title_dark(title_dark(wall.as_ref(), screen, rect));
         }
+        let p = &self.nc;
         ui.set_glass_plugin(st.shell.plugin);
         ui.set_focus_text(focus_text.into());
         ui.set_clock(clock_short(h24).into());
