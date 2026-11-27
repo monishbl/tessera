@@ -8,6 +8,7 @@
 
 import { Theme } from "@tessera/theme.slint";
 import { WGlyph, WIcon, WMenu, WMenuRow } from "@tessera/wm.slint";
+import { Segmented } from "@tessera/widgets.slint";
 
 export struct LpCell {
     name: string,
@@ -28,55 +29,6 @@ export struct LpLetter {
 export struct LpFab {
     text: string,
     glyph: WGlyph,
-}
-
-// Categories / All apps (Segmented.qml: Glass's sliding pill; Material's
-// connected button group)
-component LpSegmented inherits Rectangle {
-    in property <[string]> options;
-    in property <int> current;
-    callback chosen(int);
-    property <length> seg: (self.width - 4px - (Theme.material ? 2px : 0px) * (options.length - 1)) / max(1, options.length);
-    border-radius: self.height / 2;
-    background: Theme.material ? transparent : Theme.toggle-off;
-    accessible-role: tab-list;
-    if !Theme.material: Rectangle {
-        x: 2px + current * seg;
-        y: 2px;
-        width: seg;
-        height: parent.height - 4px;
-        border-radius: self.height / 2;
-        background: Theme.dark ? #ffffff.with-alpha(0.2) : white;
-        animate x { duration: Theme.move-standard; easing: cubic-bezier(0.2, 0.9, 0.1, 1.0); }
-    }
-    for o[i] in options: sg := Rectangle {
-        x: 2px + i * (seg + (Theme.material ? 2px : 0px));
-        width: seg;
-        property <bool> chosen-here: i == current;
-        property <length> full: self.height / 2;
-        border-top-left-radius: !Theme.material ? 0 : i == 0 || sg.chosen-here ? full : st.pressed ? 4px : 8px;
-        border-bottom-left-radius: self.border-top-left-radius;
-        border-top-right-radius: !Theme.material ? 0 : i == options.length - 1 || sg.chosen-here ? full : st.pressed ? 4px : 8px;
-        border-bottom-right-radius: self.border-top-right-radius;
-        animate border-top-left-radius, border-top-right-radius { duration: Theme.move-fast; easing: spring(0.28); } // (springFast, measured)
-        background: !Theme.material ? transparent : (sg.chosen-here ? Theme.m3-primary : Theme.m3-surface-container-highest).mix(sg.chosen-here ? Theme.m3-on-primary : Theme.m3-on-surface-variant, st.pressed ? 0.9 : st.has-hover ? 0.92 : 1);
-        animate background { duration: Theme.hover; }
-        accessible-role: tab;
-        accessible-label: o;
-        accessible-item-selected: sg.chosen-here;
-        accessible-action-default => { chosen(i); }
-        Text {
-            text: o;
-            color: Theme.material ? (sg.chosen-here ? Theme.m3-on-primary : Theme.m3-on-surface-variant) : sg.chosen-here ? Theme.label : Theme.secondary;
-            font-size: Theme.material ? Theme.body : Theme.small;
-            font-weight: Theme.material ? 500 : 600;
-            accessible-role: none;
-        }
-        st := TouchArea {
-            mouse-cursor: pointer;
-            clicked => { chosen(i); }
-        }
-    }
 }
 
 export component LaunchpadPanel inherits Window {
@@ -370,14 +322,16 @@ export component LaunchpadPanel inherits Window {
                         }
                     }
                 }
-                LpSegmented {
+                // (the kit's segmented control)
+                Segmented {
                     x: parent.width - self.width;
                     y: (parent.height - self.height) / 2;
                     width: Theme.material ? 260px : 200px;
                     height: Theme.material ? 48px : 30px;
-                    options: Theme.material ? ["Categories", "All apps"] : ["Categories", "All apps"];
+                    options: ["Categories", "All apps"];
                     current: view;
-                    chosen(i) => {
+                    label: "Launchpad view";
+                    selected(i) => {
                         view-chosen(i);
                         field.focus();
                     }
