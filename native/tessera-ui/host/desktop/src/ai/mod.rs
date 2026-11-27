@@ -35,6 +35,17 @@ pub fn meta(cfg: &Value) -> Value {
     json!({"configured": m.configured(), "name": m.name})
 }
 
+/// A save's answer for the page that sent `token` (none: an older page, not waiting)
+fn save_answer(h: &mut Host, token: &str, ok: bool, error: &str) {
+    if !token.is_empty() {
+        h.set_state("aiSave", answer(token, ok, error));
+    }
+}
+
+fn answer(token: &str, ok: bool, error: &str) -> Value {
+    json!({"token": token, "ok": ok, "error": if ok { "" } else { error }})
+}
+
 /// The chosen model (`ai.model`), else the first, else the empty one (Ai.qml's `model`)
 pub fn selected(cfg: &Value) -> Model {
     let list = models::read(&cfg["ai"]["models"]);
@@ -73,7 +84,12 @@ enum Inner {
     Ev(Event),
     /// it never started: the person is told why
     Failed(u64, String),
+    /// a save's credential was kept (or not): its token
+    KeySaved(String, bool),
 }
+
+/// What a save says when the model is kept but its credential isn't
+const KEY_NOT_KEPT: &str = "The model was saved, but its key couldn't be stored. Paste it again and save.";
 
 #[derive(Default)]
 pub struct Ai {
@@ -209,19 +225,23 @@ impl Ai {
     }
 
     /// Ai.saveModel + saveCredential: `raw` is the page's draft, `old` the key it edits; the
-    /// page checked it already, this checks again and says nothing when it fails (no error path back)
-    fn accounts_save(&mut self, h: &mut Host, raw: &Value, old: &str, credential: &str) {
+    /// page checked it already, this checks again. The answer goes to the page under `token`
+    /// (state "aiSave": {token, ok, error}, which the accounts bridge feeds it)
+    fn accounts_save(&mut self, h: &mut Host, raw: &Value, old: &str, credential: &str, token: &str) {
         let raw = match raw {
             Value::String(t) => serde_json::from_str(t).unwrap_or(Value::Null),
             v => v.clone(),
         };
         let m = models::normalize(&raw);
-        if !models::validate(&m).is_empty() {
-            eprintln!("tessera-ui: ai.accountsSave: {}", models::validate(&m));
+        let error = models::validate(&m);
+        if !error.is_empty() {
+            eprintln!("tessera-ui: ai.accountsSave: {error}");
+            save_answer(h, token, false, &error.to_string());
             return;
         }
         let list = models::read(&h.cfg()["ai"]["models"]);
         if list.iter().any(|x| x.key == m.key && x.key != old) {
+            save_answer(h, token, false, "That model and connection are already in your list. Edit the existing entry.");
             return;
         }
         let prev = list.iter().find(|x| x.key == old).cloned();
@@ -239,11 +259,17 @@ impl Ai {
         let secret = credential.trim().to_string();
         if !secret.is_empty() {
             let mut ks = Keys::default();
-            ks.set(&m.key, &secret, &format!("{} · {}", m.name, models::credential_label(&m)));
+            let send = h.sender("Ai");
+            let t = token.to_string();
+            // (the answer waits for the keyring: "saved" only once it has the key)
+            ks.set_then(&m.key, &secret, &format!("{} · {}", m.name, models::credential_label(&m)), move |kept| send(Box::new(Inner::KeySaved(t, kept))));
             if let Some(old_key) = stale {
                 clear_credential(old_key);
             }
-        } else if moved.is_none() {
+            return;
+        }
+        save_answer(h, token, true, "");
+        if moved.is_none() {
             // (another connection: the old key isn't this one's)
             if let Some(old_key) = stale {
                 clear_credential(old_key);
@@ -350,7 +376,7 @@ impl Service for Ai {
             // Settings -> AI (host-system's accounts bridge asks these; Ai.qml's setModel,
             // saveModel, removeModel/restoreModel/forgetCredential, deleteAllChats)
             "ai.setModel" => self.set_model(h, args[0].as_str().unwrap_or("")),
-            "ai.accountsSave" => self.accounts_save(h, &args[0], args[1].as_str().unwrap_or(""), args[2].as_str().unwrap_or("")),
+            "ai.accountsSave" => self.accounts_save(h, &args[0], args[1].as_str().unwrap_or(""), args[2].as_str().unwrap_or(""), args[3].as_str().unwrap_or("")),
             "ai.removeModel" => self.remove_model(h, args[0].as_str().unwrap_or("")),
             "ai.restoreRemoved" => self.restore_removed(),
             "ai.forgetRemoved" => self.forget_removed(),
@@ -371,6 +397,7 @@ impl Service for Ai {
     fn message(&mut self, h: &mut Host, msg: Box<dyn Any + Send>) {
         let Ok(inner) = msg.downcast::<Inner>() else { return };
         match *inner {
+            Inner::KeySaved(token, kept) => save_answer(h, &token, kept, if kept { "" } else { KEY_NOT_KEPT }),
             Inner::Failed(gen, e) => {
                 if gen == self.gen && self.quick.busy {
                     self.quick.busy = false;
@@ -407,6 +434,12 @@ impl Service for Ai {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_save_answers_its_token() {
+        assert_eq!(answer("9", true, "ignored"), json!({"token": "9", "ok": true, "error": ""}));
+        assert_eq!(answer("9", false, KEY_NOT_KEPT)["error"], KEY_NOT_KEPT);
+    }
 
     #[test]
     fn no_model_is_not_configured() {

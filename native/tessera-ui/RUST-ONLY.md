@@ -284,3 +284,4 @@ Removed: the passkeys daemon, its Settings group, its polkit-dialog requests and
 | AI answers: a code fence indented under a list item (as models write it) is a code block with its Copy button, not a line of the item (#422) | 27 Nov | done, unchecked | (this commit) |
 | AI answers: table columns keep their alignment (:--: centred, --: right) (#416) | 27 Nov | done, unchecked | (this commit) |
 | AI answers: a streaming reply is parsed only past its settled head (the last blank line outside a fence or list), not from the start for every chunk (#415) | 27 Nov | done, unchecked | (this commit) |
+| Settings → AI: saving a model shows "Saving…" and then the shell's own answer (saved, refused with its reason, or the key not stored); the typed key stays until it's kept (#900) | 27 Nov | done, unchecked | (this commit) |

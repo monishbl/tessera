@@ -22,7 +22,7 @@
 //! Asks it makes: launch.open [url], launch.run [argv], needs.install [list],
 //! needs.buildNative, calendar.setSource [url, {enabled}], calendar.removeSource
 //! [url], calendar.addSource [name, url], calendar.setDefaultAlert [n],
-//! ai.setModel [key], ai.accountsSave [raw, oldKey, credential],
+//! ai.setModel [key], ai.accountsSave [raw, oldKey, credential, token] (answered in state "aiSave"),
 //! ai.removeModel [key] (keeps the removed record for an undo),
 //! ai.restoreRemoved, ai.forgetRemoved, ai.deleteAllChats.
 
@@ -46,11 +46,14 @@ pub struct AccountsBridge {
     /// models whose credential was saved here since the keys were read (the
     /// shell's cached Keys don't hear of it)
     saved_keys: std::collections::HashSet<String>,
+    /// a save sent with a credential: (its token, the model's key), until the
+    /// shell's answer (state "aiSave") says it was kept
+    saving: Option<(String, String)>,
 }
 
 impl Default for AccountsBridge {
     fn default() -> Self {
-        Self { live: true, sent: String::new(), ai_undo: String::new(), undo_t: slint::Timer::default(), tx: None, saved_keys: Default::default() }
+        Self { live: true, sent: String::new(), ai_undo: String::new(), undo_t: slint::Timer::default(), tx: None, saved_keys: Default::default(), saving: None }
     }
 }
 
@@ -185,6 +188,8 @@ impl AccountsBridge {
                 "sessions": sessions,
                 "pinned": pinned,
                 "undo": self.ai_undo,
+                // (the last save's answer from the shell: {token, ok, error})
+                "save": if h.state("aiSave").is_object() { h.state("aiSave").clone() } else { json!({"token": ""}) },
             },
             "tools": TOOLS.iter().filter(|t| has_tool(t)).collect::<Vec<_>>(),
         })
@@ -261,16 +266,22 @@ impl AccountsBridge {
             "calAlert" => h.ask("calendar.setDefaultAlert", json!([arg(0).as_f64().unwrap_or(10.0)])),
             // AI
             "aiSetModel" => h.ask("ai.setModel", json!([s(0)])),
-            // [draft, old key, credential] (checked by the page first; the credential goes to the keyring, never back)
+            // [draft, old key, credential, token] (checked by the page first; the credential goes to
+            // the keyring, never back; the shell answers the token in state "aiSave")
             "aiSave" => {
                 if !s(2).trim().is_empty() {
                     let raw = match arg(0) {
                         Value::String(t) => serde_json::from_str(&t).unwrap_or(Value::Null),
                         v => v,
                     };
-                    self.saved_keys.insert(tessera_core::services::ai::models::normalize(&raw).key);
+                    let key = tessera_core::services::ai::models::normalize(&raw).key;
+                    if s(3).is_empty() {
+                        self.saved_keys.insert(key);
+                    } else {
+                        self.saving = Some((s(3), key));
+                    }
                 }
-                h.ask("ai.accountsSave", json!([arg(0), s(1), s(2)]))
+                h.ask("ai.accountsSave", json!([arg(0), s(1), s(2), s(3)]))
             }
             "aiRemove" => {
                 self.finish_ai_undo(h); // (an earlier removal is final now)
@@ -295,6 +306,16 @@ impl AccountsBridge {
     }
 
     fn send_feed(&mut self, h: &mut Host) {
+        // (a credential counts as saved once the shell says so)
+        let a = h.state("aiSave");
+        if self.saving.as_ref().is_some_and(|(token, _)| a["token"].as_str() == Some(token.as_str())) {
+            let ok = a["ok"].as_bool().unwrap_or(false);
+            if let Some((_, key)) = self.saving.take() {
+                if ok {
+                    self.saved_keys.insert(key);
+                }
+            }
+        }
         if !self.live {
             return;
         }

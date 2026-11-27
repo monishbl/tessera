@@ -89,6 +89,12 @@ impl Keys {
     /// Keep one (the composer's key field, /key): in memory now, in the
     /// keyring on a thread, the private file if the keyring can't
     pub fn set(&mut self, slot: &str, key: &str, label: &str) {
+        self.set_then(slot, key, label, |_| {});
+    }
+
+    /// set, then `done(kept)` on its thread: whether the keyring (or the
+    /// private file) really has it
+    pub fn set_then(&mut self, slot: &str, key: &str, label: &str, done: impl FnOnce(bool) + Send + 'static) {
         let key = key.trim().to_string();
         self.keys.insert(slot.to_string(), key.clone());
         self.edited.insert(slot.to_string());
@@ -105,7 +111,7 @@ impl Keys {
                     c.wait()
                 })
                 .is_ok_and(|s| s.success());
-            if !stored {
+            let kept = stored || {
                 // (read again under a lock and merged: each save wrote its
                 // own stale copy, so a second key in one session dropped
                 // the first; audit #26)
@@ -113,8 +119,9 @@ impl Keys {
                 let _held = WRITING.lock().unwrap_or_else(|e| e.into_inner());
                 let mut file: HashMap<String, String> = std::fs::read_to_string(file_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
                 file.insert(slot, key);
-                let _ = super::chats::write_private(&file_path(), &serde_json::to_string(&file).unwrap());
-            }
+                super::chats::write_private(&file_path(), &serde_json::to_string(&file).unwrap()).is_ok()
+            };
+            done(kept);
         });
     }
 
