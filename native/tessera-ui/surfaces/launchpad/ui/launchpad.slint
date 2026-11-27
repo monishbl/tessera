@@ -8,7 +8,7 @@
 
 import { Theme } from "@tessera/theme.slint";
 import { WGlyph, WIcon, WMenu, WMenuRow } from "@tessera/wm.slint";
-import { Segmented } from "@tessera/widgets.slint";
+import { Segmented, ScrollIndicator } from "@tessera/widgets.slint";
 
 export struct LpCell {
     name: string,
@@ -547,6 +547,16 @@ export component LaunchpadPanel inherits Window {
                         }
                     }
                 }
+                }
+                // (the kit's scroll indicator, held still over the list's right
+                // edge while the content moves under it, #358 #1037)
+                ScrollIndicator {
+                    x: grid.width - self.width;
+                    y: -grid.content-y;
+                    height: grid.height;
+                    content-y: grid.content-y;
+                    content-height: grid.content-height;
+                    view-height: grid.height;
                 }
             }
 
