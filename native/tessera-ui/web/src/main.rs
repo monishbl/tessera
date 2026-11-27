@@ -629,7 +629,6 @@ fn build(args: Args, main_loop: glib::MainLoop) -> Rc<App> {
     settings.set_enable_developer_extras(false);
     settings.set_enable_back_forward_navigation_gestures(true);
     settings.set_javascript_can_open_windows_automatically(false);
-    settings.set_enable_hyperlink_auditing(false);
     settings.set_media_playback_requires_user_gesture(true);
     settings.set_allow_file_access_from_file_urls(false);
     settings.set_allow_universal_access_from_file_urls(false);
