@@ -14,14 +14,14 @@
 //! typed "1". Material's press swell (ElasticControl) is a small scale on
 //! Material's fast spring here.
 //!
-//! Beside the password fields (#763): the lock's and the admin dialog's
-//! keyboard button ask Panels (panels.toggle "keyboard"); over the session
-//! lock it shows and takes touches through Hyprland's `above_lock = 2`
-//! layer rule for its namespace (hypr/tessera/rules.lua), and its keys go
-//! to the lock, which holds the keyboard. The login screen's process has no
-//! Panels: it runs this part itself and sends it "toggle" (State::send_part
-//! with a shell::Command). Opened without a screen, it goes where the
-//! keyboard focus is.
+//! Beside the password fields (#763): the admin dialog's keyboard button
+//! asks Panels (panels.toggle "keyboard"). The lock never uses this window:
+//! nothing may draw over a session lock or take its input, so the lock
+//! draws the same keys (core/ui/oskgrid.slint, keys.rs's rows and
+//! `in_field`) on its own surface and types into its field itself. The
+//! login screen's process has no Panels: it runs this part itself and sends
+//! it "toggle" (State::send_part with a shell::Command). Opened without a
+//! screen, it goes where the keyboard focus is.
 
 pub mod ui {
     slint::include_modules!();

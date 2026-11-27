@@ -373,6 +373,12 @@ pub fn lead(first_wday: i32, start: u32) -> i32 {
     locale::column(first_wday.rem_euclid(7) as u32, start) as i32
 }
 
+/// The lock's own on-screen keyboard (#763) after its button on `on`: shown
+/// there, or put away when it was there already (one screen at a time)
+pub fn osk_toggle(now: Option<&str>, on: &str) -> Option<String> {
+    if now == Some(on) { None } else { Some(on.to_string()) }
+}
+
 /// How long a lock with a regular camera lets your face unlock it (#785)
 pub const FACE_RGB_MAX_MS: i64 = 30 * 60_000;
 
@@ -654,6 +660,9 @@ mod tests {
         assert_eq!(lead(0, 1), 6);
         assert_eq!(lead(1, 1), 0);
         assert_eq!(lead(6, 1), 5);
+        assert_eq!(osk_toggle(None, "DP-1").as_deref(), Some("DP-1"));
+        assert_eq!(osk_toggle(Some("DP-1"), "DP-1"), None);
+        assert_eq!(osk_toggle(Some("DP-1"), "eDP-1").as_deref(), Some("eDP-1"));
         // a regular camera: not after a sleep, nor past 30 minutes; infrared always
         assert!(!face_rests(true, false, 29 * 60_000));
         assert!(face_rests(true, false, 30 * 60_000));

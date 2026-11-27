@@ -6,11 +6,6 @@ hl.layer_rule({ match = { namespace = "tessera:.*" }, blur = true })
 hl.layer_rule({ match = { namespace = "tessera:.*" }, ignore_alpha = 0.4 })
 -- (The menu bar takes blur: the island's glass is drawn there.)
 hl.layer_rule({ match = { namespace = "tessera:(wallpaper|background|corners|lockveil|dim|display-connect|fshud|circle)" }, blur = false }) -- (fading veils would blur, then snap sharp; a full-screen effect would blur the whole screen every frame)
--- The on-screen keyboard shows over the lock screen and takes touches
--- there (2: drawn and usable; a locked session draws nothing else), so a
--- password can be typed without a keyboard (the lock's keyboard button).
--- It never takes the keyboard focus: its keys go to the lock (#763)
-hl.layer_rule({ match = { namespace = "^tessera:keyboard$" }, above_lock = 2 })
 
 -- Menus and dropdowns of XWayland apps (Electron ones like Webex, Slack…)
 -- are windows of their own with no class or title. With focus following the
