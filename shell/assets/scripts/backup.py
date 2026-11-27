@@ -11,7 +11,10 @@ restore, tessera-ui's pages/about/backup.rs):
   backup.py restore-plan <file> [--include …] [--config DIR] [--shell DIR]
                                            what restoring would change
   backup.py restore <file> --include … [--config DIR] [--shell DIR] [--no-undo]
-  backup.py undo <undo file>               puts back what a restore replaced
+  backup.py undo <undo file> [--confirm-changed]
+                                           puts back what a restore replaced
+                                           (asks first when a file changed
+                                           since: "changed" in the answer)
   backup.py apps-status <file>             which of its apps are here now
   backup.py apps-install <file> --ids a,b  installs the user-level ones (one
                                            JSON line per step, then the result)
@@ -160,9 +163,10 @@ class Refused(Exception):
     """A file or a request this won't act on; the message says how to fix it.
     `undo`: a restore's undo file, when one is left to offer."""
 
-    def __init__(self, msg="", undo=""):
+    def __init__(self, msg="", undo="", changed=None):
         super().__init__(msg)
         self.undo = undo
+        self.changed = changed or []
 
 
 # ── Places ──────────────────────────────────────────────────────────────
@@ -196,6 +200,11 @@ def _load(name, file):
 # The settings file's scrub, merge and pictures (settings-backup.py: one
 # place that knows what's secret or this computer's own)
 SB = _load("settings_backup", "settings-backup.py")
+# The settings file's lock and write, as the shell takes them (audit #815)
+SF = _load("settings_file", "settings_file.py")
+# Undo files kept: the newest (each holds the settings it replaced, keys
+# and tokens included; audit #702)
+KEEP_UNDO = 3
 
 
 class Ctx:
@@ -1355,7 +1364,7 @@ def plan(path, include, ctx):
     for w in writes:
         if not allowed(w, ctx):
             raise Refused(NOT_BACKUP)
-    return {"include": include, "writes": writes, "state": state, "report": report, "skipped": skipped,
+    return {"include": include, "writes": writes, "state": state, "report": report, "skipped": skipped, "base": current,
             "look": (config.get("appearance") or {}).get("look", "glass") if isinstance(config.get("appearance"), dict) else "glass"}
 
 
@@ -1482,18 +1491,75 @@ def write_undo(p, ctx):
             replaced.append({"path": target, "member": name, "mode": SB.mode_of(target)})
     state = read_state()
     manifest = {"app": "Tessera", "kind": "undo", "format": FORMAT, "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "replaced": replaced, "created_files": created, "state": {k: state.get(k) for k in p["state"]}}
+                "replaced": replaced, "created_files": created, "state": {k: state.get(k) for k in p["state"]},
+                # (what the restore writes, so an undo can tell a file
+                # changed since: wrote_sha256() puts in what it really wrote)
+                "wrote": {t: sha256(d) for t, d in p["writes"].items()}}
     members["manifest.json"] = dump(manifest)
     path = SB.unique(backups, "before-restore-%s.tar.gz" % time.strftime("%Y%m%d-%H%M%S"))
     pack(path, members, {})
+    SF.keep_newest(backups, "before-restore-", KEEP_UNDO)
+    p["undo_members"] = members
+    p["undo_manifest"] = manifest
     return path
 
 
-def apply_writes(writes, ctx):
+def sha256(data):
+    return hashlib.sha256(data).hexdigest() if data is not None else ""
+
+
+def wrote_sha256(undo_file, p):
+    """The undo file's record of what the restore wrote, made to match the
+    files as they are now it's done (the settings may have been laid over a
+    change the shell made meanwhile)"""
+    manifest, members = p.get("undo_manifest"), p.get("undo_members")
+    if not undo_file or manifest is None or members is None:
+        return
+    wrote = {t: sha256(read_bytes(t)) for t in p["writes"]}
+    if wrote == manifest.get("wrote"):
+        return
+    manifest["wrote"] = wrote
+    members["manifest.json"] = dump(manifest)
+    try:
+        pack(undo_file, members, {})
+    except OSError:
+        pass  # (the planned record stays: an undo then asks before the settings)
+
+
+def changed_since(manifest, ctx):
+    """The files a restore wrote that have changed since (an undo would
+    overwrite or remove what was done after it), as shown paths"""
+    wrote = manifest.get("wrote") if isinstance(manifest.get("wrote"), dict) else None
+    if wrote is None:
+        return []  # (an undo file from before the record: nothing to compare)
+    targets = [r.get("path") for r in manifest.get("replaced") or [] if isinstance(r, dict)]
+    targets += list(manifest.get("created_files") or [])
+    out = []
+    for t in targets:
+        if not isinstance(t, str) or not isinstance(wrote.get(t), str) or not allowed(t, ctx):
+            continue
+        now = read_bytes(t)
+        if now is not None and sha256(now) != wrote[t]:
+            out.append(tilde(t, ctx.home))
+    return sorted(out)
+
+
+def apply_writes(writes, ctx, base=None):
     # (the settings last: the shell reloads them as they change)
     config = os.path.join(ctx.config, "config.json")
     for target in sorted(writes, key=lambda t: t == config):
         os.makedirs(os.path.dirname(target), exist_ok=True)
+        if target == config and isinstance(base, dict):
+            # (under the shell's settings lock: a change it made since the
+            # plan read the file is kept; only what the restore changes is
+            # laid over it; audit #815)
+            try:
+                planned = json.loads(writes[target])
+            except ValueError:
+                planned = None
+            if isinstance(planned, dict):
+                SF.replace(base, planned, target)
+                continue
         write_whole(target, writes[target], SB.mode_of(target))
 
 
@@ -1509,24 +1575,33 @@ def restore(path, include, ctx, undo=True, confirmed=False):
         return {"restored": p["include"], "skipped": p["skipped"], "undo": "", "look": p["look"], "changed": 0}
     undo_file = write_undo(p, ctx) if undo else ""
     try:
-        apply_writes(p["writes"], ctx)
+        apply_writes(p["writes"], ctx, p.get("base"))
     except OSError as err:
         # (half restored: put back at once from what was kept; and if even
         # that fails, say where it is, so Undo can still be offered; audit #73)
         why = err.strerror or str(err)
         if undo_file:
             try:
-                globals()["undo"](undo_file, ctx)
+                globals()["undo"](undo_file, ctx, confirmed=True)
             except (OSError, Refused):
                 raise Refused("Couldn't restore it (%s), and putting things back failed too. What you had is kept in %s."
                               % (why, tilde(undo_file, ctx.home)), undo=undo_file) from None
         raise Refused("Couldn't restore it (%s). Nothing was changed." % why) from None
     merge_state(p["state"])
+    wrote_sha256(undo_file, p)
     return {"restored": p["include"], "skipped": p["skipped"], "undo": undo_file, "look": p["look"], "changed": len(p["writes"])}
 
 
-def undo(path, ctx):
+CHANGED_SINCE = "Some files changed after the restore. Undo puts back what was there before it, so these changes would be lost: %s."
+
+
+def undo(path, ctx, confirmed=False):
     manifest, members = unpack(path, undo=True)
+    if not confirmed:
+        # (an older undo over newer changes: asked first; audit #702)
+        changed = changed_since(manifest, ctx)
+        if changed:
+            raise Refused(CHANGED_SINCE % ", ".join(changed), changed=changed)
     for r in manifest.get("replaced") or []:
         target = r.get("path") if isinstance(r, dict) else None
         if not isinstance(target, str) or r.get("member") not in members or not allowed(target, ctx):
@@ -1742,6 +1817,7 @@ def main(argv):
         c.add_argument("--no-undo", action="store_true")
         c.add_argument("--no-apps", action="store_true")
         c.add_argument("--confirm-elsewhere", action="store_true")
+        c.add_argument("--confirm-changed", action="store_true")
     a = ap.parse_args(argv)
     try:
         if os.geteuid() == 0:
@@ -1758,7 +1834,7 @@ def main(argv):
         elif a.cmd == "restore":
             out = restore(a.file, parts_arg(a.include), ctx, undo=not a.no_undo, confirmed=a.confirm_elsewhere)
         elif a.cmd == "undo":
-            out = undo(a.file, ctx)
+            out = undo(a.file, ctx, confirmed=a.confirm_changed)
         elif a.cmd == "apps-status":
             out = apps_status(a.file, ctx)
         else:
@@ -1768,7 +1844,8 @@ def main(argv):
         say(dict(ok=True, **out))
         return 0
     except Refused as err:
-        say(dict({"ok": False, "error": str(err)}, **({"undo": err.undo} if getattr(err, "undo", "") else {})))
+        say(dict({"ok": False, "error": str(err)}, **({"undo": err.undo} if getattr(err, "undo", "") else {}),
+                 **({"changed": err.changed} if getattr(err, "changed", None) else {})))
     except OSError as err:
         say({"ok": False, "error": "Couldn't %s: %s. Check there's free space and the folder is yours, then try again." % (
             {"create": "save the backup", "restore": "restore it", "undo": "put things back"}.get(a.cmd, "read the backup"), err.strerror or err)})

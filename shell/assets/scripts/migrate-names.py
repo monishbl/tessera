@@ -382,6 +382,18 @@ def _json(path):
         return None
 
 
+def _settings_file():
+    """settings_file.py beside this: the shell's own settings lock and write"""
+    import importlib.util
+    path = os.path.join(HERE, "settings_file.py")
+    if not os.path.isfile(path):
+        return None  # (a copy of this script on its own: written as before)
+    spec = importlib.util.spec_from_file_location("settings_file", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _write_json(path, data):
     # (a link, a dotfiles repo's: its target is rewritten, the link stays)
     path = os.path.realpath(path)
@@ -398,8 +410,8 @@ def settings(folder):
     keybinds, spaces.lua) or state folder (state.json). Returns what changed."""
     done = []
     cfg = os.path.join(folder, "config.json")
-    c = _json(cfg)
-    if isinstance(c, dict):
+
+    def change(c):
         app, shot = c.get("appearance"), c.get("screenshot")
         hit = False
         if isinstance(app, dict) and app.get("menuIcon") == OLD:
@@ -408,8 +420,15 @@ def settings(folder):
         if isinstance(shot, dict) and shot.get("editor") == OLD:
             shot["editor"] = NEW
             hit = True
-        if hit:
+        return hit
+    c = _json(cfg)
+    # (under the shell's own settings lock, read again inside it; audit #815)
+    if isinstance(c, dict) and change(c):
+        sf = _settings_file()
+        if sf is None:
             _write_json(cfg, c)
+            done.append(cfg)
+        elif sf.edit(change, path=cfg, missing={}):
             done.append(cfg)
     keys = os.path.join(folder, "keybinds.json")
     try:

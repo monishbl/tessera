@@ -4,14 +4,33 @@
 Independent of matugen and Match apps. --scheme applies a generated KDE
 scheme instead; --keep-kde only updates the desktop light/dark preference.
 Only palette keys are changed; fonts, icons, styles and other settings stay.
+
+What each key held before Tessera first changed it (kdeglobals' palette and
+ColorScheme, Dolphin's ColorScheme, qt6ct's custom_palette and
+color_scheme_path) is recorded in $XDG_STATE_HOME/tessera/desktop-theme.json,
+and `undo-kde` (the uninstaller) puts those back, unless you chose another
+scheme since (audit #962).
+
+  desktop-theme.py dark|light [--scheme FILE] [--keep-kde]
+  desktop-theme.py undo-gtk | undo-kde      (uninstall)
+  desktop-theme.py gtk-ours NAME            exit 0 when that GTK theme is one
+                                            Tessera may switch (Material's
+                                            app-theme.sh asks)
+
+A GTK theme named MacTahoe... was Tessera's own once: it's switched away a
+single time, the first sync after the update (marked done in the settings,
+appearance.gtkMacTahoeMoved), and after that it's a theme you chose and is
+left alone (audit #963).
 """
 import argparse
 import configparser
+import json
 import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 
 
@@ -69,6 +88,122 @@ def current(path, group, key):
         return ""
 
 
+def state_path():
+    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local/state")
+    return Path(base) / "tessera" / "desktop-theme.json"
+
+
+def load_record():
+    try:
+        r = json.loads(state_path().read_text())
+        return r if isinstance(r, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_record(r):
+    p = state_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".desktop-theme-", dir=p.parent)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(r, f, indent=1, sort_keys=True)
+        os.replace(tmp, p)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def current_or_none(path, group, key):
+    """A setting's value in an ini file, or None when it isn't there."""
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    parser.optionxform = str
+    try:
+        parser.read(path)
+        return parser.get(group, key, fallback=None)
+    except configparser.Error:
+        return None
+
+
+def remember(record, name, path, groups, mark):
+    """Each key's value before Tessera's first write to it (None: it wasn't
+    there), kept under record["before"][name]; a key already recorded keeps
+    what it had then. True when anything new was recorded.
+
+    `mark` (group, key) names the file's scheme: when what was recorded for
+    it is Tessera's own (an install from before this record: Tessera had
+    written them already), every key recorded is taken out at undo instead,
+    the app's own defaults then"""
+    before = record.setdefault("before", {}).setdefault(name, {})
+    new = False
+    for group, entries in groups.items():
+        g = before.setdefault(group, {})
+        for key in entries:
+            if key not in g:
+                g[key] = current_or_none(path, group, key)
+                new = True
+    was = before.get(mark[0], {}).get(mark[1])
+    if new and isinstance(was, str) and Path(was).name.startswith("Tessera"):
+        for g in before.values():
+            for key in g:
+                g[key] = None
+    return new
+
+
+def remove_keys(path, groups):
+    """Keys taken out of an ini file (a group left empty goes too), the rest
+    of the file as it was. Returns whether it changed"""
+    path = Path(path).resolve()
+    if not path.exists():
+        return False
+    text = path.read_text()
+    out = text
+    for group, keys in groups.items():
+        header = re.compile(r"^" + re.escape("[" + group + "]") + r"[ \t]*\n?", re.M)
+        match = header.search(out)
+        if not match:
+            continue
+        start = match.end()
+        following = re.search(r"^\[", out[start:], re.M)
+        end = start + following.start() if following else len(out)
+        body = out[start:end]
+        for key in keys:
+            body = re.sub(r"^" + re.escape(key) + r"[ \t]*=.*(\n|$)", "", body, flags=re.M)
+        if body.strip():
+            out = out[:start] + body + out[end:]
+        else:
+            out = out[:match.start()] + out[end:]
+    if out == text:
+        return False
+    if out.strip():
+        fd, temporary = tempfile.mkstemp(prefix=".tessera-theme-", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w") as stream:
+                stream.write(out.strip("\n") + "\n")
+            shutil.copymode(path, temporary)
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+    else:
+        path.unlink()
+    return True
+
+
+def put_back(path, before):
+    """The recorded values back (None: the key taken out)"""
+    sets = {g: {k: v for k, v in e.items() if v is not None} for g, e in before.items() if isinstance(e, dict)}
+    gone = {g: [k for k, v in e.items() if v is None] for g, e in before.items() if isinstance(e, dict)}
+    changed = False
+    sets = {g: e for g, e in sets.items() if e}
+    if sets:
+        changed |= update_ini(path, sets)
+    gone = {g: e for g, e in gone.items() if e}
+    if gone:
+        changed |= remove_keys(path, gone)
+    return changed
+
+
 # Schemes Tessera may switch between; anything else was chosen by the user and
 # is left alone (a palette set in KDE's settings or qt6ct isn't ours to undo)
 OURS = re.compile(r"^(BreezeDark|BreezeLight|Breeze|Tessera.*)?$")
@@ -110,12 +245,18 @@ def apply_kde(mode, scheme=None):
         raise ValueError("Incomplete KDE color scheme: " + str(scheme))
     groups["General"] = {"ColorScheme": scheme.stem}
     changed = False
+    # (what each key held before Tessera's first write: undo-kde puts it back)
+    record = load_record()
+    recorded = False
     if OURS.match(current(cfg / "kdeglobals", "General", "ColorScheme")):
+        recorded |= remember(record, "kdeglobals", cfg / "kdeglobals", groups, ("General", "ColorScheme"))
         changed |= update_ini(cfg / "kdeglobals", groups)
     # KColorSchemeManager also reads Dolphin's per-app scheme, independently
     # of the Qt style and kdeglobals. Keep both on the same complete palette.
     if OURS.match(current(cfg / "dolphinrc", "UiSettings", "ColorScheme")):
-        changed |= update_ini(cfg / "dolphinrc", {"UiSettings": {"ColorScheme": scheme.stem}})
+        dolphin = {"UiSettings": {"ColorScheme": scheme.stem}}
+        recorded |= remember(record, "dolphinrc", cfg / "dolphinrc", dolphin, ("UiSettings", "ColorScheme"))
+        changed |= update_ini(cfg / "dolphinrc", dolphin)
     # Qt apps using qt6ct must use the same palette as KDE widgets.
     def color(group, key):
         # (a scheme without that group, Tooltip or Selection say: the
@@ -146,8 +287,15 @@ def apply_kde(mode, scheme=None):
     # Match apps, or this one)
     chosen = current(cfg / "qt6ct/qt6ct.conf", "Appearance", "color_scheme_path")
     if not chosen or Path(chosen).name.startswith("Tessera"):
+        qt6ct = {"Appearance": {"custom_palette": "true", "color_scheme_path": str(qt_palette)}}
+        recorded |= remember(record, "qt6ct", cfg / "qt6ct/qt6ct.conf", qt6ct, ("Appearance", "color_scheme_path"))
         changed |= update_ini(qt_palette, {"ColorScheme": {"active_colors": ", ".join(colors), "inactive_colors": ", ".join(colors), "disabled_colors": ", ".join(disabled)}})
-        changed |= update_ini(cfg / "qt6ct/qt6ct.conf", {"Appearance": {"custom_palette": "true", "color_scheme_path": str(qt_palette)}})
+        changed |= update_ini(cfg / "qt6ct/qt6ct.conf", qt6ct)
+    if recorded:
+        try:
+            save_record(record)
+        except OSError:
+            pass  # (the sync goes on; an uninstall then leaves these as they are)
     # Existing KDE apps that watch the desktop palette can reload it.
     if changed and shutil.which("gdbus"):
         subprocess.run(["gdbus", "emit", "--session", "--object-path", "/KGlobalSettings", "--signal", "org.kde.KGlobalSettings.notifyChange", "0", "0"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False)
@@ -159,7 +307,49 @@ def apply_kde(mode, scheme=None):
 # its dark Adwaita is Adwaita plus gtk-application-prefer-dark-theme.
 # adw-gtk3 (the package adw-gtk-theme) takes Tessera's colours from
 # gtk-3.0/tessera-colors.css, so it's used when it's installed.
-GTK_OURS = re.compile(r"^(|Adwaita|Adwaita-dark|adw-gtk3|adw-gtk3-dark|MacTahoe.*)$")
+GTK_OURS = re.compile(r"^(|Adwaita|Adwaita-dark|adw-gtk3|adw-gtk3-dark)$")
+# An older Tessera set MacTahoe (audit #963): switched away once, then yours
+MACTAHOE = re.compile(r"^MacTahoe")
+MOVED_KEY = "gtkMacTahoeMoved"
+
+
+def tessera_config():
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "tessera" / "config.json"
+
+
+def mactahoe_moved():
+    """The once-only MacTahoe switch done (or never needed: no settings yet,
+    a new install that never had an older Tessera's theme)"""
+    try:
+        c = json.loads(tessera_config().read_text())
+    except (OSError, ValueError):
+        return True
+    a = c.get("appearance") if isinstance(c, dict) else None
+    return isinstance(a, dict) and a.get(MOVED_KEY) is True
+
+
+def mark_mactahoe_moved():
+    """Marked in the settings, under the shell's own lock (settings_file.py)"""
+    if not tessera_config().exists():
+        return
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("settings_file", Path(__file__).resolve().parent / "settings_file.py")
+        sf = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sf)
+        sf.edit(lambda c: sf.put(c, "appearance." + MOVED_KEY, True), path=str(tessera_config()))
+    except (OSError, ImportError, AttributeError):
+        pass
+
+
+def gtk_ours(name, moved=None):
+    """A GTK theme Tessera may switch: one of its own, or (until the
+    once-only switch is done) a MacTahoe one an older Tessera set"""
+    if GTK_OURS.match(name):
+        return True
+    if MACTAHOE.match(name):
+        return not (mactahoe_moved() if moved is None else moved)
+    return False
 
 
 def gtk_theme_dirs():
@@ -182,7 +372,10 @@ def apply_gtk(mode):
     now = (got or "").strip().strip("'")
     ini3 = cfg / "gtk-3.0" / "settings.ini"
     mine = current(ini3, "Settings", "gtk-theme-name")
-    if not GTK_OURS.match(now) or not GTK_OURS.match(mine):
+    moved = mactahoe_moved()
+    if not moved:
+        mark_mactahoe_moved()  # (the once-only switch: this sync)
+    if not gtk_ours(now, moved) or not gtk_ours(mine, moved):
         return  # (a theme you picked: yours)
     theme = gtk_theme(dark)
     if got is not None and now != theme:
@@ -221,26 +414,65 @@ def undo_gtk():
             else:
                 css.unlink()
         ini = d / "settings.ini"
-        if ini.exists() and GTK_OURS.match(current(ini, "Settings", "gtk-theme-name")):
+        if ini.exists() and gtk_ours(current(ini, "Settings", "gtk-theme-name")):
             text = re.sub(r"^(gtk-theme-name|gtk-application-prefer-dark-theme)=.*\n?", "", ini.read_text(), flags=re.M)
             if re.sub(r"\[Settings\]", "", text).strip():
                 ini.write_text(text)
             else:
                 ini.unlink()
     got = gsettings("get", "org.gnome.desktop.interface", "gtk-theme")
-    if got is not None and GTK_OURS.match(got.strip().strip("'")):
+    if got is not None and gtk_ours(got.strip().strip("'")):
         gsettings("reset", "org.gnome.desktop.interface", "gtk-theme")
+
+
+def undo_kde():
+    """tessera uninstall: Qt and KDE apps' colours as they were before
+    Tessera: each key it changed back to what it held (or taken out), in
+    kdeglobals, dolphinrc and qt6ct.conf, unless another scheme was chosen
+    since; its own qt6ct palette goes (audit #962)"""
+    cfg = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    record = load_record()
+    before = record.get("before") if isinstance(record.get("before"), dict) else {}
+    changed = False
+    k = before.get("kdeglobals")
+    if isinstance(k, dict) and OURS.match(current(cfg / "kdeglobals", "General", "ColorScheme")):
+        changed |= put_back(cfg / "kdeglobals", k)
+    dl = before.get("dolphinrc")
+    if isinstance(dl, dict) and OURS.match(current(cfg / "dolphinrc", "UiSettings", "ColorScheme")):
+        changed |= put_back(cfg / "dolphinrc", dl)
+    q = before.get("qt6ct")
+    chosen = current(cfg / "qt6ct/qt6ct.conf", "Appearance", "color_scheme_path")
+    if isinstance(q, dict) and (not chosen or Path(chosen).name.startswith("Tessera")):
+        changed |= put_back(cfg / "qt6ct/qt6ct.conf", q)
+    if not current(cfg / "qt6ct/qt6ct.conf", "Appearance", "color_scheme_path").endswith("TesseraDesktop.conf"):
+        (cfg / "qt6ct/colors/TesseraDesktop.conf").unlink(missing_ok=True)
+    record.pop("before", None)
+    try:
+        if record:
+            save_record(record)
+        else:
+            state_path().unlink(missing_ok=True)
+    except OSError:
+        pass
+    if changed and shutil.which("gdbus"):
+        subprocess.run(["gdbus", "emit", "--session", "--object-path", "/KGlobalSettings", "--signal", "org.kde.KGlobalSettings.notifyChange", "0", "0"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["dark", "light", "undo-gtk"])
+    parser.add_argument("mode", choices=["dark", "light", "undo-gtk", "undo-kde", "gtk-ours"])
+    parser.add_argument("name", nargs="?", default="")
     parser.add_argument("--scheme", type=Path)
     parser.add_argument("--keep-kde", action="store_true")
     args = parser.parse_args()
     if args.mode == "undo-gtk":
         undo_gtk()
         return
+    if args.mode == "undo-kde":
+        undo_kde()
+        return
+    if args.mode == "gtk-ours":
+        sys.exit(0 if gtk_ours(args.name) else 1)
     gsettings("set", "org.gnome.desktop.interface", "color-scheme", "prefer-" + args.mode)
     apply_gtk(args.mode)
     if not args.keep_kde:

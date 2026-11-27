@@ -53,6 +53,11 @@ pub fn count(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
+/// The Files app row's words: what it does, and that a change restarts the
+/// desktop's portal at once (its open/save picker follows the Files app),
+/// which ends a screen share or recording running through it (#331)
+pub const FILES_APP_DETAIL: &str = "Opens folders, Downloads and the Trash. Changing it restarts the desktop's file picker at once, which ends any screen share or recording in progress";
+
 pub fn desktop(cx: &mut Ctx, p: &mut Page) {
     let widgets = cx.list("desktop.widgets").len();
     let edit = cx.on(|cx, _| cx.ask("look", "editWidgets", Value::Null));
@@ -116,7 +121,7 @@ pub fn desktop(cx: &mut Ctx, p: &mut Page) {
             .choice(&slabels, sat, sp)
             .width(260.0))
         .row(Row::new("Files app")
-            .detail(if none_installed { format!("No file manager installed (e.g. {})", tessera_core::util::install_hint("nautilus", "", "")) } else { "Opens folders, Downloads and the Trash".to_string() })
+            .detail(if none_installed { format!("No file manager installed (e.g. {})", tessera_core::util::install_hint("nautilus", "", "")) } else { FILES_APP_DETAIL.to_string() })
             .choice(&opts, index, fp)
             .width(220.0));
 
@@ -204,6 +209,12 @@ pub fn desktop(cx: &mut Ctx, p: &mut Page) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changing_the_files_app_warns_about_screen_shares() {
+        // (#331: the portal restarts at once)
+        assert!(FILES_APP_DETAIL.contains("screen share") && FILES_APP_DETAIL.contains("at once"));
+    }
 
     #[test]
     fn counts_and_corners() {

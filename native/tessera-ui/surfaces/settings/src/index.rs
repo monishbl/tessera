@@ -1,11 +1,68 @@
-//! What Settings' search finds, as Settings.qml builds it: section names,
-//! and every row and group caption in the page files (label, title, detail,
-//! pageTitle), read from the QML pages themselves so nothing has to load
-//! (SettingsIndex.js's `captions`: a part shown in one look only is left
-//! out of the other's, a `Theme.material ? "a" : "b"` caption gives the
-//! look's text).
+//! What Settings' search finds: section names, and every row, group and
+//! part on the real pages (#887): each Rust page is built as it would show
+//! now, in this look, with nothing it asks for run (model::while_indexing),
+//! and its rows' labels and details, its groups' and parts' titles are
+//! read (`from_page`). So a hit is always a row the page has, rows whose
+//! label is made at run time (devices, accounts, displays, health checks)
+//! are found, and the look's own rows only in that look. The frozen QML
+//! pages aren't read any more.
+//!
+//! Before (and kept for the tests): the QML page files' captions
+//! (SettingsIndex.js's `captions`) and the Rust sources' (`rust_captions`).
 
 use super::map;
+use super::model::{BKind, Kind, Page};
+
+/// Every page the Rust Settings builds (pages/*/mod.rs `build`): the search
+/// list is made from each of them
+pub const PAGE_IDS: &[&str] = &[
+    "appearance", "appearance/glass", "wallpaper", "desktop", "menubar", "lock",
+    "notifications", "notifications/island", "notifications/startup", "focus", "windowrules",
+    "displays", "sound", "network", "phone",
+    "mouse", "mouse/gestures", "shortcuts",
+    "accounts", "calendar", "ai", "defaultapps",
+    "security", "biometrics", "power", "power/cooldown", "accessibility", "health",
+    "update", "update/options", "update/back", "about", "about/backup", "about/bugreport", "about/loginitems",
+];
+
+/// What the search finds on one page as it was just built: its subpage
+/// title, its groups' and parts' titles, its rows' labels with their
+/// details (a row in a closed More options too: a hit opens it); not a
+/// popover's rows, nor a line of text, nor a label too short or still
+/// loading ("…")
+pub fn from_page(page_id: &str, p: &Page) -> Vec<Entry> {
+    let mut out: Vec<Entry> = Vec::new();
+    let mut add = |text: &str, detail: &str| {
+        let text = text.trim();
+        if text.chars().count() < 3 || text.ends_with('…') || out.iter().any(|e| e.text == text) {
+            return;
+        }
+        out.push(Entry { page: page_id.to_string(), text: text.to_string(), detail: detail.trim().to_string(), section: false, line: 0 });
+    };
+    if !p.title.is_empty() {
+        add(&p.title, "");
+    }
+    for b in &p.blocks {
+        if b.popover {
+            continue;
+        }
+        if matches!(b.kind, BKind::Group | BKind::Heading) && !b.title.is_empty() {
+            add(&b.title, "");
+        }
+        for r in &b.rows {
+            if matches!(r.kind, Kind::Row | Kind::Link) && !r.label.is_empty() {
+                add(&r.label, &r.detail);
+            }
+        }
+    }
+    out
+}
+
+/// The search list from the pages as built (`from_page` for each), in
+/// PAGE_IDS' order; a row two pages show is found on each
+pub fn from_pages(pages: &[(String, Page)]) -> Vec<Entry> {
+    pages.iter().flat_map(|(id, p)| from_page(id, p)).collect()
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
@@ -445,6 +502,33 @@ mod tests {
     }
 }
 "#;
+
+    #[test]
+    fn the_search_list_is_the_pages_as_built() {
+        use super::super::model::Row;
+        // (#887) rows the page has, made at run time too; not hidden ones,
+        // nor a popover's, nor text lines
+        let mut p = Page::default();
+        let name = format!("{} Headphones", "Pixel Buds");
+        p.group("Devices").row(Row::new(name.clone()).detail("Connected")).row(Row::new("Hidden").visible(false));
+        p.group("").row(Row::text("Some words"));
+        p.group("Menu").popover().row(Row::new("In a popover"));
+        p.group("Advanced").row(Row::new("Loading…")).row(Row::link("Glass", "appearance/glass"));
+        let idx = from_pages(&[("sound".to_string(), p)]);
+        let texts: Vec<&str> = idx.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(texts, ["Devices", "Pixel Buds Headphones", "Advanced", "Glass"]);
+        assert_eq!(idx[1].detail, "Connected");
+        assert!(idx.iter().all(|e| e.page == "sound" && !e.section));
+        let r = search(&idx, "buds");
+        assert_eq!(r[0].text, "Pixel Buds Headphones");
+        // (every page the Rust Settings has is in the list it's built from)
+        for (page, _, fns) in RUST_PAGES {
+            assert!(PAGE_IDS.contains(page), "{page}");
+            for (_, sub) in fns.iter() {
+                assert!(PAGE_IDS.contains(sub), "{sub}");
+            }
+        }
+    }
 
     #[test]
     fn captions_per_look() {

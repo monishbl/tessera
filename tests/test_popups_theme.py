@@ -144,6 +144,53 @@ class Gtk(Base):
         self.assertEqual(self.gtk_theme(), "'Orchis-Dark'")
         self.assertIsNone(self.text("gtk-3.0/settings.ini"))
 
+    def test_mactahoe_is_switched_once_then_yours(self):
+        # (audit #963) an older Tessera's MacTahoe: switched away at the first
+        # sync after the update; one you choose after that stays
+        (self.cfg / "tessera").mkdir()
+        (self.cfg / "tessera/config.json").write_text(json.dumps({"dock": {"iconSize": 48}}))
+        self.gs.write_text(json.dumps({"gtk-theme": "'MacTahoe-Dark'"}))
+        self.run_py(THEME, "dark", "--keep-kde")
+        self.assertEqual(self.gtk_theme(), "'Adwaita'")
+        c = json.loads((self.cfg / "tessera/config.json").read_text())
+        self.assertIs(c["appearance"]["gtkMacTahoeMoved"], True)
+        self.assertEqual(c["dock"], {"iconSize": 48})
+        self.gs.write_text(json.dumps({"gtk-theme": "'MacTahoe-Light'"}))
+        (self.cfg / "gtk-3.0/settings.ini").write_text("[Settings]\ngtk-theme-name=MacTahoe-Light\n")
+        self.run_py(THEME, "light", "--keep-kde")
+        self.assertEqual(self.gtk_theme(), "'MacTahoe-Light'")
+        p = subprocess.run([sys.executable, "-I", str(THEME), "gtk-ours", "MacTahoe-Light"], env=self.env)
+        self.assertEqual(p.returncode, 1)
+        self.run_py(THEME, "undo-gtk")
+        self.assertEqual(self.gtk_theme(), "'MacTahoe-Light'", "uninstall leaves yours too")
+
+    def test_undo_kde_puts_qt_colours_back(self):
+        # (audit #962) kdeglobals, Dolphin and qt6ct as they were before
+        (self.cfg / "qt6ct").mkdir()
+        (self.cfg / "kdeglobals").write_text("[General]\nColorScheme=BreezeDark\nfont=Inter,11\n\n[KDE]\nSingleClick=false\n")
+        (self.cfg / "dolphinrc").write_text("[General]\nShowFullPath=true\n")
+        (self.cfg / "qt6ct/qt6ct.conf").write_text("[Appearance]\nstyle=Fusion\n")
+        before = {n: self.text(n) for n in ("kdeglobals", "dolphinrc", "qt6ct/qt6ct.conf")}
+        self.run_py(THEME, "dark")
+        self.assertIn("TesseraDesktop", self.text("qt6ct/qt6ct.conf"))
+        self.assertIn("[Colors:View]", self.text("kdeglobals"))
+        self.run_py(THEME, "light")
+        self.run_py(THEME, "undo-kde")
+        kde = self.text("kdeglobals")
+        self.assertIn("ColorScheme=BreezeDark", kde)
+        self.assertIn("font=Inter,11", kde)
+        self.assertNotIn("[Colors:View]", kde)
+        self.assertEqual(self.text("dolphinrc"), before["dolphinrc"])
+        self.assertEqual(self.text("qt6ct/qt6ct.conf"), before["qt6ct/qt6ct.conf"])
+        self.assertIsNone(self.text("qt6ct/colors/TesseraDesktop.conf"))
+
+    def test_undo_kde_leaves_a_scheme_you_chose_since(self):
+        (self.cfg / "kdeglobals").write_text("[General]\nColorScheme=BreezeDark\n")
+        self.run_py(THEME, "dark")
+        (self.cfg / "kdeglobals").write_text("[General]\nColorScheme=Nordic\n")
+        self.run_py(THEME, "undo-kde")
+        self.assertEqual(self.text("kdeglobals"), "[General]\nColorScheme=Nordic\n")
+
     def test_undo_puts_gtk_back(self):
         (self.cfg / "gtk-3.0").mkdir()
         (self.cfg / "gtk-3.0/gtk.css").write_text("@import 'tessera-colors.css';\n.mine { color: red; }\n")

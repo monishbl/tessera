@@ -81,7 +81,7 @@ class Temp(unittest.TestCase):
     def checkout(self, where, remote=None):
         """A Tessera checkout with what an update and a start need."""
         where = Path(where)
-        for rel in ("shell/assets/scripts/launch-shell.sh", "shell/assets/scripts/old-names.sh", "shell/assets/scripts/migrate-names.py",
+        for rel in ("shell/assets/scripts/launch-shell.sh", "shell/assets/scripts/old-names.sh", "shell/assets/scripts/migrate-names.py", "shell/assets/scripts/settings_file.py",
                     "shell/assets/scripts/file-manager-share.py", "sandbox/tessera-session.sh", "sandbox/irice-session.sh"):
             (where / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / rel, where / rel)

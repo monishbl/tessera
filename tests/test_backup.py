@@ -391,6 +391,49 @@ class RoundTrip(Base):
         self.assertFalse(Path(restored_pic).exists())
         self.assertEqual(json.loads((self.state_home / "tessera/state.json").read_text())["conflictsMuted"], [])
 
+    def test_undo_asks_before_newer_changes_and_only_three_are_kept(self):
+        # (audit #702)
+        self.setup_settings()
+        out, _ = self.run_bk("create", str(self.home))
+        undos = self.state_home / "tessera/backups"
+        made = []
+        for size in (60, 61, 62, 63):
+            cfg = json.loads((self.config / "config.json").read_text())
+            cfg["dock"]["size"] = size
+            (self.config / "config.json").write_text(json.dumps(cfg))
+            res, _ = self.run_bk("restore", out["file"], "--include", "settings")
+            made.append(res["undo"])
+            # (each one a second apart: their times order them)
+            os.utime(res["undo"], (1000 + size, 1000 + size))
+        kept = sorted(os.listdir(undos))
+        self.assertEqual(len(kept), 3, kept)
+        self.assertFalse(os.path.exists(made[0]), "the oldest went")
+        # a change after the restore: undo asks first and names the file
+        cfg = json.loads((self.config / "config.json").read_text())
+        cfg["dock"]["size"] = 99
+        (self.config / "config.json").write_text(json.dumps(cfg))
+        res, _ = self.run_bk("undo", made[-1], ok=False)
+        self.assertEqual(res["changed"], ["~/.config/tessera/config.json"])
+        self.assertEqual(json.loads((self.config / "config.json").read_text())["dock"]["size"], 99, "nothing undone yet")
+        self.run_bk("undo", made[-1], "--confirm-changed")
+        self.assertEqual(json.loads((self.config / "config.json").read_text())["dock"]["size"], 63)
+
+    def test_a_restore_keeps_a_change_made_meanwhile(self):
+        # (audit #815) the settings changed between the plan and the write
+        self.setup_settings()
+        out, _ = self.run_bk("create", str(self.home))
+        ctx = BK.Ctx(str(self.config), str(self.shell))
+        cfg = json.loads((self.config / "config.json").read_text())
+        cfg["dock"]["size"] = 64
+        (self.config / "config.json").write_text(json.dumps(cfg))
+        p = BK.plan(out["file"], ["settings"], ctx)
+        cfg["features"] = {"offer": "done"}  # (the shell's write, meanwhile)
+        (self.config / "config.json").write_text(json.dumps(cfg))
+        BK.apply_writes(p["writes"], ctx, p["base"])
+        now = json.loads((self.config / "config.json").read_text())
+        self.assertEqual(now["dock"]["size"], 48)
+        self.assertEqual(now["features"], {"offer": "done"})
+
     def test_a_restore_that_fails_halfway_puts_things_back(self):
         # (audit #73: half restored, and the undo file never said)
         self.setup_settings()

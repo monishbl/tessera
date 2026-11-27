@@ -758,12 +758,12 @@ export component ScreenToolbar inherits Window {
         font-size: Theme.material ? 14px : Theme.body;
         font-weight: Theme.material ? 500 : 600;
     }
-    property <length> opt-w: opt-measure.preferred-width + 40px;
+    property <length> opt-bw: opt-measure.preferred-width + 40px;
     // (Glass: the label + 40 + its gap; Material: the split button, 18 icon + 8 + 32 + 2 + 40, in 20)
     property <length> rec-w: !record-only ? 0 : Theme.material ? rec-measure.preferred-width + 120px : rec-measure.preferred-width + 44px;
     // The bar in one row with tools `tw` wide (each button + 4 px, the bar's 20 px)
     pure function one-row(tw: length) -> length {
-        return fit.tools * (tw + 4px) + fit.seps * 21px + fit.opts * (opt-w + 4px) + rec-w + 20px;
+        return fit.tools * (tw + 4px) + fit.seps * 21px + fit.opts * (opt-bw + 4px) + rec-w + 20px;
     }
     // #1071: the labels go when it doesn't fit; then two rows, if even that is too wide
     property <length> room: root.width - 32px;
@@ -964,7 +964,7 @@ export component ScreenToolbar inherits Window {
                             t: entry;
                             options-open: root.options-open;
                             compact: root.compact;
-                            opt-w: root.opt-w;
+                            opt-w: root.opt-bw;
                             ic-up: root.ic-caret-up;
                             ic-down: root.ic-caret-down;
                             shown: i < root.fit.split;
@@ -978,7 +978,7 @@ export component ScreenToolbar inherits Window {
                             t: entry;
                             options-open: root.options-open;
                             compact: root.compact;
-                            opt-w: root.opt-w;
+                            opt-w: root.opt-bw;
                             ic-up: root.ic-caret-up;
                             ic-down: root.ic-caret-down;
                             shown: !root.two-rows || i > root.fit.split;

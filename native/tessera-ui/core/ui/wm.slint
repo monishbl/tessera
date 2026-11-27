@@ -173,12 +173,11 @@ export component WMenu inherits Rectangle {
         border-radius: Theme.radius-menu; // (every menu's corner: the bar's, the dock's, the desktop's)
         background: fill;
         opacity: min(1, openness);
-        accessible-role: list;
+        accessible-role: AccessibleRole.list;
         TouchArea { }
         list := Flickable {
             width: parent.width;
             height: parent.height;
-            clip: true;
             content-height: rows-h + 10px;
             VerticalLayout {
                 padding: 5px;

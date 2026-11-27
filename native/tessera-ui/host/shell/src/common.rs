@@ -126,6 +126,7 @@ pub fn upgrades(cfg: &Value) -> Vec<(&'static str, Value)> {
     if cfg["workspaces"]["switchCue"].as_str() == Some("") {
         out.push(("workspaces.switchCue", json!(if cfg["workspaces"]["dimOthers"].as_bool().unwrap_or(true) { "glow" } else { "off" })));
     }
+    out.extend(saver_fold(cfg));
     // 24 Nov: the spaces in Overview and All Windows show the wallpaper
     // behind their windows (they were blank dark tiles). Config.qml's
     // default is off (frozen) and was written into every settings file, so
@@ -155,6 +156,30 @@ pub fn upgrades(cfg: &Value) -> Vec<(&'static str, Value)> {
         }
     }
     out.push(("defaultsVersion", json!(3)));
+    out
+}
+
+/// 27 Nov (#920): the older "Low Power when the battery is low"
+/// (power.batterySaver, batterySaverAuto, batterySaverLevel) folded into
+/// Battery saver. Automatic: Battery saver comes on when low (if it was off,
+/// at the old level, to the nearest 5%) and also uses Low Power; then the old
+/// setting is off for good (its "Ask" offer was quiet while Battery saver
+/// came on by itself anyway). Nothing for a file that says false.
+pub fn saver_fold(cfg: &Value) -> Vec<(&'static str, Value)> {
+    let pw = &cfg["power"];
+    if pw["batterySaver"].as_bool() != Some(true) {
+        return vec![];
+    }
+    let mut out = vec![];
+    if pw["batterySaverAuto"].as_bool() == Some(true) {
+        if pw["saver"].as_str() == Some("off") {
+            let level = pw["batterySaverLevel"].as_f64().filter(|v| v.is_finite()).unwrap_or(20.0).clamp(10.0, 50.0);
+            out.push(("power.saver", json!("auto")));
+            out.push(("power.saverLevel", json!(((level / 5.0).round() * 5.0) as i64)));
+        }
+        out.push(("power.saverProfile", json!(true)));
+    }
+    out.push(("power.batterySaver", json!(false)));
     out
 }
 
@@ -659,6 +684,21 @@ mod tests {
         assert_eq!(value(&u, "appearance.iconStyle"), Some(&json!("look")));
         assert_eq!(value(&u, "appearance.cursor"), Some(&json!("bibata")));
         assert_eq!(value(&u, "defaultsVersion"), Some(&json!(3)));
+    }
+
+    #[test]
+    fn the_older_battery_saver_folds_into_battery_saver() {
+        // (#920) Automatic, Battery saver off: on when low at the old level, with Low Power
+        let u = saver_fold(&json!({"power": {"batterySaver": true, "batterySaverAuto": true, "batterySaverLevel": 23, "saver": "off"}}));
+        assert_eq!(u, vec![("power.saver", json!("auto")), ("power.saverLevel", json!(25)), ("power.saverProfile", json!(true)), ("power.batterySaver", json!(false))]);
+        // Automatic, Battery saver already on when low: its level stays
+        let u = saver_fold(&json!({"power": {"batterySaver": true, "batterySaverAuto": true, "saver": "auto", "saverLevel": 30}}));
+        assert_eq!(u, vec![("power.saverProfile", json!(true)), ("power.batterySaver", json!(false))]);
+        // Ask: only the old setting off
+        assert_eq!(saver_fold(&json!({"power": {"batterySaver": true}})), vec![("power.batterySaver", json!(false))]);
+        // done, or never there: nothing (once only)
+        assert!(saver_fold(&json!({"power": {"batterySaver": false, "batterySaverAuto": true}})).is_empty());
+        assert!(saver_fold(&json!({})).is_empty());
     }
 
     #[test]

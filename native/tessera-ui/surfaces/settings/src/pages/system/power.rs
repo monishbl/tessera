@@ -240,31 +240,11 @@ pub fn power(cx: &mut Ctx, p: &mut Page) {
     // ── More options ──
     p.more(cx);
     {
-        let saver = cx.b("power.batterySaver");
-        let auto = cx.b("power.batterySaverAuto");
-        let level = cx.i("power.batterySaverLevel");
-        let sid = cx.on(|cx, a| {
-            if a.i > 0 {
-                cx.set("power.batterySaverAuto", a.i == 2);
-            }
-            cx.set("power.batterySaver", a.i > 0);
-        });
+        // (the older "Low Power when the battery is low" is Battery saver's
+        // "Also use Low Power" now, #920: host common.rs saver_fold)
         let game = cx.b("power.gamePerformance");
         let gt = cx.toggle("power.gamePerformance");
         p.group("Energy mode")
-            .row(
-                Row::new("Low Power when the battery is low")
-                    .visible(battery && ppd)
-                    .detail(if !saver {
-                        format!("At {level}% on battery, nothing changes")
-                    } else if auto {
-                        format!("At {level}% on battery, Low Power comes on by itself, and the island offers Undo")
-                    } else {
-                        format!("At {level}% on battery, once each time it runs down, the island asks")
-                    })
-                    .segmented(&["Off", "Ask", "Automatic"], if !saver { 0 } else if auto { 2 } else { 1 }, sid)
-                    .width(240.0),
-            )
             .row(
                 Row::new("Game Mode uses Performance")
                     .visible(ppd)
