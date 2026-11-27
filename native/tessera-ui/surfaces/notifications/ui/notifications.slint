@@ -176,9 +176,12 @@ component History inherits VerticalLayout {
 // The close button over a Glass card's top-left corner (CloseBadge.qml)
 export component CloseBadge inherits Rectangle {
     in property <string> label;
+    // (Notification Center: just inside the card's corner, where nothing
+    // round it can cut it off; a banner: over the corner, as macOS)
+    in property <bool> inside;
     callback clicked();
-    x: -6px;
-    y: -6px;
+    x: inside ? 4px : -6px;
+    y: inside ? 4px : -6px;
     width: 22px;
     height: 22px;
     border-radius: 11px;
@@ -294,6 +297,8 @@ export component GlassCard {
     property <bool> cut: gmeasure.preferred-height > 4 * gmeasure.line + 1px;
     property <int> bid: b.id;
     changed bid => { self.full = false; }
+    // (Notification Center: the close badge inside the corner)
+    in property <bool> badge-inside;
     callback group-toggled();
     callback activated();
     callback close();
@@ -324,7 +329,8 @@ export component GlassCard {
         image-fit: contain;
         accessible-role: none;
     }
-    if b.alert && !b.has-icon: Rectangle {
+    // (an alert, or Tessera's own notice with a symbol: its glyph on a tint)
+    if (b.alert || b.glyph != "") && !b.has-icon: Rectangle {
         x: 12px;
         y: 12px;
         width: 36px;
@@ -540,6 +546,7 @@ export component GlassCard {
     }
     // Close, top left like macOS (the banner only: it stays in the list)
     if hovered: CloseBadge {
+        inside: badge-inside;
         label: close-label != "" ? close-label : "Dismiss " + (b.summary != "" ? b.summary : b.app);
         clicked => { close(); }
     }
@@ -627,8 +634,8 @@ export component MaterialCard {
         width: 40px;
         height: 40px;
         border-radius: 20px;
-        background: b.picture ? transparent : b.alert-tonal ? Theme.m3-primary-container : b.alert ? Theme.m3-surface-container-highest.mix(b.glyph-color, 0.78) : Theme.m3-secondary-container; // (a picture fills the circle itself)
-        if b.alert && !b.has-icon: Icon {
+        background: b.picture ? transparent : b.alert-tonal ? Theme.m3-primary-container : b.alert || b.glyph != "" ? Theme.m3-surface-container-highest.mix(b.glyph-color, 0.78) : Theme.m3-secondary-container; // (a picture fills the circle itself)
+        if (b.alert || b.glyph != "") && !b.has-icon: Icon {
             text: b.glyph;
             fill: true;
             font-size: 20px;

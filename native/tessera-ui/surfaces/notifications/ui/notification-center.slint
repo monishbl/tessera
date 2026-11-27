@@ -792,6 +792,7 @@ export component Center inherits Window {
                                                 // (its text shows only once it's out of the stack)
                                                 opacity: r.fan > 0 ? max(0, min(1, (g - 0.3) / 0.7)) : 1;
                                                 gcard := GlassCard {
+                                                    badge-inside: true;
                                                     width: content-w;
                                                     b: r.b;
                                                     hovered: gtouch.has-hover;

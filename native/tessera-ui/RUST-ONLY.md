@@ -361,3 +361,4 @@ Removed: the passkeys daemon, its Settings group, its polkit-dialog requests and
 | Welcome: pictures sized from the screen height too, the card fits short screens (#952) | 27 Nov | done, unchecked | 041d73c0 |
 | Settings narrow windows: a row's control under its text past two lines; Material sidebar a rail of icons under 900 px; fingerprint sheet and gesture rows fit (#253 #282 #308 #889) | 27 Nov | done, unchecked | c41db832 |
 | Settings search built from the real pages as they show now (no QML page files read) (#887) | 27 Nov | done, unchecked | ad4fad20 |
+| Notification Center (Glass): the close badge sits just inside the card's top-left corner, so nothing round it cuts it off (banners keep it over the corner); Tessera's own battery notices (fully charged, low, charging) draw the shell's battery symbol on a tint, as the island's alerts do, not the icon theme's green battery picture | 27 Nov | done, unchecked (unit test) | (this commit) |

@@ -378,6 +378,23 @@ fn theme_icon_walk(name: &str) -> Option<String> {
 }
 
 /// What a card shows as its picture: (file, whether it's the sender's picture)
+/// Tessera's own battery notices draw the shell's symbol on a tint, as the
+/// island's alerts do, not the icon theme's picture (a green battery with a
+/// plug that didn't match anything else): (glyph, its colour), None for the rest
+fn own_glyph(n: &Note) -> Option<(&'static str, slint::Color)> {
+    if !n.image.is_empty() || n.app_icon.contains('/') {
+        return None;
+    }
+    let (name, rgb) = match n.app_icon.as_str() {
+        "battery-full-charged" | "battery-full-charging" | "battery-full" => ("battery-full", (0x34, 0xc7, 0x59)),
+        "battery-caution" | "battery-low" | "battery-empty" | "battery-caution-charging" => ("battery-warning", (0xff, 0x9f, 0x0a)),
+        i if i.starts_with("battery-") && i.ends_with("-charging") => ("battery-charging", (0x34, 0xc7, 0x59)),
+        _ => return None,
+    };
+    let g = tessera_core::icons::glyph(name);
+    (!g.is_empty()).then(|| (g, slint::Color::from_rgb_u8(rgb.0, rgb.1, rgb.2)))
+}
+
 fn icon_source(n: &Note, lookup: &mut impl FnMut(&str) -> Option<String>) -> Option<(String, bool)> {
     let file = |s: &str| s.strip_prefix("file://").map(str::to_string).unwrap_or_else(|| s.to_string());
     if !n.image.is_empty() {
@@ -819,7 +836,8 @@ impl Notifications {
                 f
             }
         };
-        let src = icon_source(&n, &mut lookup);
+        let own = own_glyph(&n);
+        let src = if own.is_some() { None } else { icon_source(&n, &mut lookup) };
         let (icon, picture) = match src {
             Some((f, pic)) => (self.image(st, &f, pic), pic),
             None => (None, false),
@@ -847,6 +865,8 @@ impl Notifications {
             draft: self.drafts.get(&n.id).cloned().unwrap_or_default().into(),
             progress: if n.value >= 0 { n.value as f32 / 100.0 } else { -1.0 },
             history: self.history(&format!("n{}", n.id), &n.changes, h24),
+            glyph: own.map_or("", |o| o.0).into(),
+            glyph_color: own.map_or(slint::Color::default(), |o| o.1),
             ..Default::default()
         }
     }
@@ -1486,6 +1506,25 @@ impl Part for Notifications {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tessera_battery_notices_draw_the_shells_symbol() {
+        let mut n = Note { app_icon: "battery-full-charged".into(), ..Default::default() };
+        let (g, _) = super::own_glyph(&n).unwrap();
+        assert_eq!(g, tessera_core::icons::glyph("battery-full"));
+        n.app_icon = "battery-caution".into();
+        assert_eq!(super::own_glyph(&n).unwrap().0, tessera_core::icons::glyph("battery-warning"));
+        n.app_icon = "battery-good-charging".into();
+        assert_eq!(super::own_glyph(&n).unwrap().0, tessera_core::icons::glyph("battery-charging"));
+        // an app's own icon, a file or a picture: as before
+        n.app_icon = "firefox".into();
+        assert!(super::own_glyph(&n).is_none());
+        n.app_icon = "/x/battery-full-charged.png".into();
+        assert!(super::own_glyph(&n).is_none());
+        n.app_icon = "battery-full-charged".into();
+        n.image = "/x/y.png".into();
+        assert!(super::own_glyph(&n).is_none());
+    }
+
     use super::*;
 
     #[test]
