@@ -7,8 +7,11 @@
 //! the same files the QML panel uses).
 //!
 //! The thread lists the history when asked (`refresh`) and when cliphist's
-//! database is written (inotify), sends `History`, then decodes the pictures
-//! it lists and sends `Previews` as they come.
+//! database is written (inotify), sends `History`, then, while the panel is
+//! open (`panel_open`), decodes the pictures it lists and sends `Previews` as
+//! they come. A while after the panel closes they are dropped (#844: up to 60
+//! pictures, about 60 MB, were kept all session, and each screenshot copied
+//! was decoded at once, for a panel never opened).
 
 use crate::Msg;
 use slint::{Rgba8Pixel, SharedPixelBuffer};
@@ -216,6 +219,42 @@ pub fn is_link(t: &str) -> bool {
 // ── The thread ───────────────────────────────────────────────────────────
 
 static ASK: std::sync::Mutex<Option<mpsc::Sender<()>>> = std::sync::Mutex::new(None);
+static OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// How long the pictures stay once the panel closes (opened again soon,
+/// they're there at once)
+pub const KEEP_AFTER_CLOSE: Duration = Duration::from_secs(20);
+
+/// The panel opened (its pictures are decoded now) or closed (dropped
+/// KEEP_AFTER_CLOSE later); the history is listed again either way
+pub fn panel_open(open: bool) {
+    OPEN.store(open, std::sync::atomic::Ordering::SeqCst);
+    refresh();
+}
+
+fn is_open() -> bool {
+    OPEN.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// What the thread does about the pictures after a listing: decode them
+/// (open, and not done for this list yet), drop them after a while (closed,
+/// some kept), or nothing
+#[derive(Debug, PartialEq)]
+enum Pictures {
+    Decode,
+    DropLater,
+    Nothing,
+}
+
+fn pictures(open: bool, stale: bool, kept: bool) -> Pictures {
+    if open && stale {
+        Pictures::Decode
+    } else if !open && kept {
+        Pictures::DropLater
+    } else {
+        Pictures::Nothing
+    }
+}
 
 /// List the history again (the panel opened; an entry was removed)
 pub fn refresh() {
@@ -341,6 +380,8 @@ pub fn spawn(tx: Sender<Msg>) {
         let mut thumbs: HashMap<PathBuf, SharedPixelBuffer<Rgba8Pixel>> = HashMap::new();
         let mut last: Option<Vec<Entry>> = None;
         let mut last_pins: Vec<Pin> = Vec::new();
+        // (the pictures don't match the list yet: decoded at the next open)
+        let mut stale = true;
         loop {
             let entries = parse_list(&list(&db).unwrap_or_default(), &dir);
             let pins = read_pins();
@@ -357,7 +398,10 @@ pub fn spawn(tx: Sender<Msg>) {
             if tx.send(Msg::Data(Box::new(h))).is_err() {
                 return;
             }
-            if changed {
+            stale |= changed;
+            let what = pictures(is_open(), stale, !thumbs.is_empty());
+            if what == Pictures::Decode {
+                stale = false;
                 // the pictures listed (and pinned), newest first; the rest forgotten
                 let mut want: Vec<(Option<String>, PathBuf)> = entries.iter().filter_map(|e| Some((Some(e.id.clone()), e.image.clone()?))).collect();
                 want.extend(pins.iter().filter_map(|p| Some((None, PathBuf::from(p.image.as_ref()?)))));
@@ -383,8 +427,32 @@ pub fn spawn(tx: Sender<Msg>) {
                     return;
                 }
             }
-            // the next ask (a copy lands as a burst of writes: settle first)
-            if asked.recv().is_err() {
+            // the next ask (a copy lands as a burst of writes: settle first);
+            // closed with pictures kept: dropped if nothing asks meanwhile
+            if what == Pictures::DropLater {
+                match asked.recv_timeout(KEEP_AFTER_CLOSE) {
+                    Ok(()) => {}
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        if !is_open() {
+                            thumbs = HashMap::new();
+                            stale = true;
+                            if tx.send(Msg::Data(Box::new(Previews::default()))).is_err() {
+                                return;
+                            }
+                            // (the decoder's and the pictures' memory back to the system)
+                            #[cfg(target_env = "gnu")]
+                            unsafe {
+                                libc::malloc_trim(0);
+                            }
+                        }
+                        // (nothing to list again: wait for the next ask)
+                        if asked.recv().is_err() {
+                            return;
+                        }
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                }
+            } else if asked.recv().is_err() {
                 return;
             }
             std::thread::sleep(Duration::from_millis(300));
@@ -396,6 +464,17 @@ pub fn spawn(tx: Sender<Msg>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pictures_only_while_the_panel_is_open() {
+        // open: decoded once per list
+        assert_eq!(pictures(true, true, false), Pictures::Decode);
+        assert_eq!(pictures(true, false, true), Pictures::Nothing);
+        // closed: a new screenshot isn't decoded; kept ones go later
+        assert_eq!(pictures(false, true, false), Pictures::Nothing);
+        assert_eq!(pictures(false, true, true), Pictures::DropLater);
+        assert_eq!(pictures(false, false, false), Pictures::Nothing);
+    }
 
     const LIST: &str = "12\thello   world\n11\t[[ binary data 31 KiB png 640x480 ]]\n10\thttps://example.org/a\n9\t[[ binary data 2 MiB JPEG 4000x3000 ]]\n8\t[[ binary data 1 KiB application/x-thing ]]\nbroken line\n7\t#1e6fd9\n";
 

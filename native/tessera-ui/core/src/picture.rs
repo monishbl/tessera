@@ -85,6 +85,31 @@ pub fn decode(path: &str, bw: u32, bh: u32) -> Option<SharedPixelBuffer<Rgb8Pixe
     Some(buf)
 }
 
+/// The longest side `decode_rgba` keeps, and the most it decodes at all
+pub const RGBA_MOST: u32 = 1024;
+const RGBA_DECODE_MOST: u32 = 16384;
+
+/// Decode `path` with its transparency, shrunk so its longer side is at
+/// most `most` (blocking: on a worker thread). Album art, alert pictures:
+/// a 3000 × 3000 cover took 100-300 ms on the UI thread (#369). None for a
+/// file the image decoder can't read (an SVG: the caller loads it itself)
+pub fn decode_rgba(path: &std::path::Path, most: u32) -> Option<SharedPixelBuffer<slint::Rgba8Pixel>> {
+    use image::imageops::{self, FilterType};
+    let mut reader = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(RGBA_DECODE_MOST);
+    limits.max_image_height = Some(RGBA_DECODE_MOST);
+    reader.limits(limits);
+    let img = reader.decode().ok()?.into_rgba8();
+    let (w, h) = img.dimensions();
+    let (kw, kh) = fit_box(w, h, most, most);
+    let out = if (kw, kh) == (w, h) { img } else { imageops::resize(&img, kw, kh, FilterType::Triangle) };
+    let buf = SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(out.as_raw(), kw, kh);
+    drop(out);
+    trim();
+    Some(buf)
+}
+
 /// Give the decoder's freed memory back to the system now (a 6000×4000
 /// picture passes through about 70 MB; glibc would otherwise keep some of it)
 fn trim() {
@@ -250,6 +275,24 @@ pub fn second_frame(surface: &crate::wayland::Surface, settled: &mut bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn art_is_decoded_shrunk_with_its_transparency() {
+        let dir = std::env::temp_dir().join(format!("tessera-rgba-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let p = dir.join("cover.png");
+        image::RgbaImage::from_pixel(2048, 1024, image::Rgba([200, 10, 20, 128])).save(&p).unwrap();
+        let b = decode_rgba(&p, RGBA_MOST).unwrap();
+        assert_eq!((b.width(), b.height()), (1024, 512));
+        let px = b.as_slice()[0];
+        assert_eq!((px.r, px.a), (200, 128));
+        // small: kept as it is; not a picture: none
+        image::RgbaImage::from_pixel(64, 64, image::Rgba([1, 2, 3, 255])).save(&p).unwrap();
+        assert_eq!(decode_rgba(&p, RGBA_MOST).map(|b| (b.width(), b.height())), Some((64, 64)));
+        std::fs::write(&p, b"<svg/>").unwrap();
+        assert!(decode_rgba(&p, RGBA_MOST).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_box_keeps_the_pictures_shape() {

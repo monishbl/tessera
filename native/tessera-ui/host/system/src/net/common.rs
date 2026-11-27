@@ -41,9 +41,9 @@ pub fn island_wants(cfg: &Value, kind: &str) -> bool {
     tessera_core::services::notify::model::island_wants(cfg, kind)
 }
 
-/// Tools.has(name): an executable on PATH
+/// Tools.has(name): an executable on PATH (remembered a while: core's has_tool, #571)
 pub fn has_tool(name: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(name).is_file()))
+    tessera_core::util::has_tool(name)
 }
 
 /// Paths.state: ~/.local/state/tessera

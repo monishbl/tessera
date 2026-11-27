@@ -359,6 +359,8 @@ impl Probes {
     /// Tools.qml's `available`, for the surfaces that hide what needs one
     /// (tools.hyprpicker: the menu bar's colour picker)
     fn publish_tools(&self, h: &mut Host) {
+        // (looked at afresh: what every other host part remembers goes too, #571)
+        tessera_core::util::tools_changed();
         let mut m = serde_json::Map::new();
         for t in ["hyprpicker", "wf-recorder", "gpu-screen-recorder", "tesseract", "grim", "slurp", "swappy", "cliphist", "easyeffects", "warp-cli", "songrec", "wtype", "checkupdates", "hyprpm", "mangohud", "qrencode", "adb", "scrcpy", "ddcutil", "hyprsunset", "yt-dlp"] {
             m.insert(t.into(), json!(tessera_core::util::on_path(t)));

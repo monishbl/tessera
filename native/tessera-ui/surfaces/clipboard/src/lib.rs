@@ -338,7 +338,8 @@ impl Clipboard {
             return;
         }
         st.shell.want("clipboard");
-        crate::perf::time(|| "clip open refresh".into(), clip::refresh);
+        // (its pictures are decoded now, and only while it's open: #844)
+        crate::perf::time(|| "clip open refresh".into(), || clip::panel_open(true));
         // (the shell's Clipboard stamps new entries with the time they came)
         crate::shell::ask("clipboard.refresh", serde_json::json!([]));
         if let Some(h) = st.shell.get::<History>() {
@@ -391,6 +392,8 @@ impl Clipboard {
             return;
         }
         self.open = false;
+        // (its pictures go a while after: clip::KEEP_AFTER_CLOSE)
+        clip::panel_open(false);
         // (closed before it showed: no closing animation will ever call
         // closed(), so it's hidden here; it stayed mapped, an invisible layer
         // taking every click; audit #136)

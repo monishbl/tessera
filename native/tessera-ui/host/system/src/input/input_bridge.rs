@@ -30,8 +30,9 @@ fn arg_str(args: &[Value], i: usize) -> String {
     args.get(i).map(|v| v.as_str().map(String::from).unwrap_or_else(|| if v.is_null() { String::new() } else { v.to_string() })).unwrap_or_default()
 }
 
+// (remembered a while: core's has_tool, #571)
 fn has_tool(cmd: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(cmd).is_file()))
+    tessera_core::util::has_tool(cmd)
 }
 
 fn expand(home: &str, path: &str) -> String {
@@ -131,6 +132,8 @@ pub struct Input {
     mtimes: [Option<std::time::SystemTime>; 3],
     last_feed: String,
     binds_rev: Option<(u64, usize, String, String)>,
+    /// counts the bind lists' rebuilds (push_feed: sent again when it moves)
+    binds_gen: u64,
     binds_cache: (Vec<Value>, Vec<Value>),
     apps_len: usize,
     poll_started: bool,
@@ -271,6 +274,7 @@ impl Input {
                 .collect();
             self.binds_cache = (binds, gestures);
             self.binds_rev = Some(key);
+            self.binds_gen += 1;
         }
         let mouse = crate::bus::get("mouse");
         // (host-desktop's Dictation and ScreenTools publish these as host state)
@@ -283,7 +287,8 @@ impl Input {
             "keymap": {
                 "ready": self.km.ready(), "defaultsError": self.km.defaults_error, "userError": self.km.user_error, "saveError": self.km.save_error,
                 "modKey": self.km.mod_key, "hyprDir": self.hypr_dir, "threeFingerDrag": self.km.three_finger_drag(),
-                "binds": self.binds_cache.0, "gestures": self.binds_cache.1, "gestureDefaults": gdefs
+                // (the binds and gestures go in by push_feed, only when sent: #571)
+                "binds": Value::Null, "gestures": Value::Null, "gestureDefaults": gdefs
             },
             "dictation": {
                 "hasBinary": dict["hasBinary"].as_bool().unwrap_or(false), "ready": dict["ready"].as_bool().unwrap_or(false), "installing": dict["installing"].as_bool().unwrap_or(false),
@@ -302,10 +307,14 @@ impl Input {
         if !self.live {
             return;
         }
-        let f = self.feed(h);
-        let s = f.to_string();
+        // (compared without the long bind lists, which change only with
+        // binds_gen: the feed every 300 ms was a whole keymap's text, #571)
+        let mut f = self.feed(h);
+        let s = format!("{}#{}", f, self.binds_gen);
         if force || s != self.last_feed {
             self.last_feed = s;
+            f["keymap"]["binds"] = Value::Array(self.binds_cache.0.clone());
+            f["keymap"]["gestures"] = Value::Array(self.binds_cache.1.clone());
             h.tell("settings", json!({"feed": {"input": f}}));
         }
         // the CPU's reading (bus "Resources"), whole degrees, for the island page
