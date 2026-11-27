@@ -532,6 +532,25 @@ impl Model {
         }
     }
 
+    /// A session picked from the list (a click on the session; audit #743);
+    /// the keyboard back to the password either way
+    pub fn pick_session(&mut self, i: usize) {
+        if !self.busy && i < self.sessions.len() {
+            self.session = i;
+        }
+        self.out.push(Effect::FocusPassword);
+    }
+
+    /// A person picked from the list (#743): that person, also instead of
+    /// a name being typed
+    pub fn pick_user(&mut self, i: usize) {
+        if !self.busy && i < self.users.len() {
+            self.set_user(i);
+            self.set_other(false);
+        }
+        self.out.push(Effect::FocusPassword);
+    }
+
     /// Enter: a power choice to confirm, else log in
     pub fn submit(&mut self, password: &str) {
         if self.drop_stale_power() {
@@ -955,6 +974,40 @@ mod tests {
         m.choose_power("reboot");
         m.next_session(1);
         assert!(m.power_choice.is_empty() && m.session_name() == Some("Sway"));
+    }
+
+    #[test]
+    fn picked_from_the_lists() {
+        let mut m = Model::new(false, people(), sessions());
+        m.begin();
+        m.take();
+        // a session from the list: that one, the keyboard back to the field
+        m.pick_session(2);
+        assert_eq!(m.session_name(), Some("Sway"));
+        assert_eq!(m.take(), vec![Effect::FocusPassword]);
+        m.pick_session(9);
+        assert_eq!(m.session_name(), Some("Sway"), "one that isn't there changes nothing");
+        // a person: that one, the conversation opened again for them
+        m.take();
+        m.pick_user(1);
+        assert_eq!(m.user_name(), "grace");
+        let e = m.take();
+        assert_eq!(sent(&e), vec![Request::CancelSession]);
+        assert!(e.contains(&Effect::BeginLater) && e.contains(&Effect::FocusPassword) && e.contains(&Effect::ClearField));
+        // the same one again: nothing restarts
+        m.pick_user(1);
+        assert_eq!(m.take(), vec![Effect::FocusPassword]);
+        // picked while a name is typed: back to the list, that person
+        m.edit_name();
+        m.set_other_name("someone");
+        m.take();
+        m.pick_user(2);
+        assert!(!m.other && m.user_name() == "katherine");
+        // nothing while the password is checked
+        m.busy = true;
+        m.pick_user(0);
+        m.pick_session(0);
+        assert_eq!((m.user, m.session_name()), (2, Some("Sway")));
     }
 
     #[test]

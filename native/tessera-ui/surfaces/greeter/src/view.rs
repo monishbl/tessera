@@ -74,6 +74,12 @@ pub fn say(style: Style, m: &Model) -> (String, bool) {
         Style::Text if !m.message.is_empty() => m.message.clone(),
         Style::Text if m.mock => "preview: the password is tessera, Esc quits".into(),
         Style::Text => "Enter to log in".into(),
+        // (PAM's next question, whole and wrapped: the placeholder is cut at
+        // the field's width and goes at the first key; audit #747)
+        _ if !m.question.is_empty() => m.question.clone(),
+        // (Glass and plain have no spinner of their own besides the field's
+        // small one: the words say it too, as the text style's; #746)
+        Style::Glass | Style::Plain if m.busy => "Logging in…".into(),
         _ if !m.message.is_empty() => m.message.clone(),
         Style::Material if m.mock => "Preview: the password is tessera. Esc closes it.".into(),
         _ if m.mock => "Preview: the password is tessera. Esc quits.".into(),
@@ -109,6 +115,42 @@ pub fn session_label(style: Style, m: &Model) -> String {
     }
 }
 
+/// What a key does in the Glass, plain and Material password fields besides
+/// Enter, the arrows, Tab and Escape (audit #745: with only a keyboard the
+/// power buttons and "another user" couldn't be reached)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldKey {
+    /// F1 shut down, F2 restart, F3 sleep (as the text style's): asks first,
+    /// the same key or Enter does it
+    Power(&'static str),
+    /// Ctrl+U: type another username
+    OtherUser,
+    /// Shift+Tab: the session before
+    SessionBack,
+}
+
+pub fn field_key(text: &str, shift: bool, ctrl: bool, alt: bool) -> Option<FieldKey> {
+    use slint::platform::Key;
+    let is = |k: Key| text == slint::SharedString::from(k).as_str();
+    if alt {
+        return None;
+    }
+    if !ctrl && !shift {
+        for (k, a) in [(Key::F1, "poweroff"), (Key::F2, "reboot"), (Key::F3, "suspend")] {
+            if is(k) {
+                return Some(FieldKey::Power(a));
+            }
+        }
+    }
+    if ctrl && text.eq_ignore_ascii_case("u") {
+        return Some(FieldKey::OtherUser);
+    }
+    if !ctrl && (is(Key::Backtab) || (shift && is(Key::Tab))) {
+        return Some(FieldKey::SessionBack);
+    }
+    None
+}
+
 /// The plain style's initial: the person's (or the typed name's) first letter
 pub fn initial(m: &Model) -> String {
     let s = if m.other { m.other_name.clone() } else { m.person().map(|p| p.full.clone()).unwrap_or_default() };
@@ -128,13 +170,17 @@ pub struct Parts {
     pub minute: u32,
 }
 
+/// Now, the day and month names in the system's language
+/// (tessera_core::locale: the greeter reads LC_TIME at its start, the
+/// greeter user's, as greetd gives it)
 pub fn parts_now() -> Parts {
     let secs = crate::util::now_ms() / 1000;
-    let t = crate::util::strftime("%A|%a|%d|%B|%b|%H|%M", secs);
+    let t = crate::util::strftime("%w|%d|%m|%H|%M", secs);
     let f: Vec<&str> = t.split('|').collect();
     let n = |i: usize| f.get(i).and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
-    let s = |i: usize| f.get(i).copied().unwrap_or("").to_string();
-    Parts { weekday: s(0), wd: s(1), day: n(2), month: s(3), mon: s(4), hour: n(5), minute: n(6) }
+    let (wday, month) = (n(0), n(2).max(1));
+    use tessera_core::locale::{day_name, month_name};
+    Parts { weekday: day_name(wday, false), wd: day_name(wday, true), day: n(1), month: month_name(month, false), mon: month_name(month, true), hour: n(3), minute: n(4) }
 }
 
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -192,12 +238,14 @@ pub fn material_clock(cfg: &serde_json::Value, h24: bool) -> (String, i32, bool)
     (face.to_string(), weight, !(raw == "dynamic" && h24))
 }
 
-/// 24-hour time: greeter-start.sh's TESSERA_GREETER_CLOCK24, else the
-/// config's appearance.clock24
+/// 24-hour time: greeter-start.sh's TESSERA_GREETER_CLOCK24 (greeter.json's
+/// clock24: your Time format setting, Auto worked out in your session from
+/// your language), else the config's (appearance.clockHours, the older
+/// clock24, else the system's language: tessera_core::locale)
 pub fn h24(env: Option<&str>, cfg: &serde_json::Value) -> bool {
     match env {
         Some(v) if !v.is_empty() => v == "1",
-        _ => cfg["appearance"]["clock24"].as_bool().unwrap_or(false),
+        _ => tessera_core::locale::clock24(cfg),
     }
 }
 
@@ -345,6 +393,59 @@ mod tests {
         assert!(h24(Some("1"), &json!({})));
         assert!(!h24(Some("0"), &json!({"appearance": {"clock24": true}})));
         assert!(h24(None, &json!({"appearance": {"clock24": true}})));
+        // (the Time format setting; tests run in the C locale: 12-hour by default)
+        assert!(h24(None, &json!({"appearance": {"clockHours": "24"}})));
+        assert!(!h24(None, &json!({"appearance": {"clockHours": "12", "clock24": true}})));
+        assert!(!h24(Some(""), &json!({})));
+    }
+
+    #[test]
+    fn todays_names_come_from_the_language() {
+        // (tests run in the C locale: English)
+        let p = parts_now();
+        assert!(["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].contains(&p.weekday.as_str()), "{p:?}");
+        assert_eq!(&p.weekday[..3], p.wd);
+        assert!((1..=31).contains(&p.day) && p.hour < 24 && p.minute < 60);
+        assert_eq!(p.mon.chars().count(), 3);
+    }
+
+    #[test]
+    fn the_fields_own_keys() {
+        use slint::platform::Key;
+        let k = |key: Key| slint::SharedString::from(key).to_string();
+        assert_eq!(field_key(&k(Key::F1), false, false, false), Some(FieldKey::Power("poweroff")));
+        assert_eq!(field_key(&k(Key::F2), false, false, false), Some(FieldKey::Power("reboot")));
+        assert_eq!(field_key(&k(Key::F3), false, false, false), Some(FieldKey::Power("suspend")));
+        assert_eq!(field_key(&k(Key::F4), false, false, false), None);
+        assert_eq!(field_key("u", false, true, false), Some(FieldKey::OtherUser));
+        assert_eq!(field_key("U", true, true, false), Some(FieldKey::OtherUser));
+        assert_eq!(field_key(&k(Key::Backtab), true, false, false), Some(FieldKey::SessionBack));
+        assert_eq!(field_key(&k(Key::Tab), true, false, false), Some(FieldKey::SessionBack));
+        // what the password field types or already handles is left to it
+        assert_eq!(field_key("u", false, false, false), None);
+        assert_eq!(field_key("u", false, true, true), None);
+        assert_eq!(field_key(&k(Key::Tab), false, false, false), None);
+        assert_eq!(field_key(&k(Key::Return), false, false, false), None);
+        assert_eq!(field_key(&k(Key::Escape), false, false, false), None);
+        assert_eq!(field_key(&k(Key::F1), false, false, true), None);
+    }
+
+    #[test]
+    fn busy_and_a_second_question_are_said_under_the_field() {
+        let mut m = model(false);
+        m.busy = true;
+        assert_eq!(say(Style::Glass, &m).0, "Logging in…");
+        assert_eq!(say(Style::Plain, &m).0, "Logging in…");
+        // (Material has its spinner; its line stays as it was)
+        assert_eq!(say(Style::Material, &m).0, "");
+        m.busy = false;
+        m.question = "Password for ada@REALM.EXAMPLE".into();
+        for s in [Style::Glass, Style::Plain, Style::Material] {
+            assert_eq!(say(s, &m), ("Password for ada@REALM.EXAMPLE".into(), false));
+        }
+        // an error still comes first
+        m.error = "Account locked".into();
+        assert_eq!(say(Style::Glass, &m).0, "Account locked");
     }
 
     #[test]
