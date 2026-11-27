@@ -692,6 +692,10 @@ export component CircleSearch inherits Window {
     // ── The bar and the card ────────────────────────────────────────────
     // (below the selection when they fit, else above it, else at the bottom)
     property <length> col-h: bar.height + (card ? 12px + answer-card.height : 0);
+    // (the answer's text scrolls within what the screen leaves: 24 px each
+    // edge, the bar, and about 170 px of the card's header, rows and buttons;
+    // 320 px at most: a short screen kept the card's end below its edge, #1078)
+    property <length> answer-room: max(60px, root.height - 48px - bar.height - 170px);
     col := Rectangle {
         width: min(560px, root.width - 48px);
         height: col-h;
@@ -917,7 +921,7 @@ export component CircleSearch inherits Window {
                 }
                 if answer-state == 1 || answer-state == 2: Flickable {
                     // (a long answer scrolls; the newest line in view while it streams)
-                    height: min(answer-text.preferred-height, 320px);
+                    height: min(answer-text.preferred-height, min(320px, answer-room));
                     content-height: answer-text.preferred-height;
                     changed content-height => {
                         if root.answer-state == 1 {

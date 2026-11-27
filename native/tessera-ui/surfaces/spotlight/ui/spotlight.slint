@@ -684,7 +684,15 @@ export component SpotlightPanel inherits Window {
     property <length> m-x: round((root.width - m-w) / 2 / 1px) * 1px;
     property <length> m-top: round(root.height * 0.2 / 1px) * 1px;
     property <bool> m-open: answering || rows.length > 0;
-    property <length> m-body: answering ? m-answer-h + 28px : min(content-h, 480px) + 20px;
+    // The lists' most, kept on a short screen (#1078): 440 / 480 px, or what
+    // is left below the field and 24 px from the bottom edge; Rust's
+    // keyboard scrolling reads it (list-max)
+    property <length> g-list-max: max(120px, min(440px, root.height - round(root.height * 0.2 / 1px) * 1px - 64px - 16px - 24px));
+    property <length> m-list-max: max(120px, min(480px, root.height - m-top - 56px - 20px - 24px));
+    out property <length> list-max: Theme.material ? m-list-max : g-list-max;
+    // (an inline answer's text: 360 px at most, less on a short screen)
+    property <length> answer-max: max(100px, min(360px, list-max - 80px));
+    property <length> m-body: answering ? m-answer-h + 28px : min(content-h, m-list-max) + 20px;
     property <length> m-answer-h;
     property <length> m-view-h: 56px + (m-open ? m-body : 0);
     // (springDefault 6.08 / 0.5: ω 19.5, ζ 0.80)
@@ -757,7 +765,7 @@ export component SpotlightPanel inherits Window {
         g-results := Rectangle {
             visible: !Theme.material && rows.length > 0 && !answering;
             y: 64px;
-            height: min(content-h, 440px) + 16px;
+            height: min(content-h, g-list-max) + 16px;
             border-radius: 24px;
             background: glass-fill;
             border-width: 0.5px;
@@ -841,7 +849,7 @@ export component SpotlightPanel inherits Window {
                     }
                 }
                 if quick-shown: Flickable {
-                    height: min(g-text.preferred-height, 360px);
+                    height: min(g-text.preferred-height, answer-max);
                     content-height: g-text.preferred-height;
                     g-text := VerticalLayout {
                         if quick-error == "": StyledText {
@@ -896,7 +904,7 @@ export component SpotlightPanel inherits Window {
                     x: 12px;
                     y: 8px;
                     width: parent.width - 24px;
-                    height: min(content-h, 480px);
+                    height: min(content-h, m-list-max);
                     content-height: max(content-h, self.height);
                     content-y <=> root.list-y;
                     accessible-role: list;
@@ -991,7 +999,7 @@ export component SpotlightPanel inherits Window {
                         }
                     }
                     if quick-shown: Flickable {
-                        height: min(m-text.preferred-height, 360px);
+                        height: min(m-text.preferred-height, answer-max);
                         content-height: m-text.preferred-height;
                         m-text := VerticalLayout {
                             if quick-error == "": StyledText {
