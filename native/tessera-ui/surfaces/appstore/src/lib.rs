@@ -127,6 +127,8 @@ pub struct AppStore {
     sections: Vec<(String, Vec<Value>)>,
     debounce: slint::Timer,
     images: HashMap<String, Option<slint::Image>>,
+    /// the logos drawn that are dark through and through (on a light backing; #260)
+    dark: HashSet<String>,
     pending: HashSet<String>,
     /// logos that couldn't be had, and when: asked again after MISS_RETRY
     /// (a second offline must not leave letter tiles for the window's life)
@@ -412,8 +414,9 @@ impl AppStore {
     }
 
     /// An app's logo at `size` (logical px), decoded off the UI thread
-    /// (None until it's there, and for no logo)
-    fn icon(&mut self, st: &State, app: &Value, size: f32) -> Option<slint::Image> {
+    /// (None until it's there, and for no logo), and whether it's dark
+    /// through and through
+    fn icon(&mut self, st: &State, app: &Value, size: f32) -> Option<(slint::Image, bool)> {
         let path = logic::text(app, "_icon");
         let path = if path.is_empty() {
             // (the feed found no file, or the theme gave it as an image://
@@ -445,7 +448,7 @@ impl AppStore {
         if let Some(i) = self.images.get(&key) {
             let stale = i.is_none() && self.misses.get(&key).is_some_and(|t| t.elapsed() >= MISS_RETRY);
             if !stale {
-                return i.clone();
+                return i.clone().map(|i| (i, self.dark.contains(&key)));
             }
             self.images.remove(&key);
             self.misses.remove(&key);
@@ -479,7 +482,8 @@ impl AppStore {
             installed: logic::truthy(&app["installed"]),
             busy: !self.busy_with(&key).is_empty(),
             has_icon: icon.is_some(),
-            icon: icon.unwrap_or_default(),
+            dark: icon.as_ref().is_some_and(|i| i.1),
+            icon: icon.map(|i| i.0).unwrap_or_default(),
         }
     }
 
@@ -797,6 +801,11 @@ impl Part for AppStore {
                 self.pending.remove(&key);
                 if px.is_none() {
                     self.misses.insert(key.clone(), std::time::Instant::now());
+                }
+                if px.as_ref().is_some_and(|p| appicon::dark_logo(p.as_slice().iter().map(|c| [c.r, c.g, c.b, c.a]))) {
+                    self.dark.insert(key.clone());
+                } else {
+                    self.dark.remove(&key);
                 }
                 self.images.insert(key, px.map(slint::Image::from_rgba8));
                 if !self.flush.running() {

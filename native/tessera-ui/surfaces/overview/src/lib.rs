@@ -92,6 +92,10 @@ enum M {
     Press(String, f32, f32, i32),
     Release(String, f32, f32, i32),
     RunResult(i32),
+    /// a screen reader's activate (#540): a space, a display row's +, a display
+    ActivateSpace(i32),
+    NewSpace(String, i32),
+    ActivateZone(String),
     MenuActivate(String, i32),
     MenuDismissed(String),
     Closed(String),
@@ -168,9 +172,10 @@ impl Menu {
     fn rows_h(&self) -> f32 {
         self.items.iter().map(|i| if i.separator { 11.0 } else if i.header { 26.0 } else { 28.0 }).sum()
     }
-    /// Where it sits (ContextMenu.qml's body), for its glass
+    /// Where it sits (ContextMenu.qml's body), for its glass; at most the
+    /// screen's height less 8 px each side, its rows scrolling inside (WMenu, #882)
     fn rect(&self, w: f32, h: f32) -> Rect {
-        let (mw, natural) = (self.width(), self.rows_h() + 10.0);
+        let (mw, natural) = (self.width(), (self.rows_h() + 10.0).min((h - 16.0).max(0.0)));
         let (px, py) = (self.x + mw / 2.0, self.y);
         let below = h - py;
         let up = if self.up { natural <= py || py >= below } else { natural > below && py > below };
@@ -383,6 +388,12 @@ impl Overview {
             on!(on_release, |x, y, b| M::Release(o.clone(), x, y, b));
         }
         on!(on_run_result, |i| M::RunResult(i));
+        on!(on_activate_space, |id| M::ActivateSpace(id));
+        {
+            let o = o.clone();
+            on!(on_new_space, |p| M::NewSpace(o.clone(), p));
+        }
+        on!(on_activate_zone, |z| M::ActivateZone(z.to_string()));
         {
             let o = o.clone();
             on!(on_menu_activate, |i| M::MenuActivate(o.clone(), i));
@@ -676,7 +687,7 @@ impl Overview {
                             y: t.rect.y,
                             w: t.rect.w,
                             h: t.rect.h,
-                            title: self.info.title(t.id, &r.name, "Desktop").into(),
+                            title: self.info.title(t.id, &r.name, "Space").into(),
                             title_y: t.title.y,
                             current,
                             minis: ModelRc::default(),
@@ -1760,6 +1771,23 @@ impl Part for Overview {
             M::Press(o, x, y, b) => self.press(st, &o, x, y, b),
             M::Release(o, x, y, b) => self.release(st, &o, x, y, b),
             M::RunResult(i) => self.run_result(st, i.max(0) as usize),
+            M::ActivateSpace(id) => {
+                if id > 0 {
+                    self.go(st, id);
+                }
+            }
+            M::NewSpace(o, p) => {
+                let name = self.wins.iter().find(|w| w.output == o).and_then(|w| w.rows.get(p.max(0) as usize)).map(|r| r.0.clone());
+                if let Some(name) = name {
+                    self.close(st, true);
+                    wm::ask("spaces.newSpace", serde_json::json!([name]));
+                }
+            }
+            M::ActivateZone(z) => {
+                let (_, snap) = Self::data(st);
+                let id = snap.active.get(&z).copied().filter(|x| *x > 0).unwrap_or_else(|| self.info.id_for(&z, 1));
+                self.go(st, id);
+            }
             M::MenuActivate(o, r) => {
                 if let Some(i) = self.wins.iter().position(|w| w.output == o) {
                     self.menu_activate(st, i, r);
@@ -1898,5 +1926,9 @@ mod tests {
         // near the bottom it opens upward
         let r = Menu { y: 1000.0, up: true, ..m }.rect(1920.0, 1080.0);
         assert!(r.y + r.h <= 1000.0);
+        // taller than the screen: held to it, 8 px each side (its rows scroll; #882)
+        let long = Menu { items: (0..40).map(|i| it(&format!("Space {i}"), true)).collect(), x: 100.0, y: 300.0, up: false, current: -1 };
+        let r = long.rect(1366.0, 768.0);
+        assert_eq!((r.y, r.h), (8.0, 768.0 - 16.0));
     }
 }

@@ -128,6 +128,13 @@ pub struct AppIcons {
     queued: Vec<IconKey>,
     styled: Option<Style>,
     plain: Option<Style>,
+    /// the pictures drawn that are dark through and through (appicon::dark_logo)
+    dark: HashSet<IconKey>,
+}
+
+/// The generic app icon (what an app with no icon of its own gets)
+fn is_generic(path: &std::path::Path) -> bool {
+    path.file_stem().and_then(|s| s.to_str()).is_some_and(|s| matches!(s, "application-x-executable" | "application-default-icon"))
 }
 
 impl AppIcons {
@@ -145,6 +152,7 @@ impl AppIcons {
         self.styled = styled;
         self.plain = plain;
         self.cache.clear();
+        self.dark.clear();
         self.pending.clear();
     }
 
@@ -166,6 +174,29 @@ impl AppIcons {
     /// The picture for this class at `size` logical px, if drawn yet (else
     /// queued: `flush` starts it)
     pub fn get(&mut self, st: &State, class: &str, size: f32, scale: f32, styled: bool) -> Option<slint::Image> {
+        self.get_key(st, class, size, scale, styled).1
+    }
+
+    /// As `get`, and how it looks: (picture, it's the generic app icon (no
+    /// icon of its own), it's dark through and through). The App Drawer
+    /// draws a lettered tile for the generic one and a light backing behind
+    /// a dark one (#232, #260)
+    pub fn get_looks(&mut self, st: &State, class: &str, size: f32, scale: f32, styled: bool) -> (Option<slint::Image>, bool, bool) {
+        // (before the icon index is read nothing is known: not generic yet)
+        let generic = st.shell.get::<Icons>().is_some() && Self::path(st, class).is_none_or(|p| is_generic(&p) || self.failed.contains(&p));
+        let (key, img) = self.get_key(st, class, size, scale, styled);
+        let dark = key.is_some_and(|k| self.dark.contains(&k));
+        (img, generic, dark)
+    }
+
+    fn get_key(&mut self, st: &State, class: &str, size: f32, scale: f32, styled: bool) -> (Option<IconKey>, Option<slint::Image>) {
+        match self.lookup(st, class, size, scale, styled) {
+            Some((key, img)) => (Some(key), img),
+            None => (None, None),
+        }
+    }
+
+    fn lookup(&mut self, st: &State, class: &str, size: f32, scale: f32, styled: bool) -> Option<(IconKey, Option<slint::Image>)> {
         let style = if styled { self.styled.clone()? } else { self.plain.clone()? };
         // (a new index, the theme rebuilt or changed: failed files are tried again)
         let index = st.shell.get::<Icons>().map_or(0, |i| std::sync::Arc::as_ptr(&i.index) as usize);
@@ -182,12 +213,13 @@ impl AppIcons {
         let tick = self.tick;
         if let Some(i) = self.cache.get_mut(&key) {
             i.1 = tick;
-            return Some(i.0.clone());
+            let img = i.0.clone();
+            return Some((key, Some(img)));
         }
         if !self.pending.contains(&key) && !self.queued.contains(&key) {
-            self.queued.push(key);
+            self.queued.push(key.clone());
         }
-        None
+        Some((key, None))
     }
 
     /// Draw what's queued (the part hears IconsDone)
@@ -212,6 +244,11 @@ impl AppIcons {
             match px {
                 Some(px) => {
                     self.tick += 1;
+                    if appicon::dark_logo(px.as_slice().iter().map(|p| [p.r, p.g, p.b, p.a])) {
+                        self.dark.insert(k.clone());
+                    } else {
+                        self.dark.remove(&k);
+                    }
                     self.cache.insert(k, (slint::Image::from_rgba8(px), self.tick));
                 }
                 None => {
@@ -228,6 +265,8 @@ impl AppIcons {
             ticks.sort_unstable();
             let cut = ticks[self.cache.len() - ICON_CACHE * 3 / 4];
             self.cache.retain(|_, v| v.1 >= cut);
+            let cache = &self.cache;
+            self.dark.retain(|k| cache.contains_key(k));
         }
     }
 }
@@ -427,6 +466,13 @@ pub fn workspace_count(cfg: &serde_json::Value) -> i32 {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_generic_icon_is_known() {
+        assert!(is_generic(std::path::Path::new("/usr/share/icons/hicolor/48x48/apps/application-x-executable.png")));
+        assert!(is_generic(std::path::Path::new("/usr/share/icons/Adwaita/scalable/apps/application-default-icon.svg")));
+        assert!(!is_generic(std::path::Path::new("/usr/share/icons/hicolor/scalable/apps/firefox.svg")));
+    }
 
     #[test]
     fn settings_with_the_shells_defaults() {

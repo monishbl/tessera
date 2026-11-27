@@ -390,8 +390,23 @@ impl Launchpad {
                 .into_iter()
                 .map(|i| {
                     let a = &self.lib.apps[i];
-                    let icon = self.icons.get(st, &a.id, 56.0, scale, true);
-                    ui::LpCell { name: a.name.as_str().into(), has_icon: icon.is_some(), icon: icon.unwrap_or_default(), folder: false, count: 0, previews: ModelRc::default(), letter: model::letter_at(&self.lib.letters, i).into() }
+                    // (the generic app icon: a lettered tile in the app's colour
+                    // instead; a dark logo: a light backing behind it; #232, #260)
+                    let (icon, generic, dark) = self.icons.get_looks(st, &a.id, 56.0, scale, true);
+                    let c = model::tile_colour(&a.name);
+                    ui::LpCell {
+                        name: a.name.as_str().into(),
+                        has_icon: icon.is_some() && !generic,
+                        icon: icon.unwrap_or_default(),
+                        folder: false,
+                        count: 0,
+                        previews: ModelRc::default(),
+                        letter: model::letter_at(&self.lib.letters, i).into(),
+                        lettered: generic,
+                        initial: model::initial(&a.name).into(),
+                        tile: slint::Color::from_rgb_u8(c[0], c[1], c[2]),
+                        dark,
+                    }
                 })
                 .collect()
         } else {
@@ -413,7 +428,7 @@ impl Launchpad {
                     // later only changes its own picture)
                     let rows = previews.entry(f.name.clone()).or_default();
                     rows.set(pics);
-                    ui::LpCell { name: f.name.as_str().into(), icon: Default::default(), has_icon: false, folder: true, count: n as i32, previews: rows.model(), letter: Default::default() }
+                    ui::LpCell { name: f.name.as_str().into(), icon: Default::default(), has_icon: false, folder: true, count: n as i32, previews: rows.model(), letter: Default::default(), ..Default::default() }
                 })
                 .collect();
             self.win.as_mut().unwrap().previews = previews;

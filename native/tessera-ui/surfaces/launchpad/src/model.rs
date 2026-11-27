@@ -91,6 +91,25 @@ pub fn letter_at(letters: &[(String, usize)], i: usize) -> String {
     letters.iter().filter(|x| x.1 <= i).last().map(|x| x.0.clone()).unwrap_or_default()
 }
 
+/// An app with no icon of its own: the first letter or digit of its name
+/// for a lettered tile ("?" when there's none)
+pub fn initial(name: &str) -> String {
+    name.chars().find(|c| c.is_alphanumeric()).map_or("?".to_string(), |c| c.to_uppercase().collect())
+}
+
+/// The lettered tile's colour: one of the system's accents, the same for
+/// the same name every time (an FNV-1a hash of it), so two apps with no
+/// icon don't look alike (#232)
+pub fn tile_colour(name: &str) -> [u8; 3] {
+    const COLOURS: [[u8; 3]; 8] = [[0x0A, 0x84, 0xFF], [0x30, 0xD1, 0x58], [0xFF, 0x9F, 0x0A], [0xFF, 0x45, 0x3A], [0xBF, 0x5A, 0xF2], [0x64, 0xD2, 0xFF], [0xFF, 0x37, 0x5F], [0x5E, 0x5C, 0xE6]];
+    let mut h: u32 = 0x811c9dc5;
+    for b in name.bytes() {
+        h ^= b as u32;
+        h = h.wrapping_mul(0x01000193);
+    }
+    COLOURS[(h % COLOURS.len() as u32) as usize]
+}
+
 /// What the list shows and how it's chosen
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Lib {
@@ -318,6 +337,19 @@ pub fn categories(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lettered_tiles_for_apps_with_no_icon() {
+        assert_eq!(initial("gnome-boxes"), "G");
+        assert_eq!(initial("  7zip"), "7");
+        assert_eq!(initial("élan"), "É");
+        assert_eq!(initial("…"), "?");
+        assert_eq!(initial(""), "?");
+        // the same name, the same colour; and not all names one colour
+        assert_eq!(tile_colour("Boxes"), tile_colour("Boxes"));
+        let names = ["Boxes", "Steam", "Lutris", "Heroic", "Bottles", "Minecraft"];
+        assert!(names.iter().any(|n| tile_colour(n) != tile_colour(names[0])));
+    }
 
     fn app(name: &str, cats: &[&str]) -> App {
         App { id: name.to_lowercase(), name: name.into(), generic: String::new(), keywords: Vec::new(), icon: String::new(), categories: cats.iter().map(|c| c.to_string()).collect() }

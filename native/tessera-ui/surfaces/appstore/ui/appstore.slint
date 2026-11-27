@@ -48,6 +48,7 @@ export struct AsApp {
     has-icon: bool,
     icon: image,
     initial: string, // (no logo: a tile with this)
+    dark: bool, // a dark logo: on a light backing in the dark
 }
 
 // Discover: a section of cards
@@ -512,9 +513,14 @@ component AppTile inherits Rectangle {
     height: size;
     horizontal-stretch: 0;
     vertical-stretch: 0;
+    // (a dark logo, LibreOffice's: on a light tile in the dark, or it vanished; #260)
+    if app.has-icon && app.dark && Theme.dark: Rectangle {
+        border-radius: root.size * 0.24;
+        background: #ececf0;
+    }
     if app.has-icon: Image {
-        width: 100%;
-        height: 100%;
+        width: app.dark && Theme.dark ? root.size * 0.84 : root.size;
+        height: self.width;
         source: app.icon;
         image-fit: contain;
         accessible-role: none;

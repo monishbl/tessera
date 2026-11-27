@@ -633,13 +633,21 @@ export component OverlayUi inherits Window {
         moved(x, y, w, h) => { root.moved("notes", x, y, w, h); }
         saved => { root.saved("notes"); }
         flag(f) => { root.flag("notes", f); }
-        Flickable {
+        notes-flick := Flickable {
             content-height: max(self.height, notes-input.preferred-height);
             notes-input := TextInput {
                 width: parent.width;
                 height: max(self.preferred-height, parent.height);
                 single-line: false;
                 wrap: word-wrap;
+                // (the box follows the caret: typing past the last line it went out of sight; #429)
+                cursor-position-changed(p) => {
+                    if p.y < -notes-flick.content-y {
+                        notes-flick.content-y = -p.y;
+                    } else if p.y + 20px > -notes-flick.content-y + notes-flick.height {
+                        notes-flick.content-y = -(p.y + 20px - notes-flick.height);
+                    }
+                }
                 text <=> root.notes-text;
                 color: Theme.label;
                 font-size: Theme.body;
