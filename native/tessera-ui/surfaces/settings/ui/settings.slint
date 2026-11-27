@@ -556,7 +556,7 @@ component GroupView inherits VerticalLayout {
     }
     Rectangle {
         border-radius: 12px;
-        background: Theme.material ? transparent : Theme.dark ? #ffffff0d : white;
+        background: Theme.material ? transparent : Theme.card-bg;
         border-width: Theme.material ? 0 : 1px;
         border-color: Theme.separator;
         VerticalLayout {
@@ -913,7 +913,7 @@ export component SettingsWindow inherits Window {
             y: 0;
             width: Theme.material ? 300px : 230px;
             height: parent.height;
-            property <color> bg: Theme.material ? Theme.m3-surface-container : Theme.dark ? #1f1f24c7 : #f0f0f5cc;
+            property <color> bg: Theme.material ? Theme.m3-surface-container : Theme.sidebar-bg;
             background: self.bg;
 
             // Glass: scrolled down and idle, the search folds into a magnifier
@@ -1319,7 +1319,7 @@ export component SettingsWindow inherits Window {
             x: side.width;
             width: parent.width - side.width;
             height: parent.height;
-            background: Theme.material ? Theme.m3-surface : Theme.dark ? #1e1e21 : #f5f5f7;
+            background: Theme.material ? Theme.m3-surface : Theme.window-bg;
             property <length> bar-h: Theme.material ? 64px : 52px;
             // Material: the headline has scrolled under the top bar
             property <bool> collapsed: Theme.material && page-scroll.content-y < -(headline.y + headline.height - 8px);

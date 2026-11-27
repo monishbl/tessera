@@ -59,7 +59,7 @@ component FpSheet inherits Rectangle {
     property <float> bump: bumped ? 0.96 : 1;
     animate bump { duration: Theme.motion(bumped ? 80ms : 260ms); easing: bumped ? ease-out : ease-out-back; }
 
-    property <color> card-color: Theme.material ? Theme.m3-surface-container-high : Theme.dark ? #232327 : white;
+    property <color> card-color: Theme.material ? Theme.m3-surface-container-high : Theme.card-solid;
     property <color> faint: Theme.dark ? #ffffff29 : #00000021;
 
     // (modal: what's behind is dimmed and takes no clicks)
