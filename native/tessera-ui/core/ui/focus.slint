@@ -27,6 +27,41 @@ export component FocusRing inherits Rectangle {
     }
 }
 
+// Makes a pointer-only control a Tab stop: lay it last inside the control
+// (it fills it and lets the pointer through to what's under it). Enter or
+// Space call `activated`; with `arrows`, Left/Down and Right/Up call
+// `nudged(-1 / 1)`; the shared ring while it has the keyboard's focus
+export component KeyStop inherits FocusScope {
+    // the corner radius of what it rings
+    in property <length> radius: 8px;
+    in property <bool> arrows;
+    callback activated();
+    callback nudged(int);
+    out property <bool> keyed-focus: self.has-focus && keyed;
+    property <bool> keyed;
+    focus-on-click: false;
+    focus-gained(r) => { keyed = r == FocusReason.tab-navigation; }
+    key-pressed(e) => {
+        if !e.repeat && (e.text == " " || e.text == Key.Return) {
+            keyed = true;
+            activated();
+            return accept;
+        }
+        if arrows && (e.text == Key.LeftArrow || e.text == Key.DownArrow) {
+            keyed = true;
+            nudged(-1);
+            return accept;
+        }
+        if arrows && (e.text == Key.RightArrow || e.text == Key.UpArrow) {
+            keyed = true;
+            nudged(1);
+            return accept;
+        }
+        reject
+    }
+    FocusRing { shown: root.keyed-focus; radius: root.radius; }
+}
+
 // A highlight for the current row of a list driven by the arrow keys (a
 // menu's, a panel's): the ring drawn on the row's own edge, inside it,
 // where a list clips what's outside
