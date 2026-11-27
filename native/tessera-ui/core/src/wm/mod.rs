@@ -453,6 +453,13 @@ pub fn spaces_open(cfg: &serde_json::Value) -> bool {
     cfg["menubar"]["spacesShown"].as_str() != Some("fixed")
 }
 
+/// workspaces.numbering (Config.qml: perDisplay): "sequential" numbers the
+/// spaces 1..n across all displays, left to right; each display its own
+/// otherwise. Only with spaces_open (fixed numbers stay per display).
+pub fn spaces_sequential(cfg: &serde_json::Value) -> bool {
+    cfg["workspaces"]["numbering"].as_str() == Some("sequential")
+}
+
 /// menubar.workspaceCount (Config.qml: 5)
 pub fn workspace_count(cfg: &serde_json::Value) -> i32 {
     // (1..30, as the menu bar reads it: a hand-edited 150 ran into the next

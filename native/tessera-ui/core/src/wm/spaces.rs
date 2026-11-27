@@ -20,11 +20,17 @@ pub struct Info {
     /// menubar.spacesShown: only the spaces there are (open), or always
     /// `count` with no gaps (fixed)
     pub open: bool,
+    /// workspaces.numbering "sequential" (with open): one sequence across
+    /// the displays, in `order` (left to right)
+    pub sequential: bool,
+    pub order: Vec<String>,
+    /// the sequence's numbers, from the last `renumber`
+    pub numbers: BTreeMap<i32, i32>,
 }
 
 impl Default for Info {
     fn default() -> Self {
-        Self { bases: BTreeMap::new(), labels: BTreeMap::new(), count: 5, open: true }
+        Self { bases: BTreeMap::new(), labels: BTreeMap::new(), count: 5, open: true, sequential: false, order: Vec::new(), numbers: BTreeMap::new() }
     }
 }
 
@@ -51,7 +57,32 @@ impl Info {
     pub fn from_json(v: &serde_json::Value, count: i32) -> Self {
         let bases = v["bases"].as_object().map(|o| o.iter().filter_map(|(k, b)| b.as_i64().map(|b| (k.clone(), b as i32))).collect()).unwrap_or_default();
         let labels = v["labels"].as_object().map(|o| o.iter().filter_map(|(k, l)| Some((k.parse().ok()?, l.as_str()?.to_string()))).collect()).unwrap_or_default();
-        Self { bases, labels, count: v["count"].as_i64().map(|c| c as i32).unwrap_or(count), open: v["open"].as_bool().unwrap_or(true) }
+        let order = v["order"].as_array().map(|a| a.iter().filter_map(|n| n.as_str().map(String::from)).collect()).unwrap_or_default();
+        Self { bases, labels, count: v["count"].as_i64().map(|c| c as i32).unwrap_or(count), open: v["open"].as_bool().unwrap_or(true), sequential: v["sequential"].as_bool().unwrap_or(false), order, numbers: BTreeMap::new() }
+    }
+
+    /// The numbers spaces show, from what Hyprland has now: one sequence
+    /// across the displays (sequential, with open), each display's own
+    /// spaces in its shown order; otherwise each display's own (number_of)
+    pub fn renumber(&mut self, h: &Snapshot) {
+        self.numbers.clear();
+        if !(self.sequential && self.open) {
+            return;
+        }
+        let order: Vec<String> = if self.order.is_empty() { self.bases.keys().cloned().collect() } else { self.order.clone() };
+        let mut n = 0;
+        for name in &order {
+            let ids: Vec<i32> = self.shown_for(name, h).into_iter().filter(|id| self.is_own(*id, name)).collect();
+            for id in ids {
+                n += 1;
+                self.numbers.insert(id, n);
+            }
+        }
+    }
+
+    /// The number a space shows: in the sequence, else its own display's
+    pub fn number(&self, id: i32) -> i32 {
+        self.numbers.get(&id).copied().unwrap_or_else(|| number_of(id))
     }
 
     pub fn base_of(&self, name: &str) -> i32 {
@@ -74,7 +105,7 @@ impl Info {
 
     /// "Space 3", or "Space 3 · U2720Q" when it belongs to another display
     pub fn title(&self, id: i32, name: &str, word: &str) -> String {
-        let t = format!("{word} {}", number_of(id));
+        let t = format!("{word} {}", self.number(id));
         let owner = self.owner_label(id);
         if self.is_own(id, name) || owner.is_empty() {
             t
@@ -294,6 +325,27 @@ mod tests {
         h.active.insert("eDP-1".into(), 1);
         assert_eq!(g.shown_for("eDP-1", &h), vec![1, 2, 3, 4, 5]);
         assert_eq!(i.shown_for("eDP-1", &h), vec![1]);
+    }
+
+    #[test]
+    fn one_sequence_across_displays() {
+        // the built-in on the left (1, 2), DP-1 on the right (101, 102, current 103)
+        let mut i = Info::from_json(&json!({"bases": {"eDP-1": 0, "DP-1": 100}, "order": ["eDP-1", "DP-1"], "sequential": true}), 5);
+        let ws = |id, m: &str| Workspace { id, monitor: m.into(), ..Default::default() };
+        let mut h = Snapshot { workspaces: vec![ws(1, "eDP-1"), ws(2, "eDP-1"), ws(101, "DP-1"), ws(102, "DP-1")], ..Default::default() };
+        h.active.insert("eDP-1".into(), 1);
+        h.active.insert("DP-1".into(), 103);
+        i.renumber(&h);
+        assert_eq!((i.number(1), i.number(2), i.number(101), i.number(102), i.number(103)), (1, 2, 3, 4, 5));
+        assert_eq!(i.title(102, "DP-1", "Space"), "Space 4");
+        // fixed, or each display its own: their own numbers
+        i.open = false;
+        i.renumber(&h);
+        assert_eq!(i.number(102), 2);
+        let mut own = Info::from_json(&json!({"bases": {"eDP-1": 0, "DP-1": 100}}), 5);
+        own.renumber(&h);
+        assert!(!own.sequential);
+        assert_eq!(own.title(102, "DP-1", "Space"), "Space 2");
     }
 
     #[test]

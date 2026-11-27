@@ -190,6 +190,8 @@ const RELEVANT: &[&str] = &[
     "workspacev2>>", "focusedmonv2>>", "activewindowv2>>", "createworkspacev2>>", "destroyworkspacev2>>",
     "moveworkspacev2>>", "openwindow>>", "closewindow>>", "movewindowv2>>", "monitoraddedv2>>", "monitorremovedv2>>",
     "fullscreen>>", "changefloatingmode>>", "pin>>", "togglegroup>>", "moveintogroup>>", "moveoutofgroup>>",
+    // (dynamic spaces renumber with change_id: host/desktop/src/wm/dynspace.rs)
+    "renameworkspace>>",
 ];
 
 /// Watches socket2; sends a fresh snapshot after each burst of relevant events

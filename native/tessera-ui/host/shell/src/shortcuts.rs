@@ -37,9 +37,33 @@ pub fn on_release(name: &str) -> bool {
     name.ends_with("Release") || name == "pointerUp"
 }
 
+/// The space keys (keybinds.lua's TESSERA_SPACE with dynamic spaces):
+/// `space-<op>-<n>` for spaces 1..10 (Super+1 … Super+0) and
+/// `space-<op>-next` / `-prev`; the Wm service's `spaces.key` does them
+const SPACE_OPS: &[&str] = &["focus", "send", "move", "new", "newmove"];
+pub const SPACE_KEYS_UP_TO: i32 = 10;
+
+fn space_names() -> Vec<String> {
+    let mut out = Vec::new();
+    for op in SPACE_OPS {
+        for n in 1..=SPACE_KEYS_UP_TO {
+            out.push(format!("space-{op}-{n}"));
+        }
+        out.push(format!("space-{op}-next"));
+        out.push(format!("space-{op}-prev"));
+    }
+    out
+}
+
+/// A space key's op and "N" / "next" / "prev" (None: not one)
+pub fn space_key(name: &str) -> Option<(&str, &str)> {
+    let (op, arg) = name.strip_prefix("space-")?.rsplit_once('-')?;
+    SPACE_OPS.contains(&op).then_some((op, arg))
+}
+
 /// The names registered with Hyprland
 pub fn names() -> Vec<String> {
-    PANELS.iter().map(|p| p.to_string()).chain(SNAPS.iter().map(|l| format!("snap-{l}"))).chain(OTHERS.iter().map(|n| n.to_string())).collect()
+    PANELS.iter().map(|p| p.to_string()).chain(SNAPS.iter().map(|l| format!("snap-{l}"))).chain(OTHERS.iter().map(|n| n.to_string())).chain(space_names()).collect()
 }
 
 #[derive(Default)]
@@ -122,6 +146,9 @@ impl Shortcuts {
         }
         if let Some(layout) = name.strip_prefix("snap-").filter(|l| SNAPS.contains(l)) {
             return h.ask("tiling.snap", json!([layout]));
+        }
+        if let Some((op, arg)) = space_key(name) {
+            return h.ask("wm", json!(["spaces.key", op, arg]));
         }
         match name {
             "reset" => h.ask("panels.reset", json!([])),
@@ -325,6 +352,23 @@ mod tests {
         assert_eq!(osd_cue("brightnessUp", true, true, true, false), Some(json!({"key": "brightness", "reason": "Brightness can't be changed"})));
         // other keys: no word to the OSD
         assert_eq!(osd_cue("lock", true, true, true, true), None);
+    }
+
+    #[test]
+    fn space_keys_are_registered_and_read_back() {
+        let n = names();
+        for k in ["space-focus-1", "space-focus-10", "space-newmove-3", "space-move-next", "space-focus-prev"] {
+            assert!(n.iter().any(|x| x == k), "{k}");
+        }
+        assert_eq!(space_key("space-newmove-3"), Some(("newmove", "3")));
+        assert_eq!(space_key("space-focus-next"), Some(("focus", "next")));
+        assert_eq!(space_key("space-fly-3"), None);
+        assert_eq!(space_key("snap-left"), None);
+        // (no clash with the other names)
+        let mut sorted = n.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), n.len());
     }
 
     #[test]

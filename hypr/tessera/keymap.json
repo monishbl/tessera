@@ -1011,11 +1011,31 @@
  },
  {
   "id": "ws-move-1",
-  "keys": "$MOD + SHIFT + 1",
+  "keys": "$MOD + CTRL + ALT + 1",
   "group": "Workspace",
   "label": "Move window to space 1 (and follow)",
   "action": {
    "space": "move",
+   "n": 1
+  }
+ },
+ {
+  "id": "ws-new-1",
+  "keys": "$MOD + SHIFT + 1",
+  "group": "Workspace",
+  "label": "New space at 1",
+  "action": {
+   "space": "new",
+   "n": 1
+  }
+ },
+ {
+  "id": "ws-new-move-1",
+  "keys": "$MOD + SHIFT + ALT + 1",
+  "group": "Workspace",
+  "label": "New space at 1 with this window",
+  "action": {
+   "space": "newmove",
    "n": 1
   }
  },
@@ -1041,11 +1061,31 @@
  },
  {
   "id": "ws-move-2",
-  "keys": "$MOD + SHIFT + 2",
+  "keys": "$MOD + CTRL + ALT + 2",
   "group": "Workspace",
   "label": "Move window to space 2 (and follow)",
   "action": {
    "space": "move",
+   "n": 2
+  }
+ },
+ {
+  "id": "ws-new-2",
+  "keys": "$MOD + SHIFT + 2",
+  "group": "Workspace",
+  "label": "New space at 2",
+  "action": {
+   "space": "new",
+   "n": 2
+  }
+ },
+ {
+  "id": "ws-new-move-2",
+  "keys": "$MOD + SHIFT + ALT + 2",
+  "group": "Workspace",
+  "label": "New space at 2 with this window",
+  "action": {
+   "space": "newmove",
    "n": 2
   }
  },
@@ -1071,11 +1111,31 @@
  },
  {
   "id": "ws-move-3",
-  "keys": "$MOD + SHIFT + 3",
+  "keys": "$MOD + CTRL + ALT + 3",
   "group": "Workspace",
   "label": "Move window to space 3 (and follow)",
   "action": {
    "space": "move",
+   "n": 3
+  }
+ },
+ {
+  "id": "ws-new-3",
+  "keys": "$MOD + SHIFT + 3",
+  "group": "Workspace",
+  "label": "New space at 3",
+  "action": {
+   "space": "new",
+   "n": 3
+  }
+ },
+ {
+  "id": "ws-new-move-3",
+  "keys": "$MOD + SHIFT + ALT + 3",
+  "group": "Workspace",
+  "label": "New space at 3 with this window",
+  "action": {
+   "space": "newmove",
    "n": 3
   }
  },
@@ -1101,11 +1161,31 @@
  },
  {
   "id": "ws-move-4",
-  "keys": "$MOD + SHIFT + 4",
+  "keys": "$MOD + CTRL + ALT + 4",
   "group": "Workspace",
   "label": "Move window to space 4 (and follow)",
   "action": {
    "space": "move",
+   "n": 4
+  }
+ },
+ {
+  "id": "ws-new-4",
+  "keys": "$MOD + SHIFT + 4",
+  "group": "Workspace",
+  "label": "New space at 4",
+  "action": {
+   "space": "new",
+   "n": 4
+  }
+ },
+ {
+  "id": "ws-new-move-4",
+  "keys": "$MOD + SHIFT + ALT + 4",
+  "group": "Workspace",
+  "label": "New space at 4 with this window",
+  "action": {
+   "space": "newmove",
    "n": 4
   }
  },
@@ -1131,11 +1211,31 @@
  },
  {
   "id": "ws-move-5",
-  "keys": "$MOD + SHIFT + 5",
+  "keys": "$MOD + CTRL + ALT + 5",
   "group": "Workspace",
   "label": "Move window to space 5 (and follow)",
   "action": {
    "space": "move",
+   "n": 5
+  }
+ },
+ {
+  "id": "ws-new-5",
+  "keys": "$MOD + SHIFT + 5",
+  "group": "Workspace",
+  "label": "New space at 5",
+  "action": {
+   "space": "new",
+   "n": 5
+  }
+ },
+ {
+  "id": "ws-new-move-5",
+  "keys": "$MOD + SHIFT + ALT + 5",
+  "group": "Workspace",
+  "label": "New space at 5 with this window",
+  "action": {
+   "space": "newmove",
    "n": 5
   }
  },
@@ -1161,11 +1261,31 @@
  },
  {
   "id": "ws-move-6",
-  "keys": "$MOD + SHIFT + 6",
+  "keys": "$MOD + CTRL + ALT + 6",
   "group": "Workspace",
   "label": "Move window to space 6 (and follow)",
   "action": {
    "space": "move",
+   "n": 6
+  }
+ },
+ {
+  "id": "ws-new-6",
+  "keys": "$MOD + SHIFT + 6",
+  "group": "Workspace",
+  "label": "New space at 6",
+  "action": {
+   "space": "new",
+   "n": 6
+  }
+ },
+ {
+  "id": "ws-new-move-6",
+  "keys": "$MOD + SHIFT + ALT + 6",
+  "group": "Workspace",
+  "label": "New space at 6 with this window",
+  "action": {
+   "space": "newmove",
    "n": 6
   }
  },
@@ -1191,11 +1311,31 @@
  },
  {
   "id": "ws-move-7",
-  "keys": "$MOD + SHIFT + 7",
+  "keys": "$MOD + CTRL + ALT + 7",
   "group": "Workspace",
   "label": "Move window to space 7 (and follow)",
   "action": {
    "space": "move",
+   "n": 7
+  }
+ },
+ {
+  "id": "ws-new-7",
+  "keys": "$MOD + SHIFT + 7",
+  "group": "Workspace",
+  "label": "New space at 7",
+  "action": {
+   "space": "new",
+   "n": 7
+  }
+ },
+ {
+  "id": "ws-new-move-7",
+  "keys": "$MOD + SHIFT + ALT + 7",
+  "group": "Workspace",
+  "label": "New space at 7 with this window",
+  "action": {
+   "space": "newmove",
    "n": 7
   }
  },
@@ -1221,11 +1361,31 @@
  },
  {
   "id": "ws-move-8",
-  "keys": "$MOD + SHIFT + 8",
+  "keys": "$MOD + CTRL + ALT + 8",
   "group": "Workspace",
   "label": "Move window to space 8 (and follow)",
   "action": {
    "space": "move",
+   "n": 8
+  }
+ },
+ {
+  "id": "ws-new-8",
+  "keys": "$MOD + SHIFT + 8",
+  "group": "Workspace",
+  "label": "New space at 8",
+  "action": {
+   "space": "new",
+   "n": 8
+  }
+ },
+ {
+  "id": "ws-new-move-8",
+  "keys": "$MOD + SHIFT + ALT + 8",
+  "group": "Workspace",
+  "label": "New space at 8 with this window",
+  "action": {
+   "space": "newmove",
    "n": 8
   }
  },
@@ -1251,11 +1411,31 @@
  },
  {
   "id": "ws-move-9",
-  "keys": "$MOD + SHIFT + 9",
+  "keys": "$MOD + CTRL + ALT + 9",
   "group": "Workspace",
   "label": "Move window to space 9 (and follow)",
   "action": {
    "space": "move",
+   "n": 9
+  }
+ },
+ {
+  "id": "ws-new-9",
+  "keys": "$MOD + SHIFT + 9",
+  "group": "Workspace",
+  "label": "New space at 9",
+  "action": {
+   "space": "new",
+   "n": 9
+  }
+ },
+ {
+  "id": "ws-new-move-9",
+  "keys": "$MOD + SHIFT + ALT + 9",
+  "group": "Workspace",
+  "label": "New space at 9 with this window",
+  "action": {
+   "space": "newmove",
    "n": 9
   }
  },
@@ -1281,11 +1461,31 @@
  },
  {
   "id": "ws-move-10",
-  "keys": "$MOD + SHIFT + 0",
+  "keys": "$MOD + CTRL + ALT + 0",
   "group": "Workspace",
   "label": "Move window to space 10 (and follow)",
   "action": {
    "space": "move",
+   "n": 10
+  }
+ },
+ {
+  "id": "ws-new-10",
+  "keys": "$MOD + SHIFT + 0",
+  "group": "Workspace",
+  "label": "New space at 10",
+  "action": {
+   "space": "new",
+   "n": 10
+  }
+ },
+ {
+  "id": "ws-new-move-10",
+  "keys": "$MOD + SHIFT + ALT + 0",
+  "group": "Workspace",
+  "label": "New space at 10 with this window",
+  "action": {
+   "space": "newmove",
    "n": 10
   }
  },
@@ -1335,7 +1535,8 @@
   "group": "Workspace",
   "label": "Next space (scroll)",
   "action": {
-   "dsp": "hl.dsp.focus({ workspace = \"m+1\" })"
+   "space": "focus",
+   "step": 1
   }
  },
  {
@@ -1344,7 +1545,8 @@
   "group": "Workspace",
   "label": "Previous space (scroll)",
   "action": {
-   "dsp": "hl.dsp.focus({ workspace = \"m-1\" })"
+   "space": "focus",
+   "step": -1
   }
  },
  {

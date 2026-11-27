@@ -174,7 +174,9 @@ Super is the key with the logo. Press **Super+/** for the full list, which is re
 | Super+Ctrl+F / Super+Ctrl+C / Super+Ctrl+Backspace | Fill, centre, back to the previous size |
 | Super+Alt+P | Picture in Picture |
 | Super+Alt+T / Super+[ / Super+] | Merge into tabs (or move a tab out), previous / next tab |
-| Super+1 … Super+9 | Spaces 1 to 9 (the display you're on) |
+| Super+1 … Super+9 | Spaces 1 to 9 (the display you're on); past the last, a new one |
+| Super+Shift+1 … Super+Shift+9 | A new space at 1 to 9 (the ones after it move along) |
+| Super+Ctrl+Alt+1 … Super+Ctrl+Alt+9 | Move the window to space 1 to 9 and follow it |
 | Super+Ctrl+Left / Super+Ctrl+Right | Previous / next space |
 | Super+scroll | Next or previous space (scroll) |
 

@@ -932,6 +932,10 @@ impl Menubar {
         let tray_images: HashMap<String, slint::Image> = tray_now.items.clone().iter().map(|t| (t.key.clone(), self.tray_image(t))).collect();
         let bases: BTreeMap<String, i32> = shell.get("spaces.bases").as_object().map(|o| o.iter().filter_map(|(k, v)| v.as_i64().map(|b| (k.clone(), b as i32))).collect()).unwrap_or_default();
         let labels: BTreeMap<i32, String> = shell.get("spaces.labels").as_object().map(|o| o.iter().filter_map(|(k, v)| Some((k.parse().ok()?, v.as_str()?.to_string()))).collect()).unwrap_or_default();
+        // (the numbers the chips say, as Overview's: workspaces.numbering)
+        let mut space_numbers = tessera_core::wm::spaces::Info::from_json(shell.get("spaces"), cfg.workspace_count);
+        space_numbers.open = cfg.spaces_open;
+        space_numbers.renumber(&snapshot);
         let open_menu = self.menu.as_ref().filter(|m| m.open).map(|m| (m.output.clone(), m.kind.clone()));
         let tray_menu = match &open_menu {
             Some((_, MenuKind::Tray(k, _))) => k.clone(),
@@ -1139,7 +1143,7 @@ impl Menubar {
                 };
                 let w = base_w * fall;
                 let mark_w = if c.mark.is_empty() || fall < 1.0 { 0.0 } else { c.mark.chars().count() as f32 * 5.6 + 10.0 };
-                chips.push(ui::Chip { id: c.id, x, w, active: c.active, elsewhere: c.elsewhere, shown_there: c.shown_there, occupied: c.occupied, icons: with_icons, apps: tessera_core::rows::shared(apps), mark: c.mark.as_str().into(), mark_w, fall });
+                chips.push(ui::Chip { id: c.id, n: space_numbers.number(c.id), x, w, active: c.active, elsewhere: c.elsewhere, shown_there: c.shown_there, occupied: c.occupied, icons: with_icons, apps: tessera_core::rows::shared(apps), mark: c.mark.as_str().into(), mark_w, fall });
                 if fall > 0.0 {
                     x += mark_w + w + 2.0;
                 }
@@ -1150,7 +1154,7 @@ impl Menubar {
             }
             let strip_w = (x - 2.0).max(0.0);
             // (the same chips: changed in place, so their widths and colours animate)
-            let chips_key = format!("{strip:?}{icons}{material}");
+            let chips_key = format!("{strip:?}{icons}{material}{:?}", space_numbers.numbers);
             if chips_key != b.chips_key {
                 b.chips_key = chips_key;
                 b.chips.set_keyed(chips, |c| c.id);

@@ -5,11 +5,12 @@
 //! comes or goes. The views get {bases, labels, count} from here
 //! (RustWindows.qml's sendSpaces) and the menu bar's state `spaces`.
 
+use super::dynspace::{self as dynamic, Act};
 use super::hx::{self, Fresh};
 use super::spacemap::{self as map, Disp, Mon, Op, Plan, Ws};
-use super::Io;
+use super::{Io, Msg};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 use tessera_core::host::Host;
 use tessera_core::services::hypr::Snapshot;
@@ -30,8 +31,46 @@ pub struct Spaces {
     quiet_until: Option<Instant>,
     reading: bool,
     sent: String,
-    /// menubar.spacesShown is "open" (told to the views)
+    /// menubar.spacesShown is "open" (told to the views): dynamic spaces,
+    /// always 1..n with no gaps (dynspace.rs)
     open: bool,
+    /// workspaces.numbering is "sequential": one sequence across the displays
+    sequential: bool,
+    /// the connected displays left to right (then top to bottom)
+    pub order: Vec<String>,
+    /// what was last said to the keybinds (TESSERA_SPACES_DYNAMIC)
+    said_dynamic: Option<bool>,
+    /// dynamic spaces: what's asked (keys, the Overview's drag, closing up),
+    /// planned and done one at a time, each on a fresh look at Hyprland
+    queue: VecDeque<Act>,
+    busy: Option<Instant>,
+}
+
+/// Lua that leaves the pointer and the focused display where they were
+fn keep_wrap(lua: &str) -> String {
+    format!("local c = hl.get_cursor_pos(); local m = hl.get_active_monitor()\n{lua}if m then hl.dispatch(hl.dsp.focus({{ monitor = m.name }})) end\nif c then hl.dispatch(hl.dsp.cursor.move({{ x = c.x, y = c.y }})) end\n")
+}
+
+/// What Hyprland has, for the planner: the connected displays (by `bases`),
+/// every window, every regular space, what has focus
+fn world_of(f: &Fresh, bases: &BTreeMap<String, i32>, sequential: bool) -> dynamic::World {
+    let displays = f
+        .monitors
+        .iter()
+        .filter_map(|m| {
+            let name = m["name"].as_str()?;
+            let base = *bases.get(name)?;
+            Some(dynamic::Display { name: name.into(), base, x: m["x"].as_i64().unwrap_or(0) as i32, y: m["y"].as_i64().unwrap_or(0) as i32, active: m["activeWorkspace"]["id"].as_i64().unwrap_or(0) as i32 })
+        })
+        .collect();
+    dynamic::World {
+        displays,
+        windows: f.clients.iter().map(|c| dynamic::Win { address: hx::addr(&c.address), ws: c.workspace.id, pinned: c.pinned }).collect(),
+        workspaces: f.workspaces.iter().filter_map(|w| w["id"].as_i64()).map(|i| i as i32).filter(|i| *i > 0).collect(),
+        focused: f.focused_monitor().and_then(|m| m["name"].as_str()).unwrap_or("").into(),
+        window: if f.active.is_empty() { String::new() } else { hx::addr(&f.active) },
+        sequential,
+    }
 }
 
 fn q(s: &str) -> String {
@@ -85,7 +124,131 @@ impl Spaces {
     /// Lua that leaves the pointer and the focused display where they were
     fn keeping(&mut self, lua: &str) -> String {
         self.hush(1200);
-        format!("local c = hl.get_cursor_pos(); local m = hl.get_active_monitor()\n{lua}if m then hl.dispatch(hl.dsp.focus({{ monitor = m.name }})) end\nif c then hl.dispatch(hl.dsp.cursor.move({{ x = c.x, y = c.y }})) end\n")
+        keep_wrap(lua)
+    }
+
+    // ── dynamic spaces (dynspace.rs) ─────────────────────────────────────────
+    /// Whether spaces close up and number 1..n (menubar.spacesShown open)
+    pub fn dynamic(&self) -> bool {
+        self.open
+    }
+    /// The settings (menubar.spacesShown, workspaces.numbering); true when they changed
+    pub fn read_cfg(&mut self, cfg: &Value) -> bool {
+        let open = tessera_core::wm::spaces_open(cfg);
+        let sequential = tessera_core::wm::spaces_sequential(cfg);
+        let changed = open != self.open || sequential != self.sequential;
+        self.open = open;
+        self.sequential = sequential;
+        changed
+    }
+    /// The settings changed: the keybinds told, the gaps closed (switching
+    /// the numbering renumbers nothing: the ids stay per display, only the
+    /// numbers shown change)
+    pub fn config_changed(&mut self, h: &Host, io: &mut Io) {
+        if self.read_cfg(h.cfg()) {
+            self.say_dynamic();
+            if self.open {
+                self.ask(io, Act::Tidy);
+            }
+        }
+    }
+    /// Tell keybinds.lua whether the space keys come here
+    /// (TESSERA_SPACE hands them over as tessera:space-<op>-<n>)
+    fn say_dynamic(&mut self) {
+        if self.said_dynamic != Some(self.open) {
+            self.said_dynamic = Some(self.open);
+            hx::eval(format!("TESSERA_SPACES_DYNAMIC = {}\n", self.open));
+        }
+    }
+    /// The way out: the keybinds number spaces themselves again
+    pub fn quit(&mut self) {
+        if self.said_dynamic == Some(true) {
+            tessera_core::services::hypr::eval_logged("TESSERA_SPACES_DYNAMIC = nil\n");
+        }
+    }
+    /// A space key (Super+N …, the `spaces` ipc): op and "N", "next" or "prev"
+    pub fn key(&mut self, io: &mut Io, op: &str, arg: &str) {
+        if !self.open {
+            // (fixed: the keybinds' own numbering, as before)
+            let call = match arg {
+                "next" => format!("TESSERA_SPACE_FIXED({}, nil, 1)", hx::q(op)),
+                "prev" => format!("TESSERA_SPACE_FIXED({}, nil, -1)", hx::q(op)),
+                n => match n.parse::<i32>() {
+                    Ok(n) => format!("TESSERA_SPACE_FIXED({}, {n})", hx::q(op)),
+                    Err(_) => return,
+                },
+            };
+            hx::eval(format!("if TESSERA_SPACE_FIXED then {call} end\n"));
+            return;
+        }
+        let Some(o) = dynamic::Op::parse(op) else { return };
+        let act = match arg {
+            "next" => Act::Step(o, 1),
+            "prev" => Act::Step(o, -1),
+            n => match n.parse::<i32>() {
+                Ok(n) if n >= 1 => Act::At(o, n),
+                _ => return,
+            },
+        };
+        self.ask(io, act);
+    }
+    /// Something changed: close up the gaps once things settle (a burst of
+    /// events is one look)
+    pub fn tick_tidy(&mut self, io: &mut Io) {
+        if !self.open {
+            return;
+        }
+        if self.quiet() {
+            io.arm("spaces.tidy", 300);
+            return;
+        }
+        self.ask(io, Act::Tidy);
+    }
+    pub fn ask(&mut self, io: &mut Io, act: Act) {
+        if act == Act::Tidy && self.queue.contains(&Act::Tidy) {
+            return;
+        }
+        self.queue.push_back(act);
+        self.pump(io);
+    }
+    /// The next one asked: a fresh look, the plan, the steps in one chunk,
+    /// all on Hyprland's own lane (after every dispatch queued before it);
+    /// only then the one after (so two quick key presses never plan from
+    /// the same, stale look)
+    fn pump(&mut self, io: &mut Io) {
+        // (an answer that never came back doesn't hold the queue for good)
+        if self.busy.is_some_and(|t| t.elapsed() < Duration::from_secs(3)) || self.bases.is_empty() {
+            return;
+        }
+        self.busy = None;
+        let Some(act) = self.queue.pop_front() else { return };
+        self.busy = Some(Instant::now());
+        let bases = self.bases.clone();
+        let sequential = self.sequential;
+        // (the Overview's drag: you stay where you were)
+        let keep = matches!(&act, Act::Insert { follow: false, .. });
+        if keep {
+            self.hush(1200);
+        }
+        let post = io.post.clone();
+        tessera_core::services::hypr::IN_ORDER.run(move || {
+            let f = hx::fetch();
+            if !f.monitors.is_empty() {
+                let steps = dynamic::plan(&world_of(&f, &bases, sequential), &act);
+                if !steps.is_empty() {
+                    let lua = dynamic::lua(&steps, hx::q);
+                    tessera_core::services::hypr::eval_logged(&if keep { keep_wrap(&lua) } else { lua });
+                    tessera_core::services::hypr::refresh();
+                }
+            }
+            post(Msg::Run(
+                "spaces::Spaces::pump",
+                Box::new(|wm: &mut super::Wm, _h: &mut Host, io: &mut Io| {
+                    wm.spaces.busy = None;
+                    wm.spaces.pump(io);
+                }),
+            ));
+        });
     }
 
     // ── actions ──────────────────────────────────────────────────────────────
@@ -111,9 +274,16 @@ impl Spaces {
     /// display, after its last (`before` 0), or in front of `before` in
     /// `order` (the display's spaces as shown), which moves that space and
     /// the ones after it one along. You stay with what you were looking at.
-    pub fn send_window_new(&mut self, h: &Host, address: &str, name: &str, order: &[i32], before: i32) {
+    pub fn send_window_new(&mut self, h: &Host, io: &mut Io, address: &str, name: &str, order: &[i32], before: i32) {
         if !self.bases.contains_key(name) {
             return;
+        }
+        if self.open {
+            // (dynamic spaces: the planner's insert, as Super+Shift+Alt+N but staying)
+            let base = self.base_of(name);
+            let list: Vec<i32> = order.iter().copied().filter(|i| *i > 0 && map::base_of_id(*i) == base).collect();
+            let index = list.iter().position(|i| *i == before).filter(|_| before > 0).unwrap_or(usize::MAX);
+            return self.ask(io, Act::Insert { display: name.to_string(), index, window: hx::addr(address), follow: false });
         }
         let new_id = self.after_last_on(h, name);
         let list: Vec<i32> = order.iter().copied().filter(|i| *i > 0).collect();
@@ -270,7 +440,11 @@ impl Spaces {
         let next_keys: BTreeMap<String, String> = mons.iter().map(|m| (m.name.clone(), map::key_in(m, &mons))).collect();
         let next_labels: BTreeMap<i32, String> = displays.values().map(|d| (d.base, d.label.clone())).collect();
         let changed = next_bases != self.bases || displays != before;
-        let moved = changed || next_labels != self.labels;
+        let mut by_place: Vec<&Mon> = mons.iter().filter(|m| next_bases.contains_key(&m.name)).collect();
+        by_place.sort_by(|a, b| (a.x, a.y, &a.name).cmp(&(b.x, b.y, &b.name)));
+        let next_order: Vec<String> = by_place.into_iter().map(|m| m.name.clone()).collect();
+        let moved = changed || next_labels != self.labels || next_order != self.order;
+        self.order = next_order;
         self.bases = next_bases.clone();
         self.keys = next_keys.clone();
         self.labels = next_labels;
@@ -334,6 +508,8 @@ impl Spaces {
         if moved {
             self.tell(h);
         }
+        // (what was asked before the displays were known)
+        self.pump(io);
     }
 
     /// The blocks to Hyprland: every display we know, by identity, as its
@@ -351,7 +527,9 @@ impl Spaces {
             t += &format!(" [{}] = {base},", q(n));
         }
         t += " }\n";
-        hx::eval(format!("{b}{t}if TESSERA_SPACE_RULES then TESSERA_SPACE_RULES(TESSERA_SPACE_BASES) end\n"));
+        // (and whether the space keys come here: dynamic spaces)
+        self.said_dynamic = Some(self.open);
+        hx::eval(format!("{b}{t}TESSERA_SPACES_DYNAMIC = {}\nif TESSERA_SPACE_RULES then TESSERA_SPACE_RULES(TESSERA_SPACE_BASES) end\n", self.open));
         if !tessera_core::env::sandboxed() || !known.is_empty() {
             let text = format!("-- Generated by Tessera (shell/services/Spaces.qml): which display each block of spaces\n-- belongs to. Loaded by hypr/tessera/keybinds.lua; changes here are overwritten.\n{b}");
             let path = hx::config_dir().join("spaces.lua");
@@ -399,20 +577,24 @@ impl Spaces {
             "monitoraddedv2" | "monitorremovedv2" | "createworkspacev2" | "moveworkspacev2" => self.reconcile(io, 250),
             _ => {}
         }
+        // dynamic spaces: a space may have emptied (or you left an empty one)
+        if self.open && matches!(name, "openwindow" | "closewindow" | "movewindow" | "movewindowv2" | "workspacev2" | "destroyworkspacev2" | "createworkspacev2" | "moveworkspacev2" | "monitoraddedv2" | "monitorremovedv2") {
+            io.arm("spaces.tidy", 200);
+        }
     }
 
     // ── what the views get ───────────────────────────────────────────────────
     pub fn json(&self, count: i64) -> Value {
         let labels: serde_json::Map<String, Value> = self.labels.iter().map(|(b, l)| (b.to_string(), json!(l))).collect();
-        json!({"bases": self.bases, "labels": labels, "count": count, "open": self.open})
+        json!({"bases": self.bases, "labels": labels, "count": count, "open": self.open, "order": self.order, "sequential": self.sequential && self.open})
     }
     /// To the views and the menu bar's state, when it changed
     pub fn tell(&mut self, h: &mut Host) {
         // (clamped as everywhere: tessera_core::wm::workspace_count)
         let count = tessera_core::wm::workspace_count(h.cfg()) as i64;
-        self.open = h.cfg()["menubar"]["spacesShown"].as_str() != Some("fixed");
+        self.read_cfg(h.cfg());
         let v = self.json(count);
-        h.set_state("spaces", json!({"bases": v["bases"], "labels": v["labels"]}));
+        h.set_state("spaces", json!({"bases": v["bases"], "labels": v["labels"], "order": v["order"], "sequential": v["sequential"]}));
         self.sent = v.to_string();
         for n in ["overview", "missioncontrol", "switcher"] {
             h.tell(n, json!({"spaces": v}));

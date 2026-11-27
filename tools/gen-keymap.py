@@ -13,9 +13,12 @@ and options. Actions:
   {"zoom": step}    screen zoom in or out
   {"space": op, "n": N} / {"space": op, "step": ±1}
                     space N (or the next/previous one) on the display you're
-                    on; op is focus, send (the window, staying) or move (the
-                    window, following). Each display numbers its own spaces
-                    (shell/services/SpaceMap.js; keybinds.lua maps them)
+                    on; op is focus, send (the window, staying), move (the
+                    window, following), new (a new space at N, the later ones
+                    one along) or newmove (the same with the window). Spaces
+                    are dynamic: 1..n with no gaps, past the last a new one
+                    (keybinds.lua's TESSERA_SPACE; tessera-ui's
+                    host/desktop/src/wm/dynspace.rs plans them)
 Run again after editing: tools/gen-keymap.py
 """
 import json
@@ -160,13 +163,17 @@ for i in range(1, 11):
     k = str(i % 10)
     b("ws-%d" % i, "$MOD + " + k, "Workspace", "Go to space %d" % i, space("focus", n=i))
     b("ws-send-%d" % i, "$MOD + ALT + " + k, "Workspace", "Send window to space %d" % i, space("send", n=i))
-    b("ws-move-%d" % i, "$MOD + SHIFT + " + k, "Workspace", "Move window to space %d (and follow)" % i, space("move", n=i))
+    # (Super+Shift+N until 27 Nov: keybinds.lua and keymap.rs read a saved
+    # entry still saying that as the default, OLD_DEFAULTS)
+    b("ws-move-%d" % i, "$MOD + CTRL + ALT + " + k, "Workspace", "Move window to space %d (and follow)" % i, space("move", n=i))
+    b("ws-new-%d" % i, "$MOD + SHIFT + " + k, "Workspace", "New space at %d" % i, space("new", n=i))
+    b("ws-new-move-%d" % i, "$MOD + SHIFT + ALT + " + k, "Workspace", "New space at %d with this window" % i, space("newmove", n=i))
 b("ws-prev", "CTRL + $MOD + Left", "Workspace", "Previous space", space("focus", step=-1))
 b("ws-next", "CTRL + $MOD + Right", "Workspace", "Next space", space("focus", step=1))
 b("ws-send-prev", "$MOD + SHIFT + Page_Up", "Workspace", "Move window to the previous space", space("move", step=-1))
 b("ws-send-next", "$MOD + SHIFT + Page_Down", "Workspace", "Move window to the next space", space("move", step=1))
-b("ws-scroll-down", "$MOD + mouse_down", "Workspace", "Next space (scroll)", dsp('hl.dsp.focus({ workspace = "m+1" })'))
-b("ws-scroll-up", "$MOD + mouse_up", "Workspace", "Previous space (scroll)", dsp('hl.dsp.focus({ workspace = "m-1" })'))
+b("ws-scroll-down", "$MOD + mouse_down", "Workspace", "Next space (scroll)", space("focus", step=1))
+b("ws-scroll-up", "$MOD + mouse_up", "Workspace", "Previous space (scroll)", space("focus", step=-1))
 b("scratchpad", "$MOD + S", "Workspace", "Show or hide the scratchpad", dsp('hl.dsp.workspace.toggle_special("special")'))
 b("scratchpad-mouse", "$MOD + mouse:275", "Workspace", "Show or hide the scratchpad (mouse)", dsp('hl.dsp.workspace.toggle_special("special")'))
 b("scratchpad-send", "$MOD + ALT + S", "Workspace", "Send window to the scratchpad", dsp('hl.dsp.window.move({ workspace = "special:special", follow = false })'))
@@ -244,7 +251,9 @@ DOC_KEYS = [
     (["snap-fill", "snap-center", "snap-restore"], "Fill, centre, back to the previous size"),
     (["pip"], "Picture in Picture"),
     (["tabs", "tab-prev", "tab-next"], "Merge into tabs (or move a tab out), previous / next tab"),
-    (["ws-1", "ws-9"], "Spaces 1 to 9 (the display you're on)", " … "),
+    (["ws-1", "ws-9"], "Spaces 1 to 9 (the display you're on); past the last, a new one", " … "),
+    (["ws-new-1", "ws-new-9"], "A new space at 1 to 9 (the ones after it move along)", " … "),
+    (["ws-move-1", "ws-move-9"], "Move the window to space 1 to 9 and follow it", " … "),
     (["ws-prev", "ws-next"], "Previous / next space"),
     (["ws-scroll-down"], "Next or previous space (scroll)"),
 ]

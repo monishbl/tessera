@@ -419,8 +419,19 @@ pub fn displays(cx: &mut Ctx, p: &mut Page) {
         let cue = if cue.is_empty() { "glow".to_string() } else { cue };
         let cues = ["off", "glow", "dim"];
         let cp = cx.pick("workspaces.switchCue", &cues);
+        let sequential = cx.s("workspaces.numbering") == "sequential";
+        let fixed = cx.s("menubar.spacesShown") == "fixed";
+        let np = cx.pick("workspaces.numbering", &["perDisplay", "sequential"]);
         p.group("Switching displays")
-            .footer("Each display has its own spaces, numbered from 1: Super+number goes to that space on the display you're on.")
+            .footer(if sequential && !fixed {
+                "Spaces are numbered 1, 2, 3 … across all displays, left to right: Super+number goes to that space wherever it is."
+            } else {
+                "Each display has its own spaces, numbered from 1: Super+number goes to that space on the display you're on."
+            })
+            .row(Row::new("Number spaces")
+                .detail(if fixed { "With Spaces shown set to Fixed number (Menu Bar), each display numbers its own" } else if sequential { "One sequence across all displays" } else { "Each display from 1" })
+                .segmented(&["On each display", "Across all displays"], if sequential { 1 } else { 0 }, np)
+                .width(300.0))
             .row(Row::new("Move the pointer there").detail("When a shortcut takes you to another display").switch(warp, wt))
             .row(Row::new("Show which display you moved to")
                 .detail(match cue.as_str() {
