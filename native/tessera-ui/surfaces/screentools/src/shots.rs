@@ -1089,6 +1089,8 @@ impl Core {
                 }
                 "s" if shift => self.save_copy(),
                 "s" => self.save(),
+                // Share (#1067)
+                "e" if !shift => self.share(screen),
                 _ => return false,
             }
             return true;
@@ -1099,7 +1101,25 @@ impl Core {
                 return true;
             }
         }
-        let _ = screen;
+        // The editor's other controls from the keys (#1067): 1 to 8 the
+        // colour, [ and ] the width, Delete the screenshot (its Undo toast
+        // follows, as the button's)
+        if self.busy.is_empty() && self.status == 1 {
+            if let Some(n) = k.parse::<usize>().ok().filter(|n| (1..=PALETTE.len()).contains(n)) {
+                self.s.color = n - 1;
+                self.push_editor();
+                return true;
+            }
+            if k == "[" || k == "]" {
+                self.s.width = if k == "[" { self.s.width.saturating_sub(1) } else { (self.s.width + 1).min(2) };
+                self.push_editor();
+                return true;
+            }
+        }
+        if is(Key::Delete) && self.busy.is_empty() && !self.s.path.is_empty() {
+            self.remove();
+            return true;
+        }
         false
     }
 
@@ -2215,5 +2235,16 @@ mod tests {
         // tool keys
         assert!(c.key("a", false, false, ""));
         assert_eq!(c.s.tool, "arrow");
+        // the colours and widths have keys too (#1067)
+        assert!(c.key("3", false, false, ""));
+        assert_eq!(c.s.color, 2);
+        assert!(!c.key("9", false, false, ""));
+        assert!(!c.key("0", false, false, ""));
+        c.s.width = 1;
+        assert!(c.key("]", false, false, ""));
+        assert!(c.key("]", false, false, ""));
+        assert_eq!(c.s.width, 2);
+        assert!(c.key("[", false, false, ""));
+        assert_eq!(c.s.width, 1);
     }
 }

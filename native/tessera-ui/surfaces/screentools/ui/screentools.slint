@@ -7,6 +7,7 @@
 // icon, the spinner) are here and used by shoteditor.slint and quicklook.slint.
 
 import { Theme } from "@tessera/theme.slint";
+import { KeyStop, FocusRing } from "@tessera/focus.slint";
 
 // An icon: Phosphor, or in Material the matching Material Symbols glyph (s)
 export struct StIc {
@@ -130,8 +131,9 @@ export component EditorButton inherits Rectangle {
     accessible-enabled: live;
     accessible-action-default => { if live { clicked(); } }
 
-    // Keyboard focus ring (Material: 3 px in secondary, 2 px out)
-    if keys.has-focus: Rectangle {
+    // Keyboard focus ring (Material: 3 px in secondary, 2 px out; only
+    // when the keys moved there, #932)
+    if keys.has-focus && keys.keyed: Rectangle {
         x: Theme.material ? -5px : -4px;
         y: self.x;
         width: root.width - 2 * self.x;
@@ -192,8 +194,11 @@ export component EditorButton inherits Rectangle {
     keys := FocusScope {
         focus-on-click: false;
         enabled: live;
+        property <bool> keyed;
+        focus-gained(why) => { self.keyed = why == FocusReason.tab-navigation; }
         key-pressed(e) => {
             if e.text == " " || e.text == Key.Return {
+                self.keyed = true;
                 root.clicked();
                 return accept;
             }
@@ -442,6 +447,10 @@ component StSwitch inherits Rectangle {
         mouse-cursor: pointer;
         clicked => { root.toggled(); }
     }
+    KeyStop {
+        radius: root.border-radius;
+        activated => { root.toggled(); }
+    }
 }
 
 // Segmented.qml: Glass, a track with a sliding pill; Material, a connected
@@ -499,6 +508,15 @@ component StSegmented inherits Rectangle {
         touch := TouchArea {
             mouse-cursor: pointer;
             clicked => { root.selected(i); }
+        }
+    }
+    // (Tab reaches it; Left/Right choose)
+    KeyStop {
+        radius: root.border-radius;
+        arrows: true;
+        nudged(d) => {
+            let n = max(0, min(options.length - 1, current + d));
+            if n != current { root.selected(n); }
         }
     }
 }
@@ -570,7 +588,12 @@ component OptionRow inherits Rectangle {
         accessible-role: none;
     }
     touch := TouchArea {
+        mouse-cursor: pointer;
         clicked => { root.clicked(); }
+    }
+    KeyStop {
+        radius: root.border-radius;
+        activated => { root.clicked(); }
     }
 }
 
@@ -644,6 +667,10 @@ component SmallButton inherits Rectangle {
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
+    }
+    KeyStop {
+        radius: root.border-radius;
+        activated => { root.clicked(); }
     }
 }
 
@@ -727,14 +754,6 @@ export component ScreenToolbar inherits Window {
         if !shown && progress <= 0.001 { closed(); }
     }
 
-    keys := FocusScope {
-        // (a click goes to what's under it: keys only; it covered link rows and choices, which then took two clicks or none)
-        focus-on-click: false;
-        key-pressed(e) => {
-            if root.key(e.text) { return accept; }
-            reject
-        }
-    }
     // (measures the Options button's label)
     opt-measure := Text {
         visible: false;
@@ -743,400 +762,459 @@ export component ScreenToolbar inherits Window {
         font-weight: 500;
     }
 
-    // A click beside the menu closes it
+    // A click beside the menu closes it (under the bar and the menu)
     if menu-open: TouchArea {
         clicked => { menu-open = false; }
     }
 
-    body := Rectangle {
-        y: (1 - progress) * 12px;
-        opacity: progress;
-
-        // ── Options, above the bar ──
-        opts := Rectangle {
-            visible: options-open;
-            width: 360px;
-            // (no taller than the room above the bar: many microphones scroll)
-            height: min(list.preferred-height + 28px, max(160px, bar.y - 8px - 16px));
-            x: (root.width - self.width) / 2;
-            y: bar.y - 8px - self.height;
-            border-radius: Theme.radius-popover;
-            // (Glass on the plugin: only its glass, as ScreenToolbar's options)
-            background: Theme.material ? Theme.m3-surface-container : Theme.plugin ? transparent : Theme.panel;
-            drop-shadow-blur: Theme.material ? 16px : 0;
-            drop-shadow-offset-y: Theme.material ? 4px : 0;
-            drop-shadow-color: Theme.material ? Theme.m3-shadow.with-alpha(Theme.dark ? 0.4 : 0.16) : transparent;
-            accessible-role: groupbox;
-            accessible-label: "Options";
-            TouchArea { }
-            Flickable {
-                x: 0;
-                y: 0;
-                width: parent.width;
-                height: parent.height;
-                viewport-height: list.preferred-height + 28px;
-            list := VerticalLayout {
-                x: 14px;
-                y: 14px;
-                width: parent.width - 28px;
-                height: self.preferred-height;
-                spacing: 2px;
-                Caption { text: "Microphone"; }
-                for m[i] in mics: OptionRow {
-                    text: m.text;
-                    check-icon: ic-check;
-                    checked: m.checked;
-                    clicked => { root.mic(i); }
-                }
-                Rectangle { height: 6px; }
-                SwitchRow {
-                    text: "System audio";
-                    checked: system-audio;
-                    toggled => { root.set-system-audio(); }
-                }
-                if gsr: SwitchRow {
-                    text: "Show mouse pointer";
-                    checked: cursor;
-                    toggled => { root.set-cursor(); }
-                }
-                SegmentRow {
-                    text: "Countdown";
-                    options: ["None", "3 s", "5 s"];
-                    current: countdown;
-                    selected(i) => { root.set-countdown(i); }
-                }
-                Rectangle { height: 6px; }
-                Caption { text: "Video"; }
-                SegmentRow {
-                    text: "Frame rate";
-                    options: ["30 fps", "60 fps"];
-                    current: fps;
-                    selected(i) => { root.set-fps(i); }
-                }
-                if gsr: SegmentRow {
-                    text: "Format";
-                    segment-width: 192px;
-                    options: ["H.264", "HEVC", "AV1"];
-                    current: codec;
-                    selected(i) => { root.set-codec(i); }
-                }
-                if gsr: Note {
-                    text: codec-note;
-                }
-                if gsr: SegmentRow {
-                    text: "Quality";
-                    // (room for "Very high" in each of the four)
-                    segment-width: 262px;
-                    options: ["Medium", "High", "Very high", "Ultra"];
-                    current: quality;
-                    selected(i) => { root.set-quality(i); }
-                }
-                Rectangle { height: 6px; }
-                Rectangle {
-                    height: 36px;
-                    Text {
-                        x: 8px;
-                        width: parent.width - folder-row.preferred-width - 16px;
-                        text: "Save to " + folder;
-                        overflow: elide;
-                        color: Theme.secondary;
-                        font-size: Theme.small;
-                        vertical-alignment: center;
-                    }
-                    folder-row := HorizontalLayout {
-                        x: parent.width - self.preferred-width;
-                        spacing: 2px;
-                        alignment: end;
-                        if custom-folder: SmallButton {
-                            icon: ic-reset;
-                            label: "Save to Screen Recordings again";
-                            clicked => { root.folder-reset(); }
-                        }
-                        SmallButton {
-                            icon: ic-pencil;
-                            label: "Choose the folder";
-                            clicked => { root.folder-pick(); }
-                        }
-                        SmallButton {
-                            icon: ic-folder;
-                            label: "Open the folder";
-                            clicked => { root.folder-open(); }
-                        }
-                    }
-                }
-                if !gsr: Note {
-                    top: 4px;
-                    text: available ? "Install gpu-screen-recorder to pause recordings and record the microphone together with system audio." : "Install gpu-screen-recorder to record the screen.";
-                }
+    // The keys (#1067): Left/Right move a ring along the tools (past the
+    // divider), Enter or Space runs the one it's on; Tab goes on to Record,
+    // the Options and their rows, and their keys come up here (Esc)
+    property <int> kb-tool: -1;
+    function tool-step(d: int) {
+        let n = tools.length;
+        if n == 0 { return; }
+        let a = (kb-tool < 0 ? (d > 0 ? -1 : n) : kb-tool) + d;
+        let b = a >= 0 && a < n && tools[a].kind == 1 ? a + d : a;
+        if b >= 0 && b < n { kb-tool = b; }
+    }
+    keys := FocusScope {
+        // (a click goes to what's under it: keys only; it covered link rows and choices, which then took two clicks or none)
+        focus-on-click: false;
+        property <bool> keyed;
+        focus-gained(why) => {
+            self.keyed = why == FocusReason.tab-navigation;
+            if self.keyed && kb-tool < 0 { root.tool-step(1); }
+        }
+        key-pressed(e) => {
+            if self.has-focus && (e.text == Key.LeftArrow || e.text == Key.RightArrow) {
+                self.keyed = true;
+                root.tool-step(e.text == Key.RightArrow ? 1 : -1);
+                return accept;
             }
+            if self.has-focus && self.keyed && kb-tool >= 0 && kb-tool < tools.length && !e.repeat && (e.text == Key.Return || e.text == " ") {
+                root.tool(kb-tool);
+                return accept;
             }
+            if root.key(e.text) { return accept; }
+            reject
         }
 
-        // ── The bar ──
-        bar := Rectangle {
-            width: row.preferred-width + 24px;
-            height: 64px;
-            x: (root.width - self.width) / 2;
-            y: root.height - bottom - self.height;
-            // Glass: the plugin's glass under a tint; Material: a vibrant
-            // floating toolbar, a pill in primaryContainer
-            border-radius: Theme.material ? self.height / 2 : 22px;
-            // (Glass on the plugin: only its glass, ScreenToolbar draws no tint over it)
-            background: Theme.material ? Theme.m3-primary-container : Theme.plugin ? transparent : Theme.panel;
-            drop-shadow-blur: Theme.material ? 10px : 0;
-            drop-shadow-offset-y: Theme.material ? 3px : 0;
-            drop-shadow-color: Theme.material ? Theme.m3-shadow.with-alpha(Theme.dark ? 0.45 : 0.18) : transparent;
-            accessible-role: groupbox;
-            accessible-label: "Screen tools";
-            TouchArea { }
-            row := HorizontalLayout {
-                alignment: center;
-                // (the 56 px buttons centred in the 64 px bar: a fixed-height
-                // child of a row sits at its top)
-                padding-top: 4px;
-                padding-bottom: 4px;
-                spacing: 4px;
-                for t[i] in tools: Rectangle {
-                    width: t.kind == 1 ? 17px : t.kind == 2 ? opt-measure.preferred-width + 40px : 104px;
-                    height: 56px;
-                    property <bool> active: tt.pressed || (t.kind == 2 && options-open);
-                    if t.kind == 1: Rectangle {
-                        width: 1px;
-                        height: Theme.material ? 32px : 36px;
-                        background: Theme.material ? Theme.m3-on-primary-container.with-alpha(0.24) : Theme.separator;
+        body := Rectangle {
+            y: (1 - progress) * 12px;
+            opacity: progress;
+
+            // ── Options, above the bar ──
+            opts := Rectangle {
+                visible: options-open;
+                width: 360px;
+                // (no taller than the room above the bar: many microphones scroll)
+                height: min(list.preferred-height + 28px, max(160px, bar.y - 8px - 16px));
+                x: (root.width - self.width) / 2;
+                y: bar.y - 8px - self.height;
+                border-radius: Theme.radius-popover;
+                // (Glass on the plugin: only its glass, as ScreenToolbar's options)
+                background: Theme.material ? Theme.m3-surface-container : Theme.plugin ? transparent : Theme.panel;
+                drop-shadow-blur: Theme.material ? 16px : 0;
+                drop-shadow-offset-y: Theme.material ? 4px : 0;
+                drop-shadow-color: Theme.material ? Theme.m3-shadow.with-alpha(Theme.dark ? 0.4 : 0.16) : transparent;
+                accessible-role: groupbox;
+                accessible-label: "Options";
+                TouchArea { }
+                Flickable {
+                    x: 0;
+                    y: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    viewport-height: list.preferred-height + 28px;
+                list := VerticalLayout {
+                    x: 14px;
+                    y: 14px;
+                    width: parent.width - 28px;
+                    height: self.preferred-height;
+                    spacing: 2px;
+                    Caption { text: "Microphone"; }
+                    for m[i] in mics: OptionRow {
+                        text: m.text;
+                        check-icon: ic-check;
+                        checked: m.checked;
+                        clicked => { root.mic(i); }
                     }
-                    face := Rectangle {
-                        visible: t.kind != 1;
-                        // Material: round, squaring off while pressed; the
-                        // picked one filled in primary
-                        border-radius: Theme.material ? (tt.pressed ? 16px : t.picked ? 20px : self.height / 2) : 12px;
-                        // (MaterialSpring "fast": springFast 12.8 / 0.54 → ω 28.3, ζ 0.60)
-                        animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); }
-                        background: Theme.material ? (t.picked ? Theme.m3-primary : Theme.m3-on-primary-container.with-alpha(parent.active ? 0.1 : tt.has-hover ? 0.08 : 0))
-                            : t.picked ? Theme.accent.with-alpha(0.22) : parent.active ? Theme.fill-pressed : tt.has-hover ? Theme.fill : transparent;
-                        // (ElasticControl, Material: swells by min(6 %, 10 px) on
-                        // springPress 7.5 / 0.3 → ω 21.7, ζ 0.43)
-                        transform-scale: Theme.material && tt.pressed ? 1 + min(0.06, 10px / max(1px, max(self.width, self.height))) : 1;
-                        animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
-                        accessible-role: button;
-                        accessible-label: t.label;
-                        accessible-checked: t.picked;
-                        accessible-action-default => { root.tool(i); }
-                        if t.kind == 0: VerticalLayout {
-                            alignment: center;
-                            spacing: 4px;
-                            // (Material: 2 px lower, where the QML's icon and label sit)
-                            padding-top: Theme.material ? 4px : 0;
-                            StIcon {
-                                // (Material: the symbol's line, 1.2x the size, as Icon.qml's Text)
-                                height: Theme.material ? 26px : 22px;
-                                icon: t.icon;
-                                size: 22px;
-                                fill: Theme.material && (t.picked || t.red);
-                                color: t.red ? Theme.danger : Theme.material ? (t.picked ? Theme.m3-on-primary : Theme.m3-on-primary-container) : t.picked ? Theme.accent : Theme.label;
-                            }
-                            Text {
-                                text: t.label;
-                                horizontal-alignment: center;
-                                color: Theme.material ? (t.picked ? Theme.m3-on-primary : Theme.m3-on-primary-container) : t.picked ? Theme.label : Theme.secondary;
-                                font-size: Theme.caption;
-                                font-weight: 500;
-                                accessible-role: none;
-                            }
-                        }
-                        if t.kind == 2: HorizontalLayout {
-                            alignment: center;
-                            spacing: 6px;
-                            Text {
-                                text: "Options";
-                                color: Theme.material ? Theme.m3-on-primary-container : Theme.label;
-                                font-size: Theme.body;
-                                font-weight: 500;
-                                vertical-alignment: center;
-                                accessible-role: none;
-                            }
-                            StIcon {
-                                width: 11px;
-                                icon: options-open ? ic-caret-down : ic-caret-up;
-                                bold: true;
-                                size: 11px;
-                                color: Theme.material ? Theme.m3-on-primary-container : Theme.secondary;
-                            }
-                        }
-                        tt := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { root.tool(i); }
-                        }
+                    Rectangle { height: 6px; }
+                    SwitchRow {
+                        text: "System audio";
+                        checked: system-audio;
+                        toggled => { root.set-system-audio(); }
                     }
-                }
-                // Recording only: Record (Material: a split button whose menu
-                // records the other areas straight away)
-                if record-only && !Theme.material: Rectangle {
-                    width: rec-label.preferred-width + 40px;
-                    height: 56px;
+                    if gsr: SwitchRow {
+                        text: "Show mouse pointer";
+                        checked: cursor;
+                        toggled => { root.set-cursor(); }
+                    }
+                    SegmentRow {
+                        text: "Countdown";
+                        options: ["None", "3 s", "5 s"];
+                        current: countdown;
+                        selected(i) => { root.set-countdown(i); }
+                    }
+                    Rectangle { height: 6px; }
+                    Caption { text: "Video"; }
+                    SegmentRow {
+                        text: "Frame rate";
+                        options: ["30 fps", "60 fps"];
+                        current: fps;
+                        selected(i) => { root.set-fps(i); }
+                    }
+                    if gsr: SegmentRow {
+                        text: "Format";
+                        segment-width: 192px;
+                        options: ["H.264", "HEVC", "AV1"];
+                        current: codec;
+                        selected(i) => { root.set-codec(i); }
+                    }
+                    if gsr: Note {
+                        text: codec-note;
+                    }
+                    if gsr: SegmentRow {
+                        text: "Quality";
+                        // (room for "Very high" in each of the four)
+                        segment-width: 262px;
+                        options: ["Medium", "High", "Very high", "Ultra"];
+                        current: quality;
+                        selected(i) => { root.set-quality(i); }
+                    }
+                    Rectangle { height: 6px; }
                     Rectangle {
-                        width: parent.width;
                         height: 36px;
-                        border-radius: 18px;
-                        background: !available ? Theme.fill : rt.pressed ? Theme.danger.darker(0.2) : rt.has-hover ? Theme.danger.darker(0.08) : Theme.danger;
-                        transform-scale: rt.pressed ? 0.97 : 1;
-                        animate transform-scale { duration: Theme.motion(100ms); }
-                        accessible-role: button;
-                        accessible-label: "Record";
-                        accessible-action-default => { if available { root.record(); } }
-                        rec-label := Text {
-                            text: "Record";
-                            color: available ? #ffffff : Theme.tertiary;
-                            font-size: Theme.body;
-                            font-weight: 600;
-                            accessible-role: none;
+                        Text {
+                            x: 8px;
+                            width: parent.width - folder-row.preferred-width - 16px;
+                            text: "Save to " + folder;
+                            overflow: elide;
+                            color: Theme.secondary;
+                            font-size: Theme.small;
+                            vertical-alignment: center;
                         }
-                        rt := TouchArea {
-                            enabled: available;
-                            mouse-cursor: pointer;
-                            clicked => { root.record(); }
+                        folder-row := HorizontalLayout {
+                            x: parent.width - self.preferred-width;
+                            spacing: 2px;
+                            alignment: end;
+                            if custom-folder: SmallButton {
+                                icon: ic-reset;
+                                label: "Save to Screen Recordings again";
+                                clicked => { root.folder-reset(); }
+                            }
+                            SmallButton {
+                                icon: ic-pencil;
+                                label: "Choose the folder";
+                                clicked => { root.folder-pick(); }
+                            }
+                            SmallButton {
+                                icon: ic-folder;
+                                label: "Open the folder";
+                                clicked => { root.folder-open(); }
+                            }
                         }
                     }
+                    if !gsr: Note {
+                        top: 4px;
+                        text: available ? "Install gpu-screen-recorder to pause recordings and record the microphone together with system audio." : "Install gpu-screen-recorder to record the screen.";
+                    }
                 }
-                if record-only && Theme.material: Rectangle {
-                    width: split.width + 16px;
-                    height: 56px;
-                    split := Rectangle {
-                        x: 8px;
-                        width: lead.width + 2px + 40px;
-                        height: 40px;
-                        opacity: available ? 1 : 0.38;
-                        lead := Rectangle {
-                            width: lead-row.preferred-width + 32px;
-                            height: 40px;
-                            border-top-left-radius: 20px;
-                            border-bottom-left-radius: 20px;
-                            border-top-right-radius: lt.pressed ? 8px : 4px;
-                            border-bottom-right-radius: self.border-top-right-radius;
-                            background: Theme.m3-primary.mix(Theme.m3-on-primary, lt.pressed ? 0.9 : lt.has-hover ? 0.92 : 1);
-                            animate background { duration: Theme.hover; }
-                            transform-scale: lt.pressed ? 1 + min(0.06, 10px / max(1px, max(self.width, self.height))) : 1;
+                }
+            }
+
+            // ── The bar ──
+            bar := Rectangle {
+                width: row.preferred-width + 24px;
+                height: 64px;
+                x: (root.width - self.width) / 2;
+                y: root.height - bottom - self.height;
+                // Glass: the plugin's glass under a tint; Material: a vibrant
+                // floating toolbar, a pill in primaryContainer
+                border-radius: Theme.material ? self.height / 2 : 22px;
+                // (Glass on the plugin: only its glass, ScreenToolbar draws no tint over it)
+                background: Theme.material ? Theme.m3-primary-container : Theme.plugin ? transparent : Theme.panel;
+                drop-shadow-blur: Theme.material ? 10px : 0;
+                drop-shadow-offset-y: Theme.material ? 3px : 0;
+                drop-shadow-color: Theme.material ? Theme.m3-shadow.with-alpha(Theme.dark ? 0.45 : 0.18) : transparent;
+                accessible-role: groupbox;
+                accessible-label: "Screen tools";
+                TouchArea { }
+                row := HorizontalLayout {
+                    alignment: center;
+                    // (the 56 px buttons centred in the 64 px bar: a fixed-height
+                    // child of a row sits at its top)
+                    padding-top: 4px;
+                    padding-bottom: 4px;
+                    spacing: 4px;
+                    for t[i] in tools: Rectangle {
+                        width: t.kind == 1 ? 17px : t.kind == 2 ? opt-measure.preferred-width + 40px : 104px;
+                        height: 56px;
+                        property <bool> active: tt.pressed || (t.kind == 2 && options-open);
+                        if t.kind == 1: Rectangle {
+                            width: 1px;
+                            height: Theme.material ? 32px : 36px;
+                            background: Theme.material ? Theme.m3-on-primary-container.with-alpha(0.24) : Theme.separator;
+                        }
+                        face := Rectangle {
+                            visible: t.kind != 1;
+                            // Material: round, squaring off while pressed; the
+                            // picked one filled in primary
+                            border-radius: Theme.material ? (tt.pressed ? 16px : t.picked ? 20px : self.height / 2) : 12px;
+                            // (MaterialSpring "fast": springFast 12.8 / 0.54 → ω 28.3, ζ 0.60)
+                            animate border-radius { duration: Theme.move-spatial; easing: spring(0.4); }
+                            background: Theme.material ? (t.picked ? Theme.m3-primary : Theme.m3-on-primary-container.with-alpha(parent.active ? 0.1 : tt.has-hover ? 0.08 : 0))
+                                : t.picked ? Theme.accent.with-alpha(0.22) : parent.active ? Theme.fill-pressed : tt.has-hover ? Theme.fill : transparent;
+                            // (ElasticControl, Material: swells by min(6 %, 10 px) on
+                            // springPress 7.5 / 0.3 → ω 21.7, ζ 0.43)
+                            transform-scale: Theme.material && tt.pressed ? 1 + min(0.06, 10px / max(1px, max(self.width, self.height))) : 1;
                             animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
                             accessible-role: button;
-                            accessible-label: "Record";
-                            accessible-action-default => { if available { root.record(); } }
-                            lead-row := HorizontalLayout {
+                            accessible-label: t.label;
+                            accessible-checked: t.picked;
+                            accessible-action-default => { root.tool(i); }
+                            if t.kind == 0: VerticalLayout {
                                 alignment: center;
-                                spacing: 8px;
+                                spacing: 4px;
+                                // (Material: 2 px lower, where the QML's icon and label sit)
+                                padding-top: Theme.material ? 4px : 0;
                                 StIcon {
-                                    width: 18px;
-                                    icon: ic-record;
-                                    size: 18px;
-                                    color: Theme.m3-on-primary;
+                                    // (Material: the symbol's line, 1.2x the size, as Icon.qml's Text)
+                                    height: Theme.material ? 26px : 22px;
+                                    icon: t.icon;
+                                    size: 22px;
+                                    fill: Theme.material && (t.picked || t.red);
+                                    color: t.red ? Theme.danger : Theme.material ? (t.picked ? Theme.m3-on-primary : Theme.m3-on-primary-container) : t.picked ? Theme.accent : Theme.label;
                                 }
                                 Text {
-                                    text: "Record";
-                                    color: Theme.m3-on-primary;
-                                    font-size: 14px;
+                                    text: t.label;
+                                    horizontal-alignment: center;
+                                    color: Theme.material ? (t.picked ? Theme.m3-on-primary : Theme.m3-on-primary-container) : t.picked ? Theme.label : Theme.secondary;
+                                    font-size: Theme.caption;
+                                    font-weight: 500;
+                                    accessible-role: none;
+                                }
+                            }
+                            if t.kind == 2: HorizontalLayout {
+                                alignment: center;
+                                spacing: 6px;
+                                Text {
+                                    text: "Options";
+                                    color: Theme.material ? Theme.m3-on-primary-container : Theme.label;
+                                    font-size: Theme.body;
                                     font-weight: 500;
                                     vertical-alignment: center;
                                     accessible-role: none;
                                 }
+                                StIcon {
+                                    width: 11px;
+                                    icon: options-open ? ic-caret-down : ic-caret-up;
+                                    bold: true;
+                                    size: 11px;
+                                    color: Theme.material ? Theme.m3-on-primary-container : Theme.secondary;
+                                }
                             }
-                            lt := TouchArea {
+                            tt := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.tool(i); }
+                            }
+                            FocusRing {
+                                shown: keys.has-focus && keys.keyed && root.kb-tool == i;
+                                radius: parent.border-radius;
+                            }
+                        }
+                    }
+                    // Recording only: Record (Material: a split button whose menu
+                    // records the other areas straight away)
+                    if record-only && !Theme.material: Rectangle {
+                        width: rec-label.preferred-width + 40px;
+                        height: 56px;
+                        Rectangle {
+                            width: parent.width;
+                            height: 36px;
+                            border-radius: 18px;
+                            background: !available ? Theme.fill : rt.pressed ? Theme.danger.darker(0.2) : rt.has-hover ? Theme.danger.darker(0.08) : Theme.danger;
+                            transform-scale: rt.pressed ? 0.97 : 1;
+                            animate transform-scale { duration: Theme.motion(100ms); }
+                            accessible-role: button;
+                            accessible-label: "Record";
+                            accessible-action-default => { if available { root.record(); } }
+                            rec-label := Text {
+                                text: "Record";
+                                color: available ? #ffffff : Theme.tertiary;
+                                font-size: Theme.body;
+                                font-weight: 600;
+                                accessible-role: none;
+                            }
+                            rt := TouchArea {
                                 enabled: available;
                                 mouse-cursor: pointer;
                                 clicked => { root.record(); }
                             }
-                        }
-                        Rectangle {
-                            x: lead.width + 2px;
-                            width: 40px;
-                            height: 40px;
-                            property <length> inner: menu-open ? 20px : tr.pressed ? 8px : 4px;
-                            border-top-left-radius: inner;
-                            border-bottom-left-radius: inner;
-                            border-top-right-radius: 20px;
-                            border-bottom-right-radius: 20px;
-                            // (springPress 7.5 / 0.3: ω 21.7, ζ 0.43)
-                            animate border-top-left-radius, border-bottom-left-radius { duration: Theme.motion(290ms); easing: spring(0.57); }
-                            background: Theme.m3-primary.mix(Theme.m3-on-primary, tr.pressed ? 0.9 : tr.has-hover ? 0.92 : 1);
-                            animate background { duration: Theme.hover; }
-                            transform-scale: tr.pressed ? 1 + min(0.06, 10px / max(1px, max(self.width, self.height))) : 1;
-                            animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
-                            accessible-role: button;
-                            accessible-label: "More record options";
-                            accessible-action-default => { menu-open = !menu-open; }
-                            // (the caret-down turned: up while closed, a half turn
-                            // more as the menu opens, popover OutCubic)
-                            StIcon {
-                                icon: ic-caret-down;
-                                size: 18px;
-                                color: Theme.m3-on-primary;
-                                turn: menu-open ? 360deg : 180deg;
-                                animate turn { duration: Theme.move-standard; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
-                            }
-                            tr := TouchArea {
+                            KeyStop {
                                 enabled: available;
-                                mouse-cursor: pointer;
-                                clicked => { menu-open = !menu-open; }
+                                radius: parent.border-radius;
+                                activated => { root.record(); }
+                            }
+                        }
+                    }
+                    if record-only && Theme.material: Rectangle {
+                        width: split.width + 16px;
+                        height: 56px;
+                        split := Rectangle {
+                            x: 8px;
+                            width: lead.width + 2px + 40px;
+                            height: 40px;
+                            opacity: available ? 1 : 0.38;
+                            lead := Rectangle {
+                                width: lead-row.preferred-width + 32px;
+                                height: 40px;
+                                border-top-left-radius: 20px;
+                                border-bottom-left-radius: 20px;
+                                border-top-right-radius: lt.pressed ? 8px : 4px;
+                                border-bottom-right-radius: self.border-top-right-radius;
+                                background: Theme.m3-primary.mix(Theme.m3-on-primary, lt.pressed ? 0.9 : lt.has-hover ? 0.92 : 1);
+                                animate background { duration: Theme.hover; }
+                                transform-scale: lt.pressed ? 1 + min(0.06, 10px / max(1px, max(self.width, self.height))) : 1;
+                                animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
+                                accessible-role: button;
+                                accessible-label: "Record";
+                                accessible-action-default => { if available { root.record(); } }
+                                lead-row := HorizontalLayout {
+                                    alignment: center;
+                                    spacing: 8px;
+                                    StIcon {
+                                        width: 18px;
+                                        icon: ic-record;
+                                        size: 18px;
+                                        color: Theme.m3-on-primary;
+                                    }
+                                    Text {
+                                        text: "Record";
+                                        color: Theme.m3-on-primary;
+                                        font-size: 14px;
+                                        font-weight: 500;
+                                        vertical-alignment: center;
+                                        accessible-role: none;
+                                    }
+                                }
+                                lt := TouchArea {
+                                    enabled: available;
+                                    mouse-cursor: pointer;
+                                    clicked => { root.record(); }
+                                }
+                                KeyStop {
+                                    enabled: available;
+                                    radius: 8px;
+                                    activated => { root.record(); }
+                                }
+                            }
+                            Rectangle {
+                                x: lead.width + 2px;
+                                width: 40px;
+                                height: 40px;
+                                property <length> inner: menu-open ? 20px : tr.pressed ? 8px : 4px;
+                                border-top-left-radius: inner;
+                                border-bottom-left-radius: inner;
+                                border-top-right-radius: 20px;
+                                border-bottom-right-radius: 20px;
+                                // (springPress 7.5 / 0.3: ω 21.7, ζ 0.43)
+                                animate border-top-left-radius, border-bottom-left-radius { duration: Theme.motion(290ms); easing: spring(0.57); }
+                                background: Theme.m3-primary.mix(Theme.m3-on-primary, tr.pressed ? 0.9 : tr.has-hover ? 0.92 : 1);
+                                animate background { duration: Theme.hover; }
+                                transform-scale: tr.pressed ? 1 + min(0.06, 10px / max(1px, max(self.width, self.height))) : 1;
+                                animate transform-scale { duration: Theme.motion(290ms); easing: spring(0.57); }
+                                accessible-role: button;
+                                accessible-label: "More record options";
+                                accessible-action-default => { menu-open = !menu-open; }
+                                // (the caret-down turned: up while closed, a half turn
+                                // more as the menu opens, popover OutCubic)
+                                StIcon {
+                                    icon: ic-caret-down;
+                                    size: 18px;
+                                    color: Theme.m3-on-primary;
+                                    turn: menu-open ? 360deg : 180deg;
+                                    animate turn { duration: Theme.move-standard; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
+                                }
+                                tr := TouchArea {
+                                    enabled: available;
+                                    mouse-cursor: pointer;
+                                    clicked => { menu-open = !menu-open; }
+                                }
+                                KeyStop {
+                                    enabled: available;
+                                    radius: 8px;
+                                    activated => { menu-open = !menu-open; }
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        // Material: the split button's menu, upward
-        menu := Rectangle {
-            visible: self.opacity > 0.01;
-            opacity: menu-open ? 1 : 0;
-            animate opacity { duration: menu-open ? Theme.popover : Theme.hover; }
-            width: 200px;
-            height: menu-col.preferred-height + 16px;
-            // (the split button: 12 in from the bar's end and 8 in its slot; 12 below the bar's top)
-            x: max(8px, min(root.width - self.width - 8px, bar.x + bar.width - 20px - self.width));
-            y: bar.y + 12px - self.height - 8px + (menu-open ? 0 : 6px);
-            border-radius: 16px;
-            background: Theme.m3-surface-container;
-            drop-shadow-blur: 16px;
-            drop-shadow-offset-y: 4px;
-            drop-shadow-color: Theme.m3-shadow.with-alpha(Theme.dark ? 0.4 : 0.16);
-            accessible-role: AccessibleRole.list;
-            TouchArea { }
-            menu-col := VerticalLayout {
-                y: 8px;
-                height: self.preferred-height;
-                for it[i] in [
-                    { text: "Record entire screen", area: "screen", icon: ic-monitor },
-                    { text: "Record a window", area: "window", icon: ic-window },
-                    { text: "Record a region", area: "region", icon: ic-selection },
-                ]: Rectangle {
-                    height: 44px;
-                    background: mt.has-hover ? Theme.m3-on-surface.with-alpha(mt.pressed ? 0.1 : 0.08) : transparent;
-                    accessible-role: AccessibleRole.list-item;
-                    accessible-label: it.text;
-                    accessible-action-default => { root.record-area(it.area); }
-                    HorizontalLayout {
-                        padding-left: 16px;
-                        spacing: 12px;
-                        StIcon {
-                            width: 20px;
-                            icon: it.icon;
-                            size: 20px;
-                            color: Theme.m3-on-surface-variant;
+            // Material: the split button's menu, upward
+            menu := Rectangle {
+                visible: self.opacity > 0.01;
+                opacity: menu-open ? 1 : 0;
+                animate opacity { duration: menu-open ? Theme.popover : Theme.hover; }
+                width: 200px;
+                height: menu-col.preferred-height + 16px;
+                // (the split button: 12 in from the bar's end and 8 in its slot; 12 below the bar's top)
+                x: max(8px, min(root.width - self.width - 8px, bar.x + bar.width - 20px - self.width));
+                y: bar.y + 12px - self.height - 8px + (menu-open ? 0 : 6px);
+                border-radius: 16px;
+                background: Theme.m3-surface-container;
+                drop-shadow-blur: 16px;
+                drop-shadow-offset-y: 4px;
+                drop-shadow-color: Theme.m3-shadow.with-alpha(Theme.dark ? 0.4 : 0.16);
+                accessible-role: AccessibleRole.list;
+                TouchArea { }
+                menu-col := VerticalLayout {
+                    y: 8px;
+                    height: self.preferred-height;
+                    for it[i] in [
+                        { text: "Record entire screen", area: "screen", icon: ic-monitor },
+                        { text: "Record a window", area: "window", icon: ic-window },
+                        { text: "Record a region", area: "region", icon: ic-selection },
+                    ]: Rectangle {
+                        height: 44px;
+                        background: mt.has-hover ? Theme.m3-on-surface.with-alpha(mt.pressed ? 0.1 : 0.08) : transparent;
+                        accessible-role: AccessibleRole.list-item;
+                        accessible-label: it.text;
+                        accessible-action-default => { root.record-area(it.area); }
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            spacing: 12px;
+                            StIcon {
+                                width: 20px;
+                                icon: it.icon;
+                                size: 20px;
+                                color: Theme.m3-on-surface-variant;
+                            }
+                            Text {
+                                text: it.text;
+                                color: Theme.m3-on-surface;
+                                font-size: 14px;
+                                vertical-alignment: center;
+                                accessible-role: none;
+                            }
                         }
-                        Text {
-                            text: it.text;
-                            color: Theme.m3-on-surface;
-                            font-size: 14px;
-                            vertical-alignment: center;
-                            accessible-role: none;
+                        mt := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.record-area(it.area); }
                         }
-                    }
-                    mt := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { root.record-area(it.area); }
+                        KeyStop {
+                            enabled: menu-open;
+                            radius: 4px;
+                            activated => { root.record-area(it.area); }
+                        }
                     }
                 }
             }
         }
     }
+
 }
 
 // ── The countdown before a recording ─────────────────────────────────────
