@@ -4,6 +4,7 @@
 // and the glass context menu they open at the pointer (ContextMenu.qml).
 
 import { Theme, Ease } from "theme.slint";
+import { MenuRow } from "widgets.slint";
 
 // A glyph as Icon.qml picks it (Material: a Material Symbol, 1.2× the size)
 export struct WGlyph {
@@ -165,46 +166,15 @@ export component WMenu inherits Rectangle {
         TouchArea { }
         VerticalLayout {
             padding: 5px;
-            for r[i] in rows: Rectangle {
-                height: r.separator ? 11px : r.header ? 26px : 28px;
-                accessible-role: list-item;
-                accessible-label: r.text;
-                accessible-action-default => { activate(i); }
-                property <bool> hot: (rt.has-hover || current == i) && r.enabled && !r.header && !r.separator;
-                if r.separator: Rectangle {
-                    width: parent.width - 18px;
-                    height: 1px;
-                    background: Theme.separator;
-                }
-                if r.header: Text {
-                    x: 12px;
-                    y: parent.height - self.height - 4px;
-                    text: r.text;
-                    color: Theme.material ? Theme.m3-primary : Theme.secondary;
-                    font-size: 12px;
-                    font-weight: 500;
-                    accessible-role: none;
-                }
-                if !r.separator && !r.header: Rectangle {
-                    border-radius: Theme.radius-menu-row;
-                    background: hot ? Theme.highlight : transparent;
-                    Text {
-                        x: 12px;
-                        text: r.text;
-                        // (on-highlight: dark text on a light accent, both looks)
-                        color: hot ? Theme.on-highlight : !r.enabled ? Theme.tertiary : Theme.label;
-                        font-size: Theme.body;
-                        vertical-alignment: center;
-                        accessible-role: none;
-                    }
-                }
-                rt := TouchArea {
-                    enabled: r.enabled && !r.header && !r.separator;
-                    changed has-hover => {
-                        if self.has-hover { current = i; }
-                    }
-                    clicked => { activate(i); }
-                }
+            // (the kit's menu row: the dock's and the desktop's menus draw the same)
+            for r[i] in rows: MenuRow {
+                text: r.text;
+                header: r.header;
+                separator: r.separator;
+                enabled: r.enabled;
+                hot: current == i;
+                hovered => { root.current = i; }
+                activate => { root.activate(i); }
             }
         }
     }
