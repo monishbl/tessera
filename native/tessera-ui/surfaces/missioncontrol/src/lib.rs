@@ -277,6 +277,8 @@ impl MissionControl {
         let Some(out) = self.open.clone() else { return };
         let Some(i) = self.wins.iter().position(|w| w.output == out) else { return };
         let (wins, snap) = Self::data(st);
+        // (workspaces.numbering: the numbers the cards' titles show)
+        self.info.renumber(&snap);
         let cfg = OverviewCfg::read(&st.shell.cfg);
         let apps = st.shell.get::<Apps>();
         let size = {

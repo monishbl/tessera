@@ -128,10 +128,13 @@ function TESSERA_SPACE_RULES(bases)
     end
 end
 TESSERA_SPACE_RULES(rawget(_G, "TESSERA_SPACE_BASES"))
--- Go to (focus), or take the active window to (send: you stay; move: you
--- follow), space n on the display you're on, or the next/previous one (step).
--- Global so `hyprctl eval 'TESSERA_SPACE("focus", 2)'` does what Super+2 does.
-function TESSERA_SPACE(op, n, step)
+-- Fixed numbering (Settings: Spaces shown "Fixed number", or the QML shell):
+-- go to (focus), or take the active window to (send: you stay; move: you
+-- follow), space n on the display you're on (the id base + n), or the
+-- next/previous one (step). With fixed numbers a new space at n is just
+-- space n (new: go there; newmove: the window there, following).
+function TESSERA_SPACE_FIXED(op, n, step)
+    if op == "new" then op = "focus" elseif op == "newmove" then op = "move" end
     local m = hl.get_active_monitor()
     local base = spaceBase(m)
     local num = n
@@ -151,9 +154,34 @@ function TESSERA_SPACE(op, n, step)
         hl.dispatch(hl.dsp.window.move({ workspace = id, follow = op == "move" }))
     end
 end
+-- Dynamic spaces (tessera-ui with Spaces shown "Open only", the default; it
+-- sets TESSERA_SPACES_DYNAMIC): a display's spaces are always 1..n with no
+-- gaps, an emptied one closes up, past the last is a new one. tessera-ui
+-- plans and does each key (host/desktop/src/wm/dynspace.rs), handed over as
+-- its global shortcut tessera:space-<op>-<n|next|prev> (n 1..10; past that,
+-- `tessera-ui ipc call spaces <op> <n>`). op: focus, send (the window, you
+-- stay), move (the window, you follow), new (a new space at n, the later
+-- ones one along, and go there), newmove (the same with the window).
+-- Global so `hyprctl eval 'TESSERA_SPACE("focus", 2)'` does what Super+2 does.
+local SPACE_OPS = { focus = true, send = true, move = true, new = true, newmove = true }
+function TESSERA_SPACE(op, n, step)
+    if not SPACE_OPS[op] then return end
+    if rawget(_G, "TESSERA_SPACES_DYNAMIC") == true then
+        local arg = n and tostring(math.floor(n)) or ((step or 0) > 0 and "next" or "prev")
+        if not n or (n >= 1 and n <= 10) then
+            hl.dispatch(hl.dsp.global("tessera:space-" .. op .. "-" .. arg))
+            return
+        end
+        if UI and n >= 1 then
+            hl.exec_cmd("'" .. UI .. "' ipc call spaces " .. op .. " " .. arg)
+            return
+        end
+    end
+    return TESSERA_SPACE_FIXED(op, n, step)
+end
 local function space(a)
     local op, n, step = a.space, tonumber(a.n), tonumber(a.step)
-    if op ~= "focus" and op ~= "send" and op ~= "move" then return nil, "unknown space action" end
+    if not SPACE_OPS[op] then return nil, "unknown space action" end
     if not n and not step then return nil, "space needs n or step" end
     return function() TESSERA_SPACE(op, n, step) end
 end
@@ -297,12 +325,37 @@ if type(user) ~= "table" then user = {} end
 local changes = type(user.keybinds) == "table" and user.keybinds or {}
 local shortcuts = type(user.shortcuts) == "table" and user.shortcuts or {}
 
+-- Keys a default had before, read as "not changed": a saved entry that still
+-- says them is the old default, not a choice of yours (dynamic spaces, 27 Nov:
+-- "move the window there and follow" went from Super+Shift+N to
+-- Super+Alt+Ctrl+N, and Super+Shift+N is now "new space at N"). The same
+-- list is in host/system/src/input/keymap.rs (OLD_DEFAULTS).
+local OLD_DEFAULTS = {}
+for i = 1, 10 do
+    OLD_DEFAULTS["ws-move-" .. i] = "$MOD + SHIFT + " .. (i == 10 and "0" or tostring(i))
+end
+local function sameKeys(a, b)
+    local function norm(k)
+        local parts = {}
+        for p in k:upper():gsub("%s", ""):gmatch("[^+]+") do parts[#parts + 1] = p end
+        table.sort(parts)
+        return table.concat(parts, "+")
+    end
+    return type(a) == "string" and type(b) == "string" and norm(a) == norm(b)
+end
+
 -- Changed defaults first, then your own shortcuts, then the untouched
 -- defaults: what you set wins a clash
 local later = {}
 for _, e in ipairs(defaults) do
     local c = changes[e.id]
     if type(c) ~= "table" then c = nil end
+    if c and OLD_DEFAULTS[e.id] and sameKeys(c.keys, OLD_DEFAULTS[e.id]) then
+        local copy = {}
+        for k, v in pairs(c) do copy[k] = v end
+        copy.keys = nil
+        c = copy
+    end
     if not (c and c.disabled) then
         if c and c.keys then
             e.keys = c.keys

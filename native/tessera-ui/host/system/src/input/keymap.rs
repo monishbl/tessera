@@ -21,6 +21,16 @@ pub fn blank_user() -> Value {
     json!({"version": 1, "keybinds": {}, "shortcuts": [], "gestures": {"changes": {}, "custom": []}})
 }
 
+/// Keys a default had before: a saved change that still says them is the
+/// old default, not a choice of yours, and is dropped (dynamic spaces, 27 Nov:
+/// "move the window there and follow" went from Super+Shift+N to
+/// Super+Alt+Ctrl+N; Super+Shift+N is "new space at N"). keybinds.lua reads
+/// them the same way (OLD_DEFAULTS), so Hyprland agrees before a save.
+pub fn old_default(id: &str) -> Option<String> {
+    let n: u32 = id.strip_prefix("ws-move-")?.parse().ok()?;
+    (1..=10).contains(&n).then(|| format!("$MOD + SHIFT + {}", n % 10))
+}
+
 pub fn normalize_user(u: &Value) -> Value {
     let mut out = blank_user();
     if !u.is_object() {
@@ -28,6 +38,21 @@ pub fn normalize_user(u: &Value) -> Value {
     }
     if u["keybinds"].is_object() {
         out["keybinds"] = u["keybinds"].clone();
+        if let Some(o) = out["keybinds"].as_object_mut() {
+            let stale: Vec<String> = o
+                .iter()
+                .filter(|(id, c)| old_default(id).is_some_and(|k| c["keys"].as_str().is_some_and(|keys| canonical(keys) == canonical(&k))))
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in stale {
+                if let Some(c) = o.get_mut(&id).and_then(Value::as_object_mut) {
+                    c.shift_remove("keys");
+                }
+                if o.get(&id).is_some_and(is_empty_obj) {
+                    o.shift_remove(&id);
+                }
+            }
+        }
     }
     if let Some(a) = u["shortcuts"].as_array() {
         out["shortcuts"] = Value::Array(a.iter().filter(|s| s.is_object()).cloned().collect());
@@ -896,6 +921,27 @@ mod tests {
             json!({"id": "workspaces", "fingers": 4, "direction": "horizontal", "action": "workspace", "label": "Spaces"}),
         ];
         k
+    }
+
+    #[test]
+    fn old_default_keys_are_no_change() {
+        assert_eq!(old_default("ws-move-3").as_deref(), Some("$MOD + SHIFT + 3"));
+        assert_eq!(old_default("ws-move-10").as_deref(), Some("$MOD + SHIFT + 0"));
+        assert_eq!(old_default("ws-move-x"), None);
+        assert_eq!(old_default("ws-3"), None);
+        let u = normalize_user(&json!({"keybinds": {
+            "ws-move-3": {"keys": "SHIFT + $MOD + 3"},
+            "ws-move-4": {"keys": "$MOD + SHIFT + 4", "disabled": true},
+            "ws-move-5": {"keys": "$MOD + F5"},
+            "ws-3": {"keys": "$MOD + SHIFT + 3"}
+        }}));
+        let k = &u["keybinds"];
+        // the old default: gone (still disabled if you turned it off)
+        assert!(k.get("ws-move-3").is_none());
+        assert_eq!(k["ws-move-4"], json!({"disabled": true}));
+        // your own keys stay
+        assert_eq!(k["ws-move-5"]["keys"], "$MOD + F5");
+        assert_eq!(k["ws-3"]["keys"], "$MOD + SHIFT + 3");
     }
 
     #[test]

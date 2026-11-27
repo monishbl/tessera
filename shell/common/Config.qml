@@ -636,6 +636,9 @@ Singleton {
                 property string switchCue: ""
                 property bool dimOthers: true // (older setting, read once to set switchCue)
                 property bool warpPointer: true // move the pointer to that display
+                // How spaces are numbered (tessera-ui, with menubar.spacesShown open):
+                // perDisplay (each display its own 1..n) | sequential (1..n across all displays, left to right)
+                property string numbering: "perDisplay"
             }
             property JsonObject mouse: JsonObject {
                 // Mice (Settings → Mouse); trackpads keep their own settings

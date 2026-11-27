@@ -383,6 +383,9 @@ Singleton {
         for (const n in bases)
             t += " [" + q(n) + "] = " + bases[n] + ",";
         t += " }\n";
+        // (the keys number spaces themselves again: tessera-ui's dynamic
+        // spaces, which hand them to it, aren't running; keybinds.lua)
+        t += "TESSERA_SPACES_DYNAMIC = nil\n";
         Quickshell.execDetached(["hyprctl", "eval", b + t + "if TESSERA_SPACE_RULES then TESSERA_SPACE_RULES(TESSERA_SPACE_BASES) end\n"]);
         if (!sandbox || Object.keys(known).length > 0) {
             rulesWriter.command = ["sh", "-c", "mkdir -p \"$(dirname \"$1\")\" && printf '%s' \"$2\" > \"$1.tmp\" && mv -f \"$1.tmp\" \"$1\"", "sh", rulesFile,

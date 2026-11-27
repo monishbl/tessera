@@ -584,6 +584,8 @@ impl Overview {
             return;
         }
         let (wins, snap) = Self::data(st);
+        // (workspaces.numbering: the numbers titles and chips show)
+        self.info.renumber(&snap);
         let cfg = Self::cfg(st);
         let m = st.shell.look.material;
         let mac = cfg.style == "macos";
@@ -817,7 +819,7 @@ impl Overview {
             .iter()
             .map(|z| {
                 let current = snap.active.get(&z.name).copied().unwrap_or(0);
-                (z.name.clone(), z.chips.iter().map(|(id, r)| ui::OvChip { id: *id, x: r.x, y: r.y, n: spaces::number_of(*id).to_string().into(), current: *id == current }).collect())
+                (z.name.clone(), z.chips.iter().map(|(id, r)| ui::OvChip { id: *id, x: r.x, y: r.y, n: info.number(*id).to_string().into(), current: *id == current }).collect())
             })
             .collect();
         let chip_lists = keyed_lists(&mut w.l_zone_chips, chips, |c: &ui::OvChip| c.id.to_string().into());

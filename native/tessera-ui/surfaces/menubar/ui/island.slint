@@ -249,6 +249,9 @@ export component IslandStatus inherits Rectangle {
 
 export struct Chip {
     id: int,
+    // the number it says (its display's own, or the one sequence across
+    // displays: workspaces.numbering)
+    n: int,
     x: length,
     w: length,
     active: bool,
@@ -377,7 +380,7 @@ export component Spaces inherits Rectangle {
         transform-scale-y: c.fall;
         animate transform-scale-y { duration: Theme.move-standard; easing: cubic-bezier(0.3333, 1, 0.6667, 1); }
         accessible-role: tab;
-        accessible-label: "Space " + Math.mod(c.id, 100) + (c.occupied ? ", has windows" : ", empty") + (c.elsewhere ? ", on another display" : "");
+        accessible-label: "Space " + c.n + (c.occupied ? ", has windows" : ", empty") + (c.elsewhere ? ", on another display" : "");
         accessible-item-selectable: true;
         accessible-item-selected: c.active;
         accessible-action-default => { root.go(c.id); }

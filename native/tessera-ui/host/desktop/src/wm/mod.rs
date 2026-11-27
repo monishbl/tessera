@@ -28,6 +28,7 @@ mod apps;
 mod apptheme;
 mod decorations;
 mod desk;
+mod dynspace;
 mod feed;
 mod findptr;
 mod focushist;
@@ -223,6 +224,7 @@ impl Wm {
         match key {
             "spaces.reconcile" => self.spaces.tick_reconcile(io),
             "spaces.shown" => self.spaces.tick_shown(io),
+            "spaces.tidy" => self.spaces.tick_tidy(io),
             "stage.start" => self.stage.tick_start(h, io),
             "stage.refresh" => self.stage.tick_refresh(h),
             "apps.recent" => self.apps.note_active(h),
@@ -303,7 +305,9 @@ impl Wm {
             "spaces.sendWindowToDisplay" => self.spaces.send_window_to_display(h, &s(0), &s(1)),
             "spaces.sendWindowNew" => {
                 let order: Vec<i32> = a.get(2).and_then(|v| v.as_array()).map(|l| l.iter().map(|x| x.as_f64().unwrap_or(0.0) as i32).collect()).unwrap_or_default();
-                self.spaces.send_window_new(h, &s(0), &s(1), &order, n(3));
+                let mut io = self.io.take();
+                self.spaces.send_window_new(h, &mut io, &s(0), &s(1), &order, n(3));
+                self.io.restore(io);
             }
             "spaces.moveSpaceTo" | "spaces.moveSpace" => {
                 let id = n(0);
@@ -319,6 +323,15 @@ impl Wm {
             // a display came (back), as its connect effect hands over (DisplayFx)
             "spaces.arrive" => self.spaces.arrive(&mut self.io, &s(0)),
             "spaces.reconcile" => self.spaces.reconcile(&mut self.io, 250),
+            // a space key (keybinds.lua's TESSERA_SPACE, as the shortcut
+            // tessera:space-<op>-<n>): op (focus, send, move, new, newmove)
+            // and N, "next" or "prev"
+            "spaces.key" => {
+                let arg = a.get(1).map(|v| v.as_str().map(String::from).unwrap_or_else(|| v.to_string())).unwrap_or_default();
+                let mut io = self.io.take();
+                self.spaces.key(&mut io, &s(0), &arg);
+                self.io.restore(io);
+            }
             "apps.show" => self.apps.show(h, &mut self.desk, &s(0)),
             "apps.pin" => self.apps.pin(h, &s(0)),
             "apps.unpin" => self.apps.unpin(h, &s(0)),
@@ -374,7 +387,7 @@ impl Service for Wm {
         &["apps", "desktop", "wm", "spaces", "tiling", "stacks", "overview", "switcher", "focus", "findpointer", "decorations"]
     }
     fn ipc_targets(&self) -> &'static [&'static str] {
-        &["tiling", "focus", "findpointer", "switcher"]
+        &["tiling", "focus", "findpointer", "switcher", "spaces"]
     }
     /// The desktop's feed (and the screen time in it) every 2 s, on the
     /// host's shared second (a timer of its own before 17 Nov)
@@ -409,6 +422,7 @@ impl Service for Wm {
         self.deco.begin(h, &mut io);
         self.desk.recover();
         self.modes.begin(h, &mut io);
+        self.spaces.read_cfg(h.cfg());
         self.spaces.reconcile(&mut io, 250);
         self.apptheme.config_changed(h, &mut io);
         self.findp.config_changed(h);
@@ -463,6 +477,15 @@ impl Service for Wm {
                 }
                 None
             }
+            // tessera-ui ipc call spaces <focus|send|move|new|newmove> <N|next|prev>
+            // (keybinds.lua's TESSERA_SPACE past the keys' own names, N > 10)
+            "spaces" => {
+                let arg = args.first().cloned().unwrap_or_default();
+                let mut io = self.io.take();
+                self.spaces.key(&mut io, func, &arg);
+                self.io.restore(io);
+                None
+            }
             "switcher" => {
                 match func {
                     "step" => self.wm_call(h, "switcher.step", &[json!(args.first().and_then(|d| d.parse::<i64>().ok()).unwrap_or(1))]),
@@ -485,6 +508,7 @@ impl Service for Wm {
         self.modes.config_changed(h);
         self.findp.config_changed(h);
         spaceswitch::config_changed(h);
+        self.spaces.config_changed(h, &mut io);
         self.io.restore(io);
         self.spaces.resend(h); // (the always-shown count may have changed)
         self.settings_feed(h);
@@ -515,6 +539,7 @@ impl Service for Wm {
 
     fn quit(&mut self, h: &mut Host) {
         self.desk.restore_desktop();
+        self.spaces.quit();
         let _ = h;
     }
 }

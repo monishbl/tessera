@@ -448,6 +448,8 @@ impl Switcher {
         let scale = self.win.as_ref().unwrap().ui.window().scale_factor().max(1.0);
         let snap = st.shell.get::<Snapshot>().cloned().unwrap_or_default();
         let here = snap.active.get(&self.output).copied().unwrap_or(0);
+        // (workspaces.numbering: the numbers "Space N" says)
+        self.info.renumber(&snap);
         let tiles: Vec<ui::SwTile> = if !shown {
             Vec::new()
         } else {
