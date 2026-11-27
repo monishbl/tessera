@@ -12,7 +12,7 @@
 
 import { Theme } from "@tessera/theme.slint";
 import { SymIcon } from "@tessera/symbols.slint";
-import { ScrollIndicator, Spinner } from "@tessera/widgets.slint";
+import { ScrollIndicator, Spinner, Switch } from "@tessera/widgets.slint";
 
 // Phosphor glyphs (SymIcon draws Material Symbols for them in Material)
 export struct NetGlyphs {
@@ -659,34 +659,14 @@ export component WifiMenu inherits Window {
                                     clicked => { spin += 360deg; refresh(); }
                                 }
                             }
-                            if !unmanaged: Rectangle {
+                            // (the kit's switch: hover and press in Glass too, #438)
+                            if !unmanaged: Switch {
                                 x: parent.width - 38px;
                                 y: 4px;
-                                width: 38px;
-                                height: 22px;
-                                border-radius: 11px;
-                                background: wifi-on ? Theme.accent : Theme.toggle-off;
-                                animate background { duration: Theme.hover; }
-                                opacity: adapter ? 1 : 0.4;
-                                accessible-role: switch;
-                                accessible-label: "Wi-Fi";
-                                accessible-checkable: true;
-                                accessible-checked: wifi-on;
-                                accessible-enabled: adapter;
-                                accessible-action-default => { if adapter { switch-toggled(); } }
-                                Rectangle {
-                                    x: wifi-on ? parent.width - self.width - 2px : 2px;
-                                    animate x { duration: Theme.move-standard; easing: cubic-bezier(0.2, 0.9, 0.1, 1.0); }
-                                    width: parent.height - 4px;
-                                    height: self.width;
-                                    border-radius: self.width / 2;
-                                    background: #ffffff;
-                                }
-                                TouchArea {
-                                    enabled: adapter;
-                                    mouse-cursor: pointer;
-                                    clicked => { switch-toggled(); }
-                                }
+                                checked: wifi-on;
+                                enabled: adapter;
+                                label: "Wi-Fi";
+                                toggled => { root.switch-toggled(); }
                             }
                         }
                         // Material: the title and refresh, then Android's main switch bar
@@ -981,7 +961,9 @@ export component WifiMenu inherits Window {
                                             alignment: start;
                                             Text {
                                                 text: "Other options…";
-                                                color: ot.has-hover ? Theme.accent-ink : Theme.secondary;
+                                                color: ot.has-hover || ot.pressed ? Theme.accent-ink : Theme.secondary;
+                                                // (pressed: dimmer, #438)
+                                                opacity: ot.pressed ? 0.6 : 1;
                                                 font-size: Theme.small;
                                                 accessible-role: button;
                                                 accessible-label: "Other options";
