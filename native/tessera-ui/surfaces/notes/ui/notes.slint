@@ -8,6 +8,7 @@
 
 import { Theme, Icon } from "@tessera/theme.slint";
 import { SymIcon } from "@tessera/symbols.slint";
+import { ScrollIndicator } from "@tessera/widgets.slint";
 
 export struct NoteMenuItem {
     text: string,
@@ -208,6 +209,16 @@ export component QuickNote inherits Window {
                     font-size: Theme.body;
                     wrap: word-wrap;
                     accessible-role: none;
+                }
+                // (the kit's scroll indicator, held still over the list's right
+                // edge while the content moves under it, #358 #1037)
+                ScrollIndicator {
+                    x: flick.width - self.width;
+                    y: -flick.content-y;
+                    height: flick.height;
+                    content-y: flick.content-y;
+                    content-height: flick.content-height;
+                    view-height: flick.height;
                 }
             }
 
