@@ -292,3 +292,4 @@ Removed: the passkeys daemon, its Settings group, its polkit-dialog requests and
 | Banners fanned out: as many as fit on the screen, "+N more" (opens Notification Center) with Clear all / Show less always visible (#212) | 27 Nov | done, unchecked | (this commit) |
 | Banners: swipe sideways to dismiss, both looks, touch or drag (#397) | 27 Nov | done, unchecked | (this commit) |
 | Notification Center: a body cut at four lines shows whole on a click on it, with Show more / Show less (#396) | 27 Nov | done, unchecked | (this commit) |
+| Notification Center, Glass without a panel: the title takes the bar's wallpaper-aware ink and Clear all has its own chip of glass (#395) | 27 Nov | done, unchecked | (this commit) |

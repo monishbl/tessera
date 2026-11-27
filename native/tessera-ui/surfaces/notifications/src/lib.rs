@@ -1204,6 +1204,14 @@ impl Part for Notifications {
             }
             return;
         }
+        // (a wallpaper measured: bare Glass's title follows it)
+        if what == TypeId::of::<crate::services::wallpaper::WallTop>() {
+            if self.nc_open {
+                self.nc_dirty = true;
+                self.nc_refresh(st);
+            }
+            return;
+        }
         if what != TypeId::of::<Event>() {
             return;
         }
