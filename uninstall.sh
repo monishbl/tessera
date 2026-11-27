@@ -410,6 +410,9 @@ for d in "$DATA/tessera" "$DATA/$OLD_NAME"; do
     run rm -f "$d/tessera-glass.so" "$d/tessera-glass.so.new" "$d/tessera-glass.built-for"
     run rm -rf "$d/src"
     run rm -f "$d/bin/tessera-events" "$d/bin/tessera-events.new"
+    # (the quick-look browser; its history and site data, $d/web, stay as your settings do)
+    run rm -f "$d/bin/tessera-web" "$d/bin/tessera-web.new" "$d/bin/tessera-web.prev" \
+        "$d/bin/tessera-web.json" "$d/bin/tessera-web.prev.json" "$d/bin/tessera-web.unavailable"
     run rm -f "$d/bin/tessera-passkeys" "$d/bin/tessera-passkeys.new" "$d/bin/tessera-passkeys.prev" \
         "$d/bin/tessera-passkeys.json" "$d/bin/tessera-passkeys.prev.json" "$d/bin/tessera-passkeys.unavailable"
     run rm -f "$d/source" "$d/previous-login-manager"

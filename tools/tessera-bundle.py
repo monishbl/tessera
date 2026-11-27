@@ -92,9 +92,10 @@ FORMAT = 1
 NAME = "tessera-bundle"
 VARIANTS = ("x86-64-v3", "generic")
 PROGRAMS = ("tessera-ui", "tessera-events")
-# (in a bundle when it built; never a reason to refuse one. None now: the
-# passkeys daemon was removed, and an older bundle's copy isn't unpacked)
-OPTIONAL = ()
+# (in a bundle when it built; never a reason to refuse one: tessera-web,
+# the quick-look browser. The passkeys daemon was removed: an older
+# bundle's copy isn't unpacked)
+OPTIONAL = ("tessera-web",)
 CHANNELS = ("stable", "beta", "release", "local")
 ROLLING = {"stable": ["tessera-ui-latest", "tessera-ui-beta"], "beta": ["tessera-ui-beta", "tessera-ui-latest"]}
 LATEST = "tessera-latest.bundle.json"  # the rolling release's newest bundle manifest (the pointer)

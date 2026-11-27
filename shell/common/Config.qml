@@ -514,6 +514,9 @@ Singleton {
                 property string mixer: ""
                 property string tasks: ""
             }
+            property JsonObject apps: JsonObject {
+                property string webLinks: "tessera" // (Rust shell) links from Tessera open in: tessera (its quick-look browser, tessera-web; your browser when it isn't installed) | browser
+            }
             property JsonObject notes: JsonObject {
                 property string folder: "" // Markdown notes (Spotlight "note …", quick note); empty = ~/Documents/Notes
             }
@@ -529,6 +532,7 @@ Singleton {
             property JsonObject network: JsonObject {
                 property string speedTest: "cloudflare" // speed test server: cloudflare (speed.cloudflare.com, needs only curl) | ookla (speedtest.net; needs speedtest or speedtest-cli)
                 property bool ooklaAccepted: false // (Rust shell) you accepted Ookla's licence and privacy notice in Settings → Network
+                property bool portalAuto: true // (Rust shell) Wi-Fi sign-in pages (captive portals) open by themselves in Tessera's quick-look browser
             }
             property JsonObject power: JsonObject {
                 // Battery & Power (Settings; services/Power.qml)

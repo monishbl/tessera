@@ -470,6 +470,16 @@ def build(t, tree):
                   variant, flags, "tessera-ui", logf, build_env(t, variant))
             cargo(["build", *prof, "--locked", "--manifest-path", "native/tessera-events/Cargo.toml"],
                   variant, flags, "tessera-events", logf)
+            # (tessera-web, the quick-look browser, when this version has it:
+            # one that doesn't build is left out of the archive, never the release)
+            if os.path.isfile(os.path.join(SRC, "native/tessera-ui/web/Cargo.toml")):
+                try:
+                    cargo(["build", *prof, "--locked", "--manifest-path", "native/tessera-ui/Cargo.toml", "-p", "tessera-web", "--bin", "tessera-web"],
+                          variant, flags, "tessera-web", logf, build_env(t, variant))
+                except Stop as e:
+                    log(f"{t['name']}: tessera-web didn't build for {variant} (left out): {e}")
+                    with contextlib.suppress(OSError):
+                        os.unlink(os.path.join(TARGETS, variant, profile, "tessera-web"))
         status(step=f"{variant}: packing", progress=None)
         v = pack(outdir, tree, variant, epoch, profile)
         log(f"{t['name']}: built {variant} in {int(time.time() - t0)} s ({v['size']} bytes)")
@@ -506,6 +516,9 @@ def pack(outdir, tree, variant, epoch, profile="release"):
     os.makedirs(stage)
     versions = {}
     names = ["tessera-ui", "tessera-events"]
+    # (optional: in the archive when it built; native-install.py takes it when it's there)
+    if os.path.isfile(os.path.join(rel, "tessera-web")) and os.path.isfile(os.path.join(SRC, "native/tessera-ui/web/Cargo.toml")):
+        names.append("tessera-web")
     for name in names:
         shutil.copy2(os.path.join(rel, name), os.path.join(stage, name))
         # (--version only, and never with a display)

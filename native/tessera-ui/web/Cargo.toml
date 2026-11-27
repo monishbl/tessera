@@ -1,0 +1,25 @@
+[package]
+name = "tessera-web"
+description = "Tessera's quick-look browser: one window, one address field, WebKitGTK 6 in a process of its own"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "tessera-web"
+path = "src/main.rs"
+doctest = false
+
+[dependencies]
+# (the look as the shell reads it: theme::read, theme::tokens; the Hyprland socket)
+tessera-core.workspace = true
+slint.workspace = true # (only to name the theme tokens' colour type)
+serde.workspace = true
+serde_json.workspace = true
+libc.workspace = true
+# WebKitGTK 6 (webkitgtk-6.0 2.54 on the build machines: its API up to 2.52
+# here) and GTK 4 (4.24 installed; 4.18's API is all this uses). Pinned:
+# the system libraries decide what links, so a newer binding never slips in.
+webkit6 = { version = "=0.6.1", features = ["v2_50"] }
+gtk4 = { version = "=0.11.5", features = ["v4_18"] }

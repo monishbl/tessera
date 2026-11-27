@@ -50,6 +50,23 @@ fn row(cx: &mut Ctx, label: &str, keys: &str, key: &str, auto: &str, all: &[&str
     r
 }
 
+/// Tessera's quick-look browser (tessera-web): its history and website
+/// data, cleared (tessera_core::settings::web_dirs; the bar's menu does the
+/// same). Where links open and Wi-Fi sign-in pages: "Open links from Tessera
+/// in" above and Settings → Network.
+fn web(cx: &mut Ctx, p: &mut Page) {
+    let clear = cx.on(|cx, _| {
+        if !cx.confirmed("webClear", "Choose Clear again to remove the quick-look browser's history, cookies and website data") {
+            return;
+        }
+        let all = tessera_core::settings::web_dirs().iter().all(|d| !d.exists() || std::fs::remove_dir_all(d).is_ok());
+        cx.toast(if all { "History and website data cleared" } else { "Some website data couldn't be cleared" }, None);
+    });
+    let g = p.group("Quick-look browser");
+    g.footer("Its history stays on this computer and is never sent anywhere.");
+    g.row(Row::new("Clear history and website data").button("Clear", clear).danger());
+}
+
 pub fn page(cx: &mut Ctx, p: &mut Page) {
     let rows = vec![
         row(cx, "Terminal", "Super+Return", "terminal", "Automatic", &["kitty", "foot", "alacritty", "wezterm", "ghostty", "konsole", "gnome-terminal", "kgx", "ptyxis", "xfce4-terminal", "xterm"]),
@@ -63,6 +80,7 @@ pub fn page(cx: &mut Ctx, p: &mut Page) {
     for r in rows {
         g.row(r);
     }
+    web(cx, p);
     p.more(cx);
     let rows = vec![
         row(cx, "Volume mixer", "Ctrl+Super+V", "mixer", "Automatic", &["pavucontrol", "pavucontrol-qt"]),

@@ -11,6 +11,9 @@ PACKAGES=(
     gnome-keyring libsecret openssl polkit brightnessctl playerctl libnotify mesa mesa-utils xdg-user-dirs
     # Commands the shell runs: pactl/paplay, xdg-open, gio/gsettings/gdbus, gtk-launch, sound effects, drives, file dialogs
     libpulse xdg-utils glib2 gtk3 libcanberra udisks2 zenity inotify-tools
+    # Tessera's quick-look browser (tessera-web: links, Search the web, Wi-Fi sign-in pages,
+    # Quick Look); without it links open in your browser
+    webkitgtk-6.0
     # Shared Google sign-in through desktop Online Accounts (no user OAuth project)
     gnome-online-accounts gnome-control-center python-gobject
     # Android Quick Share, built in (shell/assets/scripts/quickshare): its encryption, its

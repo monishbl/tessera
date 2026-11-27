@@ -1,0 +1,311 @@
+//! The command line: the contract with the shell (~/tessera-verify/web/SPEC.md,
+//! "Command line"). Every option is written as there; `--opt=value` works too.
+//!
+//!   tessera-web [OPTIONS] [URL|FILE]
+//!     --from X,Y,W,H         grow the window from this rectangle (screen logical px)
+//!     --at X,Y,W,H           open at exactly this rectangle
+//!     --lens PICTURE         search this picture with Google Lens
+//!     --portal               captive-portal mode; closes by itself once online
+//!     --signin URL --done PREFIX   sign-in mode: prints the final URL when navigation reaches PREFIX
+//!     --quicklook            Quick Look mode: read-only preview, Space/Esc closes
+//!     --title TEXT           a title for the bar when there's no page title yet
+
+use std::path::{Path, PathBuf};
+
+/// A rectangle on the screen, logical px
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rect {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+impl Rect {
+    pub fn centre(&self) -> (i32, i32) {
+        (self.x + self.w / 2, self.y + self.h / 2)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Mode {
+    /// a page, the address field editable
+    Browse,
+    /// a picture searched with Google Lens (its path)
+    Lens(PathBuf),
+    /// a Wi-Fi network's sign-in page
+    Portal,
+    /// an account's sign-in: done when navigation reaches `done`
+    SignIn { url: String, done: String },
+    /// a read-only preview of a link or an HTML file
+    QuickLook,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Place {
+    /// where the window rules put it (centred, about 66% × 70%)
+    Rules,
+    /// grows from this rectangle to where the rules would put it
+    From(Rect),
+    /// exactly here (the shell animated to it already)
+    At(Rect),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Args {
+    pub mode: Mode,
+    pub place: Place,
+    pub title: Option<String>,
+    /// URL|FILE as given (None: a blank page, the address field ready)
+    pub target: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Parsed {
+    Run(Args),
+    Help,
+    Version,
+}
+
+pub const USAGE: &str = "\
+tessera-web: Tessera's quick-look browser
+
+usage: tessera-web [OPTIONS] [URL|FILE]
+  --from X,Y,W,H         grow the window from this rectangle (screen logical px)
+  --at X,Y,W,H           open at exactly this rectangle
+  --lens PICTURE         search this picture with Google Lens
+  --portal               open the network's sign-in page; close by itself once online
+  --signin URL --done PREFIX
+                         sign in: no address editing; when navigation reaches PREFIX,
+                         print {\"event\":\"done\",\"url\":…} and close
+  --quicklook            read-only preview: Space or Esc closes
+  --title TEXT           a title for the bar until the page has one
+  --version              which build this is
+
+Esc closes the window. --signin and --portal print one JSON line on stdout:
+{\"event\":\"done\",\"url\":…} (signed in, or online) or {\"event\":\"closed\"}.
+Exit status: 0 shown and closed; 1 it couldn't start (no display, no WebKitGTK);
+2 a mistake on the command line.";
+
+/// "X,Y,W,H" (numbers may have decimals: rounded); W and H above zero
+pub fn parse_rect(s: &str) -> Result<Rect, String> {
+    let parts: Vec<&str> = s.split(',').map(str::trim).collect();
+    if parts.len() != 4 {
+        return Err(format!("{s:?} isn't X,Y,W,H"));
+    }
+    let mut n = [0i32; 4];
+    for (i, p) in parts.iter().enumerate() {
+        let v: f64 = p.parse().map_err(|_| format!("{s:?} isn't X,Y,W,H"))?;
+        if !v.is_finite() || v.abs() > 1e6 {
+            return Err(format!("{s:?} isn't X,Y,W,H"));
+        }
+        n[i] = v.round() as i32;
+    }
+    if n[2] <= 0 || n[3] <= 0 {
+        return Err(format!("{s:?}: the width and height must be above zero"));
+    }
+    Ok(Rect { x: n[0], y: n[1], w: n[2], h: n[3] })
+}
+
+/// The arguments after the program's name
+pub fn parse(argv: &[String]) -> Result<Parsed, String> {
+    let mut place = Place::Rules;
+    let mut lens: Option<PathBuf> = None;
+    let mut portal = false;
+    let mut signin: Option<String> = None;
+    let mut done: Option<String> = None;
+    let mut quicklook = false;
+    let mut title: Option<String> = None;
+    let mut target: Option<String> = None;
+    let mut i = 0;
+    let mut only_positional = false;
+    while i < argv.len() {
+        let a = argv[i].as_str();
+        i += 1;
+        if only_positional || !a.starts_with("--") || a == "--" {
+            if a == "--" && !only_positional {
+                only_positional = true;
+                continue;
+            }
+            if target.is_some() {
+                return Err(format!("one URL or file at a time ({a:?} too)"));
+            }
+            target = Some(a.to_string());
+            continue;
+        }
+        let (name, inline) = match a.split_once('=') {
+            Some((n, v)) => (n, Some(v.to_string())),
+            None => (a, None),
+        };
+        let mut value = |what: &str| -> Result<String, String> {
+            if let Some(v) = inline.clone() {
+                return Ok(v);
+            }
+            match argv.get(i) {
+                Some(v) => {
+                    i += 1;
+                    Ok(v.clone())
+                }
+                None => Err(format!("{name} needs {what}")),
+            }
+        };
+        match name {
+            "--help" | "-h" => return Ok(Parsed::Help),
+            "--version" => return Ok(Parsed::Version),
+            "--from" | "--at" => {
+                let r = parse_rect(&value("X,Y,W,H")?).map_err(|e| format!("{name}: {e}"))?;
+                if place != Place::Rules {
+                    return Err("--from and --at: one of them".into());
+                }
+                place = if name == "--from" { Place::From(r) } else { Place::At(r) };
+            }
+            "--lens" => lens = Some(PathBuf::from(value("a picture")?)),
+            "--portal" => portal = true,
+            "--signin" => signin = Some(value("a URL")?),
+            "--done" => done = Some(value("a URL prefix")?),
+            "--quicklook" => quicklook = true,
+            "--title" => title = Some(value("a title")?),
+            _ => return Err(format!("unknown option {name}")),
+        }
+        if inline.is_some() && matches!(name, "--portal" | "--quicklook") {
+            return Err(format!("{name} takes no value"));
+        }
+    }
+    let modes = [lens.is_some(), portal, signin.is_some(), quicklook].iter().filter(|x| **x).count();
+    if modes > 1 {
+        return Err("--lens, --portal, --signin and --quicklook: one of them".into());
+    }
+    if done.is_some() != signin.is_some() {
+        return Err("--signin URL and --done PREFIX go together".into());
+    }
+    let mode = if let Some(p) = lens {
+        if target.is_some() {
+            return Err("--lens searches its picture: no URL with it".into());
+        }
+        Mode::Lens(p)
+    } else if let (Some(url), Some(done)) = (signin, done) {
+        if target.is_some() {
+            return Err("--signin has its URL: no other with it".into());
+        }
+        if url.trim().is_empty() || done.trim().is_empty() {
+            return Err("--signin and --done need a URL each".into());
+        }
+        Mode::SignIn { url, done }
+    } else if portal {
+        Mode::Portal
+    } else if quicklook {
+        if target.is_none() {
+            return Err("--quicklook needs a URL or a file".into());
+        }
+        Mode::QuickLook
+    } else {
+        Mode::Browse
+    };
+    let title = title.filter(|t| !t.trim().is_empty());
+    Ok(Parsed::Run(Args { mode, place, title, target }))
+}
+
+/// What the window loads first for a URL|FILE argument: a file that's there
+/// as a file:// URI (relative to `cwd`), anything else as typed into the
+/// address field (crate::nav::typed). None for nothing to load.
+pub fn start_uri(target: &str, cwd: &Path, is_file: impl Fn(&Path) -> bool) -> Option<String> {
+    let t = target.trim();
+    if t.is_empty() {
+        return None;
+    }
+    if let Some(rest) = t.strip_prefix("file://") {
+        return Some(format!("file://{}", crate::nav::encode_path(&crate::nav::decode(rest))));
+    }
+    if !crate::nav::has_scheme(t) {
+        let p = if Path::new(t).is_absolute() { PathBuf::from(t) } else { cwd.join(t) };
+        if is_file(&p) {
+            let p = std::fs::canonicalize(&p).unwrap_or(p);
+            return Some(format!("file://{}", crate::nav::encode_path(&p.to_string_lossy())));
+        }
+    }
+    crate::nav::typed(t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p(a: &[&str]) -> Result<Parsed, String> {
+        parse(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+    }
+    fn run(a: &[&str]) -> Args {
+        match p(a) {
+            Ok(Parsed::Run(x)) => x,
+            other => panic!("{a:?}: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_url_alone_browses() {
+        let a = run(&["https://example.com"]);
+        assert_eq!(a.mode, Mode::Browse);
+        assert_eq!(a.place, Place::Rules);
+        assert_eq!(a.target.as_deref(), Some("https://example.com"));
+        assert_eq!(run(&[]).target, None);
+    }
+
+    #[test]
+    fn rectangles() {
+        assert_eq!(parse_rect("10,20,300,400"), Ok(Rect { x: 10, y: 20, w: 300, h: 400 }));
+        assert_eq!(parse_rect(" 10.4, -20.6 ,300.5,400"), Ok(Rect { x: 10, y: -21, w: 301, h: 400 }));
+        assert!(parse_rect("10,20,300").is_err());
+        assert!(parse_rect("10,20,0,400").is_err());
+        assert!(parse_rect("a,b,c,d").is_err());
+        assert!(parse_rect("1,2,3,NaN").is_err());
+        let a = run(&["--from", "1,2,3,4", "https://a.b"]);
+        assert_eq!(a.place, Place::From(Rect { x: 1, y: 2, w: 3, h: 4 }));
+        let a = run(&["--at=5,6,7,8"]);
+        assert_eq!(a.place, Place::At(Rect { x: 5, y: 6, w: 7, h: 8 }));
+        assert!(p(&["--from", "1,2,3,4", "--at", "1,2,3,4"]).is_err());
+        assert!(p(&["--from"]).is_err());
+    }
+
+    #[test]
+    fn every_mode_as_the_spec_writes_it() {
+        assert_eq!(run(&["--lens", "/tmp/x.png", "--from", "1,2,3,4"]).mode, Mode::Lens("/tmp/x.png".into()));
+        assert_eq!(run(&["--portal"]).mode, Mode::Portal);
+        assert_eq!(run(&["--portal", "http://portal.example/login"]).target.as_deref(), Some("http://portal.example/login"));
+        assert_eq!(
+            run(&["--signin", "https://accounts.example/auth", "--done", "http://127.0.0.1:8123/cb"]).mode,
+            Mode::SignIn { url: "https://accounts.example/auth".into(), done: "http://127.0.0.1:8123/cb".into() }
+        );
+        let a = run(&["--quicklook", "--title", "Report", "page.html"]);
+        assert_eq!(a.mode, Mode::QuickLook);
+        assert_eq!(a.title.as_deref(), Some("Report"));
+        assert_eq!(run(&["--title", "  ", "x"]).title, None);
+    }
+
+    #[test]
+    fn mistakes_are_refused() {
+        assert!(p(&["--signin", "https://a"]).is_err());
+        assert!(p(&["--done", "https://a"]).is_err());
+        assert!(p(&["--lens", "a.png", "--portal"]).is_err());
+        assert!(p(&["--lens", "a.png", "https://x"]).is_err());
+        assert!(p(&["--quicklook"]).is_err());
+        assert!(p(&["--portal=yes"]).is_err());
+        assert!(p(&["--nonsense"]).is_err());
+        assert!(p(&["a", "b"]).is_err());
+        assert_eq!(p(&["--help"]), Ok(Parsed::Help));
+        assert_eq!(p(&["--version"]), Ok(Parsed::Version));
+        // (after --, a name starting with -- is a file)
+        assert_eq!(run(&["--", "--odd.html"]).target.as_deref(), Some("--odd.html"));
+    }
+
+    #[test]
+    fn files_and_typed_addresses() {
+        let cwd = Path::new("/home/me");
+        let yes = |_: &Path| true;
+        let no = |_: &Path| false;
+        assert_eq!(start_uri("notes.html", cwd, yes).as_deref(), Some("file:///home/me/notes.html"));
+        assert_eq!(start_uri("/tmp/a b.html", cwd, yes).as_deref(), Some("file:///tmp/a%20b.html"));
+        assert_eq!(start_uri("example.com", cwd, no).as_deref(), Some("https://example.com"));
+        assert_eq!(start_uri("https://example.com/x", cwd, yes).as_deref(), Some("https://example.com/x"));
+        assert_eq!(start_uri("file:///tmp/a%20b.html", cwd, no).as_deref(), Some("file:///tmp/a%20b.html"));
+        assert_eq!(start_uri("  ", cwd, yes), None);
+    }
+}

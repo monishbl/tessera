@@ -33,6 +33,21 @@ hl.window_rule({
 hl.window_rule({ match = { title = "^Tessera Settings$" }, float = true })
 hl.window_rule({ match = { title = "^Tessera Settings$" }, center = true })
 
+-- Tessera's quick-look browser (tessera-web: links, Circle to Search's
+-- "Search the web", Wi-Fi sign-in pages, Quick Look, account sign-in): a
+-- floating window with no border, centred at about two thirds of the screen,
+-- its corners the theme's window corners (look.lua's rounding). Its bar is
+-- glass, so Hyprland's blur shows through it; its pages are opaque, so the
+-- window transparency setting never makes a page see-through. --from/--at
+-- place it themselves (a rule of their own while it opens: web/src/place.rs).
+hl.window_rule({
+    name = "tessera-web",
+    match = { class = "^tessera-web$" },
+    float = true, center = true, border_size = 0,
+    size = "(monitor_w*0.66) (monitor_h*0.7)",
+    opacity = "1.0 override 1.0 override"
+})
+
 -- File pickers and account dialogs float, centred, on top. Opened from a
 -- floating window (Settings' "Choose…", Connect Google), a tiled one would
 -- sit behind it, as floating windows stay above tiled ones. The portals'

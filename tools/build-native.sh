@@ -111,6 +111,19 @@ if [[ "${1:-}" == --stage ]]; then
     else
         echo "tessera-ui didn't build"
     fi
+    # tessera-web (Tessera's quick-look browser, native/tessera-ui/web): with
+    # tessera-ui when WebKitGTK 6 is there to build against; optional, so one
+    # that doesn't build never stops the rest (native-install.py's OPTIONAL).
+    # Without it links open in your browser.
+    if pkg-config --exists webkitgtk-6.0 2>/dev/null; then
+        if cargo_build tessera-web "the quick-look browser" tessera-web --profile "$P" --locked --manifest-path "$UI_CRATE/Cargo.toml" --target-dir "$T" -p tessera-web --bin tessera-web; then
+            cp "$T/$P/tessera-web" "$STAGE/tessera-web"
+        else
+            echo "tessera-web didn't build (links open in your browser)"
+        fi
+    else
+        echo "tessera-web skipped: webkitgtk-6.0 isn't installed (links open in your browser)"
+    fi
     exit 0
 fi
 # (folders under Tessera's old name move over first, never both: migrate-names.py)
