@@ -9,6 +9,7 @@
 import { Theme } from "@tessera/theme.slint";
 import { Squircle } from "@tessera/squircle.slint";
 import { Symbols, SymIcon } from "@tessera/symbols.slint";
+import { ScrollIndicator } from "@tessera/widgets.slint";
 
 // The drawn battery (BatteryGlyph): a capsule, its fill, the nub; a bolt or
 // plug when on power; the number inside when asked
@@ -1841,7 +1842,7 @@ component RecentList inherits VerticalLayout {
             }
         }
     }
-    Flickable {
+    sb-list1844 := Flickable {
         height: min(count * 40px, 300px);
         content-height: count * 40px;
         interactive: count * 40px > 300px;
@@ -1985,6 +1986,16 @@ component RecentList inherits VerticalLayout {
                     }
                 }
             }
+        }
+        // (the kit's scroll indicator, held still over the list's right
+        // edge while the content moves under it, #358 #1037)
+        ScrollIndicator {
+            x: sb-list1844.width - self.width;
+            y: -sb-list1844.content-y;
+            height: sb-list1844.height;
+            content-y: sb-list1844.content-y;
+            content-height: sb-list1844.content-height;
+            view-height: sb-list1844.height;
         }
     }
 }
