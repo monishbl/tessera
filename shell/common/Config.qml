@@ -540,6 +540,8 @@ Singleton {
             // Search's edge light, tessera-ui edgefx.rs; audit #61)
             property JsonObject circle: JsonObject {
                 property string glow: "" // "": dots (the default), siri, gemini, ripple…
+                property bool webSearch: true // the "Search the web" chip (sends the circled picture to Google Lens)
+                property bool lensAccepted: false // you said yes, once, to the circled picture going to Google
             }
             property JsonObject keyboard: JsonObject {
                 property string superTap: "overview" // tapping Super alone: overview | spotlight | none

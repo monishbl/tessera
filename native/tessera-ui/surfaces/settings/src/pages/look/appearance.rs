@@ -282,8 +282,11 @@ pub fn appearance(cx: &mut Ctx, p: &mut Page) {
         }
     });
     let glow_names: Vec<String> = GLOWS.iter().map(|g| g.1.to_string()).collect();
+    let web = cx.b("circle.webSearch");
+    let wt = cx.toggle("circle.webSearch");
     p.group("Circle to Search")
-        .row(Row::new("Edge light").detail(GLOWS[gi].2).choice(&glow_names, gi as i32, gp).width(220.0));
+        .row(Row::new("Edge light").detail(GLOWS[gi].2).choice(&glow_names, gi as i32, gp).width(220.0))
+        .row(Row::new("Search the web").detail("A chip that sends the circled picture to Google Lens, after asking once").switch(web, wt));
 
     p.group("Accessibility")
         .row(Row::new("Reduce transparency").visible(!cx.material).detail("Solid surfaces instead of glass, whatever the material above").switch(reduce, rt))

@@ -62,6 +62,26 @@ const MAX_SIDE: u32 = 1568;
 /// What the chips are, in order
 const CHIPS: [(&str, &str); 4] = [("What is this?", "question"), ("Search the web", "magnifying-glass"), ("Copy text", "text-t"), ("Translate", "translate")];
 
+/// The chips shown (indexes into CHIPS): "Search the web" only while the
+/// setting circle.webSearch is on (#1058)
+pub fn shown_chips(web: bool) -> Vec<usize> {
+    (0..CHIPS.len()).filter(|&i| i != 1 || web).collect()
+}
+
+/// Settings → Appearance → Circle to Search: the "Search the web" chip (on
+/// unless turned off)
+pub fn web_search_on(cfg: &Value) -> bool {
+    cfg["circle"]["webSearch"].as_bool().unwrap_or(true)
+}
+
+/// You said yes, once, to the circled picture going to Google (#1058)
+pub fn lens_accepted(cfg: &Value) -> bool {
+    cfg["circle"]["lensAccepted"].as_bool().unwrap_or(false)
+}
+
+/// What's asked before the first upload
+pub const LENS_NOTICE: &str = "The circled picture will be sent to Google to search with it.";
+
 /// The circled area, cut out: the JPEG's path, it in base64, the thumbnail (w, h, RGBA)
 pub struct Crop {
     path: String,
@@ -91,6 +111,8 @@ pub enum Fix {
     Retry,
     /// tesseract, through Software Update (as Live Text's Install)
     Install,
+    /// yes to the circled picture going to Google (asked once: #1058)
+    SendToGoogle,
 }
 
 impl Fix {
@@ -100,6 +122,7 @@ impl Fix {
             Fix::Settings => "Open AI settings",
             Fix::Retry => "Try again",
             Fix::Install => "Install",
+            Fix::SendToGoogle => "Send to Google",
         }
     }
 }
@@ -231,6 +254,10 @@ pub struct Circle {
     status_fix: Fix,
     /// Lens (true) or Copy text failed: which Try again means
     status_lens: bool,
+    /// "Search the web" hidden by the setting (this opening's)
+    no_web: bool,
+    /// said yes to Google this session (the settings file may not have caught up)
+    lens_ok: bool,
     asked: Asked,
     answer: String,
     /// the answer as the model wrote it (Markdown: for the sidebar)
@@ -522,7 +549,13 @@ impl Circle {
     fn sync_chips(&self) {
         let Some(w) = &self.win else { return };
         let m = theme_material(&w.ui);
-        let v: Vec<ui::CsChip> = CHIPS.iter().zip(self.chips).map(|((label, icon), (busy, done))| ui::CsChip { label: (*label).into(), icon: ic(icon, m), busy, done }).collect();
+        let v: Vec<ui::CsChip> = shown_chips(!self.no_web)
+            .into_iter()
+            .map(|i| {
+                let ((label, icon), (busy, done)) = (CHIPS[i], self.chips[i]);
+                ui::CsChip { label: label.into(), icon: ic(icon, m), busy, done }
+            })
+            .collect();
         w.ui.set_chips(ModelRc::new(VecModel::from(v)));
     }
 
@@ -567,6 +600,7 @@ impl Circle {
         let pointer = b.select_from == "pointer";
         let reduce = st.shell.look.reduce_motion;
         st.shell.want("ai");
+        self.no_web = !web_search_on(&st.shell.cfg);
         self.sync_chips();
         let win = self.win.as_ref().unwrap();
         let ui = &win.ui;
@@ -635,7 +669,7 @@ impl Circle {
         if let Some(w) = &self.win {
             w.ui.set_status(text.into());
             w.ui.set_status_error(error);
-            w.ui.set_status_action(if error { self.status_fix.label() } else { "" }.into());
+            w.ui.set_status_action(if error || self.status_fix == Fix::SendToGoogle { self.status_fix.label() } else { "" }.into());
         }
     }
 
@@ -754,6 +788,8 @@ impl Circle {
             }
             return;
         }
+        // (the chip shown at i: "Search the web" may be hidden)
+        let Some(&i) = shown_chips(!self.no_web).get(i.max(0) as usize) else { return };
         match i {
             0 => self.ask(st, Asked { shown: "What is this?".into(), prompt: CIRCLE_QUESTION.into(), translate: false }),
             1 => self.lens(st),
@@ -771,6 +807,12 @@ impl Circle {
     fn lens(&mut self, st: &mut State) {
         let Some(crop) = &self.crop else { return };
         if self.chips[1].0 {
+            return;
+        }
+        // (the picture leaves the computer: asked once, remembered)
+        if !self.lens_ok && !lens_accepted(&st.shell.cfg) {
+            self.status_fix = Fix::SendToGoogle;
+            self.set_status(LENS_NOTICE, false);
             return;
         }
         self.chips[1] = (true, false);
@@ -960,6 +1002,13 @@ impl Circle {
                     self.set_status("Installing Tesseract with Software Update…", false);
                 }
                 Fix::Settings => self.open_settings(st),
+                Fix::SendToGoogle => {
+                    self.lens_ok = true;
+                    tessera_core::cfgfile::set_config("circle.lensAccepted", json!(true));
+                    self.status_fix = Fix::None;
+                    self.set_status("", false);
+                    self.lens(st);
+                }
                 Fix::None => {}
             },
             Cm::AnswerAct => match self.answer_fix {
@@ -1272,6 +1321,17 @@ fn theme_material(ui: &ui::CircleSearch) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_web_chip_can_be_hidden_and_asks_first() {
+        assert_eq!(shown_chips(true), vec![0, 1, 2, 3]);
+        assert_eq!(shown_chips(false), vec![0, 2, 3]);
+        assert!(web_search_on(&json!({})));
+        assert!(!web_search_on(&json!({"circle": {"webSearch": false}})));
+        assert!(!lens_accepted(&json!({})));
+        assert!(lens_accepted(&json!({"circle": {"lensAccepted": true}})));
+        assert_eq!(Fix::SendToGoogle.label(), "Send to Google");
+    }
 
     #[test]
     fn answers_read_as_plain_text() {
