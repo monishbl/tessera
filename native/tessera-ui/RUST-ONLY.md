@@ -293,3 +293,4 @@ Removed: the passkeys daemon, its Settings group, its polkit-dialog requests and
 | Banners: swipe sideways to dismiss, both looks, touch or drag (#397) | 27 Nov | done, unchecked | (this commit) |
 | Notification Center: a body cut at four lines shows whole on a click on it, with Show more / Show less (#396) | 27 Nov | done, unchecked | (this commit) |
 | Notification Center, Glass without a panel: the title takes the bar's wallpaper-aware ink and Clear all has its own chip of glass (#395) | 27 Nov | done, unchecked | (this commit) |
+| Island: an open island never grows past its window; alerts or activity rows that don't fit show as "+N more" (#363) | 27 Nov | done, unchecked | (this commit) |

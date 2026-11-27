@@ -391,6 +391,9 @@ export component Bar inherits Window {
     in property <bool> card-on;
     in property <bool> all-mode;
     in property <[ActRow]> act-rows;
+    // past the open island's room: how many alerts / activity rows wait ("+N more"; #363)
+    in property <int> alerts-more;
+    in property <int> act-more;
     in property <[RecentRow]> recent;
     in property <int> recent-n;
     out property <bool> island-keys: island.wants-keys;
@@ -763,6 +766,8 @@ export component Bar inherits Window {
         level-set(id, v) => { root.level-set(id, v); }
         level-mute(id) => { root.level-mute(id); }
         act-rows: root.act-rows;
+        alerts-more: root.alerts-more;
+        act-more: root.act-more;
         recent: root.recent;
         recent-n: root.recent-n;
         recent-run(h) => { root.recent-run(h); }

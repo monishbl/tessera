@@ -344,6 +344,20 @@ fn load(path: &std::path::Path) -> Option<slint::Image> {
     slint::Image::load_from_path(path).ok()
 }
 
+/// An alert's height in the open island (AlertView's, a notification card's
+/// at its usual two lines; a guess on the tall side)
+fn alert_h(a: &ui::AlertRow) -> f32 {
+    if a.hud {
+        34.0
+    } else if a.kind == "ringing" {
+        68.0
+    } else if a.card {
+        88.0 + if a.headline.is_empty() { 0.0 } else { 34.0 } + if slint::Model::row_count(&a.card_buttons) > 0 { 34.0 } else { 0.0 }
+    } else {
+        (if a.has_picture && !a.has_art { 60.0 } else { 52.0 }) + if slint::Model::row_count(&a.more) > 0 { 36.0 } else { 0.0 }
+    }
+}
+
 /// rgb luminance of a colour (is the bar's text dark?)
 fn luma(c: slint::Color) -> f32 {
     (0.2126 * c.red() as f32 + 0.7152 * c.green() as f32 + 0.0722 * c.blue() as f32) / 255.0
@@ -1184,7 +1198,14 @@ impl Menubar {
                 b.ui.set_card(card_live);
                 b.ui.set_card_on(card.is_some());
                 b.ui.set_all_mode(all_mode);
-                let rows = if all_mode { self.act_rows(material, &theme) } else { Vec::new() };
+                let mut rows = if all_mode { self.act_rows(material, &theme) } else { Vec::new() };
+                // (what fits under the card and above the status line; "+N more" for the rest, #363)
+                let card_h = if card.is_some() { if card.as_ref().is_some_and(|c| c.kind == "music") { 200.0 } else { 120.0 } + 10.0 } else { 0.0 };
+                let heights: Vec<f32> = rows.iter().map(|r| if r.kind == "captions" && slint::Model::row_count(&r.lines) > 0 { (20.0 + slint::Model::row_count(&r.lines) as f32 * 18.0).max(36.0) } else if r.progress >= 0.0 { 42.0 } else { 36.0 }).collect();
+                let keep = island::fit(&heights, 10.0, island::room(ISLAND_H as f32, false) - card_h - 32.0, 18.0);
+                let more = rows.len().saturating_sub(keep);
+                rows.truncate(keep);
+                b.ui.set_act_more(more as i32);
                 self.act_rows_model.set_keyed(rows, |r| r.kind.clone());
                 b.live_key = live_key;
             }
@@ -1192,7 +1213,13 @@ impl Menubar {
             // entrance again, nor lose a press, when it changes)
             let alerts_key = format!("{material}{:?}", self.island.alerts);
             if alerts_key != b.alerts_key {
-                let alerts = self.alert_rows(material, &theme);
+                let mut alerts = self.alert_rows(material, &theme);
+                // (what fits the open island; "+N more" for the rest, #363)
+                let heights: Vec<f32> = alerts.iter().map(alert_h).collect();
+                let keep = island::fit(&heights, 10.0, island::room(ISLAND_H as f32, true), 18.0);
+                let more = alerts.len().saturating_sub(keep);
+                alerts.truncate(keep);
+                b.ui.set_alerts_more(more as i32);
                 self.alert_rows.set_keyed(alerts, |a| a.uid);
                 b.alerts_key = alerts_key;
             }
