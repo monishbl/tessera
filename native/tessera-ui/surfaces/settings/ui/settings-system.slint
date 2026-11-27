@@ -265,6 +265,22 @@ component HealthChart {
                 horizontal-stretch: 1;
                 accessible-role: AccessibleRole.image;
                 accessible-label: r.detail;
+                // The keys (#945): a Tab stop; Left/Right (Home/End) read
+                // one slot at a time, as the pointer does
+                ck := FocusScope {
+                    focus-on-click: false;
+                    key-pressed(e) => {
+                        let n = r.data.length;
+                        if n == 0 { return reject; }
+                        if e.text == Key.LeftArrow { root.hovered = root.hovered < 0 ? n - 1 : max(0, root.hovered - 1); return accept; }
+                        if e.text == Key.RightArrow { root.hovered = root.hovered < 0 ? 0 : min(n - 1, root.hovered + 1); return accept; }
+                        if e.text == Key.Home { root.hovered = 0; return accept; }
+                        if e.text == Key.End { root.hovered = n - 1; return accept; }
+                        reject
+                    }
+                    focus-lost(why) => { root.hovered = -1; }
+                }
+                SFocusRing { shown: ck.has-focus; radius: 4px; }
                 // (the scale's top and the baseline)
                 Rectangle {
                     y: 0;
