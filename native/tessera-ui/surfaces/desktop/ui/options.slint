@@ -10,6 +10,8 @@
 
 import { Theme } from "@tessera/theme.slint";
 import { IconButton } from "@tessera/widgets.slint";
+import { Segmented } from "@tessera/calendar.slint";
+import { KeyStop } from "@tessera/focus.slint";
 
 component Lbl inherits Text {
     color: Theme.label;
@@ -106,48 +108,10 @@ component Toggle inherits Rectangle {
         mouse-cursor: pointer;
         clicked => { toggled(!checked); }
     }
-}
-
-// Segmented.qml: a track with the chosen option on a pill (Glass), or a
-// connected button group with the chosen one filled (Material)
-component Segments inherits Rectangle {
-    in property <[string]> options;
-    in property <int> current;
-    in property <string> label;
-    callback selected(int);
-    height: Theme.material ? 36px : 30px;
-    border-radius: self.height / 2;
-    background: Theme.material ? transparent : Theme.toggle-off;
-    accessible-role: tab-list;
-    accessible-label: label;
-    for o[i] in options: Rectangle {
-        property <bool> chosen: i == current;
-        property <length> w: (parent.width - 4px - (options.length - 1) * (Theme.material ? 2px : 0px)) / options.length;
-        x: 2px + i * (w + (Theme.material ? 2px : 0px));
-        y: Theme.material ? 0px : 2px;
-        width: w;
-        height: parent.height - (Theme.material ? 0px : 4px);
-        border-radius: Theme.material ? (chosen ? self.height / 2 : t.pressed ? 4px : 8px) : self.height / 2;
-        background: Theme.material ? (chosen ? Theme.m3-primary : Theme.m3-surface-container-highest) : chosen ? (Theme.dark ? #ffffff33 : #ffffff) : transparent;
-        animate background { duration: Theme.hover; }
-        accessible-role: tab;
-        accessible-label: o;
-        accessible-action-default => { root.selected(i); }
-        Text {
-            width: 100%;
-            height: 100%;
-            text: o;
-            color: Theme.material ? (chosen ? Theme.m3-on-primary : Theme.m3-on-surface-variant) : Theme.label;
-            font-size: Theme.material ? Theme.body : Theme.small;
-            font-weight: chosen ? 600 : 500;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            accessible-role: none;
-        }
-        t := TouchArea {
-            mouse-cursor: pointer;
-            clicked => { root.selected(i); }
-        }
+    // (Tab reaches it, Space or Enter flips it, #520)
+    KeyStop {
+        radius: root.border-radius;
+        activated => { root.toggled(!root.checked); }
     }
 }
 
@@ -300,7 +264,7 @@ export component WidgetOptions inherits Window {
                     spacing: 8px;
                     Lbl { text: "Graphs"; }
                     HorizontalLayout {
-                        Segments {
+                        Segmented {
                             width: min(parent.width, 280px);
                             options: ["Area", "Bars", "Line"];
                             current: graph;
@@ -334,6 +298,10 @@ export component WidgetOptions inherits Window {
                             dt := TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => { root.finish(); }
+                            }
+                            KeyStop {
+                                radius: parent.border-radius;
+                                activated => { root.finish(); }
                             }
                         }
                     }
