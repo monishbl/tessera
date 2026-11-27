@@ -33,6 +33,9 @@ pub struct Look {
     pub motion: String,
     /// appearance.reduceMotion
     pub reduce_motion: bool,
+    /// How key hints are written: mac | windows | linux (Shortcut symbols,
+    /// keynames::style); Theme.key-* from it
+    pub keys: String,
 }
 
 pub fn config_path() -> PathBuf {
@@ -118,7 +121,8 @@ pub fn look_with(v: &Value, look_override: Option<&str>, wallpaper: impl Fn(&str
     });
     let motion = s("motion", "subtle"); // (Config.qml's default)
     let reduce_motion = a["reduceMotion"].as_bool().unwrap_or(false);
-    Look { material, dark, seed, style, accent, contrast, transparency, glass, motion, reduce_motion }
+    let keys = crate::keynames::style(v).to_string();
+    Look { material, dark, seed, style, accent, contrast, transparency, glass, motion, reduce_motion, keys }
 }
 
 // ── Glass: Theme.glass (shell/common/Theme.qml) ─────────────────────────────
@@ -737,6 +741,15 @@ macro_rules! __theme_tokens {
             hover / set_hover: i64,
             popover / set_popover: i64,
             motion_panel / set_motion_panel: i64,
+            key_save / set_key_save: slint::SharedString,
+            key_save_copy / set_key_save_copy: slint::SharedString,
+            key_copy / set_key_copy: slint::SharedString,
+            key_undo / set_key_undo: slint::SharedString,
+            key_redo / set_key_redo: slint::SharedString,
+            key_esc / set_key_esc: slint::SharedString,
+            key_del / set_key_del: slint::SharedString,
+            key_enter / set_key_enter: slint::SharedString,
+            key_ctrl_enter / set_key_ctrl_enter: slint::SharedString,
         }
     };
 }
@@ -821,6 +834,17 @@ pub fn tokens(look: &Look, plugin: bool) -> Tokens {
     t.set_motion_panel((320.0_f64 * pace).round() as i64);
     t.set_press_bounce(look.material && !look.reduce_motion);
     t.set_still(look.reduce_motion);
+    // (key hints in tooltips, buttons and footers, as Shortcut symbols says: audit #1047)
+    let k = |spec: &str| slint::SharedString::from(crate::keynames::combo(&look.keys, spec));
+    t.set_key_save(k("CTRL S"));
+    t.set_key_save_copy(k("CTRL SHIFT S"));
+    t.set_key_copy(k("CTRL C"));
+    t.set_key_undo(k("CTRL Z"));
+    t.set_key_redo(k("CTRL SHIFT Z"));
+    t.set_key_esc(k("ESCAPE"));
+    t.set_key_del(k("DELETE"));
+    t.set_key_enter(k("RETURN"));
+    t.set_key_ctrl_enter(k("CTRL RETURN"));
     if look.material {
         let roles = look_roles(look);
         let r = |k: &str| hex(roles.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str()).unwrap_or("#ff00ff"));

@@ -872,7 +872,7 @@ export component SpotlightPanel inherits Window {
                         clicked => { copy-answer(); }
                     }
                     Text {
-                        text: "  ↵ to continue in chat";
+                        text: "  " + Theme.key-enter + " continues in chat";
                         color: Theme.tertiary;
                         font-size: Theme.small;
                         vertical-alignment: center;
@@ -1022,7 +1022,7 @@ export component SpotlightPanel inherits Window {
                             clicked => { copy-answer(); }
                         }
                         Text {
-                            text: "  Enter continues in chat";
+                            text: "  " + Theme.key-enter + " continues in chat";
                             color: Theme.m3-on-surface-variant;
                             font-size: 13px;
                             vertical-alignment: center;

@@ -94,6 +94,17 @@ export global Theme {
     in property <duration> popover: 220ms;
     // (Theme.motion.panel: Dialog.qml and the launchpad close in 0.6 of it)
     in property <duration> motion-panel: 320ms;
+    // Key hints, as Settings → Appearance → Shortcut symbols writes them
+    // (tessera_core::keynames::combo: "Ctrl+S" or "⌃S"; audit #1047)
+    in property <string> key-save: "Ctrl+S";
+    in property <string> key-save-copy: "Ctrl+Shift+S";
+    in property <string> key-copy: "Ctrl+C";
+    in property <string> key-undo: "Ctrl+Z";
+    in property <string> key-redo: "Ctrl+Shift+Z";
+    in property <string> key-esc: "Esc";
+    in property <string> key-del: "Del";
+    in property <string> key-enter: "Enter";
+    in property <string> key-ctrl-enter: "Ctrl+Enter";
     in property <color> m3-primary-fixed: #eaddff;
     in property <color> m3-primary-fixed-dim: #d0bcff;
     in property <color> m3-shadow: #000000;

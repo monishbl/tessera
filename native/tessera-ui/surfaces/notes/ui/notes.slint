@@ -277,7 +277,7 @@ export component QuickNote inherits Window {
                 accessible-enabled: can-save;
                 accessible-action-default => { if can-save { save(); } }
                 save-label := Text {
-                    text: saving ? "Saving…" : "Save note  ⌃↵";
+                    text: saving ? "Saving…" : "Save note  " + Theme.key-ctrl-enter;
                     color: Theme.material ? (can-save ? Theme.m3-on-primary : Theme.m3-on-surface.with-alpha(0.38)) : can-save ? #ffffff : Theme.tertiary;
                     font-size: Theme.material ? 14px : Theme.small;
                     font-weight: Theme.material ? 500 : 600;
