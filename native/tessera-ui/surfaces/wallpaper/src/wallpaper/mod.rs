@@ -43,7 +43,7 @@ const NAME: &str = "wallpaper";
 /// plugin keeps shapes by screen and namespace)
 pub const NS: &str = "tessera:wallpicker";
 const M: u32 = 24; // room for the shadow round the panel
-const HEIGHT: u32 = 124 + 78 + 2 * M; // a thumbnail (220 × 9/16), the title, the shadow
+const HEIGHT: u32 = 124 + 78 + 20 + 2 * M; // a thumbnail (220 × 9/16), the title, the name under it, the shadow
 /// Thumbnails kept either side of the ones in view (decoded ahead), and the
 /// distance past which they're let go
 const AHEAD: usize = 3;
@@ -266,7 +266,7 @@ impl WallpaperPicker {
             return;
         }
         self.files = list;
-        let names = self.files.iter().map(|p| ui::Thumb { name: p.rsplit('/').next().unwrap_or(p).into(), image: Default::default(), ready: false });
+        let names = self.files.iter().map(|p| ui::Thumb { name: p.rsplit('/').next().unwrap_or(p).into(), image: Default::default(), ready: false, failed: false });
         self.thumbs.set(names.collect());
         self.loaded = vec![false; self.files.len()];
         self.range = (usize::MAX, 0);
@@ -338,15 +338,20 @@ impl WallpaperPicker {
         if gen != self.listing || self.files.get(i) != Some(&path) || self.loaded[i] {
             return;
         }
-        // (an unreadable one stays an empty tile, as the QML's)
+        // (an unreadable one shows a broken-picture mark and its name, not a
+        // blank tile for ever; #554)
         self.loaded[i] = true;
         let model = self.thumbs.model();
         let Some(mut t) = model.row_data(i) else { return };
-        if let Some(px) = px {
-            t.image = slint::Image::from_rgb8(px);
-            t.ready = true;
-            model.set_row_data(i, t);
+        match px {
+            Some(px) => {
+                t.image = slint::Image::from_rgb8(px);
+                t.ready = true;
+                t.failed = false;
+            }
+            None => t.failed = true,
         }
+        model.set_row_data(i, t);
     }
 
     fn apply(&mut self, i: i32) {
@@ -569,7 +574,7 @@ mod tests {
 
     #[test]
     fn sized_as_the_qml() {
-        assert_eq!(HEIGHT, 250);
+        assert_eq!(HEIGHT, 270);
         assert_eq!(panel_width(1920), 1200 + 48);
         assert_eq!(panel_width(1280), 1200 + 48);
         assert_eq!(panel_width(1000), 920 + 48);
