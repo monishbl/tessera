@@ -227,6 +227,11 @@ enum M {
     Art(String, Option<(Vec<u8>, Vec<u8>)>),
     /// the player's position (bus, µs), read once a second while its timeline shows
     Position(String, i64),
+    /// the position reader ended (no target for a while, or no session
+    /// bus): another starts when the timeline shows again
+    PositionEnded,
+    /// the screens' power, read on the pool (reader::screens)
+    Screens(Vec<(String, bool)>),
     /// the compositor ended the lock while it's still wanted: take it again
     Retake,
     /// the wallpaper is late: play the entrance without it
@@ -441,9 +446,12 @@ pub struct Lock {
     icons_asked: std::collections::HashSet<String>,
     /// the hands' angles, only ever growing (they turn forward past 12)
     angles: (f32, f32),
-    /// the player whose position is read now (the reader thread's target)
-    position_for: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// the player whose position is read now (the reader thread's target):
+    /// the thread waits on it while there is none, and ends after a while
+    position_for: std::sync::Arc<PositionTarget>,
     position_thread: bool,
+    /// the screens' power is being read on the pool
+    screens_asked: bool,
     /// the position (µs) and the track's length (µs) of the shown player
     position: (String, i64),
     /// tries at taking the lock again after the compositor ended it
@@ -518,6 +526,7 @@ impl Default for Lock {
             angles: (-1.0, -1.0),
             position_for: Default::default(),
             position_thread: false,
+            screens_asked: false,
             position: (String::new(), 0),
             retakes: 0,
             t_retake: slint::Timer::default(),
@@ -539,6 +548,39 @@ pub fn forward(prev: f32, a: f32) -> f32 {
         v += 360.0;
     }
     v
+}
+
+/// The player the position thread reads (None: it waits, then ends)
+#[derive(Default)]
+pub struct PositionTarget {
+    bus: std::sync::Mutex<Option<String>>,
+    wake: std::sync::Condvar,
+}
+
+impl PositionTarget {
+    fn set(&self, bus: Option<String>) {
+        *self.bus.lock().unwrap_or_else(|e| e.into_inner()) = bus;
+        self.wake.notify_all();
+    }
+    /// The target now; with none, waits up to `idle` for one (None: still none)
+    fn wait(&self, idle: Duration) -> Option<String> {
+        let g = self.bus.lock().unwrap_or_else(|e| e.into_inner());
+        let (g, _) = self.wake.wait_timeout_while(g, idle, |b| b.is_none()).unwrap_or_else(|e| e.into_inner());
+        g.clone()
+    }
+}
+
+/// How long the position thread waits with nothing to read before it ends
+const POSITION_IDLE: Duration = Duration::from_secs(30);
+
+/// The pause before a logind watch that ended is started again: 2 s,
+/// doubling up to a minute; one that ran a minute or more starts over at 2 s
+pub fn watch_backoff(prev: Duration, ran: Duration) -> Duration {
+    if ran >= Duration::from_secs(60) {
+        Duration::from_secs(2)
+    } else {
+        (prev * 2).clamp(Duration::from_secs(2), Duration::from_secs(60))
+    }
 }
 
 /// The MPRIS player's Position (µs), read off the session bus
@@ -1227,23 +1269,30 @@ impl Lock {
         if self.position.0 != bus {
             self.position = (bus.clone(), -1);
         }
-        if let Ok(mut t) = self.position_for.lock() {
-            *t = want.then(|| bus.clone());
-        }
+        self.position_for.set(want.then(|| bus.clone()));
+        // (#751: it waits while there's no timeline instead of polling for
+        // the life of the shell, ends after a while without one, and says
+        // so, so the next timeline starts another; it ended quietly on a
+        // failed connect and the timeline never showed again)
         if want && !self.position_thread {
             self.position_thread = true;
             let (target, to) = (self.position_for.clone(), Self::send(st));
             std::thread::spawn(move || {
-                let Ok(conn) = zbus::blocking::Connection::session() else { return };
-                loop {
-                    let bus = target.lock().ok().and_then(|t| t.clone());
-                    if let Some(bus) = bus {
-                        if let Some(pos) = read_position(&conn, &bus) {
-                            to(Box::new(M::Position(bus, pos)));
+                match zbus::blocking::Connection::session() {
+                    Ok(conn) => {
+                        while let Some(bus) = target.wait(POSITION_IDLE) {
+                            if let Some(pos) = read_position(&conn, &bus) {
+                                to(Box::new(M::Position(bus, pos)));
+                            }
+                            std::thread::sleep(Duration::from_secs(1));
                         }
                     }
-                    std::thread::sleep(Duration::from_secs(1));
+                    Err(e) => {
+                        eprintln!("tessera-ui: lock: no session bus for the player's position ({e})");
+                        std::thread::sleep(Duration::from_secs(5));
+                    }
                 }
+                to(Box::new(M::PositionEnded));
             });
         }
         let known = want && self.position.1 >= 0;
@@ -1824,10 +1873,16 @@ impl Lock {
                     self.field();
                     return;
                 }
-                // (its 30 s are up, or PAM ended it: the next scan, renewed)
-                if self.finger_wanted() && !self.t_finger.running() {
-                    self.finger.retry_why = reader::Why::Fresh;
-                    self.finger_retry(st, 400);
+                // (its 30 s are up: the next scan at once, the reader was
+                // answering; PAM ended it some other way: renewed after a
+                // look at the reader)
+                if self.finger_wanted() && !self.t_finger.running() && !self.finger.probing {
+                    if reader::renew_at_once(self.finger.asked, now - self.finger.started_at) {
+                        self.start_scan(st);
+                    } else {
+                        self.finger.retry_why = reader::Why::Fresh;
+                        self.finger_retry(st, 400);
+                    }
                 }
                 self.rules(st);
             }
@@ -1985,8 +2040,20 @@ impl Lock {
     }
 }
 
-/// logind's PrepareForSleep, read-only (Lock.qml's EventWatch "login1")
+/// logind's PrepareForSleep and the lid, read-only (Lock.qml's EventWatch
+/// "login1"). Each watch runs until its connection ends (a bus restart, a
+/// failed connect right after a wake), then is started again after a pause
+/// (watch_backoff); it said so once and was never heard again, and the
+/// reader ran into the next sleep (#751)
 fn watch_sleep(to: impl Fn(Box<dyn Any + Send>) + Send + Clone + 'static) {
+    fn again(what: &str, prev: &mut Duration, started: std::time::Instant, e: Option<zbus::Error>) {
+        match e {
+            Some(e) => eprintln!("tessera-ui: lock: no logind {what} signal ({e}); again shortly"),
+            None => eprintln!("tessera-ui: lock: the logind {what} watch ended; again shortly"),
+        }
+        *prev = watch_backoff(*prev, started.elapsed());
+        std::thread::sleep(*prev);
+    }
     // the lid (logind's LidClosed): as it is now, then each change
     let lid = to.clone();
     std::thread::spawn(move || {
@@ -2012,8 +2079,10 @@ fn watch_sleep(to: impl Fn(Box<dyn Any + Send>) + Send + Clone + 'static) {
             }
             Ok(())
         };
-        if let Err(e) = run() {
-            eprintln!("tessera-ui: lock: no logind lid signal ({e})");
+        let mut pause = Duration::ZERO;
+        loop {
+            let started = std::time::Instant::now();
+            again("lid", &mut pause, started, run().err());
         }
     });
     std::thread::spawn(move || {
@@ -2033,8 +2102,10 @@ fn watch_sleep(to: impl Fn(Box<dyn Any + Send>) + Send + Clone + 'static) {
             }
             Ok(())
         };
-        if let Err(e) = run() {
-            eprintln!("tessera-ui: lock: no logind sleep signal ({e})");
+        let mut pause = Duration::ZERO;
+        loop {
+            let started = std::time::Instant::now();
+            again("sleep", &mut pause, started, run().err());
         }
     });
 }
@@ -2249,18 +2320,20 @@ impl Part for Lock {
                 }
                 self.tick_ms = now;
                 if self.finger_on && self.real && self.held {
-                    // a screen came on (DPMS): a fresh scan at once
-                    let screens = reader::screens();
-                    let on = reader::screen_came_on(&self.finger.screens, &screens);
-                    self.finger.screens = screens;
-                    if on {
-                        self.reader_activity(st, true);
+                    // a screen came on (DPMS): a fresh scan at once (read on
+                    // the pool: a stat of every connector each second held
+                    // up the UI thread, #752)
+                    if !self.screens_asked {
+                        self.screens_asked = true;
+                        let to = Self::send(st);
+                        crate::work::spawn(move || to(Box::new(M::Screens(reader::screens()))));
                     }
                     // the 2 idle minutes began (or ended): the scan stops (or starts)
                     if self.finger_wanted() != self.finger.wanted {
                         self.rules(st);
                     }
-                    // one scan, renewed every 30 s
+                    // one scan: a helper that hung past pam_fprintd's own
+                    // timeout is renewed (a working one ends by itself)
                     let since = self.finger.conv.as_ref().map(|_| self.finger.started_at);
                     if reader::renew_due(since, now) && !self.finger.probing {
                         self.fresh(st, reader::Why::Fresh);
@@ -2542,6 +2615,23 @@ impl Part for Lock {
                     self.player(st);
                 }
             }
+            M::PositionEnded => {
+                self.position_thread = false;
+                // (a timeline wanted meanwhile: another reader)
+                self.player(st);
+            }
+            M::Screens(screens) => {
+                self.screens_asked = false;
+                if !(self.finger_on && self.real && self.held) {
+                    self.finger.screens.clear();
+                    return;
+                }
+                let on = reader::screen_came_on(&self.finger.screens, &screens);
+                self.finger.screens = screens;
+                if on {
+                    self.reader_activity(st, true);
+                }
+            }
             M::RevealNow => self.wins.iter_mut().for_each(reveal),
             M::Retake => {
                 if self.held && self.lock.is_none() && !self.demo {
@@ -2737,6 +2827,36 @@ mod tests {
         std::fs::write(dir.join("bad.png"), b"x").unwrap();
         assert!(super::note_icon_pixels(&dir.join("bad.png"), 16).is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_watch_that_ended_waits_longer_each_time_up_to_a_minute() {
+        use super::watch_backoff;
+        use std::time::Duration;
+        let s = Duration::from_secs;
+        assert_eq!(watch_backoff(Duration::ZERO, s(0)), s(2));
+        assert_eq!(watch_backoff(s(2), s(1)), s(4));
+        assert_eq!(watch_backoff(s(32), s(1)), s(60));
+        assert_eq!(watch_backoff(s(60), s(1)), s(60));
+        // one that ran a while (a bus restart much later): quick again
+        assert_eq!(watch_backoff(s(60), s(600)), s(2));
+    }
+
+    #[test]
+    fn the_position_reader_waits_for_a_player_and_gives_up() {
+        use super::PositionTarget;
+        use std::time::Duration;
+        let t = std::sync::Arc::new(PositionTarget::default());
+        assert_eq!(t.wait(Duration::from_millis(20)), None);
+        t.set(Some(":1.42".into()));
+        assert_eq!(t.wait(Duration::from_secs(5)).as_deref(), Some(":1.42"));
+        // (a player chosen while it waits wakes it)
+        t.set(None);
+        let t2 = t.clone();
+        let h = std::thread::spawn(move || t2.wait(Duration::from_secs(5)));
+        std::thread::sleep(Duration::from_millis(50));
+        t.set(Some(":1.7".into()));
+        assert_eq!(h.join().unwrap().as_deref(), Some(":1.7"));
     }
 
     #[test]
