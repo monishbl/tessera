@@ -273,7 +273,7 @@ component GlassDay inherits Rectangle {
     // when some don't, as Material's do: five events and five to-dos ran
     // under Options, and on a short screen rows were cut off; #447)
     property <length> col-y: head.y + head.height + 32px;
-    property <length> col-h: parent.height - pad - 36px - 16px - col-y;
+    property <length> col-h: root.height - pad - 36px - 16px - col-y;
     // (rows of 40 px: 36 and the 4 between; the titles and the gap 68 px)
     property <int> rows-fit: max(2, floor((col-h - 68px) / 40px));
     property <int> ev-need: Day.events.length == 0 ? 1 : Day.events.length > 5 ? 6 : Day.events.length;
