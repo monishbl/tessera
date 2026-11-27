@@ -5,6 +5,7 @@
 
 use crate::services::audio::{self, Sound};
 use crate::services::brightness::Backlight;
+use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Kind {
@@ -30,6 +31,66 @@ pub const HEADPHONES: &str = "\u{e2a6}";
 pub const SPEAKER_HIFI: &str = "\u{ea08}";
 pub const WEBCAM: &str = "\u{e9b2}";
 pub const APP_WINDOW: &str = "\u{e5da}";
+pub const MONITOR: &str = "\u{e32e}";
+
+/// The host's displays (state "displays") and the one the brightness keys
+/// move (state "brightnessNow"): an external monitor (DDC) has its level and
+/// name there, the built-in panel's is the Backlight's
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Displays {
+    /// the keys move an external display
+    pub external: bool,
+    pub name: String,
+    pub value: f64,
+    /// levels set on an external display so far (each shows)
+    pub changes: u64,
+    pub list: Vec<Display>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Display {
+    pub id: String,
+    pub name: String,
+    pub value: f64,
+    pub built_in: bool,
+}
+
+impl Displays {
+    pub fn from_state(now: &Value, list: &Value) -> Self {
+        Displays {
+            external: now["external"].as_bool().unwrap_or(false),
+            name: now["name"].as_str().unwrap_or("").to_string(),
+            value: now["value"].as_f64().unwrap_or(0.5),
+            changes: now["changes"].as_u64().unwrap_or(0),
+            list: list
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|d| {
+                            Some(Display { id: d["id"].as_str().filter(|i| !i.is_empty())?.to_string(), name: d["name"].as_str().unwrap_or("").to_string(), value: d["value"].as_f64().unwrap_or(0.5), built_in: d["builtIn"].as_bool().unwrap_or(false) })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    /// The backlight as the OSD shows it: the external display's level
+    /// while the keys move one
+    pub fn shown(&self, b: &Backlight) -> Backlight {
+        if self.external {
+            Backlight { present: true, value: self.value, ..b.clone() }
+        } else {
+            b.clone()
+        }
+    }
+
+    /// Whether a new reading is a level set on the same external display
+    /// (not focus moving to another, nor its first reading)
+    pub fn changed_from(&self, before: &Displays) -> bool {
+        self.external && before.external && self.name == before.name && self.changes > before.changes
+    }
+}
 
 /// Audio.icon: muted or silent, then by thirds
 pub fn volume_icon(volume: f64, muted: bool) -> &'static str {
@@ -197,6 +258,8 @@ pub enum Act {
     Sink(String),
     Source(String),
     Backlight,
+    /// an external display (the host's brightness.setFor id)
+    Display(String),
     Apps,
     Back,
     Stream(u32),
@@ -288,7 +351,7 @@ pub fn streams(s: &Sound) -> Vec<&audio::Stream> {
 
 /// The rows for a kind and page ("list" or "apps"); `app_name` names an
 /// app's stream (its installed app's name when there is one)
-pub fn rows(kind: Kind, page: &str, s: &Sound, b: &Backlight, app_name: &mut dyn FnMut(&audio::Stream) -> String) -> Vec<Row> {
+pub fn rows(kind: Kind, page: &str, s: &Sound, b: &Backlight, d: &Displays, app_name: &mut dyn FnMut(&audio::Stream) -> String) -> Vec<Row> {
     let mut out = Vec::new();
     if page == "apps" && kind == Kind::Volume {
         out.push(Row::choice(CARET_LEFT, "App volumes", Act::Back));
@@ -314,6 +377,10 @@ pub fn rows(kind: Kind, page: &str, s: &Sound, b: &Backlight, app_name: &mut dyn
         Kind::Brightness => {
             if b.present {
                 out.push(Row { value: b.value, picture: Some("laptop"), ..Row::choice(LAPTOP, "Built-in display", Act::Backlight) });
+            }
+            // (each external monitor the host sets over DDC, with its level)
+            for x in d.list.iter().filter(|x| !x.built_in) {
+                out.push(Row { value: x.value, current: d.external && x.name == d.name, ..Row::choice(MONITOR, x.name.clone(), Act::Display(x.id.clone())) });
             }
         }
     }
@@ -435,24 +502,47 @@ mod tests {
         s.streams = vec![Stream { index: 3, name: "Firefox".into(), binary: "firefox".into(), volume: 0.7, ..Default::default() }, Stream { index: 4, name: "sound".into(), binary: "pw-play".into(), ..Default::default() }];
         let b = Backlight { present: true, device: "intel".into(), value: 0.4 };
         let mut name = |x: &Stream| x.name.clone();
-        let r = rows(Kind::Volume, "list", &s, &b, &mut name);
+        let nd = Displays::default();
+        let r = rows(Kind::Volume, "list", &s, &b, &nd, &mut name);
         let texts: Vec<&str> = r.iter().map(|r| r.text.as_str()).collect();
         assert_eq!(texts, vec!["USB Headphones", "b desc", "App volumes", "Sound settings"]);
         assert_eq!((r[0].icon, r[0].current, r[1].current, r[2].chevron), (HEADPHONES, false, true, true));
         assert_eq!(r[1].act, Act::Sink("b".into()));
         assert_eq!(r[3].act, Act::Settings("sound"));
         // the apps page: the shell's own short sounds aren't listed
-        let r = rows(Kind::Volume, "apps", &s, &b, &mut name);
+        let r = rows(Kind::Volume, "apps", &s, &b, &nd, &mut name);
         assert_eq!(r.len(), 2);
         assert_eq!((r[1].act.clone(), r[1].value), (Act::Stream(3), 0.7));
         // no apps playing: no App volumes
         s.streams.clear();
-        assert!(!rows(Kind::Volume, "list", &s, &b, &mut name).iter().any(|r| r.act == Act::Apps));
-        let r = rows(Kind::Mic, "list", &s, &b, &mut name);
+        assert!(!rows(Kind::Volume, "list", &s, &b, &nd, &mut name).iter().any(|r| r.act == Act::Apps));
+        let r = rows(Kind::Mic, "list", &s, &b, &nd, &mut name);
         assert_eq!((r[0].icon, r[0].current, r.len()), (MICROPHONE, true, 2));
-        let r = rows(Kind::Brightness, "list", &s, &b, &mut name);
+        let r = rows(Kind::Brightness, "list", &s, &b, &nd, &mut name);
         assert_eq!((r[0].value, r[1].text.as_str(), r[1].act.clone()), (0.4, "Display settings", Act::Settings("displays")));
-        assert_eq!(rows(Kind::Brightness, "list", &s, &Backlight::default(), &mut name).len(), 1);
+        assert_eq!(rows(Kind::Brightness, "list", &s, &Backlight::default(), &nd, &mut name).len(), 1);
+        // external monitors: each with its level, the one the keys move ticked
+        let d = Displays::from_state(
+            &serde_json::json!({"external": true, "name": "BenQ GW2786TC", "value": 0.7, "changes": 3}),
+            &serde_json::json!([{"id": "backlight", "name": "Built-in display", "value": 0.4, "builtIn": true}, {"id": "DP-1", "name": "BenQ GW2786TC", "value": 0.7, "builtIn": false}]),
+        );
+        let r = rows(Kind::Brightness, "list", &s, &b, &d, &mut name);
+        assert_eq!(r.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(), ["Built-in display", "BenQ GW2786TC", "Display settings"]);
+        assert_eq!((r[1].act.clone(), r[1].value, r[1].current, r[1].icon), (Act::Display("DP-1".into()), 0.7, true, MONITOR));
+        // the level shown is the monitor's
+        assert_eq!(value(Kind::Brightness, &s, &d.shown(&b)), 0.7);
+        assert_eq!(value(Kind::Brightness, &s, &Displays::default().shown(&b)), 0.4);
+    }
+
+    #[test]
+    fn an_external_displays_change_shows_but_focus_moving_doesnt() {
+        let at = |name: &str, changes: u64| Displays { external: true, name: name.into(), value: 0.5, changes, list: vec![] };
+        assert!(at("BenQ", 4).changed_from(&at("BenQ", 3)));
+        // (focus to another monitor, its level read: no OSD)
+        assert!(!at("Dell", 4).changed_from(&at("BenQ", 3)));
+        assert!(!at("BenQ", 3).changed_from(&at("BenQ", 3)));
+        // (the built-in panel: the backlight's own readings show it)
+        assert!(!Displays { changes: 5, ..Default::default() }.changed_from(&Displays::default()));
     }
 
     #[test]
